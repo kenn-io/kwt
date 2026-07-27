@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/url"
+	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 )
@@ -293,6 +294,35 @@ func TestDiscoverGlobalWorktrees_RegisteredIdentityWinsForForkOrigin(t *testing.
 		if got := entry.Model().SessionName; got != wantSession {
 			t.Errorf("entry %s: SessionName = %q, want %q", entry.Path, got, wantSession)
 		}
+	}
+}
+
+func TestDiscoverWorktreeResolvesLinkedPathOutsideGlobalBase(t *testing.T) {
+	mainDir := filepath.Join(t.TempDir(), "registered", "widget")
+	repo := initRepoAt(t, mainDir, "https://github.com/fork/widget.git")
+	repo.CreateBranch(t, "feature")
+	worktreePath := filepath.Join(t.TempDir(), "external", "feature")
+	repo.CreateWorktree(t, worktreePath, "feature")
+
+	entry, err := DiscoverWorktree(worktreePath, []models.Project{{
+		Repository: "github.com/acme/widget",
+		Path:       mainDir,
+	}})
+
+	if err != nil {
+		t.Fatalf("DiscoverWorktree() error = %v", err)
+	}
+	if utils.CanonicalPath(entry.Path) != utils.CanonicalPath(worktreePath) {
+		t.Errorf("Path = %q, want %q", entry.Path, worktreePath)
+	}
+	if entry.RepositoryInfo == nil {
+		t.Fatal("RepositoryInfo = nil")
+	}
+	if entry.RepositoryInfo.FullPath != "github.com/acme/widget" {
+		t.Errorf(
+			"RepositoryInfo.FullPath = %q, want github.com/acme/widget",
+			entry.RepositoryInfo.FullPath,
+		)
 	}
 }
 

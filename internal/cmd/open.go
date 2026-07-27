@@ -85,26 +85,43 @@ func runOpen(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("--start-session requires an exact worktree path")
 		}
 
-		entries, err := discovery.DiscoverGlobalWorktrees(ctx.Config.Worktree.BaseDir, ctx.Config.Projects)
-		if err != nil {
-			return fmt.Errorf("failed to discover worktrees: %w", err)
-		}
-		if len(entries) == 0 {
-			if len(args) == 1 {
-				return fmt.Errorf("could not resolve worktree %s", args[0])
-			}
-			ctx.Printer.PrintInfo("No worktrees found in " + ctx.Config.Worktree.BaseDir)
-			return nil
-		}
-
 		finder := ctx.GetGlobalFinder()
 		var entry *discovery.GlobalWorktreeEntry
 		requestedPath := ""
-		if len(args) == 1 {
+		if openStartSession {
 			requestedPath = args[0]
-			if openStartSession {
-				entry = findEntryByPath(entries, requestedPath)
-			} else {
+			var err error
+			entry, err = discovery.DiscoverWorktree(
+				requestedPath,
+				ctx.Config.Projects,
+			)
+			if err != nil {
+				return fmt.Errorf(
+					"could not resolve worktree %s: %w",
+					requestedPath,
+					err,
+				)
+			}
+		} else {
+			entries, err := discovery.DiscoverGlobalWorktrees(
+				ctx.Config.Worktree.BaseDir,
+				ctx.Config.Projects,
+			)
+			if err != nil {
+				return fmt.Errorf("failed to discover worktrees: %w", err)
+			}
+			if len(entries) == 0 {
+				if len(args) == 1 {
+					return fmt.Errorf("could not resolve worktree %s", args[0])
+				}
+				ctx.Printer.PrintInfo(
+					"No worktrees found in " + ctx.Config.Worktree.BaseDir,
+				)
+				return nil
+			}
+
+			if len(args) == 1 {
+				requestedPath = args[0]
 				matches := discovery.FilterGlobalWorktrees(
 					entries,
 					requestedPath,
@@ -125,15 +142,15 @@ func runOpen(cmd *cobra.Command, args []string) error {
 					}
 					entry = findEntryByPath(matches, selected.Path)
 				}
+			} else {
+				worktrees := discovery.ConvertToWorktreeModels(entries, false)
+				selected, err := finder.SelectWorktree(worktrees)
+				if err != nil {
+					return fmt.Errorf("selection cancelled: %w", err)
+				}
+				requestedPath = selected.Path
+				entry = findEntryByPath(entries, requestedPath)
 			}
-		} else {
-			worktrees := discovery.ConvertToWorktreeModels(entries, false)
-			selected, err := finder.SelectWorktree(worktrees)
-			if err != nil {
-				return fmt.Errorf("selection cancelled: %w", err)
-			}
-			requestedPath = selected.Path
-			entry = findEntryByPath(entries, requestedPath)
 		}
 
 		if entry == nil || entry.RepositoryInfo == nil {

@@ -54,7 +54,9 @@ the canonical tmux workspace with its resolved layout before attaching.
 `kwt open <exact-worktree-path> --start-session` performs the same layout and
 session bootstrap without attaching a client. Use it before an external
 ordinary tmux client attaches to a session that may not exist yet. The exact
-path requirement keeps this automation mode noninteractive and unambiguous.
+path is resolved directly from Git rather than the global worktree base, which
+keeps this automation mode noninteractive and supports linked worktrees stored
+outside that base.
 Protected pull-request imports remain restricted to `kwt pr attach`.
 
 ## `kwt list`

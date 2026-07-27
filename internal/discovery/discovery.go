@@ -111,6 +111,34 @@ func DiscoverGlobalWorktrees(baseDir string, projects []models.Project) ([]*Glob
 	return extractWorktreeCandidates(candidates, projects, extractWorktreeInfo), nil
 }
 
+// DiscoverWorktree resolves one exact worktree root independently of the
+// configured global base directory. Automation callers already holding a path
+// from repository-local inventory can therefore establish that workspace even
+// when the linked worktree lives elsewhere.
+func DiscoverWorktree(path string, projects []models.Project) (*GlobalWorktreeEntry, error) {
+	expanded, err := utils.ExpandPath(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to expand worktree path: %w", err)
+	}
+	repositoryGit := git.New(expanded)
+	root, err := repositoryGit.GetRepositoryPath()
+	if err != nil {
+		return nil, fmt.Errorf("failed to find worktree root: %w", err)
+	}
+	if utils.CanonicalPath(root) != utils.CanonicalPath(expanded) {
+		return nil, fmt.Errorf("path is not a worktree root")
+	}
+	entry, err := extractWorktreeInfo(root, projects)
+	if err != nil {
+		return nil, err
+	}
+	if mainRoot, mainErr := repositoryGit.GetMainRepositoryPath(); mainErr == nil {
+		entry.IsMain =
+			utils.CanonicalPath(mainRoot) == utils.CanonicalPath(root)
+	}
+	return entry, nil
+}
+
 func extractWorktreeCandidates(
 	candidates []worktreeCandidate,
 	projects []models.Project,
