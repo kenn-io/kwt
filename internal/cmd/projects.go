@@ -3,7 +3,9 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/kwt/internal/config"
@@ -16,7 +18,9 @@ import (
 
 var (
 	projectsJSON       bool
+	projectsAddJSON    bool
 	loadProjectsConfig = config.Load
+	registerProject    = config.RegisterProject
 )
 
 var projectsCmd = &cobra.Command{
@@ -35,9 +39,18 @@ that external automation can consume without parsing the config file.`,
 	RunE:              runProjects,
 }
 
+var projectsAddCmd = &cobra.Command{
+	Use:   "add <path>",
+	Short: "Register an existing Git repository",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runProjectsAdd,
+}
+
 func init() {
 	rootCmd.AddCommand(projectsCmd)
 	projectsCmd.Flags().BoolVar(&projectsJSON, "json", false, "Output in JSON format")
+	projectsAddCmd.Flags().BoolVar(&projectsAddJSON, "json", false, "Output a machine-readable result")
+	projectsCmd.AddCommand(projectsAddCmd)
 }
 
 func runProjects(cmd *cobra.Command, args []string) error {
@@ -64,6 +77,152 @@ func runProjects(cmd *cobra.Command, args []string) error {
 		t.Row(project.Name, project.Repository, project.Path, project.LastTouched)
 	}
 	return t.Println()
+}
+
+type projectAddResult struct {
+	Status  string         `json:"status"`
+	Project models.Project `json:"project"`
+}
+
+type projectCommandErrorBody struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	Retryable bool   `json:"retryable"`
+}
+
+type projectCommandErrorEnvelope struct {
+	Error projectCommandErrorBody `json:"error"`
+}
+
+type projectCommandError struct {
+	body     projectCommandErrorBody
+	exitCode int
+}
+
+func (e *projectCommandError) Error() string { return e.body.Message }
+func (e *projectCommandError) ExitCode() int { return e.exitCode }
+
+func runProjectsAdd(cmd *cobra.Command, args []string) error {
+	project, err := resolveProjectForRegistration(args[0])
+	if err != nil {
+		return writeProjectCommandError(
+			cmd,
+			"invalid_repository",
+			err.Error(),
+			2,
+		)
+	}
+	cfg, err := loadProjectsConfig()
+	if err != nil {
+		return writeProjectCommandError(
+			cmd,
+			"registration_failed",
+			fmt.Sprintf("failed to load projects: %v", err),
+			1,
+		)
+	}
+	for _, existing := range cfg.Projects {
+		if !samePath(existing.Path, project.Path) {
+			continue
+		}
+		if reusable, ok := reusableExistingProject(existing, project); ok {
+			project = reusable
+		}
+		break
+	}
+	project.LastTouched = time.Now().UTC().Format(time.RFC3339)
+	if err := registerProject(project); err != nil {
+		return writeProjectCommandError(
+			cmd,
+			"registration_failed",
+			fmt.Sprintf("failed to register project: %v", err),
+			1,
+		)
+	}
+
+	if projectsAddJSON {
+		encoder := json.NewEncoder(cmd.OutOrStdout())
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(projectAddResult{
+			Status:  "registered",
+			Project: project,
+		})
+	}
+	_, err = fmt.Fprintf(
+		cmd.OutOrStdout(),
+		"registered project %s at %s\n",
+		project.Name,
+		project.Path,
+	)
+	return err
+}
+
+func resolveProjectForRegistration(path string) (models.Project, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return models.Project{}, fmt.Errorf("repository path is required")
+	}
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return models.Project{}, fmt.Errorf(
+			"resolve repository path %q: %w",
+			path,
+			err,
+		)
+	}
+	if resolved, err := filepath.EvalSymlinks(absolutePath); err == nil {
+		absolutePath = resolved
+	}
+	repositoryGit := git.New(absolutePath)
+	mainPath, err := repositoryGit.GetMainRepositoryPath()
+	if err != nil {
+		return models.Project{}, fmt.Errorf(
+			"%s is not an accessible Git repository",
+			absolutePath,
+		)
+	}
+	if resolved, err := filepath.EvalSymlinks(mainPath); err == nil {
+		mainPath = resolved
+	}
+	info, err := worktree.RepositoryInfoFromGit(repositoryGit)
+	if err != nil {
+		return models.Project{}, fmt.Errorf(
+			"resolve repository identity for %s: %w",
+			absolutePath,
+			err,
+		)
+	}
+	name := info.Repository
+	if name == "" {
+		name = filepath.Base(mainPath)
+	}
+	return models.Project{
+		Repository: info.FullPath,
+		Name:       name,
+		Path:       mainPath,
+	}, nil
+}
+
+func writeProjectCommandError(
+	cmd *cobra.Command,
+	code string,
+	message string,
+	exitCode int,
+) error {
+	body := projectCommandErrorBody{
+		Code:      code,
+		Message:   message,
+		Retryable: false,
+	}
+	cmd.Root().SilenceUsage = true
+	cmd.Root().SilenceErrors = true
+	if projectsAddJSON {
+		encoder := json.NewEncoder(cmd.OutOrStdout())
+		encoder.SetIndent("", "  ")
+		_ = encoder.Encode(projectCommandErrorEnvelope{Error: body})
+	}
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "kwt projects: %s: %s\n", code, message)
+	return &projectCommandError{body: body, exitCode: exitCode}
 }
 
 // canonicalizeProjectIdentities returns a copy of projects with every

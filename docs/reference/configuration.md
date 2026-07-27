@@ -64,6 +64,8 @@ The dashboard lists worktrees from the configured base directory, the current
 launch repository, and registered projects. Running `kwt` inside a repository
 registers or refreshes that repository so future dashboard launches can find its
 worktrees from anywhere.
+Automation and graphical clients can perform the same explicit registration
+without opening the dashboard by running `kwt projects add <path> --json`.
 
 Project entries are discovery metadata, not worktree-creation policy:
 

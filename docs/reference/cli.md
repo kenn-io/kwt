@@ -69,6 +69,38 @@ paths that live outside the configured worktree base directory without
 parsing the config file. `repository` uses the same `host/owner/name` slug as
 `kwt list --json`'s `repository` field, so the two surfaces can be joined.
 
+`kwt projects add <path>` registers an existing Git checkout without opening
+the dashboard. A linked-worktree path resolves to its main repository before
+registration, and repeating the command updates the existing entry rather than
+adding a duplicate.
+
+With `--json`, success returns:
+
+```json
+{
+  "status": "registered",
+  "project": {
+    "repository": "github.com/kenn-io/kwt",
+    "name": "kwt",
+    "path": "/home/wesm/code/kwt",
+    "last_touched": "2026-07-27T11:16:16Z"
+  }
+}
+```
+
+Failures return a stable error envelope on stdout. `invalid_repository` exits
+2; `registration_failed` exits 1. Both are non-retryable:
+
+```json
+{
+  "error": {
+    "code": "invalid_repository",
+    "message": "/missing is not an accessible Git repository",
+    "retryable": false
+  }
+}
+```
+
 ## `kwt pr`
 
 `kwt pr list` and `kwt pr import` are the noninteractive, structured boundary

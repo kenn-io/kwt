@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -344,4 +345,68 @@ func TestRunProjectsJSONEmptyIsArray(t *testing.T) {
 	if len(got) != 0 {
 		t.Errorf("expected empty array, got %d entries", len(got))
 	}
+}
+
+func TestRunProjectsAddJSONRegistersCanonicalProject(t *testing.T) {
+	repoPath := newTUITestRepo(t)
+	canonicalRepoPath, err := filepath.EvalSymlinks(repoPath)
+	require.NoError(t, err)
+	runTUITestGit(t, repoPath, "remote", "add", "origin", "git@github.com:acme/widget.git")
+	linkedPath := filepath.Join(t.TempDir(), "linked")
+	runTUITestGit(t, repoPath, "worktree", "add", "-b", "linked", linkedPath)
+
+	originalRegister := registerProject
+	t.Cleanup(func() { registerProject = originalRegister })
+	var registered models.Project
+	registerProject = func(project models.Project) error {
+		registered = project
+		return nil
+	}
+	projectsAddJSON = true
+	t.Cleanup(func() { projectsAddJSON = false })
+	stdout := &bytes.Buffer{}
+	projectsAddCmd.SetOut(stdout)
+
+	require.NoError(t, runProjectsAdd(projectsAddCmd, []string{linkedPath}))
+
+	var response struct {
+		Status  string         `json:"status"`
+		Project models.Project `json:"project"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	assert.Equal(t, "registered", response.Status)
+	assert.Equal(t, "github.com/acme/widget", response.Project.Repository)
+	assert.Equal(t, canonicalRepoPath, response.Project.Path)
+	assert.NotEmpty(t, response.Project.LastTouched)
+	assert.Equal(t, response.Project, registered)
+}
+
+func TestRunProjectsAddJSONWritesStableInvalidRepositoryError(t *testing.T) {
+	projectsAddJSON = true
+	t.Cleanup(func() { projectsAddJSON = false })
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	projectsAddCmd.SetOut(stdout)
+	projectsAddCmd.SetErr(stderr)
+
+	err := runProjectsAdd(
+		projectsAddCmd,
+		[]string{filepath.Join(t.TempDir(), "missing")},
+	)
+
+	var exitErr interface{ ExitCode() int }
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 2, exitErr.ExitCode())
+	var response struct {
+		Error struct {
+			Code      string `json:"code"`
+			Message   string `json:"message"`
+			Retryable bool   `json:"retryable"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	assert.Equal(t, "invalid_repository", response.Error.Code)
+	assert.False(t, response.Error.Retryable)
+	assert.NotEmpty(t, response.Error.Message)
+	assert.Contains(t, stderr.String(), "invalid_repository")
 }

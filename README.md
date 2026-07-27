@@ -195,6 +195,8 @@ The dashboard lists worktrees from the global base directory and from projects
 recorded in `config.toml`. Running `kwt` inside a repository registers or
 refreshes that project entry, so future dashboard launches can see its
 worktrees even when they are outside `worktree.basedir`.
+Noninteractive clients can register an existing checkout explicitly with
+`kwt projects add /absolute/repository/path --json`.
 
 ### Repository Setup
 
@@ -225,7 +227,7 @@ spaces.
 | `kwt open`       | Fuzzy-pick and attach to a workspace      |
 | `kwt list`       | List worktrees                            |
 | `kwt status`     | Show git status, sync state, and activity |
-| `kwt projects`   | List registered project repositories      |
+| `kwt projects`   | List or register project repositories     |
 | `kwt pr`         | Discover and import pull requests as JSON |
 | `kwt get`        | Print a matching worktree path            |
 | `kwt cd`         | Open a shell in a matching worktree       |
