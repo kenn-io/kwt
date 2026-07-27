@@ -3,7 +3,6 @@ package tmux
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -188,9 +187,6 @@ func (r *WorkspaceRunner) validateProtectedState(
 ) error {
 	globalEnvironment, err := r.tmux.GlobalEnvironment()
 	if err != nil {
-		if !sessionExists && errors.Is(err, errNoServerRunning) {
-			return nil
-		}
 		return fmt.Errorf("cannot verify tmux server environment: %w", err)
 	}
 	if name, ok := firstMatchingName(

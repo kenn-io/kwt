@@ -14,6 +14,42 @@ import (
 	"go.kenn.io/kwt/pkg/models"
 )
 
+func TestGlobalEnvironmentReadsFreshNamedServer(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not found in PATH")
+	}
+
+	socket := fmt.Sprintf("kwt-envtest-%d-%d", os.Getpid(), time.Now().UnixNano())
+	t.Cleanup(func() { killPrivateTmuxServer(socket) })
+	t.Setenv("KWT_FRESH_SERVER_CANARY", "visible")
+	t.Setenv("KWT_GITHUB_TOKEN", "must-not-reach-server")
+
+	command := NewTmuxCommandForSocketWithStripNames(
+		"tmux",
+		socket,
+		[]string{"KWT_GITHUB_TOKEN"},
+	)
+	globalEnvironment, err := command.GlobalEnvironment()
+	if err != nil {
+		t.Fatalf("read fresh server environment: %v", err)
+	}
+	if !strings.Contains(
+		globalEnvironment,
+		"KWT_FRESH_SERVER_CANARY=visible",
+	) {
+		t.Errorf(
+			"fresh server environment omitted the launcher canary; got:\n%s",
+			globalEnvironment,
+		)
+	}
+	if strings.Contains(globalEnvironment, "KWT_GITHUB_TOKEN=") {
+		t.Errorf(
+			"fresh server environment leaked the configured credential; got:\n%s",
+			globalEnvironment,
+		)
+	}
+}
+
 // TestStripEnvMasksGlobalEnvForSessionOnly exercises the real session
 // bootstrap sequence against a private tmux server and confirms that a
 // variable present in the server-global environment at server-start time is

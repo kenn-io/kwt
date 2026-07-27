@@ -3,16 +3,11 @@ package tmux
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 )
-
-// errNoServerRunning distinguishes a clean first-session launch from a tmux
-// server whose environment could not be inspected.
-var errNoServerRunning = errors.New("tmux server is not running")
 
 // TmuxInterface defines the contract for tmux operations
 type TmuxInterface interface {
@@ -311,20 +306,19 @@ func (t *TmuxCommand) RunCommandOutputContext(ctx context.Context, args ...strin
 	return stdout.String(), nil
 }
 
-// GlobalEnvironment returns the tmux server's global environment table via
-// show-environment -g, one "NAME=VALUE" (or "-NAME") entry per line. It fails
-// when no server is running; callers treat that as "nothing to inspect" and
-// fall back to the launcher-derived strip set.
+// GlobalEnvironment returns the tmux server's global environment table, one
+// "NAME=VALUE" (or "-NAME") entry per line. start-server is a no-op for an
+// existing server; on a fresh named socket it lets show-environment inspect
+// the sanitized server state without interpreting platform-specific
+// connection errors. The empty server exits after the command sequence.
 func (t *TmuxCommand) GlobalEnvironment() (string, error) {
-	output, err := t.RunCommandOutputContext(
+	return t.RunCommandOutputContext(
 		context.Background(),
+		"start-server",
+		";",
 		"show-environment",
 		"-g",
 	)
-	if err != nil && strings.Contains(err.Error(), "no server running") {
-		return "", fmt.Errorf("%w: %v", errNoServerRunning, err)
-	}
-	return output, err
 }
 
 // SessionEnvironment returns a session's own environment table via
