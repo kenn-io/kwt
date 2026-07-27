@@ -11,7 +11,7 @@ stable command surface.
 | `kwt list`       | List worktrees.                                        |
 | `kwt status`     | Show Git status, sync state, and activity.             |
 | `kwt projects`   | List registered project repositories.                  |
-| `kwt pr`         | Discover and import pull requests through JSON.         |
+| `kwt pr`         | Discover and import pull requests through JSON.        |
 | `kwt get`        | Print a matching worktree path.                        |
 | `kwt cd`         | Open a shell in a matching worktree.                   |
 | `kwt exec`       | Run a command in a matching worktree.                  |
@@ -207,7 +207,7 @@ pane applications resolving tmux's own `TERM`.
 
 ### Attaching from other tools
 
-kwt applies this bootstrap when it *creates* a session. A session that some
+kwt applies this bootstrap when it _creates_ a session. A session that some
 other tool created — for example with `tmux new-session -A -s <session_name>`,
 which attaches if the session exists but otherwise creates it bare — starts
 without the `default-command` and remove-markers, so its windows would not
@@ -216,7 +216,7 @@ match kwt's until repaired.
 Two rules keep external tools consistent with kwt:
 
 - **When the session already exists, attach only:** use `tmux attach-session -t
-  <session_name>` (or `switch-client -t` from inside tmux). Attach-only commands
+<session_name>` (or `switch-client -t` from inside tmux). Attach-only commands
   never create a bare session, so there is nothing to repair.
 - **If your tool creates the session itself, apply the equivalent bootstrap:**
   set `default-command` to `""` and add a session-scoped remove-marker
