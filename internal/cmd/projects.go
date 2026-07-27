@@ -31,18 +31,28 @@ var projectsCmd = &cobra.Command{
 Registered projects hold main-repository paths that may live outside the
 configured worktree base directory. Use --json for a machine-readable surface
 that external automation can consume without parsing the config file.`,
-	Args: cobra.NoArgs,
+	Args: projectsNoArgs,
 	// Isolation: projects is a global registry surface and must not merge the
 	// caller's cwd .kwt.toml. The command still propagates global config
 	// initialization failures through Cobra.
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error { return requireConfigInitialization() },
-	RunE:              runProjects,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if err := requireConfigInitialization(); err != nil {
+			return writeProjectCommandError(
+				cmd,
+				"registration_failed",
+				fmt.Sprintf("failed to initialize configuration: %v", err),
+				1,
+			)
+		}
+		return nil
+	},
+	RunE: runProjects,
 }
 
 var projectsAddCmd = &cobra.Command{
 	Use:   "add <path>",
 	Short: "Register an existing Git repository",
-	Args:  cobra.ExactArgs(1),
+	Args:  projectsExactArgs(1),
 	RunE:  runProjectsAdd,
 }
 
@@ -51,6 +61,9 @@ func init() {
 	projectsCmd.Flags().BoolVar(&projectsJSON, "json", false, "Output in JSON format")
 	projectsAddCmd.Flags().BoolVar(&projectsAddJSON, "json", false, "Output a machine-readable result")
 	projectsCmd.AddCommand(projectsAddCmd)
+	projectsCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return writeProjectCommandError(cmd, "invalid_repository", err.Error(), 2)
+	})
 }
 
 func runProjects(cmd *cobra.Command, args []string) error {
@@ -101,6 +114,32 @@ type projectCommandError struct {
 
 func (e *projectCommandError) Error() string { return e.body.Message }
 func (e *projectCommandError) ExitCode() int { return e.exitCode }
+
+func projectsNoArgs(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	return writeProjectCommandError(
+		cmd,
+		"invalid_repository",
+		"this command does not accept positional arguments",
+		2,
+	)
+}
+
+func projectsExactArgs(count int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) == count {
+			return nil
+		}
+		return writeProjectCommandError(
+			cmd,
+			"invalid_repository",
+			fmt.Sprintf("expected %d repository path, received %d", count, len(args)),
+			2,
+		)
+	}
+}
 
 func runProjectsAdd(cmd *cobra.Command, args []string) error {
 	project, err := resolveProjectForRegistration(args[0])
@@ -216,7 +255,7 @@ func writeProjectCommandError(
 	}
 	cmd.Root().SilenceUsage = true
 	cmd.Root().SilenceErrors = true
-	if projectsAddJSON {
+	if projectsJSON || projectsAddJSON {
 		encoder := json.NewEncoder(cmd.OutOrStdout())
 		encoder.SetIndent("", "  ")
 		_ = encoder.Encode(projectCommandErrorEnvelope{Error: body})

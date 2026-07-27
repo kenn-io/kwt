@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/git"
@@ -409,4 +412,76 @@ func TestRunProjectsAddJSONWritesStableInvalidRepositoryError(t *testing.T) {
 	assert.False(t, response.Error.Retryable)
 	assert.NotEmpty(t, response.Error.Message)
 	assert.Contains(t, stderr.String(), "invalid_repository")
+}
+
+func TestProjectsAddArgumentValidationUsesStructuredErrors(t *testing.T) {
+	projectsAddJSON = true
+	t.Cleanup(func() { projectsAddJSON = false })
+	cmd, stdout, stderr := projectsTestCommand()
+
+	err := projectsExactArgs(1)(cmd, nil)
+
+	var exitErr *projectCommandError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 2, exitErr.ExitCode())
+	var envelope projectCommandErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	assert.Equal(t, "invalid_repository", envelope.Error.Code)
+	assert.Contains(t, stderr.String(), "invalid_repository")
+}
+
+func TestProjectsAddFlagValidationUsesStructuredErrors(t *testing.T) {
+	projectsAddJSON = true
+	t.Cleanup(func() { projectsAddJSON = false })
+	cmd, stdout, stderr := projectsTestCommand()
+
+	err := projectsCmd.FlagErrorFunc()(cmd, errors.New("unknown flag: --bogus"))
+
+	var exitErr *projectCommandError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 2, exitErr.ExitCode())
+	var envelope projectCommandErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	assert.Equal(t, "invalid_repository", envelope.Error.Code)
+	assert.Contains(t, stderr.String(), "invalid_repository")
+}
+
+func TestProjectsConfigInitializationFailureUsesJSONContract(t *testing.T) {
+	if os.Getenv("KWT_TEST_PROJECTS_CONFIG_INIT_FAILURE") == "1" {
+		rootCmd.SetArgs([]string{"projects", "add", "/missing", "--json"})
+		rootCmd.SetOut(os.Stdout)
+		rootCmd.SetErr(os.Stderr)
+		Execute()
+		return
+	}
+
+	kwtHome := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(kwtHome, "config.toml"), []byte("invalid = [\n"), 0o600))
+	cmd := exec.Command(os.Args[0], "-test.run=^TestProjectsConfigInitializationFailureUsesJSONContract$")
+	cmd.Env = append(os.Environ(),
+		"KWT_TEST_PROJECTS_CONFIG_INIT_FAILURE=1",
+		"KWT_HOME="+kwtHome,
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 1, exitErr.ExitCode())
+	var envelope projectCommandErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	assert.Equal(t, "registration_failed", envelope.Error.Code)
+	assert.Contains(t, stderr.String(), "registration_failed")
+}
+
+func projectsTestCommand() (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
+	cmd := &cobra.Command{}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	return cmd, stdout, stderr
 }
