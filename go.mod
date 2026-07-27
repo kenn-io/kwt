@@ -10,7 +10,7 @@ require (
 	github.com/gofrs/flock v0.13.0
 	github.com/google/go-github/v89 v89.0.0
 	github.com/ktr0731/go-fuzzyfinder v0.9.0
-	github.com/mattn/go-runewidth v0.0.24
+	github.com/mattn/go-runewidth v0.0.27
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
