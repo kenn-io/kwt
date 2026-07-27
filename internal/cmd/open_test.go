@@ -8,9 +8,29 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/pullrequest"
+	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/pkg/models"
 )
+
+type recordingOpenWorkspaceRunner struct {
+	ensured  bool
+	attached bool
+}
+
+func (r *recordingOpenWorkspaceRunner) Ensure(
+	context.Context, string, string, models.Layout,
+) error {
+	r.ensured = true
+	return nil
+}
+
+func (r *recordingOpenWorkspaceRunner) EnsureAndAttach(
+	context.Context, string, string, models.Layout, bool,
+) error {
+	r.attached = true
+	return nil
+}
 
 func TestFindEntryByPath(t *testing.T) {
 	a := &discovery.GlobalWorktreeEntry{
@@ -70,10 +90,44 @@ func TestOpenSelectedWorktreeRefusesProtectedPullRequestWorkspace(
 			},
 		},
 		nil,
+		false,
 	)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "kwt pr attach")
+}
+
+func TestOpenSelectedWorktreeStartsSessionWithoutAttaching(t *testing.T) {
+	runner := &recordingOpenWorkspaceRunner{}
+	oldNewRunner := newOpenWorkspaceRunner
+	oldLayout := openLayout
+	oldSelectLayout := openSelectLayout
+	t.Cleanup(func() {
+		newOpenWorkspaceRunner = oldNewRunner
+		openLayout = oldLayout
+		openSelectLayout = oldSelectLayout
+	})
+	newOpenWorkspaceRunner = func() openWorkspaceRunner { return runner }
+	openLayout = tmux.BlankLayoutName
+	openSelectLayout = false
+
+	err := openSelectedWorktree(
+		context.Background(),
+		&CommandContext{Config: &models.Config{}},
+		&discovery.GlobalWorktreeEntry{
+			Path:   t.TempDir(),
+			Branch: "feature",
+			RepositoryInfo: &url.RepositoryInfo{
+				FullPath: "github.com/acme/widget",
+			},
+		},
+		nil,
+		true,
+	)
+
+	require.NoError(t, err)
+	assert.True(t, runner.ensured)
+	assert.False(t, runner.attached)
 }
 
 // TestOpenCmdIsolatesFromCwdConfig guards the config-isolation invariant:

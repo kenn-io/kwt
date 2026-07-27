@@ -34,8 +34,11 @@ kwt add -b feature/new-ui
 # Create without launching tmux
 kwt add --no-launch -b feature/new-ui
 
-# Attach to an existing worktree workspace
+# Open a worktree workspace, creating its session when needed
 kwt open
+
+# Establish an exact workspace session for another tmux client
+kwt open /path/to/worktree --start-session
 
 # Inspect worktrees and git status
 kwt list
@@ -224,7 +227,7 @@ spaces.
 | ---------------- | ----------------------------------------- |
 | `kwt`, `kwt tui` | Cross-project dashboard                   |
 | `kwt add`        | Create a worktree                         |
-| `kwt open`       | Fuzzy-pick and attach to a workspace      |
+| `kwt open`       | Open or establish a workspace session     |
 | `kwt list`       | List worktrees                            |
 | `kwt status`     | Show git status, sync state, and activity |
 | `kwt projects`   | List or register project repositories     |

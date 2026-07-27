@@ -7,7 +7,7 @@ stable command surface.
 | ---------------- | ------------------------------------------------------ |
 | `kwt`, `kwt tui` | Open the cross-project and multi-machine dashboard.    |
 | `kwt add`        | Create a worktree and optionally launch its workspace. |
-| `kwt open`       | Fuzzy-pick and attach to a workspace.                  |
+| `kwt open`       | Open or establish a worktree workspace session.        |
 | `kwt list`       | List worktrees.                                        |
 | `kwt status`     | Show Git status, sync state, and activity.             |
 | `kwt projects`   | List registered project repositories.                  |
@@ -28,6 +28,7 @@ stable command surface.
 ```sh
 kwt add -b fix/parser-race
 kwt open parser
+kwt open /path/to/worktree --start-session
 kwt status
 kwt pr list --project github.com/acme/widget --json
 kwt pr import 17 --project github.com/acme/widget \
@@ -44,6 +45,18 @@ When `kwt add -b` creates a branch, it fetches `origin` and starts from its
 default branch. If that remote base is unavailable, it falls back to local
 `main`, then `master`, then the branch checked out in the primary worktree.
 
+## `kwt open`
+
+With no argument, `kwt open` fuzzy-picks a worktree. A pattern narrows the
+cross-project list and opens the sole match directly. Kwt creates or repairs
+the canonical tmux workspace with its resolved layout before attaching.
+
+`kwt open <exact-worktree-path> --start-session` performs the same layout and
+session bootstrap without attaching a client. Use it before an external
+ordinary tmux client attaches to a session that may not exist yet. The exact
+path requirement keeps this automation mode noninteractive and unambiguous.
+Protected pull-request imports remain restricted to `kwt pr attach`.
+
 ## `kwt list`
 
 `--json` emits an array of objects with `path`, `branch`, `commit_hash`, `is_main`,
@@ -51,11 +64,11 @@ default branch. If that remote base is unavailable, it falls back to local
 slug, or a `local/<path>` fallback for a repository without a usable remote —
 see below), and `session_name` (the tmux workspace session name kwt attaches to).
 An imported pull-request worktree additionally includes `tmux_socket_name` for
-its protected workspace-specific server. To
-converge on the same session, prefer an attach-only command — `tmux
-attach-session -t <session_name>` on the normal server, or `kwt pr attach
-<path>` when `tmux_socket_name` is present — so you never create the session
-bare or bypass its protected attach policy. See [Attaching from other
+its protected workspace-specific server. To converge on the same session, run
+`kwt open <path> --start-session` before an ordinary attach-only client, or
+`kwt pr attach <path>` when `tmux_socket_name` is present. This lets kwt create
+the session when needed without a client creating it bare or bypassing its
+protected attach policy. See [Attaching from other
 tools](#attaching-from-other-tools) before using `new-session`.
 `kwt open` and dashboard open actions refuse protected pull-request imports
 and direct the user through `kwt pr attach`.

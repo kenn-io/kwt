@@ -10,22 +10,44 @@ import (
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/tmux"
+	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
 )
 
 var (
 	openLayout       string
 	openSelectLayout bool
+	openStartSession bool
+
+	newOpenWorkspaceRunner = func() openWorkspaceRunner {
+		return tmux.NewWorkspaceRunner(tmux.NewTmuxCommand(""))
+	}
 )
 
+type openWorkspaceRunner interface {
+	Ensure(context.Context, string, string, models.Layout) error
+	EnsureAndAttach(
+		context.Context,
+		string,
+		string,
+		models.Layout,
+		bool,
+	) error
+}
+
 var openCmd = &cobra.Command{
-	Use:   "open",
+	Use:   "open [pattern]",
 	Short: "Open a worktree workspace from any repository",
 	Long: `Fuzzy-pick a worktree across all repositories in the configured base
 directory and attach to its tmux workspace, creating the workspace with the
-resolved layout if it does not yet exist.`,
+resolved layout if it does not yet exist. A pattern filters the worktree list.
+Pass an exact worktree path with --start-session to create or repair the
+workspace without attaching.`,
 	Example: `  # Pick a worktree and open its workspace
   kwt open
+
+  # Ensure an exact worktree workspace exists without attaching
+  kwt open /path/to/worktree --start-session
 
   # Force a specific layout
   kwt open --layout focus
@@ -36,6 +58,7 @@ resolved layout if it does not yet exist.`,
 	// root cwd merge keeps the global config pristine while still
 	// propagating global config initialization failures.
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error { return requireConfigInitialization() },
+	Args:              cobra.MaximumNArgs(1),
 	RunE:              runOpen,
 }
 
@@ -44,6 +67,12 @@ func init() {
 	openCmd.Flags().StringVar(&openLayout, "layout", "", "Workspace layout preset to launch (\"none\" = blank session)")
 	openCmd.Flags().BoolVarP(&openSelectLayout, "select-layout", "L", false,
 		"Fuzzy-pick a workspace layout")
+	openCmd.Flags().BoolVar(
+		&openStartSession,
+		"start-session",
+		false,
+		"ensure an exact worktree's workspace exists without attaching",
+	)
 	openCmd.MarkFlagsMutuallyExclusive("layout", "select-layout")
 }
 
@@ -52,26 +81,63 @@ func runOpen(cmd *cobra.Command, args []string) error {
 		if err := tmux.ValidateLayouts(ctx.Config.Layouts, ctx.Config.Agents); err != nil {
 			return err
 		}
+		if openStartSession && len(args) != 1 {
+			return fmt.Errorf("--start-session requires an exact worktree path")
+		}
 
 		entries, err := discovery.DiscoverGlobalWorktrees(ctx.Config.Worktree.BaseDir, ctx.Config.Projects)
 		if err != nil {
 			return fmt.Errorf("failed to discover worktrees: %w", err)
 		}
 		if len(entries) == 0 {
+			if len(args) == 1 {
+				return fmt.Errorf("could not resolve worktree %s", args[0])
+			}
 			ctx.Printer.PrintInfo("No worktrees found in " + ctx.Config.Worktree.BaseDir)
 			return nil
 		}
 
 		finder := ctx.GetGlobalFinder()
-		worktrees := discovery.ConvertToWorktreeModels(entries, false)
-		selected, err := finder.SelectWorktree(worktrees)
-		if err != nil {
-			return fmt.Errorf("selection cancelled: %w", err)
+		var entry *discovery.GlobalWorktreeEntry
+		requestedPath := ""
+		if len(args) == 1 {
+			requestedPath = args[0]
+			if openStartSession {
+				entry = findEntryByPath(entries, requestedPath)
+			} else {
+				matches := discovery.FilterGlobalWorktrees(
+					entries,
+					requestedPath,
+				)
+				switch len(matches) {
+				case 0:
+				case 1:
+					entry = matches[0]
+				default:
+					selected, selectErr := finder.SelectWorktree(
+						discovery.ConvertToWorktreeModels(matches, true),
+					)
+					if selectErr != nil {
+						return fmt.Errorf(
+							"selection cancelled: %w",
+							selectErr,
+						)
+					}
+					entry = findEntryByPath(matches, selected.Path)
+				}
+			}
+		} else {
+			worktrees := discovery.ConvertToWorktreeModels(entries, false)
+			selected, err := finder.SelectWorktree(worktrees)
+			if err != nil {
+				return fmt.Errorf("selection cancelled: %w", err)
+			}
+			requestedPath = selected.Path
+			entry = findEntryByPath(entries, requestedPath)
 		}
 
-		entry := findEntryByPath(entries, selected.Path)
 		if entry == nil || entry.RepositoryInfo == nil {
-			return fmt.Errorf("could not resolve repository info for %s", selected.Path)
+			return fmt.Errorf("could not resolve worktree %s", requestedPath)
 		}
 
 		return openSelectedWorktree(
@@ -85,6 +151,7 @@ func runOpen(cmd *cobra.Command, args []string) error {
 				}
 				return *sel, nil
 			},
+			openStartSession,
 		)
 	})(cmd, args)
 }
@@ -94,6 +161,7 @@ func openSelectedWorktree(
 	ctx *CommandContext,
 	entry *discovery.GlobalWorktreeEntry,
 	selectLayout func([]models.Layout) (models.Layout, error),
+	startSession bool,
 ) error {
 	if err := rejectProtectedWorkspaceOpen(commandCtx, entry.Path); err != nil {
 		return err
@@ -132,7 +200,10 @@ func openSelectedWorktree(
 	}
 
 	session := tmux.WorkspaceSessionName(entry.RepositoryInfo, entry.Branch, entry.Path)
-	runner := tmux.NewWorkspaceRunner(tmux.NewTmuxCommand(""))
+	runner := newOpenWorkspaceRunner()
+	if startSession {
+		return runner.Ensure(commandCtx, session, entry.Path, layout)
+	}
 	return runner.EnsureAndAttach(
 		commandCtx, session, entry.Path, layout, os.Getenv("TMUX") != "",
 	)
@@ -150,8 +221,9 @@ func shouldLoadTargetDefault(layoutFlag string, selectLayout bool) bool {
 func findEntryByPath(
 	entries []*discovery.GlobalWorktreeEntry, path string,
 ) *discovery.GlobalWorktreeEntry {
+	path = utils.CanonicalPath(path)
 	for _, e := range entries {
-		if e.Path == path {
+		if utils.CanonicalPath(e.Path) == path {
 			return e
 		}
 	}
