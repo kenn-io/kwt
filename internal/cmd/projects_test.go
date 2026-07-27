@@ -430,14 +430,30 @@ func TestProjectsAddArgumentValidationUsesStructuredErrors(t *testing.T) {
 	assert.Contains(t, stderr.String(), "invalid_repository")
 }
 
-func TestProjectsAddFlagValidationUsesStructuredErrors(t *testing.T) {
-	projectsAddJSON = true
-	t.Cleanup(func() { projectsAddJSON = false })
-	cmd, stdout, stderr := projectsTestCommand()
+func TestProjectsAddUnknownFlagBeforeJSONUsesStructuredError(t *testing.T) {
+	if os.Getenv("KWT_TEST_PROJECTS_UNKNOWN_FLAG") == "1" {
+		os.Args = []string{
+			os.Args[0],
+			"projects",
+			"add",
+			"--bogus",
+			"--json",
+		}
+		rootCmd.SetOut(os.Stdout)
+		rootCmd.SetErr(os.Stderr)
+		Execute()
+		return
+	}
 
-	err := projectsCmd.FlagErrorFunc()(cmd, errors.New("unknown flag: --bogus"))
+	cmd := exec.Command(os.Args[0], "-test.run=^TestProjectsAddUnknownFlagBeforeJSONUsesStructuredError$")
+	cmd.Env = append(os.Environ(), "KWT_TEST_PROJECTS_UNKNOWN_FLAG=1")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
-	var exitErr *projectCommandError
+	err := cmd.Run()
+
+	var exitErr *exec.ExitError
 	require.ErrorAs(t, err, &exitErr)
 	assert.Equal(t, 2, exitErr.ExitCode())
 	var envelope projectCommandErrorEnvelope

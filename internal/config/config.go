@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	repositoryurl "go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
 )
@@ -805,6 +806,16 @@ func sameProject(existing, next models.Project) bool {
 		return true
 	}
 	if existing.Repository != "" && next.Repository != "" {
+		existingIdentity, existingOK := repositoryurl.CanonicalRepositoryIdentity(
+			existing.Repository,
+		)
+		nextIdentity, nextOK := repositoryurl.CanonicalRepositoryIdentity(
+			next.Repository,
+		)
+		if existingOK && nextOK {
+			return repositoryurl.FoldRepositoryIdentity(existingIdentity) ==
+				repositoryurl.FoldRepositoryIdentity(nextIdentity)
+		}
 		return existing.Repository == next.Repository
 	}
 	return existing.Path == next.Path

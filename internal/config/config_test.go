@@ -996,6 +996,34 @@ func TestRegisterProjectUpdatesExistingProject(t *testing.T) {
 	assert.Equal(t, wantSecondPath, cfg.Projects[0].Path)
 }
 
+func TestRegisterProjectMatchesCaseInsensitiveRepositoryIdentity(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(func() { viper.Reset() })
+
+	t.Setenv("KWT_HOME", t.TempDir())
+	require.NoError(t, Init())
+
+	firstPath := t.TempDir()
+	secondPath := t.TempDir()
+	require.NoError(t, RegisterProject(models.Project{
+		Repository: "github.com/Acme/Widget",
+		Name:       "widget",
+		Path:       firstPath,
+	}))
+	require.NoError(t, RegisterProject(models.Project{
+		Repository: "github.com/acme/widget",
+		Name:       "widget",
+		Path:       secondPath,
+	}))
+	wantSecondPath, err := filepath.EvalSymlinks(secondPath)
+	require.NoError(t, err)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Len(t, cfg.Projects, 1)
+	assert.Equal(t, wantSecondPath, cfg.Projects[0].Path)
+}
+
 func TestRegisterProjectUpgradesPathFallbackByPath(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(func() { viper.Reset() })

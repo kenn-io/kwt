@@ -3,7 +3,9 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -255,13 +257,40 @@ func writeProjectCommandError(
 	}
 	cmd.Root().SilenceUsage = true
 	cmd.Root().SilenceErrors = true
-	if projectsJSON || projectsAddJSON {
+	if projectCommandJSONRequested() {
 		encoder := json.NewEncoder(cmd.OutOrStdout())
 		encoder.SetIndent("", "  ")
 		_ = encoder.Encode(projectCommandErrorEnvelope{Error: body})
 	}
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "kwt projects: %s: %s\n", code, message)
 	return &projectCommandError{body: body, exitCode: exitCode}
+}
+
+func projectCommandJSONRequested() bool {
+	if projectsJSON || projectsAddJSON {
+		return true
+	}
+	// pflag stops at the first parse error, so a later --json never reaches
+	// the bound variable. Preserve the caller's output choice from raw argv.
+	requested := false
+	for _, argument := range os.Args[1:] {
+		if argument == "--" {
+			break
+		}
+		if argument == "--json" {
+			requested = true
+			continue
+		}
+		name, value, ok := strings.Cut(argument, "=")
+		if !ok || name != "--json" {
+			continue
+		}
+		enabled, err := strconv.ParseBool(value)
+		if err == nil {
+			requested = enabled
+		}
+	}
+	return requested
 }
 
 // canonicalizeProjectIdentities returns a copy of projects with every
