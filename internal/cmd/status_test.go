@@ -5,10 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/ui"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
@@ -61,6 +63,66 @@ func TestCollectWorktreeStatusesLocalUsesCanonicalLocalRepository(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, statuses, 1)
 	require.Equal(t, want.FullPath, statuses[0].Repository)
+}
+
+func TestUnreviewedRemoteSourceSkipsAutomaticStatusAndFleetInspection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executable fsmonitor hook fixture requires a POSIX shell")
+	}
+	resetStatusTestFlags(t)
+	resetFleetCommandDeps(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	repoDir := t.TempDir()
+	require.NoError(t, cmdStatusTestGit(repoDir, "init", "-b", "main"))
+	require.NoError(t, cmdStatusTestGit(repoDir, "config", "user.name", "Test User"))
+	require.NoError(t, cmdStatusTestGit(repoDir, "config", "user.email", "test@example.com"))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repoDir, "README.md"),
+		[]byte("# remote\n"),
+		0644,
+	))
+	require.NoError(t, cmdStatusTestGit(repoDir, "add", "."))
+	require.NoError(t, cmdStatusTestGit(repoDir, "commit", "-m", "Initial commit"))
+	marker := filepath.Join(t.TempDir(), "fsmonitor-ran")
+	hook := filepath.Join(t.TempDir(), "fsmonitor")
+	require.NoError(t, os.WriteFile(
+		hook,
+		[]byte("#!/bin/sh\nprintf ran > \""+marker+"\"\nprintf '0\\n'\n"),
+		0755,
+	))
+	require.NoError(t, cmdStatusTestGit(repoDir, "config", "core.fsmonitor", hook))
+	reg, err := registry.New()
+	require.NoError(t, err)
+	require.NoError(t, reg.Register(&registry.WorktreeEntry{
+		Path:                   repoDir,
+		Branch:                 "main",
+		UnreviewedRemoteSource: true,
+	}))
+	t.Chdir(repoDir)
+	statusNoFetch = true
+	cfg := &models.Config{
+		Fleet: models.FleetConfig{HostID: "host-a"},
+		Projects: []models.Project{{
+			Repository: "github.com/acme/widget",
+			Path:       repoDir,
+		}},
+	}
+
+	statuses, err := collectWorktreeStatuses(
+		context.Background(),
+		cfg,
+		ui.New(&models.UIConfig{}),
+	)
+	require.NoError(t, err)
+	require.Len(t, statuses, 1)
+	require.Equal(t, models.WorktreeStatusUnknown, statuses[0].Status)
+	require.NoFileExists(t, marker)
+
+	manifest, err := newFleetManifestBuilder().Build(context.Background(), cfg)
+	require.NoError(t, err)
+	require.Empty(t, manifest.Worktrees)
+	require.NoFileExists(t, marker)
 }
 
 func resetStatusTestFlags(t *testing.T) {

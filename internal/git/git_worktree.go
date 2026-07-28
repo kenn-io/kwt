@@ -87,10 +87,14 @@ func (g *Git) AddWorktreeTracking(
 		return fmt.Errorf("create empty hooks directory: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(hooksDir) }()
+	hookIsolation := []string{"-c", "core.hooksPath=" + hooksDir}
 
 	if _, err := g.runWithoutCredentials(
 		protectedNames,
-		"branch", "--track", branch, remoteBranch,
+		append(
+			append([]string(nil), hookIsolation...),
+			"branch", "--track", branch, remoteBranch,
+		)...,
 	); err != nil {
 		return fmt.Errorf(
 			"failed to create branch tracking %s: %w",
@@ -99,7 +103,7 @@ func (g *Git) AddWorktreeTracking(
 		)
 	}
 	worktreeArgs := append(
-		[]string{"-c", "core.hooksPath=" + hooksDir},
+		append([]string(nil), hookIsolation...),
 		isolationArgs...,
 	)
 	worktreeArgs = append(worktreeArgs, "worktree", "add", path, branch)
@@ -109,7 +113,10 @@ func (g *Git) AddWorktreeTracking(
 	); err != nil {
 		if _, rollbackErr := g.runWithoutCredentials(
 			protectedNames,
-			"branch", "-D", branch,
+			append(
+				append([]string(nil), hookIsolation...),
+				"branch", "-D", branch,
+			)...,
 		); rollbackErr != nil {
 			return fmt.Errorf(
 				"failed to add worktree tracking %s: %w (failed to remove branch %s: %v)",

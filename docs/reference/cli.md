@@ -52,10 +52,15 @@ default branch. If that remote base is unavailable, it falls back to local
 `kwt add --from <remote-ref> <branch>` when a remote candidate must become a
 local tracking branch. This remote-source path does not copy files, run setup
 commands, or launch a workspace; `--layout` and `--select-layout` are rejected.
-Git checkout runs with an empty hooks directory, configured smudge and process
-filters disabled, and kwt credential variables removed. Review the checkout
-and run `kwt open <worktree>` as the separate opt-in to its layout and pane
-commands.
+Git branch mutation and checkout run with an empty hooks directory, configured
+smudge and process filters disabled, and kwt credential variables removed.
+Environment references in the remote-derived branch name remain literal when
+kwt builds the destination path.
+
+The created worktree remains marked unreviewed, so automatic status collection
+does not run Git inside it and fleet publication omits it. Review the checkout
+and run `kwt open <worktree>` as the explicit acknowledgement that re-enables
+normal inspection and opts in to its layout and pane commands.
 
 `kwt branches --json` emits only candidates not already checked out, with
 `name`, full source ref, and `is_remote` fields for interactive clients.

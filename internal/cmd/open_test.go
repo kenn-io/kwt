@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/pullrequest"
+	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
@@ -179,11 +180,14 @@ func TestOpenSelectedWorktreeRefusesProtectedPullRequestWorkspace(
 func TestOpenSelectedWorktreeStartsSessionWithoutAttaching(t *testing.T) {
 	runner := &recordingOpenWorkspaceRunner{}
 	var protectedNames []string
+	var acknowledgedPath string
 	oldNewRunner := newOpenWorkspaceRunner
+	oldAcknowledge := acknowledgeRemoteSourcePath
 	oldLayout := openLayout
 	oldSelectLayout := openSelectLayout
 	t.Cleanup(func() {
 		newOpenWorkspaceRunner = oldNewRunner
+		acknowledgeRemoteSourcePath = oldAcknowledge
 		openLayout = oldLayout
 		openSelectLayout = oldSelectLayout
 	})
@@ -191,8 +195,13 @@ func TestOpenSelectedWorktreeStartsSessionWithoutAttaching(t *testing.T) {
 		protectedNames = append([]string(nil), names...)
 		return runner
 	}
+	acknowledgeRemoteSourcePath = func(path string) error {
+		acknowledgedPath = path
+		return nil
+	}
 	openLayout = tmux.BlankLayoutName
 	openSelectLayout = false
+	worktreePath := t.TempDir()
 
 	err := openSelectedWorktree(
 		context.Background(),
@@ -200,7 +209,7 @@ func TestOpenSelectedWorktreeStartsSessionWithoutAttaching(t *testing.T) {
 			Fleet: models.FleetConfig{TokenEnv: "CUSTOM_FLEET_TOKEN"},
 		}},
 		&discovery.GlobalWorktreeEntry{
-			Path:   t.TempDir(),
+			Path:   worktreePath,
 			Branch: "feature",
 			RepositoryInfo: &url.RepositoryInfo{
 				FullPath: "github.com/acme/widget",
@@ -212,6 +221,7 @@ func TestOpenSelectedWorktreeStartsSessionWithoutAttaching(t *testing.T) {
 	)
 
 	require.NoError(t, err)
+	assert.Equal(t, worktreePath, acknowledgedPath)
 	assert.True(t, runner.ensured)
 	assert.False(t, runner.attached)
 	assert.ElementsMatch(
@@ -219,6 +229,53 @@ func TestOpenSelectedWorktreeStartsSessionWithoutAttaching(t *testing.T) {
 		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN", "CUSTOM_FLEET_TOKEN"},
 		protectedNames,
 	)
+}
+
+func TestOpenSelectedWorktreeAcknowledgesPersistedRemoteSource(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	worktreePath := t.TempDir()
+	reg, err := registry.New()
+	require.NoError(t, err)
+	require.NoError(t, reg.Register(&registry.WorktreeEntry{
+		Path:                   worktreePath,
+		Branch:                 "feature/remote",
+		UnreviewedRemoteSource: true,
+	}))
+
+	runner := &recordingOpenWorkspaceRunner{}
+	oldNewRunner := newOpenWorkspaceRunner
+	oldLayout := openLayout
+	oldSelectLayout := openSelectLayout
+	t.Cleanup(func() {
+		newOpenWorkspaceRunner = oldNewRunner
+		openLayout = oldLayout
+		openSelectLayout = oldSelectLayout
+	})
+	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	openLayout = tmux.BlankLayoutName
+	openSelectLayout = false
+
+	err = openSelectedWorktree(
+		context.Background(),
+		&CommandContext{Config: &models.Config{}},
+		&discovery.GlobalWorktreeEntry{
+			Path:   worktreePath,
+			Branch: "feature/remote",
+			RepositoryInfo: &url.RepositoryInfo{
+				FullPath: "github.com/acme/widget",
+			},
+		},
+		nil,
+		true,
+		false,
+	)
+
+	require.NoError(t, err)
+	reloaded, err := registry.New()
+	require.NoError(t, err)
+	assert.False(t, reloaded.IsUnreviewedRemoteSource(worktreePath))
+	assert.True(t, runner.ensured)
 }
 
 func TestOpenSelectedWorktreeStartSessionDoesNotPromptForTargetTrust(t *testing.T) {

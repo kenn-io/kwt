@@ -50,6 +50,8 @@ type tuiBackend struct {
 	unregisterWorkspace       func(name string) error
 	readFleetState            func(context.Context, *models.Config) (fleet.FleetState, error)
 	loadTargetConfig          func(string, bool) (*models.Config, error)
+	unreviewedWorktreePaths   func() (map[string]struct{}, error)
+	acknowledgeRemoteSource   func(string) error
 	now                       func() time.Time
 }
 
@@ -80,12 +82,14 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 			tmuxCmd,
 			protectedNames,
 		).EnsureAndAttach,
-		registerProject:     config.RegisterProject,
-		registerWorkspace:   config.RegisterWorkspace,
-		unregisterWorkspace: config.UnregisterWorkspace,
-		readFleetState:      readTUIFleetState,
-		loadTargetConfig:    config.LoadForTarget,
-		now:                 time.Now,
+		registerProject:         config.RegisterProject,
+		registerWorkspace:       config.RegisterWorkspace,
+		unregisterWorkspace:     config.UnregisterWorkspace,
+		readFleetState:          readTUIFleetState,
+		loadTargetConfig:        config.LoadForTarget,
+		unreviewedWorktreePaths: unreviewedRemoteSourcePaths,
+		acknowledgeRemoteSource: acknowledgeRemoteSourcePath,
+		now:                     time.Now,
 	}
 }
 
@@ -147,7 +151,22 @@ func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboar
 
 	var statusByPath map[string]*models.WorktreeStatus
 	if includeStatuses {
-		statusByPath, discoveryErr = b.collectStatuses(ctx, b.cfg.Worktree.BaseDir, entries)
+		unreviewed, stateErr := b.unreviewedWorktreePaths()
+		if stateErr != nil {
+			return nil, nil, stateErr
+		}
+		inspectable := make([]*discovery.GlobalWorktreeEntry, 0, len(entries))
+		for _, entry := range entries {
+			if entry != nil && pathSetContains(unreviewed, entry.Path) {
+				continue
+			}
+			inspectable = append(inspectable, entry)
+		}
+		statusByPath, discoveryErr = b.collectStatuses(
+			ctx,
+			b.cfg.Worktree.BaseDir,
+			inspectable,
+		)
 		if discoveryErr != nil {
 			return nil, nil, discoveryErr
 		}
@@ -1340,6 +1359,9 @@ func (b *tuiBackend) attachWorkspace(ctx context.Context, row dashboard.Row, lay
 		return fmt.Errorf("no worktree selected")
 	}
 	if err := rejectProtectedWorkspaceOpen(ctx, rowPaneRoot(row)); err != nil {
+		return err
+	}
+	if err := b.acknowledgeRemoteSource(rowPaneRoot(row)); err != nil {
 		return err
 	}
 	sessionName, err := b.sessionName(row)

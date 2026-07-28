@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -73,6 +74,46 @@ func TestCollectAllPrefersWorktreeRepository(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, statuses, 1)
 	assert.Equal(t, "github.com/upstream/repo", statuses[0].Repository)
+}
+
+func TestCollectAllSkipsUnreviewedWorktreeBeforeGitInspection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executable fsmonitor hook fixture requires a POSIX shell")
+	}
+	worktreePath := t.TempDir()
+	runStatusTestGit(t, worktreePath, "init", "-b", "main")
+	runStatusTestGit(t, worktreePath, "config", "user.name", "Test User")
+	runStatusTestGit(t, worktreePath, "config", "user.email", "test@example.com")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(worktreePath, "README.md"),
+		[]byte("# unreviewed\n"),
+		0644,
+	))
+	runStatusTestGit(t, worktreePath, "add", ".")
+	runStatusTestGit(t, worktreePath, "commit", "-m", "Initial commit")
+	marker := filepath.Join(t.TempDir(), "fsmonitor-ran")
+	hook := filepath.Join(t.TempDir(), "fsmonitor")
+	require.NoError(t, os.WriteFile(
+		hook,
+		[]byte("#!/bin/sh\nprintf ran > \""+marker+"\"\nprintf '0\\n'\n"),
+		0755,
+	))
+	runStatusTestGit(t, worktreePath, "config", "core.fsmonitor", hook)
+
+	collector := NewStatusCollectorWithOptions(StatusCollectorOptions{
+		SkipWorktree: func(path string) bool {
+			return filepath.Clean(path) == filepath.Clean(worktreePath)
+		},
+	})
+	statuses, err := collector.CollectAll(context.Background(), []*models.Worktree{{
+		Path:   worktreePath,
+		Branch: "feature/remote",
+	}})
+
+	require.NoError(t, err)
+	require.Len(t, statuses, 1)
+	assert.Equal(t, models.WorktreeStatusUnknown, statuses[0].Status)
+	assert.NoFileExists(t, marker)
 }
 
 // TestCollectAllRelativeDotlessRemoteFallsBackToPathIdentity pins the

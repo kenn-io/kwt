@@ -236,6 +236,9 @@ func openSelectedWorktree(
 	if err := rejectProtectedWorkspaceOpen(commandCtx, entry.Path); err != nil {
 		return err
 	}
+	if err := acknowledgeRemoteSourcePath(entry.Path); err != nil {
+		return err
+	}
 
 	// Only resolve the target repo's default layout (which requires
 	// finding its root and loading, and possibly trust-prompting for, its

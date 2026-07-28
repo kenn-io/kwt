@@ -132,6 +132,42 @@ func TestRegistry_ListExpired(t *testing.T) {
 	}
 }
 
+func TestRegistryAcknowledgesUnreviewedRemoteSourceWithoutLosingExpiration(
+	t *testing.T,
+) {
+	future := time.Now().Add(time.Hour)
+	r := &Registry{
+		entries: make(map[string]*WorktreeEntry),
+		path:    filepath.Join(t.TempDir(), "registry.json"),
+	}
+	if err := r.Register(&WorktreeEntry{
+		Path:                   "/worktrees/remote",
+		Branch:                 "feature/remote",
+		ExpiresAt:              &future,
+		UnreviewedRemoteSource: true,
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	if !r.IsUnreviewedRemoteSource("/worktrees/remote") {
+		t.Fatal("remote source was not marked unreviewed")
+	}
+	if err := r.AcknowledgeRemoteSource("/worktrees/remote"); err != nil {
+		t.Fatalf("AcknowledgeRemoteSource() error = %v", err)
+	}
+	if r.IsUnreviewedRemoteSource("/worktrees/remote") {
+		t.Fatal("remote source remained unreviewed after acknowledgement")
+	}
+	entry, ok := r.Get("/worktrees/remote")
+	if !ok || entry.ExpiresAt == nil {
+		t.Fatal("acknowledgement discarded expiration metadata")
+	}
+	if entry.ExpiresAt.Sub(future) > time.Second ||
+		future.Sub(*entry.ExpiresAt) > time.Second {
+		t.Fatalf("expiration = %v, want %v", entry.ExpiresAt, future)
+	}
+}
+
 func TestWorktreeEntry_ExpiresAt_JSONMarshal(t *testing.T) {
 	// Test that ExpiresAt is omitted when nil (backwards compatibility)
 	entry := &WorktreeEntry{

@@ -201,13 +201,15 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			t := time.Now().Add(expiresDuration)
 			expiresAt = &t
 
-			entry := &registry.WorktreeEntry{
-				Repository: repoURL,
-				Branch:     branch,
-				Path:       worktreePath,
-				IsMain:     false,
-				ExpiresAt:  expiresAt,
+			entry := &registry.WorktreeEntry{}
+			if existing, ok := reg.Get(worktreePath); ok {
+				*entry = *existing
 			}
+			entry.Repository = repoURL
+			entry.Branch = branch
+			entry.Path = worktreePath
+			entry.IsMain = false
+			entry.ExpiresAt = expiresAt
 
 			if err := reg.Register(entry); err != nil {
 				return fmt.Errorf("failed to register worktree: %w", err)

@@ -825,6 +825,7 @@ func TestAddWorktreeTrackingRemoteBranch(t *testing.T) {
 	t.Setenv("Custom_Fleet_Token", "must-not-reach-remote-checkout")
 
 	hookMarker := filepath.Join(t.TempDir(), "hook-ran")
+	referenceHookMarker := filepath.Join(t.TempDir(), "reference-hook-ran")
 	filterMarker := filepath.Join(t.TempDir(), "filter-ran")
 	processMarker := filepath.Join(t.TempDir(), "process-ran")
 	hooksDir := t.TempDir()
@@ -834,6 +835,13 @@ func TestAddWorktreeTrackingRemoteBranch(t *testing.T) {
 		0755,
 	); err != nil {
 		t.Fatalf("write checkout hook: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(hooksDir, "reference-transaction"),
+		fmt.Appendf(nil, "#!/bin/sh\nprintf reference > %q\n", referenceHookMarker),
+		0755,
+	); err != nil {
+		t.Fatalf("write reference transaction hook: %v", err)
 	}
 	filterDir := t.TempDir()
 	smudgePath := filepath.Join(filterDir, "smudge")
@@ -916,6 +924,9 @@ exec "$REAL_GIT" "$@"
 	if _, err := os.Stat(hookMarker); !os.IsNotExist(err) {
 		t.Errorf("checkout hook ran against remote content: stat error = %v", err)
 	}
+	if _, err := os.Stat(referenceHookMarker); !os.IsNotExist(err) {
+		t.Errorf("reference transaction hook ran during remote creation: stat error = %v", err)
+	}
 	if _, err := os.Stat(filterMarker); !os.IsNotExist(err) {
 		t.Errorf("smudge filter ran against remote content: stat error = %v", err)
 	}
@@ -934,6 +945,16 @@ func TestAddWorktreeTrackingRollsBackBranchWhenWorktreeFails(t *testing.T) {
 	gitOutput(t, repo.Path, "push", "origin", "remote-only")
 	gitOutput(t, repo.Path, "checkout", "main")
 	gitOutput(t, repo.Path, "branch", "-D", "remote-only")
+	referenceHookMarker := filepath.Join(t.TempDir(), "reference-hook-ran")
+	hooksDir := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(hooksDir, "reference-transaction"),
+		fmt.Appendf(nil, "#!/bin/sh\nprintf reference > %q\n", referenceHookMarker),
+		0755,
+	); err != nil {
+		t.Fatalf("write reference transaction hook: %v", err)
+	}
+	gitOutput(t, repo.Path, "config", "core.hooksPath", hooksDir)
 
 	occupiedPath := filepath.Join(t.TempDir(), "occupied")
 	if err := os.MkdirAll(occupiedPath, 0755); err != nil {
@@ -955,6 +976,9 @@ func TestAddWorktreeTrackingRollsBackBranchWhenWorktreeFails(t *testing.T) {
 	}
 	if err := repo.run("show-ref", "--verify", "--quiet", "refs/heads/remote-only"); err == nil {
 		t.Error("local tracking branch remained after worktree creation failed")
+	}
+	if _, err := os.Stat(referenceHookMarker); !os.IsNotExist(err) {
+		t.Errorf("reference transaction hook ran during rollback: stat error = %v", err)
 	}
 }
 

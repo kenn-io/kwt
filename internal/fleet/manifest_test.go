@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +42,41 @@ func TestBuildManifestIncludesConfiguredProjectWorktrees(t *testing.T) {
 	assert.Equal(t, fixedTime, manifest.ObservedAt)
 	assert.Contains(t, worktreeRefs(manifest), "branch:feature/fleet")
 	assert.Equal(t, "github.com/kenn-io/kwt", manifest.Projects[0].Identity)
+}
+
+func TestBuildManifestExcludesUnreviewedWorktreeBeforeGitInspection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executable fsmonitor hook fixture requires a POSIX shell")
+	}
+	repo := initFleetTestRepo(t, "https://github.com/kenn-io/kwt.git")
+	marker := filepath.Join(t.TempDir(), "fsmonitor-ran")
+	hook := filepath.Join(t.TempDir(), "fsmonitor")
+	require.NoError(t, os.WriteFile(
+		hook,
+		[]byte("#!/bin/sh\nprintf ran > \""+marker+"\"\nprintf '0\\n'\n"),
+		0755,
+	))
+	runGit(t, repo, "config", "core.fsmonitor", hook)
+
+	cfg := &models.Config{
+		Fleet: models.FleetConfig{HostID: "host-a"},
+		Projects: []models.Project{{
+			Repository: "github.com/kenn-io/kwt",
+			Name:       "kwt",
+			Path:       repo,
+		}},
+	}
+	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
+		Now:      func() time.Time { return fixedTime },
+		Hostname: func() (string, error) { return "Host-A", nil },
+		ExcludeWorktree: func(string) (bool, error) {
+			return true, nil
+		},
+	}).Build(context.Background(), cfg)
+
+	require.NoError(t, err)
+	assert.Empty(t, manifest.Worktrees)
+	assert.NoFileExists(t, marker)
 }
 
 func TestBuildManifestKeysDetachedWorktreeByHead(t *testing.T) {

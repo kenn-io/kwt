@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	configpkg "go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/pkg/models"
 )
 
@@ -30,6 +31,24 @@ type mockGit struct {
 	mainRepoPathError error
 	trackingSource    string
 	protectedNames    []string
+}
+
+type mockRemoteSourceState struct {
+	entries map[string]*registry.WorktreeEntry
+}
+
+func (m *mockRemoteSourceState) Register(entry *registry.WorktreeEntry) error {
+	if m.entries == nil {
+		m.entries = make(map[string]*registry.WorktreeEntry)
+	}
+	copied := *entry
+	m.entries[entry.Path] = &copied
+	return nil
+}
+
+func (m *mockRemoteSourceState) Unregister(path string) error {
+	delete(m.entries, path)
+	return nil
 }
 
 func (m *mockGit) ListWorktrees() ([]models.Worktree, error) {
@@ -216,6 +235,7 @@ func TestManagerAddTrackingUsesRemoteSource(t *testing.T) {
 		0644,
 	))
 	mockG := &mockGit{repoPath: repoDir}
+	state := &mockRemoteSourceState{}
 	manager := New(mockG, &models.Config{
 		Worktree: models.WorktreeConfig{
 			BaseDir:   baseDir,
@@ -228,6 +248,9 @@ func TestManagerAddTrackingUsesRemoteSource(t *testing.T) {
 		}},
 		Fleet: models.FleetConfig{TokenEnv: "Custom_Fleet_Token"},
 	})
+	manager.openRemoteSourceState = func() (remoteSourceState, error) {
+		return state, nil
+	}
 
 	path, err := manager.AddTracking(
 		"feature/remote",
@@ -245,8 +268,38 @@ func TestManagerAddTrackingUsesRemoteSource(t *testing.T) {
 		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN", "Custom_Fleet_Token"},
 		mockG.protectedNames,
 	)
+	require.Contains(t, state.entries, worktreePath)
+	assert.True(t, state.entries[worktreePath].UnreviewedRemoteSource)
 	assert.NoFileExists(t, filepath.Join(worktreePath, "copy-me"))
 	assert.NoFileExists(t, filepath.Join(worktreePath, "setup-ran"))
+}
+
+func TestManagerAddTrackingDoesNotExpandRemoteBranchEnvironmentReferences(
+	t *testing.T,
+) {
+	trustedBase := t.TempDir()
+	t.Setenv("KWT_TEST_WORKTREE_BASE", trustedBase)
+	t.Setenv("KWT_GITHUB_TOKEN", "credential-must-not-appear-in-path")
+	mockG := &mockGit{repoURL: "https://github.com/acme/widget.git"}
+	manager := New(mockG, &models.Config{
+		Worktree: models.WorktreeConfig{
+			BaseDir: "$KWT_TEST_WORKTREE_BASE",
+		},
+		Naming: models.NamingConfig{Template: "{{.Branch}}"},
+	})
+	manager.openRemoteSourceState = func() (remoteSourceState, error) {
+		return &mockRemoteSourceState{}, nil
+	}
+
+	path, err := manager.AddTracking(
+		"$KWT_GITHUB_TOKEN",
+		"refs/remotes/origin/$KWT_GITHUB_TOKEN",
+		"",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(trustedBase, "$KWT_GITHUB_TOKEN"), path)
+	assert.NotContains(t, path, "credential-must-not-appear-in-path")
 }
 
 func TestManagerRemove(t *testing.T) {

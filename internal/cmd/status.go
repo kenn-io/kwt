@@ -224,10 +224,17 @@ func collectWorktreeStatuses(ctx context.Context, cfg *models.Config, printer *u
 		}
 	}
 
+	unreviewed, err := unreviewedRemoteSourcePaths()
+	if err != nil {
+		return nil, err
+	}
 	collector := status.NewStatusCollectorWithOptions(status.StatusCollectorOptions{
 		FetchRemote:    !statusNoFetch,
 		StaleThreshold: time.Duration(statusStaleDays) * 24 * time.Hour,
 		BaseDir:        cfg.Worktree.BaseDir,
+		SkipWorktree: func(path string) bool {
+			return pathSetContains(unreviewed, path)
+		},
 	})
 	return collector.CollectAll(ctx, worktrees)
 }

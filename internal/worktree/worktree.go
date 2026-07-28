@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"go.kenn.io/kwt/internal/credentials"
+	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/template"
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
@@ -35,8 +36,14 @@ type GitInterface interface {
 
 // Manager handles worktree operations.
 type Manager struct {
-	git    GitInterface
-	config *models.Config
+	git                   GitInterface
+	config                *models.Config
+	openRemoteSourceState func() (remoteSourceState, error)
+}
+
+type remoteSourceState interface {
+	Register(*registry.WorktreeEntry) error
+	Unregister(string) error
 }
 
 // AddOptions controls optional behavior for creating a worktree.
@@ -49,6 +56,9 @@ func New(g GitInterface, config *models.Config) *Manager {
 	return &Manager{
 		git:    g,
 		config: config,
+		openRemoteSourceState: func() (remoteSourceState, error) {
+			return registry.New()
+		},
 	}
 }
 
@@ -83,12 +93,25 @@ func (m *Manager) AddTracking(branch, remoteBranch, customPath string) (string, 
 		return "", err
 	}
 
+	state, err := m.openRemoteSourceState()
+	if err != nil {
+		return "", fmt.Errorf("open remote-source state: %w", err)
+	}
+	if err := state.Register(&registry.WorktreeEntry{
+		Branch:                 branch,
+		Path:                   path,
+		UnreviewedRemoteSource: true,
+	}); err != nil {
+		return "", fmt.Errorf("mark remote-source worktree unreviewed: %w", err)
+	}
+
 	if err := m.git.AddWorktreeTracking(
 		path,
 		branch,
 		remoteBranch,
 		credentials.ProtectedNames(m.config),
 	); err != nil {
+		_ = state.Unregister(path)
 		return "", err
 	}
 
@@ -237,7 +260,7 @@ func (m *Manager) preparePath(
 		path = generatedPath
 	}
 
-	if !generated || !m.config.Naming.RepositoryLocal {
+	if !generated {
 		expandedPath, err := utils.ExpandPath(path)
 		if err != nil {
 			return "", fmt.Errorf("failed to expand path: %w", err)
@@ -282,11 +305,20 @@ func (m *Manager) generateWorktreePathForRepository(
 			baseDir = setting.BaseDir
 		}
 	}
+	namingTemplate := m.config.Naming.Template
+	if !m.config.Naming.RepositoryLocal {
+		expandedBaseDir, err := utils.ExpandPath(baseDir)
+		if err != nil {
+			return "", fmt.Errorf("failed to expand worktree base: %w", err)
+		}
+		baseDir = expandedBaseDir
+		namingTemplate = os.ExpandEnv(namingTemplate)
+	}
 
 	// Use template if configured, otherwise fall back to default URL hierarchy
-	if m.config.Naming.Template != "" {
+	if namingTemplate != "" {
 		// Create template processor
-		processor, err := template.New(m.config.Naming.Template, m.config.Naming.SanitizeChars)
+		processor, err := template.New(namingTemplate, m.config.Naming.SanitizeChars)
 		if err != nil {
 			// Fall back to default hierarchy if template is invalid
 			return url.GenerateWorktreePath(baseDir, repoInfo, branch), nil

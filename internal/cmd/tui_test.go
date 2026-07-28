@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/kwt/internal/tmux"
 	dashboard "go.kenn.io/kwt/internal/tui"
 	"go.kenn.io/kwt/internal/url"
+	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 )
@@ -367,6 +368,44 @@ func TestTUIBackendListFastSkipsStatusCollection(t *testing.T) {
 	backend.listSessions = func() ([]string, error) { return nil, nil }
 
 	rows, _, err := backend.ListFast(context.Background())
+
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, models.WorktreeStatusUnknown, rows[0].Status.Status)
+}
+
+func TestTUIBackendListExcludesUnreviewedWorktreeFromStatusCollection(t *testing.T) {
+	entry := &discovery.GlobalWorktreeEntry{
+		RepositoryInfo: &url.RepositoryInfo{
+			Host: "github.com", Owner: "example", Repository: "kwt",
+		},
+		Branch: "feature/remote",
+		Path:   "/global/github.com/example/kwt/feature-remote",
+	}
+	backend := newTUIBackendWithLaunchDir(&models.Config{
+		Worktree: models.WorktreeConfig{BaseDir: "/global"},
+	}, "")
+	stubTUIProjectRegistration(backend)
+	backend.discoverGlobalWorktrees = func(string) ([]*discovery.GlobalWorktreeEntry, error) {
+		return []*discovery.GlobalWorktreeEntry{entry}, nil
+	}
+	backend.discoverLaunchWorktrees = func(string) ([]*discovery.GlobalWorktreeEntry, error) {
+		return nil, nil
+	}
+	backend.unreviewedWorktreePaths = func() (map[string]struct{}, error) {
+		return map[string]struct{}{utils.CanonicalPath(entry.Path): {}}, nil
+	}
+	backend.collectStatuses = func(
+		_ context.Context,
+		_ string,
+		entries []*discovery.GlobalWorktreeEntry,
+	) (map[string]*models.WorktreeStatus, error) {
+		assert.Empty(t, entries)
+		return nil, nil
+	}
+	backend.listSessions = func() ([]string, error) { return nil, nil }
+
+	rows, _, err := backend.List(context.Background())
 
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
@@ -2573,6 +2612,43 @@ func TestTUIBackendAttachWorkspaceGuardRejectsEmptyRow(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Equal(t, "no worktree selected", err.Error())
+}
+
+func TestTUIBackendAttachAcknowledgesRemoteSourceBeforeWorkspaceLaunch(t *testing.T) {
+	workspacePath := t.TempDir()
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	var acknowledged string
+	backend.acknowledgeRemoteSource = func(path string) error {
+		acknowledged = path
+		return nil
+	}
+	launched := false
+	backend.ensureAndAttach = func(
+		context.Context,
+		string,
+		string,
+		models.Layout,
+		bool,
+	) error {
+		launched = true
+		assert.Equal(t, workspacePath, acknowledged)
+		return nil
+	}
+
+	err := backend.attachWorkspace(
+		context.Background(),
+		dashboard.Row{Workspace: &dashboard.WorkspaceInfo{
+			Name: "remote",
+			Path: workspacePath,
+		}},
+		tmux.BlankLayoutName,
+		false,
+		false,
+	)
+
+	require.NoError(t, err)
+	assert.True(t, launched)
+	assert.Equal(t, workspacePath, acknowledged)
 }
 
 func TestTUIBackendRefusesProtectedPullRequestWorkspace(t *testing.T) {

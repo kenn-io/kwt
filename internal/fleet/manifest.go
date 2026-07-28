@@ -28,6 +28,7 @@ type ManifestBuilderOptions struct {
 		baseDir string, projects []models.Project,
 	) ([]*discovery.GlobalWorktreeEntry, error)
 	ListProjectWorktrees func(ctx context.Context, project models.Project) ([]models.Worktree, error)
+	ExcludeWorktree      func(path string) (bool, error)
 }
 
 // ManifestBuilder builds local advisory fleet manifests.
@@ -38,6 +39,7 @@ type ManifestBuilder struct {
 		baseDir string, projects []models.Project,
 	) ([]*discovery.GlobalWorktreeEntry, error)
 	listProjectWorktrees func(ctx context.Context, project models.Project) ([]models.Worktree, error)
+	excludeWorktree      func(path string) (bool, error)
 }
 
 // NewManifestBuilder creates a manifest builder with optional dependency hooks.
@@ -47,6 +49,7 @@ func NewManifestBuilder(opts ManifestBuilderOptions) *ManifestBuilder {
 		hostname:                opts.Hostname,
 		discoverGlobalWorktrees: opts.DiscoverGlobalWorktrees,
 		listProjectWorktrees:    opts.ListProjectWorktrees,
+		excludeWorktree:         opts.ExcludeWorktree,
 	}
 	if builder.now == nil {
 		builder.now = time.Now
@@ -281,6 +284,15 @@ func (b *ManifestBuilder) addWorktree(
 ) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
+	}
+	if b.excludeWorktree != nil {
+		excluded, err := b.excludeWorktree(worktree.Path)
+		if err != nil {
+			return false, fmt.Errorf("check worktree inspection state: %w", err)
+		}
+		if excluded {
+			return false, nil
+		}
 	}
 	path, ok := observablePath(worktree.Path)
 	if !ok || hasSeenPath(seenWorktreePaths, path) {

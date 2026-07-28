@@ -12,13 +12,14 @@ import (
 
 // WorktreeEntry represents a registered worktree.
 type WorktreeEntry struct {
-	Repository   string     `json:"repository"`
-	Branch       string     `json:"branch"`
-	Path         string     `json:"path"`
-	Hash         string     `json:"hash"`
-	IsMain       bool       `json:"is_main"`
-	RegisteredAt time.Time  `json:"registered_at"`
-	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+	Repository             string     `json:"repository"`
+	Branch                 string     `json:"branch"`
+	Path                   string     `json:"path"`
+	Hash                   string     `json:"hash"`
+	IsMain                 bool       `json:"is_main"`
+	RegisteredAt           time.Time  `json:"registered_at"`
+	ExpiresAt              *time.Time `json:"expires_at,omitempty"`
+	UnreviewedRemoteSource bool       `json:"unreviewed_remote_source,omitempty"`
 }
 
 // IsExpired returns true if the worktree has an expiration date that has passed.
@@ -169,6 +170,68 @@ func (r *Registry) Get(path string) (*WorktreeEntry, bool) {
 
 	entry, ok := r.entries[path]
 	return entry, ok
+}
+
+// IsUnreviewedRemoteSource reports whether path was created from remote
+// content that has not yet been explicitly opened by the user.
+func (r *Registry) IsUnreviewedRemoteSource(path string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	entry, ok := r.entryForPath(path)
+	return ok && entry.UnreviewedRemoteSource
+}
+
+// AcknowledgeRemoteSource marks a remote-source worktree as reviewed while
+// preserving any other registry metadata such as its expiration.
+func (r *Registry) AcknowledgeRemoteSource(path string) error {
+	r.mu.Lock()
+	entry, ok := r.entryForPath(path)
+	if !ok || !entry.UnreviewedRemoteSource {
+		r.mu.Unlock()
+		return nil
+	}
+	entry.UnreviewedRemoteSource = false
+	r.mu.Unlock()
+	return r.save()
+}
+
+func (r *Registry) entryForPath(path string) (*WorktreeEntry, bool) {
+	if entry, ok := r.entries[path]; ok {
+		return entry, true
+	}
+	want := comparableRegistryPath(path)
+	for _, entry := range r.entries {
+		if comparableRegistryPath(entry.Path) == want {
+			return entry, true
+		}
+	}
+	return nil, false
+}
+
+func comparableRegistryPath(path string) string {
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	return filepath.Clean(path)
+}
+
+// UnreviewedRemoteSourcePaths returns the paths that automatic status and
+// fleet collection must not inspect.
+func (r *Registry) UnreviewedRemoteSourcePaths() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	paths := make([]string, 0)
+	for _, entry := range r.entries {
+		if entry.UnreviewedRemoteSource {
+			paths = append(paths, entry.Path)
+		}
+	}
+	return paths
 }
 
 // ListExpired returns all worktrees that have expired.

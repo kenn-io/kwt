@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/fleet"
 	"go.kenn.io/kwt/internal/git"
+	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/pkg/models"
@@ -103,6 +104,7 @@ func TestAddFromRemoteBranchCreatesTrackingWorktreeWithoutLaunching(t *testing.T
 	runTUITestGit(t, repoPath, "branch", "-D", "feature/remote")
 
 	addFrom = "origin/feature/remote"
+	addExpires = "1h"
 	worktreePath := filepath.Join(t.TempDir(), "feature-remote")
 
 	cmd, _, _ := fleetTestCommand()
@@ -120,6 +122,12 @@ func TestAddFromRemoteBranchCreatesTrackingWorktreeWithoutLaunching(t *testing.T
 			"@{upstream}",
 		)),
 	)
+	reg, registryErr := registry.New()
+	require.NoError(t, registryErr)
+	entry, ok := reg.Get(worktreePath)
+	require.True(t, ok)
+	assert.True(t, entry.UnreviewedRemoteSource)
+	assert.NotNil(t, entry.ExpiresAt)
 }
 
 func TestAddFromRemoteBranchRejectsImmediateLayoutLaunch(t *testing.T) {
