@@ -25,6 +25,7 @@ var (
 	addLayout       string
 	addSelectLayout bool
 	addNoLaunch     bool
+	addFrom         string
 )
 
 // addCmd represents the add command.
@@ -38,7 +39,10 @@ Use -i flag to interactively select a branch using fuzzy finder.
 
 When -b creates a branch, kwt fetches origin and starts from its default branch.
 If that remote base is unavailable, it falls back to local main, then master,
-then the branch checked out in the primary worktree.`,
+then the branch checked out in the primary worktree.
+
+Use --from with an exact remote ref to create a local tracking branch and its
+worktree.`,
 	Example: `  # Create worktree from existing branch
   kwt add feature/new-ui
 
@@ -47,6 +51,9 @@ then the branch checked out in the primary worktree.`,
 
   # Create new branch and worktree
   kwt add -b feature/api-v2
+
+  # Create a tracking worktree from a remote branch
+  kwt add --from origin/feature/review feature/review
 
   # Interactive branch selection
   kwt add -i
@@ -72,7 +79,10 @@ func init() {
 		"Fuzzy-pick a workspace layout")
 	addCmd.Flags().BoolVar(&addNoLaunch, "no-launch", false,
 		"Create the worktree without launching a workspace")
+	addCmd.Flags().StringVar(&addFrom, "from", "",
+		"Create a local tracking branch from this remote ref")
 	addCmd.MarkFlagsMutuallyExclusive("layout", "select-layout")
+	addCmd.MarkFlagsMutuallyExclusive("branch", "from", "interactive")
 }
 
 func runAdd(cmd *cobra.Command, args []string) error {
@@ -85,7 +95,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("cannot specify branch name with -i flag")
 			}
 
-			branches, err := ctx.Git.ListBranches(true)
+			branches, err := ctx.Git.ListAvailableBranches()
 			if err != nil {
 				return fmt.Errorf("failed to list branches: %w", err)
 			}
@@ -97,8 +107,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 			branch = selectedBranch.Name
 			if selectedBranch.IsRemote {
-				branch = selectedBranch.Name[len("origin/"):]
-				addBranch = true
+				addFrom = selectedBranch.Source
 			}
 		} else {
 			if len(args) < 1 {
@@ -153,7 +162,12 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		worktreePath, err := ctx.WorktreeManager.Add(branch, path, addBranch)
+		var worktreePath string
+		if addFrom != "" {
+			worktreePath, err = ctx.WorktreeManager.AddTracking(branch, addFrom, path)
+		} else {
+			worktreePath, err = ctx.WorktreeManager.Add(branch, path, addBranch)
+		}
 		if err != nil {
 			return err
 		}

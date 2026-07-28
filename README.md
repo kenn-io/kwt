@@ -34,6 +34,9 @@ kwt add -b feature/new-ui
 # Create without launching tmux
 kwt add --no-launch -b feature/new-ui
 
+# Create a tracking worktree from an existing remote branch
+kwt add --from origin/feature/review feature/review
+
 # Open a worktree workspace, creating its session when needed
 kwt open
 
@@ -74,7 +77,8 @@ branch. If that remote base is unavailable, it falls back to local `main`, then
 | --------- | --------------------------------------- |
 | `up/down` | Move selection                          |
 | `enter`   | Attach to selected workspace            |
-| `n`       | Create a worktree in the active project |
+| `n`       | Create a new branch and worktree         |
+| `b`       | Search existing branches for a worktree  |
 | `L`       | Select workspace layout                 |
 | `P`       | Switch active project perspective       |
 | `p`       | Filter visible projects                 |

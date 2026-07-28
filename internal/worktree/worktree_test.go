@@ -28,6 +28,7 @@ type mockGit struct {
 	deleteBranchError error
 	recentCommits     []models.CommitInfo
 	mainRepoPathError error
+	trackingSource    string
 }
 
 func (m *mockGit) ListWorktrees() ([]models.Worktree, error) {
@@ -41,6 +42,18 @@ func (m *mockGit) AddWorktree(path, branch string, createBranch bool) error {
 	if m.addError != nil {
 		return m.addError
 	}
+	m.worktrees = append(m.worktrees, models.Worktree{
+		Path:   path,
+		Branch: branch,
+	})
+	return nil
+}
+
+func (m *mockGit) AddWorktreeTracking(path, branch, remoteBranch string) error {
+	if m.addError != nil {
+		return m.addError
+	}
+	m.trackingSource = remoteBranch
 	m.worktrees = append(m.worktrees, models.Worktree{
 		Path:   path,
 		Branch: branch,
@@ -185,6 +198,29 @@ func TestManagerAdd(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestManagerAddTrackingUsesRemoteSource(t *testing.T) {
+	baseDir := t.TempDir()
+	mockG := &mockGit{}
+	manager := New(mockG, &models.Config{
+		Worktree: models.WorktreeConfig{
+			BaseDir:   baseDir,
+			AutoMkdir: true,
+		},
+	})
+
+	path, err := manager.AddTracking(
+		"feature/remote",
+		"origin/feature/remote",
+		"",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(baseDir, "github.com", "test-user", "test-repo", "feature-remote"), path)
+	require.Len(t, mockG.worktrees, 1)
+	assert.Equal(t, "feature/remote", mockG.worktrees[0].Branch)
+	assert.Equal(t, "origin/feature/remote", mockG.trackingSource)
 }
 
 func TestManagerRemove(t *testing.T) {

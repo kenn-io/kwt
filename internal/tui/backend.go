@@ -74,7 +74,8 @@ type Backend interface {
 	// is a display value only: passing it back as a destination would re-run
 	// path resolution over an already-resolved path.
 	PreviewWorktree(row Row, branch string) (Row, error)
-	CreateWorktree(ctx context.Context, row Row, branch string) (string, error)
+	ListBranches(ctx context.Context, row Row) ([]models.Branch, error)
+	CreateWorktree(ctx context.Context, row Row, branch, source string) (string, error)
 	MaterializeWorktree(ctx context.Context, row Row) (string, error)
 	RemoveWorktree(ctx context.Context, row Row, force bool) error
 	UnregisterWorkspace(row Row) error

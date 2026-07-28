@@ -1599,7 +1599,7 @@ func TestTUIBackendCreateWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 	}}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
 
-	path, err := backend.CreateWorktree(context.Background(), row, "feature/from-tui")
+	path, err := backend.CreateWorktree(context.Background(), row, "feature/from-tui", "")
 
 	require.NoError(t, err)
 	assert.DirExists(t, path)
@@ -1627,7 +1627,7 @@ func TestTUIBackendCreateWorktreeDoesNotExpandRepositoryLocalTemplate(t *testing
 
 	planned, err := backend.PreviewWorktree(row, "feature/from-tui")
 	require.NoError(t, err)
-	path, err := backend.CreateWorktree(context.Background(), row, "feature/from-tui")
+	path, err := backend.CreateWorktree(context.Background(), row, "feature/from-tui", "")
 
 	require.NoError(t, err)
 	assert.NotContains(t, path, secret,

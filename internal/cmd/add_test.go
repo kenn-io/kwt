@@ -82,6 +82,43 @@ func TestAddDoesNotPublishWhenValidationFails(t *testing.T) {
 	assert.Zero(t, calls)
 }
 
+func TestAddFromRemoteBranchCreatesTrackingWorktree(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetAddCommandFlags(t)
+
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	t.Chdir(repoPath)
+
+	remotePath := filepath.Join(t.TempDir(), "origin.git")
+	runTUITestGit(t, filepath.Dir(remotePath), "init", "--bare", "-b", "main", remotePath)
+	runTUITestGit(t, repoPath, "remote", "add", "origin", remotePath)
+	runTUITestGit(t, repoPath, "checkout", "-b", "feature/remote")
+	runTUITestGit(t, repoPath, "push", "origin", "feature/remote")
+	runTUITestGit(t, repoPath, "checkout", "main")
+	runTUITestGit(t, repoPath, "branch", "-D", "feature/remote")
+
+	addFrom = "origin/feature/remote"
+	addNoLaunch = true
+	worktreePath := filepath.Join(t.TempDir(), "feature-remote")
+
+	cmd, _, _ := fleetTestCommand()
+	err := runAdd(cmd, []string{"feature/remote", worktreePath})
+
+	require.NoError(t, err)
+	assert.Equal(
+		t,
+		"origin/feature/remote",
+		strings.TrimSpace(runTUITestGitOutput(
+			t,
+			worktreePath,
+			"rev-parse",
+			"--abbrev-ref",
+			"@{upstream}",
+		)),
+	)
+}
+
 func TestShouldLaunch(t *testing.T) {
 	cases := []struct {
 		name             string
@@ -166,6 +203,7 @@ func resetAddCommandFlags(t *testing.T) {
 	oldAddLayout := addLayout
 	oldAddSelectLayout := addSelectLayout
 	oldAddNoLaunch := addNoLaunch
+	oldAddFrom := addFrom
 
 	t.Cleanup(func() {
 		addBranch = oldAddBranch
@@ -175,6 +213,7 @@ func resetAddCommandFlags(t *testing.T) {
 		addLayout = oldAddLayout
 		addSelectLayout = oldAddSelectLayout
 		addNoLaunch = oldAddNoLaunch
+		addFrom = oldAddFrom
 	})
 
 	addBranch = false
@@ -184,6 +223,7 @@ func resetAddCommandFlags(t *testing.T) {
 	addLayout = ""
 	addSelectLayout = false
 	addNoLaunch = false
+	addFrom = ""
 }
 
 func initCommandTestConfig(t *testing.T, baseDir string) {

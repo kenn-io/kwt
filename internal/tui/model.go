@@ -21,6 +21,7 @@ const (
 	inputProjectFilter
 	inputProjectSwitch
 	inputNewBranch
+	inputExistingBranch
 )
 
 type confirmKind int
@@ -59,6 +60,12 @@ type fleetRowsMsg struct {
 	warnings []string
 }
 
+type branchListMsg struct {
+	row      Row
+	branches []models.Branch
+	err      error
+}
+
 type actionDoneMsg struct {
 	message     string
 	err         error
@@ -81,6 +88,10 @@ type Model struct {
 	projectPerspective  string
 	projectFilter       string
 	projectSwitchCursor int
+	branches            []models.Branch
+	branchCursor        int
+	branchRow           Row
+	branchesLoading     bool
 	layouts             []string
 	selectedLayout      string
 	inputMode           inputMode
@@ -174,6 +185,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyFleetRows(msg)
 	case actionDoneMsg:
 		return m.applyActionDone(msg)
+	case branchListMsg:
+		return m.applyBranchList(msg)
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case tea.PasteMsg:
@@ -193,6 +206,8 @@ func (m Model) View() tea.View {
 		b.WriteString(m.renderHelp())
 	} else if m.inputMode == inputProjectSwitch {
 		b.WriteString(m.renderProjectSwitchView())
+	} else if m.inputMode == inputExistingBranch {
+		b.WriteString(m.renderExistingBranchView())
 	} else {
 		b.WriteString(m.renderHeader())
 		b.WriteString("\n\n")
@@ -484,6 +499,21 @@ func (m Model) applyActionDone(msg actionDoneMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) applyBranchList(msg branchListMsg) (Model, tea.Cmd) {
+	if m.inputMode != inputExistingBranch ||
+		pathIdentity(rowPath(msg.row)) != pathIdentity(rowPath(m.branchRow)) {
+		return m, nil
+	}
+	m.branchesLoading = false
+	if msg.err != nil {
+		m.err = msg.err
+		return m, nil
+	}
+	m.branches = append([]models.Branch(nil), msg.branches...)
+	m.branchCursor = clampCursor(m.branchCursor, len(m.branchOptions()))
+	return m, nil
+}
+
 // dropPendingRow removes an optimistic creation row and supersedes any fleet
 // overlay still in flight. That overlay carries the rows it was dispatched
 // with, so applying it afterwards would put the row back — and with nothing
@@ -634,6 +664,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m.cycleLayout()
 	case key.Matches(msg, m.keys.New):
 		return m.startNewBranch()
+	case key.Matches(msg, m.keys.Existing):
+		return m.startExistingBranch()
 	case key.Matches(msg, m.keys.Delete):
 		return m.startDelete()
 	case key.Matches(msg, m.keys.Sync):
@@ -691,6 +723,9 @@ func (m Model) handleInputKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if m.inputMode == inputProjectSwitch {
 		return m.handleProjectSwitchKey(msg)
 	}
+	if m.inputMode == inputExistingBranch {
+		return m.handleExistingBranchKey(msg)
+	}
 
 	if key.Matches(msg, m.keys.Cancel) {
 		selectedPath := rowPath(m.selectedRow())
@@ -730,7 +765,7 @@ func (m Model) handleInputKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 				return m, nil
 			}
 			row := m.selectedRow()
-			return m.startCreateWorktree(row, branch)
+			return m.startCreateWorktree(row, branch, "")
 		case inputFilter:
 			m.inputMode = inputNone
 			m.input.Blur()
@@ -747,7 +782,7 @@ func (m Model) handleInputKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	return m.updateTextInput(msg)
 }
 
-func (m Model) startCreateWorktree(row Row, branch string) (Model, tea.Cmd) {
+func (m Model) startCreateWorktree(row Row, branch, source string) (Model, tea.Cmd) {
 	planned, err := m.backend.PreviewWorktree(row, branch)
 	if err != nil {
 		m.err = err
@@ -772,7 +807,7 @@ func (m Model) startCreateWorktree(row Row, branch string) (Model, tea.Cmd) {
 	sortRows(m.rows)
 	m.cursor = indexByPath(m.filteredRows(), pendingPath)
 	m.message = fmt.Sprintf("creating %s", branch)
-	return m, m.createWorktreeCmd(row, branch, pendingPath)
+	return m, m.createWorktreeCmd(row, branch, source, pendingPath)
 }
 
 func (m Model) handlePaste(msg tea.PasteMsg) (Model, tea.Cmd) {
@@ -785,6 +820,9 @@ func (m Model) handlePaste(msg tea.PasteMsg) (Model, tea.Cmd) {
 	if m.inputMode == inputProjectSwitch {
 		return m.appendProjectSwitchText(msg.Content), nil
 	}
+	if m.inputMode == inputExistingBranch {
+		return m.appendExistingBranchText(msg.Content), nil
+	}
 	return m.updateTextInput(msg)
 }
 
@@ -792,7 +830,8 @@ func (m Model) shouldForwardToTextInput() bool {
 	return !m.showHelp &&
 		m.confirm.kind == confirmNone &&
 		m.inputMode != inputNone &&
-		m.inputMode != inputProjectSwitch
+		m.inputMode != inputProjectSwitch &&
+		m.inputMode != inputExistingBranch
 }
 
 func (m Model) updateTextInput(msg tea.Msg) (Model, tea.Cmd) {
@@ -840,6 +879,64 @@ func (m Model) handleProjectSwitchKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	}
 
 	return m.appendProjectSwitchText(msg.Key().Text), nil
+}
+
+func (m Model) handleExistingBranchKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	switch msg.Key().Code {
+	case tea.KeyEsc:
+		m.inputMode = inputNone
+		m.input.Blur()
+		m.input.SetValue("")
+		m.branches = nil
+		m.branchRow = Row{}
+		m.branchesLoading = false
+		return m, nil
+	case tea.KeyEnter:
+		options := m.branchOptions()
+		if len(options) == 0 {
+			return m, nil
+		}
+		branch := options[clampCursor(m.branchCursor, len(options))]
+		row := m.branchRow
+		m.inputMode = inputNone
+		m.input.Blur()
+		m.input.SetValue("")
+		m.branches = nil
+		m.branchRow = Row{}
+		return m.startCreateWorktree(row, branch.Name, branch.Source)
+	case tea.KeyUp:
+		m.branchCursor = clampCursor(m.branchCursor-1, len(m.branchOptions()))
+		return m, nil
+	case tea.KeyDown:
+		m.branchCursor = clampCursor(m.branchCursor+1, len(m.branchOptions()))
+		return m, nil
+	case tea.KeyBackspace:
+		value := []rune(m.input.Value())
+		if len(value) > 0 {
+			m.input.SetValue(string(value[:len(value)-1]))
+			m.branchCursor = 0
+		}
+		return m, nil
+	}
+	if msg.String() == "ctrl+c" {
+		return m, quitCmd()
+	}
+	return m.appendExistingBranchText(msg.Key().Text), nil
+}
+
+func (m Model) appendExistingBranchText(text string) Model {
+	var b strings.Builder
+	for _, r := range text {
+		if unicode.IsPrint(r) && !unicode.IsControl(r) {
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() == 0 {
+		return m
+	}
+	m.input.SetValue(m.input.Value() + b.String())
+	m.branchCursor = 0
+	return m
 }
 
 func (m Model) appendProjectSwitchText(text string) Model {
@@ -960,6 +1057,31 @@ func (m Model) startNewBranch() (Model, tea.Cmd) {
 	m.input.Prompt = fmt.Sprintf("new branch in %s: ", rowRepoName(row))
 	m.input.SetValue("")
 	return m, m.input.Focus()
+}
+
+func (m Model) startExistingBranch() (Model, tea.Cmd) {
+	row := m.selectedRow()
+	if row.Creating {
+		m.message = "worktree is still being created"
+		return m, nil
+	}
+	if row.Workspace != nil {
+		m.message = "not a git worktree"
+		return m, nil
+	}
+	if row.Entry == nil {
+		m.message = "no worktree selected"
+		return m, nil
+	}
+	m.inputMode = inputExistingBranch
+	m.input.Prompt = "Search: "
+	m.input.SetValue("")
+	m.branchRow = row
+	m.branches = nil
+	m.branchCursor = 0
+	m.branchesLoading = true
+	_ = m.input.Focus()
+	return m, m.listBranchesCmd(row)
 }
 
 func (m Model) syncSelected(row Row) (Model, tea.Cmd) {
@@ -1132,9 +1254,21 @@ func (m Model) fleetRowsCmd(ctx context.Context, seq int, rows []Row) tea.Cmd {
 	}
 }
 
-func (m Model) createWorktreeCmd(row Row, branch, pendingPath string) tea.Cmd {
+func (m Model) listBranchesCmd(row Row) tea.Cmd {
 	return func() tea.Msg {
-		path, err := m.backend.CreateWorktree(context.Background(), row, branch)
+		branches, err := m.backend.ListBranches(context.Background(), row)
+		return branchListMsg{row: row, branches: branches, err: err}
+	}
+}
+
+func (m Model) createWorktreeCmd(row Row, branch, source, pendingPath string) tea.Cmd {
+	return func() tea.Msg {
+		path, err := m.backend.CreateWorktree(
+			context.Background(),
+			row,
+			branch,
+			source,
+		)
 		if err != nil {
 			return actionDoneMsg{err: err, pendingPath: pendingPath}
 		}
@@ -1492,6 +1626,29 @@ func (m Model) projectSwitchOptionRows() []projectSwitchOption {
 	return m.projectSwitchOptions()
 }
 
+func (m Model) branchOptions() []models.Branch {
+	query := strings.TrimSpace(strings.ToLower(m.input.Value()))
+	if query == "" {
+		return append([]models.Branch(nil), m.branches...)
+	}
+	tokens := strings.Fields(query)
+	filtered := make([]models.Branch, 0, len(m.branches))
+	for _, branch := range m.branches {
+		haystack := strings.ToLower(branch.Name + " " + branch.Source)
+		matches := true
+		for _, token := range tokens {
+			if !strings.Contains(haystack, token) {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			filtered = append(filtered, branch)
+		}
+	}
+	return filtered
+}
+
 func (m Model) projectSwitchOptions() []projectSwitchOption {
 	return m.projectSwitchOptionsForQuery(m.input.Value())
 }
@@ -1606,6 +1763,81 @@ func (m Model) renderProjectSwitchView() string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+func (m Model) renderExistingBranchView() string {
+	var b strings.Builder
+	b.WriteString("Add existing branch")
+	if name := rowRepoName(m.branchRow); name != "" {
+		b.WriteString(" in ")
+		b.WriteString(name)
+	}
+	b.WriteString("\n\n")
+	b.WriteString(m.input.View())
+	b.WriteString("\n\n")
+
+	options := m.branchOptions()
+	switch {
+	case m.err != nil:
+		b.WriteString(m.theme.error.Render(m.err.Error()))
+		b.WriteString("\n")
+	case m.branchesLoading:
+		b.WriteString(m.theme.dim.Render("  Loading available branches…"))
+		b.WriteString("\n")
+	case len(options) == 0:
+		b.WriteString(m.theme.dim.Render("  No matching available branches"))
+		b.WriteString("\n")
+	default:
+		selected := clampCursor(m.branchCursor, len(options))
+		visibleRows := len(options)
+		if m.height > 0 {
+			footerLines := helpLines(inputHelpRows(inputExistingBranch), m.width)
+			visibleRows = m.height - 6 - footerLines
+			if visibleRows < 1 {
+				visibleRows = 1
+			}
+		}
+		start := 0
+		if visibleRows < len(options) {
+			start = selected - visibleRows/2
+			if start < 0 {
+				start = 0
+			}
+			if start+visibleRows > len(options) {
+				start = len(options) - visibleRows
+			}
+		}
+		end := min(start+visibleRows, len(options))
+		for index := start; index < end; index++ {
+			branch := options[index]
+			cursor := " "
+			if index == selected {
+				cursor = "▸"
+			}
+			location := "local"
+			if branch.IsRemote {
+				location = "remote · " + branch.Source
+			}
+			line := fmt.Sprintf("%s %-32s %s", cursor, branch.Name, location)
+			if index == selected {
+				line = m.theme.cursor.Render(line)
+			}
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+		if len(options) > visibleRows {
+			b.WriteString(m.theme.dim.Render(fmt.Sprintf(
+				"[showing %d-%d of %d]",
+				start+1,
+				end,
+				len(options),
+			)))
+			b.WriteString("\n")
+		}
+	}
+
+	b.WriteString(renderHelpTable(inputHelpRows(inputExistingBranch), m.width))
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func (m Model) projectSwitchVisibleRows() int {
 	if m.height <= 0 {
 		return len(m.projectSwitchOptions())
@@ -1654,7 +1886,7 @@ func (m Model) renderHelp() string {
 		"kwt help",
 		"",
 		"↑/k ↓/j move    g/G top/bottom",
-		"enter attach    L layout    n new    d delete    s sync    c shell    K kill workspace",
+		"enter attach    L layout    n new    b branch    d delete    s sync    c shell    K kill workspace",
 		"P project       p filter    / search    r refresh    esc cancel/clear    q quit",
 		"",
 		"Press any key to close help.",

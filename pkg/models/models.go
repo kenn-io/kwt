@@ -19,6 +19,7 @@ type Worktree struct {
 // Branch represents a Git branch with its metadata.
 type Branch struct {
 	Name       string     `json:"name"`        // Branch name
+	Source     string     `json:"source"`      // Local branch or remote ref used to create a worktree
 	IsCurrent  bool       `json:"is_current"`  // Whether this is the current branch
 	IsRemote   bool       `json:"is_remote"`   // Whether this is a remote branch
 	LastCommit CommitInfo `json:"last_commit"` // Information about the last commit

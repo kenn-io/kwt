@@ -18,6 +18,7 @@ import (
 type GitInterface interface {
 	ListWorktrees() ([]models.Worktree, error)
 	AddWorktree(path, branch string, createBranch bool) error
+	AddWorktreeTracking(path, branch, remoteBranch string) error
 	AddWorktreeFromBase(path, branch, baseBranch string) error
 	RemoveWorktree(path string, force bool) error
 	DeleteBranch(branch string, force bool) error
@@ -66,6 +67,21 @@ func (m *Manager) AddWithOptions(branch string, customPath string, createBranch 
 	if !opts.SkipSetup {
 		m.runPostWorktreeSetup(branch, path)
 	}
+	return path, nil
+}
+
+// AddTracking creates a worktree on a local branch that tracks remoteBranch.
+func (m *Manager) AddTracking(branch, remoteBranch, customPath string) (string, error) {
+	path, err := m.preparePath(customPath, branch, nil)
+	if err != nil {
+		return "", err
+	}
+
+	if err := m.git.AddWorktreeTracking(path, branch, remoteBranch); err != nil {
+		return "", err
+	}
+
+	m.runPostWorktreeSetup(branch, path)
 	return path, nil
 }
 

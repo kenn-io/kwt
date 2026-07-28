@@ -7,6 +7,7 @@ stable command surface.
 | ---------------- | ------------------------------------------------------ |
 | `kwt`, `kwt tui` | Open the cross-project and multi-machine dashboard.    |
 | `kwt add`        | Create a worktree and optionally launch its workspace. |
+| `kwt branches`   | List branches available for a new worktree.            |
 | `kwt open`       | Open or establish a worktree workspace session.        |
 | `kwt list`       | List worktrees.                                        |
 | `kwt status`     | Show Git status, sync state, and activity.             |
@@ -27,6 +28,8 @@ stable command surface.
 
 ```sh
 kwt add -b fix/parser-race
+kwt add --from origin/fix/review fix/review
+kwt branches --json
 kwt open parser
 kwt open /path/to/worktree --start-session
 kwt status
@@ -44,6 +47,12 @@ kwt config set --local layouts.default stack
 When `kwt add -b` creates a branch, it fetches `origin` and starts from its
 default branch. If that remote base is unavailable, it falls back to local
 `main`, then `master`, then the branch checked out in the primary worktree.
+
+`kwt add <branch>` checks out an existing local branch. Use
+`kwt add --from <remote-ref> <branch>` when a remote candidate must become a
+local tracking branch. `kwt branches --json` emits only candidates not already
+checked out, with `name`, exact `source`, and `is_remote` fields for interactive
+clients.
 
 ## `kwt open`
 

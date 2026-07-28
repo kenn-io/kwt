@@ -28,8 +28,8 @@ auto-registered.
 Workspace rows show the workspace name under REPO, the path under BRANCH, and
 session liveness under WORKSPACE; Git-specific columns show `-`. Rows match `/`
 search by name and path. `K` kills a live session, and `d` unregisters the
-workspace after confirmation. Git actions such as `n` (new branch) and `s`
-(sync) do not apply and say so in the status line.
+workspace after confirmation. Git actions such as `n` (new branch), `b`
+(existing branch), and `s` (sync) do not apply and say so in the status line.
 
 ## Sessions and layouts
 

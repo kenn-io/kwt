@@ -869,16 +869,37 @@ func (b *tuiBackend) CreateWorktree(
 	ctx context.Context,
 	row dashboard.Row,
 	branch string,
+	source string,
 ) (string, error) {
 	if row.Entry == nil {
 		return "", fmt.Errorf("no worktree selected")
 	}
-	path, err := worktree.New(git.New(row.Entry.Path), b.cfg).Add(branch, "", true)
+	manager := worktree.New(git.New(row.Entry.Path), b.cfg)
+	var path string
+	var err error
+	switch source {
+	case "":
+		path, err = manager.Add(branch, "", true)
+	case branch:
+		path, err = manager.Add(branch, "", false)
+	default:
+		path, err = manager.AddTracking(branch, source, "")
+	}
 	if err != nil {
 		return "", err
 	}
 	publishTUIFleetBestEffort(ctx, b.cfg)
 	return path, nil
+}
+
+func (b *tuiBackend) ListBranches(
+	_ context.Context,
+	row dashboard.Row,
+) ([]models.Branch, error) {
+	if row.Entry == nil {
+		return nil, fmt.Errorf("no worktree selected")
+	}
+	return git.New(row.Entry.Path).ListAvailableBranches()
 }
 
 func (b *tuiBackend) PreviewWorktree(row dashboard.Row, branch string) (dashboard.Row, error) {

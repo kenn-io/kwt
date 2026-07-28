@@ -24,6 +24,7 @@ func defaultHelpRows(row Row) [][]helpItem {
 		action,
 		{key: "P", desc: "project"},
 		{key: "n", desc: "new"},
+		{key: "b", desc: "branch"},
 		{key: "L", desc: "layout"},
 		{key: "d", desc: "delete"},
 		{key: "K", desc: "kill"},
@@ -46,6 +47,13 @@ func inputHelpRows(mode inputMode) [][]helpItem {
 	switch mode {
 	case inputNewBranch:
 		return [][]helpItem{{
+			{key: "enter", desc: "create"},
+			{key: "esc", desc: "cancel"},
+		}}
+	case inputExistingBranch:
+		return [][]helpItem{{
+			{key: "↑↓", desc: "select"},
+			{key: "type", desc: "narrow"},
 			{key: "enter", desc: "create"},
 			{key: "esc", desc: "cancel"},
 		}}

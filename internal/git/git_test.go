@@ -678,6 +678,82 @@ func TestListBranches(t *testing.T) {
 	})
 }
 
+func TestListAvailableBranchesNormalizesRemoteAndExcludesCheckedOut(t *testing.T) {
+	repo := NewTestRepository(t)
+	remotePath := filepath.Join(t.TempDir(), "origin.git")
+	gitOutput(t, filepath.Dir(remotePath), "init", "--bare", "-b", "main", remotePath)
+	gitOutput(t, repo.Path, "remote", "add", "origin", remotePath)
+
+	repo.CreateBranch(t, "local-ready")
+	gitOutput(t, repo.Path, "checkout", "main")
+	repo.CreateBranch(t, "checked-out")
+	gitOutput(t, repo.Path, "checkout", "main")
+	repo.CreateBranch(t, "remote-only")
+	commitTestFile(t, repo.Path, "remote.txt", "remote\n", "Remote branch")
+	gitOutput(t, repo.Path, "push", "origin", "main", "local-ready", "remote-only")
+	gitOutput(t, repo.Path, "checkout", "main")
+	gitOutput(t, repo.Path, "branch", "-D", "remote-only")
+	gitOutput(t, repo.Path, "remote", "set-head", "origin", "-a")
+
+	worktreePath := filepath.Join(t.TempDir(), "checked-out")
+	repo.CreateWorktree(t, worktreePath, "checked-out")
+
+	branches, err := New(repo.Path).ListAvailableBranches()
+	if err != nil {
+		t.Fatalf("ListAvailableBranches() error = %v", err)
+	}
+
+	byName := make(map[string]models.Branch, len(branches))
+	for _, branch := range branches {
+		byName[branch.Name] = branch
+	}
+	if _, ok := byName["main"]; ok {
+		t.Error("current branch was offered as available")
+	}
+	if _, ok := byName["checked-out"]; ok {
+		t.Error("branch checked out in another worktree was offered as available")
+	}
+	if got := byName["local-ready"]; got.IsRemote || got.Source != "local-ready" {
+		t.Errorf("local-ready = %+v, want available local branch", got)
+	}
+	if got := byName["remote-only"]; !got.IsRemote || got.Source != "origin/remote-only" {
+		t.Errorf("remote-only = %+v, want normalized origin branch", got)
+	}
+	if _, ok := byName["HEAD"]; ok {
+		t.Error("remote symbolic HEAD was offered as a branch")
+	}
+}
+
+func TestAddWorktreeTrackingRemoteBranch(t *testing.T) {
+	repo := NewTestRepository(t)
+	remotePath := filepath.Join(t.TempDir(), "origin.git")
+	gitOutput(t, filepath.Dir(remotePath), "init", "--bare", "-b", "main", remotePath)
+	gitOutput(t, repo.Path, "remote", "add", "origin", remotePath)
+
+	repo.CreateBranch(t, "remote-only")
+	commitTestFile(t, repo.Path, "remote.txt", "remote\n", "Remote branch")
+	wantHead := gitOutput(t, repo.Path, "rev-parse", "HEAD")
+	gitOutput(t, repo.Path, "push", "origin", "remote-only")
+	gitOutput(t, repo.Path, "checkout", "main")
+	gitOutput(t, repo.Path, "branch", "-D", "remote-only")
+
+	worktreePath := filepath.Join(t.TempDir(), "remote-only")
+	err := New(repo.Path).AddWorktreeTracking(
+		worktreePath,
+		"remote-only",
+		"origin/remote-only",
+	)
+	if err != nil {
+		t.Fatalf("AddWorktreeTracking() error = %v", err)
+	}
+	if got := gitOutput(t, worktreePath, "rev-parse", "HEAD"); got != wantHead {
+		t.Errorf("HEAD = %s, want remote branch %s", got, wantHead)
+	}
+	if got := gitOutput(t, worktreePath, "rev-parse", "--abbrev-ref", "@{upstream}"); got != "origin/remote-only" {
+		t.Errorf("upstream = %s, want origin/remote-only", got)
+	}
+}
+
 func TestGetRepositoryName(t *testing.T) {
 	repo := NewTestRepository(t)
 	g := New(repo.Path)
