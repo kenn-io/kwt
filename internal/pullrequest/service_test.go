@@ -689,9 +689,117 @@ func TestImportMigratesTransferredRepositoryProvenance(t *testing.T) {
 	migrated := store.records[pr.ID]
 	assert.Equal(t, pr.ID, migrated.PullRequestID)
 	assert.Equal(t, pr.Repository.Identity, migrated.Repository)
+	assert.ElementsMatch(t, []string{
+		legacyIdentity,
+		testProject().Identity,
+	}, migrated.RepositoryAliases)
 	assert.Equal(t, testProject().Identity, migrated.Project.Identity)
 	assert.Equal(t, pr.Source.Repository.Identity, migrated.SourceRepo)
 	assert.Equal(t, workspace, migrated.Workspace)
+}
+
+func TestImportMigratesConsecutiveRepositoryTransfers(t *testing.T) {
+	pr := testPR(54, false)
+	backend := newFakeBackend()
+	workspace := Workspace{
+		ID: "ws-54", Repository: testProject().Identity,
+		Branch: "pr-54-feature-widgets", Path: "/worktrees/54", State: "ready",
+	}
+	backend.workspaces = []Workspace{workspace}
+	store := newMemoryStore()
+	firstIdentity := "github.com/legacy/widget"
+	intermediateIdentity := "github.com/middle/widget"
+	intermediateID := OpaqueID(intermediateIdentity, pr.Number)
+	store.records[intermediateID] = Provenance{
+		PullRequestID: intermediateID,
+		Provider:      "github",
+		Repository:    intermediateIdentity,
+		RepositoryAliases: []string{
+			firstIdentity,
+			intermediateIdentity,
+		},
+		Number: pr.Number,
+		Project: Project{
+			Identity: intermediateIdentity,
+			Path:     testProject().Path,
+		},
+		Workspace: Workspace{
+			ID: "middle-ws", Repository: intermediateIdentity,
+			Branch: workspace.Branch, Path: workspace.Path, State: "ready",
+		},
+		SourceRepo:   intermediateIdentity,
+		SourceBranch: pr.Source.Name,
+	}
+	service := NewService(
+		&fakeProvider{prs: []PullRequest{pr}},
+		backend,
+		store,
+		firstIdentity,
+		testProject().Identity,
+	)
+
+	result, err := service.Import(context.Background(), testProject(), "54")
+
+	require.NoError(t, err)
+	assert.Equal(t, ImportExisting, result.Status)
+	assert.Zero(t, backend.createCalls)
+	assert.NotContains(t, store.records, intermediateID)
+	require.Contains(t, store.records, pr.ID)
+	migrated := store.records[pr.ID]
+	assert.ElementsMatch(t, []string{
+		firstIdentity,
+		intermediateIdentity,
+		testProject().Identity,
+	}, migrated.RepositoryAliases)
+	assert.Equal(t, pr.Repository.Identity, migrated.Repository)
+	assert.Equal(t, testProject().Identity, migrated.Project.Identity)
+	assert.Equal(t, pr.Source.Repository.Identity, migrated.SourceRepo)
+}
+
+func TestImportDoesNotTrustRepositoryOutsidePersistedAliasHistory(
+	t *testing.T,
+) {
+	pr := testPR(57, false)
+	backend := newFakeBackend()
+	store := newMemoryStore()
+	legacyIdentity := "github.com/legacy/widget"
+	intermediateIdentity := "github.com/middle/widget"
+	unlistedIdentity := "github.com/unlisted/widget"
+	recordID := OpaqueID(unlistedIdentity, pr.Number)
+	store.records[recordID] = Provenance{
+		PullRequestID: recordID,
+		Provider:      "github",
+		Repository:    unlistedIdentity,
+		RepositoryAliases: []string{
+			legacyIdentity,
+			intermediateIdentity,
+		},
+		Number: pr.Number,
+		Project: Project{
+			Identity: intermediateIdentity,
+			Path:     testProject().Path,
+		},
+		Workspace: Workspace{
+			ID: "unlisted-ws", Repository: intermediateIdentity,
+			Branch: "pr-57-feature-widgets", Path: "/worktrees/57", State: "ready",
+		},
+		SourceRepo:   intermediateIdentity,
+		SourceBranch: pr.Source.Name,
+	}
+	service := NewService(
+		&fakeProvider{prs: []PullRequest{pr}},
+		backend,
+		store,
+		legacyIdentity,
+		testProject().Identity,
+	)
+
+	result, err := service.Import(context.Background(), testProject(), "57")
+
+	require.NoError(t, err)
+	assert.Equal(t, ImportCreated, result.Status)
+	assert.Equal(t, 1, backend.createCalls)
+	assert.Contains(t, store.records, recordID)
 }
 
 func TestImportDoesNotTreatProjectAliasAsForkSource(t *testing.T) {

@@ -263,7 +263,7 @@ func importedWorkspaceProvenance(
 	record := matches[0]
 	liveProject, liveWorkspaces, err := inspectPRProjectClone(
 		ctx,
-		record.Project,
+		record,
 	)
 	if err != nil {
 		return pullrequest.Provenance{}, pullrequest.NewError(
@@ -273,8 +273,8 @@ func importedWorkspaceProvenance(
 			err,
 		)
 	}
-	if !samePRProjectClone(record.Project, liveProject) ||
-		!containsPRWorkspace(liveWorkspaces, record.Workspace) {
+	if !samePRProjectClone(record, liveProject) ||
+		!containsPRWorkspace(liveWorkspaces, record) {
 		return pullrequest.Provenance{}, pullrequest.NewError(
 			pullrequest.CodeWorkspaceCreation,
 			"workspace no longer matches its pull-request provenance",
@@ -320,12 +320,12 @@ func rejectProtectedWorkspaceOpen(
 
 func defaultInspectPRProjectClone(
 	ctx context.Context,
-	recorded pullrequest.Project,
+	recorded pullrequest.Provenance,
 ) (pullrequest.Project, []pullrequest.Workspace, error) {
 	if err := ctx.Err(); err != nil {
 		return pullrequest.Project{}, nil, err
 	}
-	project, err := validatePRProjectRoot(recorded)
+	project, err := validatePRProjectRoot(recorded.Project)
 	if err != nil {
 		return pullrequest.Project{}, nil, err
 	}
@@ -339,7 +339,7 @@ func defaultInspectPRProjectClone(
 	registered := make([]models.Project, 0, 1)
 	for _, candidate := range cfg.Projects {
 		if utils.CanonicalPath(candidate.Path) !=
-			utils.CanonicalPath(recorded.Path) {
+			utils.CanonicalPath(recorded.Project.Path) {
 			continue
 		}
 		registered = append(registered, candidate)
@@ -352,7 +352,11 @@ func defaultInspectPRProjectClone(
 	if len(registered) == 1 &&
 		!pullrequest.EqualRepositoryIdentity(
 			publishableProjectRepository(registered[0]),
-			recorded.Identity,
+			recorded.Project.Identity,
+		) &&
+		!pullrequest.ProvenanceHasRepositoryIdentity(
+			recorded,
+			publishableProjectRepository(registered[0]),
 		) {
 		return pullrequest.Project{}, nil, fmt.Errorf(
 			"registered project conflicts with recorded identity",
@@ -380,6 +384,17 @@ func defaultInspectPRProjectClone(
 		return pullrequest.Project{}, nil, err
 	}
 	project.Identity = pullrequest.NormalizeRepositoryIdentity(info.FullPath)
+	if !pullrequest.EqualRepositoryIdentity(
+		recorded.Project.Identity,
+		project.Identity,
+	) && !pullrequest.ProvenanceHasRepositoryIdentity(
+		recorded,
+		project.Identity,
+	) {
+		return pullrequest.Project{}, nil, fmt.Errorf(
+			"live project conflicts with recorded identity",
+		)
+	}
 	return project, livePRWorkspaces(info, project, live), nil
 }
 
@@ -417,31 +432,73 @@ func liveGitWorktreePath(path string) bool {
 }
 
 func samePRProjectClone(
-	left, right pullrequest.Project,
+	recorded pullrequest.Provenance,
+	live pullrequest.Project,
 ) bool {
-	return pullrequest.EqualRepositoryIdentity(
-		left.Identity,
-		right.Identity,
-	) && utils.CanonicalPath(left.Path) == utils.CanonicalPath(right.Path)
+	if utils.CanonicalPath(recorded.Project.Path) !=
+		utils.CanonicalPath(live.Path) {
+		return false
+	}
+	if pullrequest.EqualRepositoryIdentity(
+		recorded.Project.Identity,
+		live.Identity,
+	) {
+		return true
+	}
+	return pullrequest.ProvenanceHasRepositoryIdentity(
+		recorded,
+		recorded.Project.Identity,
+	) && pullrequest.ProvenanceHasRepositoryIdentity(
+		recorded,
+		live.Identity,
+	)
 }
 
 func containsPRWorkspace(
 	live []pullrequest.Workspace,
-	recorded pullrequest.Workspace,
+	recorded pullrequest.Provenance,
 ) bool {
 	for _, candidate := range live {
 		if utils.CanonicalPath(candidate.Path) ==
-			utils.CanonicalPath(recorded.Path) &&
-			candidate.Branch == recorded.Branch &&
-			pullrequest.EqualRepositoryIdentity(
-				candidate.Repository,
-				recorded.Repository,
-			) &&
-			candidate.SessionName == recorded.SessionName {
+			utils.CanonicalPath(recorded.Workspace.Path) &&
+			candidate.Branch == recorded.Workspace.Branch &&
+			prWorkspaceIdentityMatches(candidate, recorded) {
 			return true
 		}
 	}
 	return false
+}
+
+func prWorkspaceIdentityMatches(
+	live pullrequest.Workspace,
+	recorded pullrequest.Provenance,
+) bool {
+	if pullrequest.EqualRepositoryIdentity(
+		live.Repository,
+		recorded.Workspace.Repository,
+	) {
+		return live.SessionName == recorded.Workspace.SessionName
+	}
+	if !pullrequest.ProvenanceHasRepositoryIdentity(
+		recorded,
+		live.Repository,
+	) || !pullrequest.ProvenanceHasRepositoryIdentity(
+		recorded,
+		recorded.Workspace.Repository,
+	) {
+		return false
+	}
+	info, ok := urlutil.CanonicalRepositoryInfo(
+		recorded.Workspace.Repository,
+	)
+	if !ok {
+		return false
+	}
+	return recorded.Workspace.SessionName == tmux.WorkspaceSessionName(
+		info,
+		recorded.Workspace.Branch,
+		recorded.Workspace.Path,
+	)
 }
 
 func preparePRProject() (pullrequest.Project, error) {

@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -45,7 +46,13 @@ func (s *FileStore) Update(ctx context.Context, fn func(map[string]Provenance) e
 		if err := fn(records); err != nil {
 			return err
 		}
-		if maps.Equal(original, records) {
+		if maps.EqualFunc(
+			original,
+			records,
+			func(left, right Provenance) bool {
+				return reflect.DeepEqual(left, right)
+			},
+		) {
 			return nil
 		}
 		return s.save(records)

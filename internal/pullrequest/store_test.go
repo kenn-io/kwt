@@ -16,7 +16,15 @@ import (
 func TestFileStorePersistsProvenance(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pull-requests.json")
 	store := NewFileStore(path)
-	record := Provenance{PullRequestID: "github:github.com/acme/widget#1", Number: 1}
+	record := Provenance{
+		PullRequestID: "github:github.com/acme/widget#1",
+		Repository:    "github.com/acme/widget",
+		RepositoryAliases: []string{
+			"github.com/legacy/widget",
+			"github.com/acme/widget",
+		},
+		Number: 1,
+	}
 
 	require.NoError(t, store.Update(context.Background(), func(records map[string]Provenance) error {
 		records[record.PullRequestID] = record

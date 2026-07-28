@@ -85,7 +85,7 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 	validatePRProjectRoot = func(project pullrequest.Project) (pullrequest.Project, error) { return project, nil }
 	inspectPRProjectClone = func(
 		context.Context,
-		pullrequest.Project,
+		pullrequest.Provenance,
 	) (pullrequest.Project, []pullrequest.Workspace, error) {
 		return pullrequest.Project{}, nil, nil
 	}
@@ -582,7 +582,7 @@ func TestRunPRAttachUsesPersistedWorkspaceIdentity(t *testing.T) {
 	withPRCommandDeps(t, cfg, &fakePRService{})
 	inspectPRProjectClone = func(
 		context.Context,
-		pullrequest.Project,
+		pullrequest.Provenance,
 	) (pullrequest.Project, []pullrequest.Workspace, error) {
 		return project, []pullrequest.Workspace{workspace}, nil
 	}
@@ -600,6 +600,86 @@ func TestRunPRAttachUsesPersistedWorkspaceIdentity(t *testing.T) {
 	cmd, _, _ := prTestCommand()
 
 	err := runPRAttach(cmd, []string{workspace.Path})
+
+	require.NoError(t, err)
+	assert.True(t, attached)
+}
+
+func TestRunPRAttachUsesTransferredProvenanceAliasHistory(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
+	registeredIdentity := "github.com/legacy/widget"
+	resolvedIdentity := "github.com/current/widget"
+	workspacePath := "/worktrees/pr-33"
+	branch := "pr-33"
+	resolvedInfo, ok := urlutil.CanonicalRepositoryInfo(resolvedIdentity)
+	require.True(t, ok)
+	registeredInfo, ok := urlutil.CanonicalRepositoryInfo(registeredIdentity)
+	require.True(t, ok)
+	record := pullrequest.Provenance{
+		PullRequestID: "github:github.com/current/widget#33",
+		Repository:    resolvedIdentity,
+		RepositoryAliases: []string{
+			registeredIdentity,
+			"github.com/middle/widget",
+			resolvedIdentity,
+		},
+		Project: pullrequest.Project{
+			Identity: resolvedIdentity,
+			Path:     "/repos/widget",
+		},
+		Workspace: pullrequest.Workspace{
+			Path:       workspacePath,
+			Branch:     branch,
+			Repository: resolvedIdentity,
+			SessionName: tmux.WorkspaceSessionName(
+				resolvedInfo,
+				branch,
+				workspacePath,
+			),
+		},
+	}
+	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
+		context.Background(),
+		func(records map[string]pullrequest.Provenance) error {
+			records[record.PullRequestID] = record
+			return nil
+		},
+	))
+	cfg := testPRConfig()
+	withPRCommandDeps(t, cfg, &fakePRService{})
+	inspectPRProjectClone = func(
+		_ context.Context,
+		got pullrequest.Provenance,
+	) (pullrequest.Project, []pullrequest.Workspace, error) {
+		assert.Equal(t, record, got)
+		return pullrequest.Project{
+				Identity: registeredIdentity,
+				Path:     record.Project.Path,
+			}, []pullrequest.Workspace{{
+				Path:       workspacePath,
+				Branch:     branch,
+				Repository: registeredIdentity,
+				SessionName: tmux.WorkspaceSessionName(
+					registeredInfo,
+					branch,
+					workspacePath,
+				),
+			}}, nil
+	}
+	attached := false
+	attachPRWorkspaceSession = func(
+		_ context.Context,
+		got pullrequest.Workspace,
+		gotConfig *models.Config,
+	) error {
+		attached = true
+		assert.Equal(t, record.Workspace, got)
+		assert.Same(t, cfg, gotConfig)
+		return nil
+	}
+	cmd, _, _ := prTestCommand()
+
+	err := runPRAttach(cmd, []string{workspacePath})
 
 	require.NoError(t, err)
 	assert.True(t, attached)
@@ -629,7 +709,7 @@ func TestRunPRAttachRejectsStaleProvenanceAgainstLiveInventory(t *testing.T) {
 	withPRCommandDeps(t, testPRConfig(), &fakePRService{})
 	inspectPRProjectClone = func(
 		context.Context,
-		pullrequest.Project,
+		pullrequest.Provenance,
 	) (pullrequest.Project, []pullrequest.Workspace, error) {
 		live := recorded
 		live.Branch = "unrelated"
@@ -681,13 +761,124 @@ func TestInspectPRProjectCloneUsesRegisteredIdentityOverForkOrigin(
 
 	project, workspaces, err := defaultInspectPRProjectClone(
 		context.Background(),
-		recorded,
+		pullrequest.Provenance{
+			Repository: recorded.Identity,
+			Project:    recorded,
+		},
 	)
 
 	require.NoError(t, err)
 	assert.Equal(t, recorded.Identity, project.Identity)
 	require.NotEmpty(t, workspaces)
 	assert.Equal(t, recorded.Identity, workspaces[0].Repository)
+}
+
+func TestInspectPRProjectCloneAcceptsTransferredRegisteredAlias(
+	t *testing.T,
+) {
+	repo := newPRInspectionRepo(t)
+	runPRInspectionGit(
+		t,
+		repo,
+		"remote",
+		"add",
+		"origin",
+		"https://github.com/current/widget.git",
+	)
+	registeredIdentity := "github.com/legacy/widget"
+	recorded := pullrequest.Provenance{
+		Repository: "github.com/current/widget",
+		RepositoryAliases: []string{
+			registeredIdentity,
+			"github.com/middle/widget",
+			"github.com/current/widget",
+		},
+		Project: pullrequest.Project{
+			Identity: "github.com/current/widget",
+			Name:     "widget",
+			Path:     repo,
+		},
+	}
+	oldLoad := loadPRConfig
+	t.Cleanup(func() { loadPRConfig = oldLoad })
+	loadPRConfig = func() (*models.Config, error) {
+		return &models.Config{Projects: []models.Project{{
+			Repository: registeredIdentity,
+			Name:       recorded.Project.Name,
+			Path:       recorded.Project.Path,
+		}}}, nil
+	}
+
+	project, workspaces, err := defaultInspectPRProjectClone(
+		context.Background(),
+		recorded,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, registeredIdentity, project.Identity)
+	require.NotEmpty(t, workspaces)
+	assert.Equal(t, registeredIdentity, workspaces[0].Repository)
+}
+
+func TestTransferredProvenanceMatchesLiveWorkspaceAcrossAliases(
+	t *testing.T,
+) {
+	path := "/worktrees/pr-32"
+	branch := "pr-32"
+	recordedInfo, ok := urlutil.CanonicalRepositoryInfo(
+		"github.com/current/widget",
+	)
+	require.True(t, ok)
+	liveInfo, ok := urlutil.CanonicalRepositoryInfo(
+		"github.com/legacy/widget",
+	)
+	require.True(t, ok)
+	record := pullrequest.Provenance{
+		Repository: "github.com/current/widget",
+		RepositoryAliases: []string{
+			"github.com/legacy/widget",
+			"github.com/middle/widget",
+			"github.com/current/widget",
+		},
+		Project: pullrequest.Project{
+			Identity: "github.com/current/widget",
+			Path:     "/repos/widget",
+		},
+		Workspace: pullrequest.Workspace{
+			Repository: "github.com/current/widget",
+			Branch:     branch,
+			Path:       path,
+			SessionName: tmux.WorkspaceSessionName(
+				recordedInfo,
+				branch,
+				path,
+			),
+		},
+	}
+	liveProject := pullrequest.Project{
+		Identity: "github.com/legacy/widget",
+		Path:     record.Project.Path,
+	}
+	liveWorkspace := pullrequest.Workspace{
+		Repository: liveProject.Identity,
+		Branch:     branch,
+		Path:       path,
+		SessionName: tmux.WorkspaceSessionName(
+			liveInfo,
+			branch,
+			path,
+		),
+	}
+
+	assert.True(t, samePRProjectClone(record, liveProject))
+	assert.True(t, containsPRWorkspace([]pullrequest.Workspace{
+		liveWorkspace,
+	}, record))
+
+	record.Workspace.SessionName = "tampered"
+	assert.False(t, containsPRWorkspace([]pullrequest.Workspace{
+		liveWorkspace,
+	}, record))
 }
 
 func TestInspectPRProjectCloneUsesLiveIdentityWithoutRegistration(
@@ -715,7 +906,10 @@ func TestInspectPRProjectCloneUsesLiveIdentityWithoutRegistration(
 
 	project, workspaces, err := defaultInspectPRProjectClone(
 		context.Background(),
-		recorded,
+		pullrequest.Provenance{
+			Repository: recorded.Identity,
+			Project:    recorded,
+		},
 	)
 
 	require.NoError(t, err)
@@ -745,7 +939,10 @@ func TestInspectPRProjectCloneRejectsConflictingRegistration(
 
 	_, _, err := defaultInspectPRProjectClone(
 		context.Background(),
-		recorded,
+		pullrequest.Provenance{
+			Repository: recorded.Identity,
+			Project:    recorded,
+		},
 	)
 
 	require.Error(t, err)
@@ -780,7 +977,10 @@ func TestInspectPRProjectCloneRejectsAmbiguousRegistrations(
 
 	_, _, err := defaultInspectPRProjectClone(
 		context.Background(),
-		recorded,
+		pullrequest.Provenance{
+			Repository: recorded.Identity,
+			Project:    recorded,
+		},
 	)
 
 	require.Error(t, err)

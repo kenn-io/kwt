@@ -112,16 +112,17 @@ type workspacePartialCleanup struct {
 }
 
 type Provenance struct {
-	PullRequestID string    `json:"pull_request_id"`
-	Provider      string    `json:"provider"`
-	Repository    string    `json:"repository"`
-	Number        int       `json:"number"`
-	URL           string    `json:"url"`
-	HeadSHA       string    `json:"head_sha"`
-	SourceRepo    string    `json:"source_repository"`
-	SourceBranch  string    `json:"source_branch"`
-	Project       Project   `json:"project"`
-	Workspace     Workspace `json:"workspace"`
+	PullRequestID     string    `json:"pull_request_id"`
+	Provider          string    `json:"provider"`
+	Repository        string    `json:"repository"`
+	RepositoryAliases []string  `json:"repository_aliases,omitempty"`
+	Number            int       `json:"number"`
+	URL               string    `json:"url"`
+	HeadSHA           string    `json:"head_sha"`
+	SourceRepo        string    `json:"source_repository"`
+	SourceBranch      string    `json:"source_branch"`
+	Project           Project   `json:"project"`
+	Workspace         Workspace `json:"workspace"`
 }
 
 type ImportStatus string

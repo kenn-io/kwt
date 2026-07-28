@@ -117,7 +117,11 @@ use either the registered or resolved repository URL during that transition.
 Existing imports from the same project clone remain discoverable through the
 verified alias pair; the next import migrates their repository, project,
 same-repository source, workspace, and record-key identities to the resolved
-repository atomically.
+repository atomically. Provenance retains the canonical alias history so later
+transfers remain connected through a previously verified identity. Protected
+attachment requires that history to overlap the live registered identity and
+validates the recorded deterministic session against its own historical
+repository identity.
 
 ## Authentication
 
