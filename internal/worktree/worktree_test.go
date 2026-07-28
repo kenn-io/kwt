@@ -552,6 +552,8 @@ func TestManagerValidateWorktreePath(t *testing.T) {
 }
 
 func TestGenerateWorktreePath(t *testing.T) {
+	defaultBaseDir := filepath.Join(t.TempDir(), "base")
+	perRepoBaseDir := filepath.Join(t.TempDir(), "per-repo-base")
 	tests := []struct {
 		name               string
 		branch             string
@@ -561,7 +563,7 @@ func TestGenerateWorktreePath(t *testing.T) {
 		repositorySettings []models.RepositorySetting
 		mainRepoPathError  error
 		wantErr            bool
-		wantBaseDir        string // if non-empty, overrides "/base" in expected path
+		wantBaseDir        string
 	}{
 		{
 			name:       "BasicTemplate",
@@ -587,10 +589,10 @@ func TestGenerateWorktreePath(t *testing.T) {
 			repoName: "myrepo",
 			repoPath: "/mock/repo/path",
 			repositorySettings: []models.RepositorySetting{
-				{Repository: "/mock/repo/path", BaseDir: "/per-repo-base"},
+				{Repository: "/mock/repo/path", BaseDir: perRepoBaseDir},
 			},
 			wantSuffix:  "github.com/test-user/test-repo/feature-test",
-			wantBaseDir: "/per-repo-base",
+			wantBaseDir: perRepoBaseDir,
 		},
 		{
 			name:     "PerRepoBaseDirEmpty",
@@ -608,7 +610,7 @@ func TestGenerateWorktreePath(t *testing.T) {
 			repoName:          "myrepo",
 			mainRepoPathError: errors.New("git error"),
 			repositorySettings: []models.RepositorySetting{
-				{Repository: "/mock/repo/path", BaseDir: "/per-repo-base"},
+				{Repository: "/mock/repo/path", BaseDir: perRepoBaseDir},
 			},
 			wantErr: true,
 		},
@@ -624,7 +626,7 @@ func TestGenerateWorktreePath(t *testing.T) {
 
 			config := &models.Config{
 				Worktree: models.WorktreeConfig{
-					BaseDir: "/base",
+					BaseDir: defaultBaseDir,
 				},
 				RepositorySettings: tt.repositorySettings,
 			}
@@ -642,7 +644,7 @@ func TestGenerateWorktreePath(t *testing.T) {
 				t.Fatalf("generateWorktreePath() error = %v", err)
 			}
 
-			baseDir := "/base"
+			baseDir := defaultBaseDir
 			if tt.wantBaseDir != "" {
 				baseDir = tt.wantBaseDir
 			}

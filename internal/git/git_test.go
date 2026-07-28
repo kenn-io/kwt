@@ -764,24 +764,31 @@ func TestListAvailableBranchesPreservesDelimiterCharacters(t *testing.T) {
 	gitOutput(t, filepath.Dir(remotePath), "init", "--bare", "-b", "main", remotePath)
 	gitOutput(t, repo.Path, "remote", "add", "origin", remotePath)
 
-	repo.CreateBranch(t, "topic|review")
+	branchName := "topic|review"
+	if runtime.GOOS == "windows" {
+		// NTFS cannot materialize a loose ref containing "|". The commit
+		// subject still exercises NUL-delimited parsing on Windows, while the
+		// ref-name case runs on filesystems that support it.
+		branchName = "topic-review"
+	}
+	repo.CreateBranch(t, branchName)
 	commitTestFile(t, repo.Path, "topic.txt", "topic\n", "Subject | details")
-	gitOutput(t, repo.Path, "push", "origin", "topic|review")
+	gitOutput(t, repo.Path, "push", "origin", branchName)
 	gitOutput(t, repo.Path, "checkout", "main")
-	gitOutput(t, repo.Path, "branch", "-D", "topic|review")
+	gitOutput(t, repo.Path, "branch", "-D", branchName)
 
 	branches, err := New(repo.Path).ListAvailableBranches()
 	if err != nil {
 		t.Fatalf("ListAvailableBranches() error = %v", err)
 	}
 
-	const source = "refs/remotes/origin/topic|review"
+	source := "refs/remotes/origin/" + branchName
 	for _, branch := range branches {
 		if branch.Source != source {
 			continue
 		}
-		if branch.Name != "topic|review" {
-			t.Errorf("branch name = %q, want topic|review", branch.Name)
+		if branch.Name != branchName {
+			t.Errorf("branch name = %q, want %s", branch.Name, branchName)
 		}
 		if branch.LastCommit.Message != "Subject | details" {
 			t.Errorf(
