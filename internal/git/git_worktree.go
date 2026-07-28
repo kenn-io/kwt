@@ -194,6 +194,7 @@ func (g *Git) checkoutIsolationArgs(
 	if workDir != "" {
 		configArgs = append(configArgs, "-C", workDir)
 	}
+	configArgs = append(configArgs, "-c", "submodule.recurse=false")
 	configArgs = append(configArgs, "config", "--null", "--list")
 	output, err := g.runWithoutCredentials(protectedNames, configArgs...)
 	if err != nil {
@@ -239,11 +240,12 @@ func (g *Git) checkoutIsolationArgs(
 	}
 	sort.Strings(driverNames)
 
-	args := make([]string, 0, 4+len(hookNames)*2+len(driverNames)*6)
+	args := make([]string, 0, 6+len(hookNames)*2+len(driverNames)*6)
 	args = append(
 		args,
 		"-c", "core.hooksPath="+hooksDir,
 		"-c", "core.fsmonitor=false",
+		"-c", "submodule.recurse=false",
 	)
 	for _, hook := range hookNames {
 		args = append(args, "-c", "hook."+hook+".enabled=false")
@@ -275,7 +277,7 @@ func (g *Git) checkoutIsolatedWorktree(
 	}
 	args := []string{"-C", path}
 	args = append(args, isolationArgs...)
-	args = append(args, "checkout", "--force")
+	args = append(args, "checkout", "--force", "--no-recurse-submodules")
 	if _, err := g.runWithoutCredentials(protectedNames, args...); err != nil {
 		return err
 	}

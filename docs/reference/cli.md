@@ -55,7 +55,9 @@ commands, or launches a workspace; `--layout` and `--select-layout` are rejected
 Git branch mutation and checkout run with an empty hooks directory, configured
 smudge and process filters disabled, and kwt credential variables removed.
 Environment references in the source-derived branch name remain literal when
-kwt builds the destination path.
+kwt builds the destination path. Submodules are not recursively updated during
+creation; inspect the superproject first, then update submodules explicitly
+after acknowledgement.
 
 The created worktree remains marked unreviewed, so automatic status collection
 does not run Git inside it and fleet publication omits it. Review the checkout
@@ -63,7 +65,8 @@ and run `kwt open <worktree>` as the explicit acknowledgement that re-enables
 normal inspection and opts in to its layout and pane commands.
 
 `kwt branches --json` emits only candidates not already checked out, with
-`name`, full source ref, and `is_remote` fields for interactive clients.
+`name`, a source-qualified display `label`, the full source ref, and
+`is_remote` fields for interactive clients.
 
 ## `kwt open`
 

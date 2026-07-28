@@ -609,6 +609,70 @@ func TestAddWorktreeExistingDisablesCheckoutHooks(t *testing.T) {
 	}
 }
 
+func TestAddWorktreeExistingDoesNotRecurseIntoSubmodules(t *testing.T) {
+	submodule := NewTestRepository(t)
+	if err := os.WriteFile(
+		filepath.Join(submodule.Path, ".gitattributes"),
+		[]byte("payload.txt filter=submodule-attack\n"),
+		0644,
+	); err != nil {
+		t.Fatalf("write submodule attributes: %v", err)
+	}
+	gitOutput(t, submodule.Path, "add", ".gitattributes")
+	commitTestFile(t, submodule.Path, "payload.txt", "payload\n", "Payload")
+
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "existing-unreviewed")
+	gitOutput(
+		t,
+		repo.Path,
+		"-c",
+		"protocol.file.allow=always",
+		"submodule",
+		"add",
+		submodule.Path,
+		"dependency",
+	)
+	gitOutput(t, repo.Path, "commit", "-am", "Add dependency")
+	gitOutput(t, repo.Path, "checkout", "main")
+
+	filterMarker := filepath.Join(t.TempDir(), "submodule-filter-ran")
+	filterCommand := filepath.Join(t.TempDir(), "submodule-filter")
+	if err := os.WriteFile(
+		filterCommand,
+		fmt.Appendf(nil, "#!/bin/sh\nprintf filter > %q\ncat\n", filterMarker),
+		0755,
+	); err != nil {
+		t.Fatalf("write submodule filter: %v", err)
+	}
+	gitOutput(
+		t,
+		filepath.Join(repo.Path, "dependency"),
+		"config",
+		"filter.submodule-attack.smudge",
+		filterCommand,
+	)
+	gitOutput(t, repo.Path, "config", "submodule.recurse", "true")
+
+	worktreePath := filepath.Join(t.TempDir(), "existing-unreviewed")
+	if err := New(repo.Path).AddWorktreeExisting(
+		worktreePath,
+		"existing-unreviewed",
+		nil,
+	); err != nil {
+		t.Fatalf("AddWorktreeExisting() error = %v", err)
+	}
+
+	if _, err := os.Stat(filterMarker); !os.IsNotExist(err) {
+		t.Errorf("submodule filter ran before review: stat error = %v", err)
+	}
+	if _, err := os.Stat(
+		filepath.Join(worktreePath, "dependency", "payload.txt"),
+	); !os.IsNotExist(err) {
+		t.Errorf("submodule content materialized before review: stat error = %v", err)
+	}
+}
+
 func TestRemoveWorktree(t *testing.T) {
 	repo := NewTestRepository(t)
 	g := New(repo.Path)
@@ -846,6 +910,39 @@ func TestListAvailableBranchesUsesFullRefsAcrossNamespaceCollisions(t *testing.T
 	const remoteSource = "refs/remotes/team/upstream/topic"
 	if got := bySource[remoteSource]; got.Name != "topic" || !got.IsRemote {
 		t.Errorf("remote collision branch = %+v, want topic from %s", got, remoteSource)
+	}
+}
+
+func TestListAvailableBranchesLabelsDuplicateRemoteNamesBySource(t *testing.T) {
+	repo := NewTestRepository(t)
+	for _, remote := range []string{"origin", "upstream"} {
+		remotePath := filepath.Join(t.TempDir(), remote+".git")
+		gitOutput(t, filepath.Dir(remotePath), "init", "--bare", "-b", "main", remotePath)
+		gitOutput(t, repo.Path, "remote", "add", remote, remotePath)
+	}
+	repo.CreateBranch(t, "topic")
+	commitTestFile(t, repo.Path, "topic.txt", "topic\n", "Topic")
+	gitOutput(t, repo.Path, "push", "origin", "topic")
+	gitOutput(t, repo.Path, "push", "upstream", "topic")
+	gitOutput(t, repo.Path, "checkout", "main")
+	gitOutput(t, repo.Path, "branch", "-D", "topic")
+
+	branches, err := New(repo.Path).ListAvailableBranches()
+	if err != nil {
+		t.Fatalf("ListAvailableBranches() error = %v", err)
+	}
+
+	labels := make(map[string]string)
+	for _, branch := range branches {
+		if branch.Name == "topic" {
+			labels[branch.Source] = branch.Label
+		}
+	}
+	if got := labels["refs/remotes/origin/topic"]; got != "topic (origin/topic)" {
+		t.Errorf("origin label = %q, want source-qualified label", got)
+	}
+	if got := labels["refs/remotes/upstream/topic"]; got != "topic (upstream/topic)" {
+		t.Errorf("upstream label = %q, want source-qualified label", got)
 	}
 }
 

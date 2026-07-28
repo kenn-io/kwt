@@ -4,9 +4,11 @@ package template
 import (
 	"crypto/sha256"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
+	"text/template/parse"
 
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
@@ -40,6 +42,53 @@ func New(templateStr string, sanitizeChars map[string]string) (*Processor, error
 		template:      tmpl,
 		sanitizeChars: sanitizeChars,
 	}, nil
+}
+
+// NewWithEnvironment creates a processor for trusted global configuration.
+// Environment references expand only in literal template text and replacement
+// values, never inside template actions or branch-derived data.
+func NewWithEnvironment(
+	templateStr string,
+	sanitizeChars map[string]string,
+) (*Processor, error) {
+	processor, err := New(templateStr, sanitizeChars)
+	if err != nil {
+		return nil, err
+	}
+	for _, tmpl := range processor.template.Templates() {
+		if tmpl.Tree != nil {
+			expandLiteralText(tmpl.Root)
+		}
+	}
+	expandedSanitizeChars := make(map[string]string, len(sanitizeChars))
+	for old, replacement := range sanitizeChars {
+		expandedSanitizeChars[old] = os.ExpandEnv(replacement)
+	}
+	processor.sanitizeChars = expandedSanitizeChars
+	return processor, nil
+}
+
+func expandLiteralText(node parse.Node) {
+	switch current := node.(type) {
+	case *parse.ListNode:
+		if current == nil {
+			return
+		}
+		for _, child := range current.Nodes {
+			expandLiteralText(child)
+		}
+	case *parse.TextNode:
+		current.Text = []byte(os.ExpandEnv(string(current.Text)))
+	case *parse.IfNode:
+		expandLiteralText(current.List)
+		expandLiteralText(current.ElseList)
+	case *parse.RangeNode:
+		expandLiteralText(current.List)
+		expandLiteralText(current.ElseList)
+	case *parse.WithNode:
+		expandLiteralText(current.List)
+		expandLiteralText(current.ElseList)
+	}
 }
 
 // GeneratePath generates a worktree path using the configured template.

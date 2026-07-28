@@ -179,6 +179,9 @@ func (r *Registry) Register(entry *WorktreeEntry) error {
 		copied.RegisteredAt = time.Now()
 	}
 	return r.mutate(func(entries map[string]*WorktreeEntry) bool {
+		for _, key := range matchingRegistryKeys(entries, copied.Path) {
+			delete(entries, key)
+		}
 		entries[copied.Path] = &copied
 		return true
 	})
@@ -187,11 +190,11 @@ func (r *Registry) Register(entry *WorktreeEntry) error {
 // Unregister removes a worktree entry by path.
 func (r *Registry) Unregister(path string) error {
 	return r.mutate(func(entries map[string]*WorktreeEntry) bool {
-		if _, ok := entries[path]; !ok {
-			return false
+		keys := matchingRegistryKeys(entries, path)
+		for _, key := range keys {
+			delete(entries, key)
 		}
-		delete(entries, path)
-		return true
+		return len(keys) > 0
 	})
 }
 
@@ -250,12 +253,14 @@ func (r *Registry) IsUnreviewedRemoteSource(path string) bool {
 // preserving any other registry metadata such as its expiration.
 func (r *Registry) AcknowledgeRemoteSource(path string) error {
 	return r.mutate(func(entries map[string]*WorktreeEntry) bool {
-		entry, ok := entryForPath(entries, path)
-		if !ok || !entry.UnreviewedRemoteSource {
-			return false
+		changed := false
+		for _, key := range matchingRegistryKeys(entries, path) {
+			if entries[key].UnreviewedRemoteSource {
+				entries[key].UnreviewedRemoteSource = false
+				changed = true
+			}
 		}
-		entry.UnreviewedRemoteSource = false
-		return true
+		return changed
 	})
 }
 
@@ -277,6 +282,21 @@ func entryForPath(
 		}
 	}
 	return nil, false
+}
+
+func matchingRegistryKeys(
+	entries map[string]*WorktreeEntry,
+	path string,
+) []string {
+	want := comparableRegistryPath(path)
+	keys := make([]string, 0, 1)
+	for key, entry := range entries {
+		if key == path || entry.Path == path ||
+			comparableRegistryPath(entry.Path) == want {
+			keys = append(keys, key)
+		}
+	}
+	return keys
 }
 
 func comparableRegistryPath(path string) string {

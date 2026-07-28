@@ -169,6 +169,52 @@ func TestRegistryAcknowledgesUnreviewedRemoteSourceWithoutLosingExpiration(
 	}
 }
 
+func TestRegistryMutationsTreatSymlinkAliasesAsOneWorktree(t *testing.T) {
+	root := t.TempDir()
+	worktreePath := filepath.Join(root, "worktree")
+	if err := os.MkdirAll(worktreePath, 0755); err != nil {
+		t.Fatalf("create worktree path: %v", err)
+	}
+	aliasPath := filepath.Join(root, "worktree-alias")
+	if err := os.Symlink(worktreePath, aliasPath); err != nil {
+		t.Skipf("symbolic links are not supported or allowed: %v", err)
+	}
+	r := &Registry{
+		entries: make(map[string]*WorktreeEntry),
+		path:    filepath.Join(root, "registry.json"),
+	}
+	if err := r.Register(&WorktreeEntry{
+		Path:                   worktreePath,
+		Branch:                 "first",
+		UnreviewedRemoteSource: true,
+	}); err != nil {
+		t.Fatalf("Register(real path) error = %v", err)
+	}
+	if err := r.Register(&WorktreeEntry{
+		Path:                   aliasPath,
+		Branch:                 "latest",
+		UnreviewedRemoteSource: true,
+	}); err != nil {
+		t.Fatalf("Register(alias path) error = %v", err)
+	}
+
+	if got := r.List(); len(got) != 1 || got[0].Branch != "latest" {
+		t.Fatalf("List() = %+v, want one latest alias registration", got)
+	}
+	if err := r.AcknowledgeRemoteSource(worktreePath); err != nil {
+		t.Fatalf("AcknowledgeRemoteSource(real path) error = %v", err)
+	}
+	if r.IsUnreviewedRemoteSource(aliasPath) {
+		t.Fatal("alias remained unreviewed after canonical path acknowledgement")
+	}
+	if err := r.Unregister(worktreePath); err != nil {
+		t.Fatalf("Unregister(real path) error = %v", err)
+	}
+	if got := r.List(); len(got) != 0 {
+		t.Fatalf("List() after unregister = %+v, want empty registry", got)
+	}
+}
+
 func TestRegistryConcurrentRegistrationsPreserveBothMarkers(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.json")
 	left := &Registry{entries: make(map[string]*WorktreeEntry), path: path}

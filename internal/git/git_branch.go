@@ -62,6 +62,7 @@ func (g *Git) ListBranches(includeRemote bool) ([]models.Branch, error) {
 
 		branches = append(branches, models.Branch{
 			Name:      name,
+			Label:     name,
 			Source:    source,
 			IsCurrent: isCurrent,
 			IsRemote:  isRemote,
@@ -124,9 +125,15 @@ func (g *Git) ListAvailableBranches() ([]models.Branch, error) {
 			continue
 		}
 		branch.Name = name
+		branch.Label = remoteBranchLabel(name, branch.Source)
 		available = append(available, branch)
 	}
 	return available, nil
+}
+
+func remoteBranchLabel(name string, source string) string {
+	source = strings.TrimPrefix(source, "refs/remotes/")
+	return fmt.Sprintf("%s (%s)", name, source)
 }
 
 func (g *Git) remoteNames() ([]string, error) {

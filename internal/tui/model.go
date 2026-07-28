@@ -765,7 +765,7 @@ func (m Model) handleInputKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 				return m, nil
 			}
 			row := m.selectedRow()
-			return m.startCreateWorktree(row, branch, "")
+			return m.startCreateWorktree(row, branch, "", branch)
 		case inputFilter:
 			m.inputMode = inputNone
 			m.input.Blur()
@@ -782,7 +782,15 @@ func (m Model) handleInputKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	return m.updateTextInput(msg)
 }
 
-func (m Model) startCreateWorktree(row Row, branch, source string) (Model, tea.Cmd) {
+func (m Model) startCreateWorktree(
+	row Row,
+	branch string,
+	source string,
+	display string,
+) (Model, tea.Cmd) {
+	if strings.TrimSpace(display) == "" {
+		display = branch
+	}
 	planned, err := m.backend.PreviewWorktree(row, branch)
 	if err != nil {
 		m.err = err
@@ -801,13 +809,24 @@ func (m Model) startCreateWorktree(row Row, branch, source string) (Model, tea.C
 		}
 		return m, nil
 	}
+	if source != "" && planned.Entry != nil {
+		entry := *planned.Entry
+		entry.Branch = display
+		planned.Entry = &entry
+	}
 	planned.Creating = true
 	m.creating = append(m.creating, pendingPath)
 	m.rows = append(m.rows, planned)
 	sortRows(m.rows)
 	m.cursor = indexByPath(m.filteredRows(), pendingPath)
-	m.message = fmt.Sprintf("creating %s", branch)
-	return m, m.createWorktreeCmd(row, branch, source, pendingPath)
+	m.message = fmt.Sprintf("creating %s", display)
+	return m, m.createWorktreeCmd(
+		row,
+		branch,
+		source,
+		display,
+		pendingPath,
+	)
 }
 
 func (m Model) handlePaste(msg tea.PasteMsg) (Model, tea.Cmd) {
@@ -903,7 +922,12 @@ func (m Model) handleExistingBranchKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.input.SetValue("")
 		m.branches = nil
 		m.branchRow = Row{}
-		return m.startCreateWorktree(row, branch.Name, branch.Source)
+		return m.startCreateWorktree(
+			row,
+			branch.Name,
+			branch.Source,
+			branchDisplayLabel(branch),
+		)
 	case tea.KeyUp:
 		m.branchCursor = clampCursor(m.branchCursor-1, len(m.branchOptions()))
 		return m, nil
@@ -1263,7 +1287,13 @@ func (m Model) listBranchesCmd(row Row) tea.Cmd {
 	}
 }
 
-func (m Model) createWorktreeCmd(row Row, branch, source, pendingPath string) tea.Cmd {
+func (m Model) createWorktreeCmd(
+	row Row,
+	branch string,
+	source string,
+	display string,
+	pendingPath string,
+) tea.Cmd {
 	return func() tea.Msg {
 		path, err := m.backend.CreateWorktree(
 			context.Background(),
@@ -1274,9 +1304,12 @@ func (m Model) createWorktreeCmd(row Row, branch, source, pendingPath string) te
 		if err != nil {
 			return actionDoneMsg{err: err, pendingPath: pendingPath}
 		}
-		message := fmt.Sprintf("created %s", branch)
+		message := fmt.Sprintf("created %s", display)
 		if source != "" {
-			message = fmt.Sprintf("created %s; review it before attaching", branch)
+			message = fmt.Sprintf(
+				"created %s; review it before attaching",
+				display,
+			)
 		}
 		return actionDoneMsg{
 			message:     message,
@@ -1640,7 +1673,9 @@ func (m Model) branchOptions() []models.Branch {
 	tokens := strings.Fields(query)
 	filtered := make([]models.Branch, 0, len(m.branches))
 	for _, branch := range m.branches {
-		haystack := strings.ToLower(branch.Name + " " + branch.Source)
+		haystack := strings.ToLower(
+			branch.Name + " " + branch.Label + " " + branch.Source,
+		)
 		matches := true
 		for _, token := range tokens {
 			if !strings.Contains(haystack, token) {
@@ -1818,12 +1853,12 @@ func (m Model) renderExistingBranchView() string {
 			if index == selected {
 				cursor = "▸"
 			}
+			label := branchDisplayLabel(branch)
 			location := "local"
 			if branch.IsRemote {
-				source := strings.TrimPrefix(branch.Source, "refs/remotes/")
-				location = "remote · " + source
+				location = "remote"
 			}
-			line := fmt.Sprintf("%s %-32s %s", cursor, branch.Name, location)
+			line := fmt.Sprintf("%s %-48s %s", cursor, label, location)
 			if index == selected {
 				line = m.theme.cursor.Render(line)
 			}
@@ -1843,6 +1878,19 @@ func (m Model) renderExistingBranchView() string {
 
 	b.WriteString(renderHelpTable(inputHelpRows(inputExistingBranch), m.width))
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func branchDisplayLabel(branch models.Branch) string {
+	if label := strings.TrimSpace(branch.Label); label != "" {
+		return label
+	}
+	if branch.IsRemote {
+		source := strings.TrimPrefix(branch.Source, "refs/remotes/")
+		if source != "" {
+			return fmt.Sprintf("%s (%s)", branch.Name, source)
+		}
+	}
+	return branch.Name
 }
 
 func (m Model) projectSwitchVisibleRows() int {

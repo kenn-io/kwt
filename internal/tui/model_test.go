@@ -759,6 +759,46 @@ func TestModelExistingBranchPickerCreatesSelectedRemote(t *testing.T) {
 	assert.Equal(t, []string{"refs/remotes/origin/remote-ready"}, backend.createSources)
 }
 
+func TestModelExistingBranchPickerPreviewsDuplicateRemoteSource(t *testing.T) {
+	backend := &fakeBackend{
+		createPath: "/w/kwt/topic",
+		branches: []models.Branch{
+			{
+				Name:     "topic",
+				Label:    "topic (origin/topic)",
+				Source:   "refs/remotes/origin/topic",
+				IsRemote: true,
+			},
+			{
+				Name:     "topic",
+				Label:    "topic (upstream/topic)",
+				Source:   "refs/remotes/upstream/topic",
+				IsRemote: true,
+			},
+		},
+	}
+	model := NewModel(backend, "/worktrees")
+	model, _ = updateModel(t, model, rowsMsg{rows: []Row{
+		testRow("kwt", "main", "/w/kwt/main"),
+	}})
+
+	model, loadCmd := updateModel(t, model, press("b"))
+	require.NotNil(t, loadCmd)
+	model, _ = updateModel(t, model, loadCmd())
+	content := stripANSI(viewContent(model))
+	assert.Contains(t, content, "topic (origin/topic)")
+	assert.Contains(t, content, "topic (upstream/topic)")
+
+	model, _ = updateModel(t, model, paste("upstream"))
+	model, createCmd := updateModel(t, model, press("enter"))
+
+	require.NotNil(t, createCmd)
+	require.NotNil(t, model.selectedRow().Entry)
+	assert.Equal(t, "topic (upstream/topic)", model.selectedRow().Entry.Branch)
+	_ = createCmd()
+	assert.Equal(t, []string{"refs/remotes/upstream/topic"}, backend.createSources)
+}
+
 func TestModelExistingLocalBranchRequiresReviewBeforeAttaching(t *testing.T) {
 	backend := &fakeBackend{
 		createPath: "/w/kwt/local-ready",

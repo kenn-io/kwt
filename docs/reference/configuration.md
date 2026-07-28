@@ -47,7 +47,10 @@ Repository-local path fields cannot reference environment variables, including
 influenced by repository-local naming are not environment-expanded after
 rendering, so a template cannot synthesize a reference. Environment expansion
 remains available for paths in the global configuration and for explicit
-command-line paths.
+command-line paths. In a global naming template, expansion applies only to
+literal template text, preserving Go template variables inside actions.
+Global `naming.sanitize_chars` replacement values expand before branch
+sanitization.
 
 Pane entries are shell commands. `agent:<name>` expands through the `[agents]`
 table before tmux starts, so command flags live in one local config file.
