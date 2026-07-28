@@ -44,6 +44,7 @@ func TestStripEnvNamesSelectsExactAndPrefix(t *testing.T) {
 func TestStripEnvNamesCoversFullCanonicalSet(t *testing.T) {
 	env := []string{
 		"__CFBundleIdentifier=com.example.Terminal",
+		"KWT_FLEET_TOKEN=secret",
 		"KWT_GITHUB_TOKEN=secret",
 		"OLDPWD=/old",
 		"PROMPT=$ ",
@@ -70,6 +71,7 @@ func TestStripEnvNamesCoversFullCanonicalSet(t *testing.T) {
 
 	want := []string{
 		"__CFBundleIdentifier",
+		"KWT_FLEET_TOKEN",
 		"KWT_GITHUB_TOKEN",
 		"OLDPWD",
 		"PROMPT",
@@ -98,7 +100,7 @@ func TestCanonicalStripExactNamesIsSortedAndComplete(t *testing.T) {
 	got := CanonicalStripExactNames()
 
 	want := []string{
-		"EDITOR", "KWT_GITHUB_TOKEN", "OLDPWD", "PROMPT", "PROMPT_COMMAND",
+		"EDITOR", "KWT_FLEET_TOKEN", "KWT_GITHUB_TOKEN", "OLDPWD", "PROMPT", "PROMPT_COMMAND",
 		"PWD", "RPROMPT", "SHLVL", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "VISUAL",
 		"WINDOWID", "_", "__CFBundleIdentifier",
 	}

@@ -74,9 +74,29 @@ func (g *Git) AddWorktree(path, branch string, createBranch bool) error {
 // AddWorktreeTracking creates a local branch and worktree that track a
 // specific remote branch.
 func (g *Git) AddWorktreeTracking(path, branch, remoteBranch string) error {
-	if _, err := g.run(
-		"worktree", "add", "--track", "-b", branch, path, remoteBranch,
+	if _, err := g.runWithoutKWTCredentials(
+		"branch", "--track", branch, remoteBranch,
 	); err != nil {
+		return fmt.Errorf(
+			"failed to create branch tracking %s: %w",
+			remoteBranch,
+			err,
+		)
+	}
+	if _, err := g.runWithoutKWTCredentials(
+		"worktree", "add", path, branch,
+	); err != nil {
+		if _, rollbackErr := g.runWithoutKWTCredentials(
+			"branch", "-D", branch,
+		); rollbackErr != nil {
+			return fmt.Errorf(
+				"failed to add worktree tracking %s: %w (failed to remove branch %s: %v)",
+				remoteBranch,
+				err,
+				branch,
+				rollbackErr,
+			)
+		}
 		return fmt.Errorf(
 			"failed to add worktree tracking %s: %w",
 			remoteBranch,

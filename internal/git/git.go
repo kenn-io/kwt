@@ -60,6 +60,31 @@ func (g *Git) run(args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
+// runWithoutKWTCredentials executes a Git operation that may run checkout
+// hooks or filters against untrusted content without exposing kwt tokens.
+func (g *Git) runWithoutKWTCredentials(args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	if g.workDir != "" {
+		cmd.Dir = g.workDir
+	}
+	cmd.Env = make([]string, 0, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		name, _, ok := strings.Cut(entry, "=")
+		if ok && (name == "KWT_GITHUB_TOKEN" || name == "KWT_FLEET_TOKEN") {
+			continue
+		}
+		cmd.Env = append(cmd.Env, entry)
+	}
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), stderr.String())
+	}
+	return stdout.String(), nil
+}
+
 // runWithContext executes a git command with context support.
 func (g *Git) runWithContext(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)

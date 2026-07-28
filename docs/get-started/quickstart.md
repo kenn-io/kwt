@@ -65,9 +65,18 @@ kwt add feature/local
 kwt add --from origin/feature/review feature/review
 ```
 
-By default, `kwt add` creates the worktree and launches a tmux workspace — a
-blank single-pane session unless a [layout](../reference/configuration.md) is
-selected. To create without launching:
+An existing remote branch is untrusted until you inspect it. Remote-source
+creation skips `copy_files`, `setup_commands`, and workspace launch. After
+reviewing the checkout, explicitly create and attach its workspace:
+
+```sh
+kwt open "$(kwt get feature/review)"
+```
+
+For local and newly created branches, `kwt add` launches a tmux workspace by
+default — a blank single-pane session unless a
+[layout](../reference/configuration.md) is selected. To create without
+launching:
 
 ```sh
 kwt add --no-launch -b feature/new-ui

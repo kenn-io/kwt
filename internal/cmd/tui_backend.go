@@ -47,6 +47,7 @@ type tuiBackend struct {
 	registerWorkspace         func(models.Workspace) (models.Workspace, error)
 	unregisterWorkspace       func(name string) error
 	readFleetState            func(context.Context, *models.Config) (fleet.FleetState, error)
+	loadTargetConfig          func(string, bool) (*models.Config, error)
 	now                       func() time.Time
 }
 
@@ -76,6 +77,7 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 		registerWorkspace:        config.RegisterWorkspace,
 		unregisterWorkspace:      config.UnregisterWorkspace,
 		readFleetState:           readTUIFleetState,
+		loadTargetConfig:         config.LoadForTarget,
 		now:                      time.Now,
 	}
 }
@@ -874,9 +876,11 @@ func (b *tuiBackend) CreateWorktree(
 	if row.Entry == nil {
 		return "", fmt.Errorf("no worktree selected")
 	}
-	manager := worktree.New(git.New(row.Entry.Path), b.cfg)
+	manager, err := b.worktreeManager(row)
+	if err != nil {
+		return "", err
+	}
 	var path string
-	var err error
 	switch source {
 	case "":
 		path, err = manager.Add(branch, "", true)
@@ -906,7 +910,10 @@ func (b *tuiBackend) PreviewWorktree(row dashboard.Row, branch string) (dashboar
 	if row.Entry == nil {
 		return dashboard.Row{}, fmt.Errorf("no worktree selected")
 	}
-	manager := worktree.New(git.New(row.Entry.Path), b.cfg)
+	manager, err := b.worktreeManager(row)
+	if err != nil {
+		return dashboard.Row{}, err
+	}
 	worktreePath, err := manager.PreparePath("", branch)
 	if err != nil {
 		return dashboard.Row{}, err
@@ -922,6 +929,19 @@ func (b *tuiBackend) PreviewWorktree(row dashboard.Row, branch string) (dashboar
 		Entry:  &entry,
 		Status: unknownStatusForEntry(&entry),
 	}, nil
+}
+
+func (b *tuiBackend) worktreeManager(row dashboard.Row) (*worktree.Manager, error) {
+	repositoryGit := git.New(row.Entry.Path)
+	repoRoot, err := repositoryGit.GetMainRepositoryPath()
+	if err != nil {
+		return nil, fmt.Errorf("resolve selected repository root: %w", err)
+	}
+	cfg, err := b.loadTargetConfig(repoRoot, false)
+	if err != nil {
+		return nil, fmt.Errorf("load selected repository config: %w", err)
+	}
+	return worktree.New(repositoryGit, cfg), nil
 }
 
 func (b *tuiBackend) MaterializeWorktree(ctx context.Context, row dashboard.Row) (string, error) {

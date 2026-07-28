@@ -726,7 +726,7 @@ func TestModelExistingBranchPickerCreatesSelectedRemote(t *testing.T) {
 			{Name: "local-ready", Source: "local-ready"},
 			{
 				Name:     "remote-ready",
-				Source:   "origin/remote-ready",
+				Source:   "refs/remotes/origin/remote-ready",
 				IsRemote: true,
 			},
 		},
@@ -744,6 +744,7 @@ func TestModelExistingBranchPickerCreatesSelectedRemote(t *testing.T) {
 	assert.Contains(t, content, "local-ready")
 	assert.Contains(t, content, "remote-ready")
 	assert.Contains(t, content, "origin/remote-ready")
+	assert.NotContains(t, content, "refs/remotes/")
 
 	for _, value := range []string{"r", "e", "m", "o", "t", "e"} {
 		model, _ = updateModel(t, model, press(value))
@@ -752,9 +753,10 @@ func TestModelExistingBranchPickerCreatesSelectedRemote(t *testing.T) {
 	_, createCmd := updateModel(t, model, press("enter"))
 
 	require.NotNil(t, createCmd)
-	_ = createCmd()
+	result := createCmd()
+	assert.Contains(t, result.(actionDoneMsg).message, "review")
 	assert.Equal(t, []string{"/w/kwt/main:remote-ready"}, backend.createCalls)
-	assert.Equal(t, []string{"origin/remote-ready"}, backend.createSources)
+	assert.Equal(t, []string{"refs/remotes/origin/remote-ready"}, backend.createSources)
 }
 
 func TestModelShowsNewWorktreeWhileCreateIsInFlight(t *testing.T) {

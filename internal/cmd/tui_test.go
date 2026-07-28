@@ -1598,12 +1598,54 @@ func TestTUIBackendCreateWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 		Path:   repoPath,
 	}}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	backend.loadTargetConfig = func(string, bool) (*models.Config, error) {
+		return cfg, nil
+	}
 
 	path, err := backend.CreateWorktree(context.Background(), row, "feature/from-tui", "")
 
 	require.NoError(t, err)
 	assert.DirExists(t, path)
 	assert.Equal(t, 1, published)
+}
+
+func TestTUIBackendWorktreeCreationUsesSelectedRepositoryConfig(t *testing.T) {
+	repoPath := newTUITestRepo(t)
+	runTUITestGit(t, repoPath, "remote", "add", "origin", "https://github.com/example/kwt.git")
+	globalBase := filepath.Join(t.TempDir(), "global-worktrees")
+	selectedBase := filepath.Join(t.TempDir(), "selected-worktrees")
+	globalCfg := &models.Config{
+		Worktree: models.WorktreeConfig{BaseDir: globalBase, AutoMkdir: true},
+	}
+	selectedCfg := &models.Config{
+		Worktree: models.WorktreeConfig{BaseDir: selectedBase, AutoMkdir: true},
+	}
+	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
+		Branch: "main",
+		Path:   repoPath,
+	}}
+	backend := newTUIBackendWithLaunchDir(globalCfg, "")
+	backend.loadTargetConfig = func(path string, interactive bool) (*models.Config, error) {
+		expectedRoot, err := filepath.EvalSymlinks(repoPath)
+		require.NoError(t, err)
+		assert.Equal(t, expectedRoot, path)
+		assert.False(t, interactive)
+		return selectedCfg, nil
+	}
+
+	planned, err := backend.PreviewWorktree(row, "feature/selected-config")
+	require.NoError(t, err)
+	path, err := backend.CreateWorktree(
+		context.Background(),
+		row,
+		"feature/selected-config",
+		"",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, planned.Entry.Path, path)
+	assert.True(t, strings.HasPrefix(path, selectedBase+string(os.PathSeparator)))
+	assert.False(t, strings.HasPrefix(path, globalBase+string(os.PathSeparator)))
 }
 
 func TestTUIBackendCreateWorktreeDoesNotExpandRepositoryLocalTemplate(t *testing.T) {
@@ -1624,6 +1666,9 @@ func TestTUIBackendCreateWorktreeDoesNotExpandRepositoryLocalTemplate(t *testing
 		Path:   repoPath,
 	}}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	backend.loadTargetConfig = func(string, bool) (*models.Config, error) {
+		return cfg, nil
+	}
 
 	planned, err := backend.PreviewWorktree(row, "feature/from-tui")
 	require.NoError(t, err)

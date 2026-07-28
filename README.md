@@ -37,6 +37,9 @@ kwt add --no-launch -b feature/new-ui
 # Create a tracking worktree from an existing remote branch
 kwt add --from origin/feature/review feature/review
 
+# After reviewing that checkout, explicitly start its workspace
+kwt open "$(kwt get feature/review)"
+
 # Open a worktree workspace, creating its session when needed
 kwt open
 
@@ -70,6 +73,11 @@ kwt remove -b feature/new-ui
 When `-b` creates a branch, `kwt` fetches `origin` and starts from its default
 branch. If that remote base is unavailable, it falls back to local `main`, then
 `master`, then the branch checked out in the primary worktree.
+
+Remote-source worktrees are inert on creation: `kwt` does not copy configured
+files, run setup commands, or launch a layout against contributor-controlled
+content. Review the checkout first, then use `kwt open` to explicitly create
+and attach its workspace.
 
 ### Dashboard Keys
 
@@ -180,7 +188,8 @@ visible at roughly 100 columns. Select a remote-only branch row and press `s` to
 sync that branch locally. Press `c` on a local row to open a shell there.
 Remote-only sync verifies the created worktree against the hub-reported commit
 when one is available, and skips repository setup (`copy_files` and
-`setup_commands`); those hooks run for locally initiated `kwt add` worktrees.
+`setup_commands`). Remote-source `kwt add --from` worktrees have the same inert
+creation boundary; setup hooks run only for local and newly created branches.
 
 Useful commands:
 

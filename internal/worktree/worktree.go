@@ -71,6 +71,8 @@ func (m *Manager) AddWithOptions(branch string, customPath string, createBranch 
 }
 
 // AddTracking creates a worktree on a local branch that tracks remoteBranch.
+// Repository setup is intentionally deferred: the remote checkout is
+// untrusted until the user has reviewed it.
 func (m *Manager) AddTracking(branch, remoteBranch, customPath string) (string, error) {
 	path, err := m.preparePath(customPath, branch, nil)
 	if err != nil {
@@ -81,7 +83,6 @@ func (m *Manager) AddTracking(branch, remoteBranch, customPath string) (string, 
 		return "", err
 	}
 
-	m.runPostWorktreeSetup(branch, path)
 	return path, nil
 }
 

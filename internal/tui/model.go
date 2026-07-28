@@ -1274,8 +1274,12 @@ func (m Model) createWorktreeCmd(row Row, branch, source, pendingPath string) te
 		if err != nil {
 			return actionDoneMsg{err: err, pendingPath: pendingPath}
 		}
+		message := fmt.Sprintf("created %s", branch)
+		if source != "" && source != branch {
+			message = fmt.Sprintf("created %s; review it before attaching", branch)
+		}
 		return actionDoneMsg{
-			message:     fmt.Sprintf("created %s", branch),
+			message:     message,
 			refresh:     true,
 			anchorPath:  path,
 			pendingPath: pendingPath,
@@ -1816,7 +1820,8 @@ func (m Model) renderExistingBranchView() string {
 			}
 			location := "local"
 			if branch.IsRemote {
-				location = "remote · " + branch.Source
+				source := strings.TrimPrefix(branch.Source, "refs/remotes/")
+				location = "remote · " + source
 			}
 			line := fmt.Sprintf("%s %-32s %s", cursor, branch.Name, location)
 			if index == selected {

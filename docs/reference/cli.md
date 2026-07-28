@@ -50,9 +50,13 @@ default branch. If that remote base is unavailable, it falls back to local
 
 `kwt add <branch>` checks out an existing local branch. Use
 `kwt add --from <remote-ref> <branch>` when a remote candidate must become a
-local tracking branch. `kwt branches --json` emits only candidates not already
-checked out, with `name`, exact `source`, and `is_remote` fields for interactive
-clients.
+local tracking branch. This remote-source path does not copy files, run setup
+commands, or launch a workspace; `--layout` and `--select-layout` are rejected.
+Review the checkout and run `kwt open <worktree>` as the separate opt-in to its
+layout and pane commands.
+
+`kwt branches --json` emits only candidates not already checked out, with
+`name`, full source ref, and `is_remote` fields for interactive clients.
 
 ## `kwt open`
 

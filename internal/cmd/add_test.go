@@ -82,12 +82,14 @@ func TestAddDoesNotPublishWhenValidationFails(t *testing.T) {
 	assert.Zero(t, calls)
 }
 
-func TestAddFromRemoteBranchCreatesTrackingWorktree(t *testing.T) {
+func TestAddFromRemoteBranchCreatesTrackingWorktreeWithoutLaunching(t *testing.T) {
 	resetFleetCommandDeps(t)
 	resetAddCommandFlags(t)
 
 	repoPath := newTUITestRepo(t)
 	initCommandTestConfig(t, t.TempDir())
+	viper.Set("layouts.auto_launch_on_add", true)
+	putFakeTmuxOnPath(t)
 	t.Chdir(repoPath)
 
 	remotePath := filepath.Join(t.TempDir(), "origin.git")
@@ -99,7 +101,6 @@ func TestAddFromRemoteBranchCreatesTrackingWorktree(t *testing.T) {
 	runTUITestGit(t, repoPath, "branch", "-D", "feature/remote")
 
 	addFrom = "origin/feature/remote"
-	addNoLaunch = true
 	worktreePath := filepath.Join(t.TempDir(), "feature-remote")
 
 	cmd, _, _ := fleetTestCommand()
@@ -117,6 +118,26 @@ func TestAddFromRemoteBranchCreatesTrackingWorktree(t *testing.T) {
 			"@{upstream}",
 		)),
 	)
+}
+
+func TestAddFromRemoteBranchRejectsImmediateLayoutLaunch(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetAddCommandFlags(t)
+
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	t.Chdir(repoPath)
+
+	addFrom = "origin/feature/remote"
+	addLayout = "shell"
+	worktreePath := filepath.Join(t.TempDir(), "feature-remote")
+
+	cmd, _, _ := fleetTestCommand()
+	err := runAdd(cmd, []string{"feature/remote", worktreePath})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "inspect the remote checkout")
+	assert.NoDirExists(t, worktreePath)
 }
 
 func TestShouldLaunch(t *testing.T) {

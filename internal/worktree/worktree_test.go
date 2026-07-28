@@ -202,25 +202,40 @@ func TestManagerAdd(t *testing.T) {
 
 func TestManagerAddTrackingUsesRemoteSource(t *testing.T) {
 	baseDir := t.TempDir()
-	mockG := &mockGit{}
+	repoDir := t.TempDir()
+	worktreePath := filepath.Join(baseDir, "remote-worktree")
+	require.NoError(t, os.MkdirAll(worktreePath, 0755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repoDir, "copy-me"),
+		[]byte("untrusted"),
+		0644,
+	))
+	mockG := &mockGit{repoPath: repoDir}
 	manager := New(mockG, &models.Config{
 		Worktree: models.WorktreeConfig{
 			BaseDir:   baseDir,
 			AutoMkdir: true,
 		},
+		RepositorySettings: []models.RepositorySetting{{
+			Repository:    repoDir,
+			CopyFiles:     []string{"copy-me"},
+			SetupCommands: []string{"touch setup-ran"},
+		}},
 	})
 
 	path, err := manager.AddTracking(
 		"feature/remote",
 		"origin/feature/remote",
-		"",
+		worktreePath,
 	)
 
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(baseDir, "github.com", "test-user", "test-repo", "feature-remote"), path)
+	assert.Equal(t, worktreePath, path)
 	require.Len(t, mockG.worktrees, 1)
 	assert.Equal(t, "feature/remote", mockG.worktrees[0].Branch)
 	assert.Equal(t, "origin/feature/remote", mockG.trackingSource)
+	assert.NoFileExists(t, filepath.Join(worktreePath, "copy-me"))
+	assert.NoFileExists(t, filepath.Join(worktreePath, "setup-ran"))
 }
 
 func TestManagerRemove(t *testing.T) {

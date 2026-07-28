@@ -53,6 +53,7 @@ func FirstPanePlaceholderArgv() []string {
 var canonicalStripExact = map[string]bool{
 	"__CFBundleIdentifier": true,
 	"EDITOR":               true,
+	"KWT_FLEET_TOKEN":      true,
 	"KWT_GITHUB_TOKEN":     true,
 	"OLDPWD":               true,
 	"PROMPT":               true,

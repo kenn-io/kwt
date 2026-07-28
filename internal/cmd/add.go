@@ -42,7 +42,8 @@ If that remote base is unavailable, it falls back to local main, then master,
 then the branch checked out in the primary worktree.
 
 Use --from with an exact remote ref to create a local tracking branch and its
-worktree.`,
+worktree. Remote-source worktrees skip repository setup and workspace launch
+until you inspect the checkout and explicitly open it.`,
 	Example: `  # Create worktree from existing branch
   kwt add feature/new-ui
 
@@ -145,13 +146,23 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		// repository identity failure never leaves a stray worktree behind.
 		// Only worktree creation and the tmux attach below are side-effecting,
 		// so they run after this point.
+		layoutRequested := addLayout != "" || addSelectLayout
+		if addFrom != "" && layoutRequested {
+			return fmt.Errorf(
+				"--from cannot be combined with --layout/--select-layout; " +
+					"inspect the remote checkout, then run kwt open",
+			)
+		}
 		launch, err := shouldLaunch(
 			ctx.Config.Layouts.AutoLaunchOnAdd,
-			addLayout != "" || addSelectLayout,
+			layoutRequested,
 			addNoLaunch,
 		)
 		if err != nil {
 			return err
+		}
+		if addFrom != "" {
+			launch = false
 		}
 		var layout models.Layout
 		var info *url.RepositoryInfo
@@ -198,6 +209,13 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		}
 
 		printAddResult(os.Stdout, branch, expiresAt)
+		if addFrom != "" {
+			_, _ = fmt.Fprintf(
+				os.Stdout,
+				"Review the remote checkout, then run 'kwt open %s' to start its workspace.\n",
+				worktreePath,
+			)
+		}
 		publishFleetBestEffortForCommand(cmd, ctx.Config)
 
 		if launch {

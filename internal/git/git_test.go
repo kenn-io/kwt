@@ -716,11 +716,45 @@ func TestListAvailableBranchesNormalizesRemoteAndExcludesCheckedOut(t *testing.T
 	if got := byName["local-ready"]; got.IsRemote || got.Source != "local-ready" {
 		t.Errorf("local-ready = %+v, want available local branch", got)
 	}
-	if got := byName["remote-only"]; !got.IsRemote || got.Source != "origin/remote-only" {
+	if got := byName["remote-only"]; !got.IsRemote ||
+		got.Source != "refs/remotes/origin/remote-only" {
 		t.Errorf("remote-only = %+v, want normalized origin branch", got)
 	}
 	if _, ok := byName["HEAD"]; ok {
 		t.Error("remote symbolic HEAD was offered as a branch")
+	}
+}
+
+func TestListAvailableBranchesUsesFullRefsAcrossNamespaceCollisions(t *testing.T) {
+	repo := NewTestRepository(t)
+	remotePath := filepath.Join(t.TempDir(), "upstream.git")
+	gitOutput(t, filepath.Dir(remotePath), "init", "--bare", "-b", "main", remotePath)
+	gitOutput(t, repo.Path, "remote", "add", "team/upstream", remotePath)
+
+	repo.CreateBranch(t, "topic")
+	commitTestFile(t, repo.Path, "topic.txt", "topic\n", "Topic branch")
+	gitOutput(t, repo.Path, "push", "team/upstream", "topic")
+	gitOutput(t, repo.Path, "checkout", "main")
+	gitOutput(t, repo.Path, "branch", "-D", "topic")
+	gitOutput(t, repo.Path, "branch", "team/upstream/topic")
+	gitOutput(t, repo.Path, "fetch", "team/upstream")
+
+	branches, err := New(repo.Path).ListAvailableBranches()
+	if err != nil {
+		t.Fatalf("ListAvailableBranches() error = %v", err)
+	}
+
+	bySource := make(map[string]models.Branch, len(branches))
+	for _, branch := range branches {
+		bySource[branch.Source] = branch
+	}
+	if got := bySource["team/upstream/topic"]; got.Name != "team/upstream/topic" ||
+		got.IsRemote {
+		t.Errorf("local collision branch = %+v, want canonical local identity", got)
+	}
+	const remoteSource = "refs/remotes/team/upstream/topic"
+	if got := bySource[remoteSource]; got.Name != "topic" || !got.IsRemote {
+		t.Errorf("remote collision branch = %+v, want topic from %s", got, remoteSource)
 	}
 }
 
@@ -736,6 +770,39 @@ func TestAddWorktreeTrackingRemoteBranch(t *testing.T) {
 	gitOutput(t, repo.Path, "push", "origin", "remote-only")
 	gitOutput(t, repo.Path, "checkout", "main")
 	gitOutput(t, repo.Path, "branch", "-D", "remote-only")
+	t.Setenv("KWT_GITHUB_TOKEN", "must-not-reach-remote-checkout")
+	t.Setenv("KWT_FLEET_TOKEN", "must-not-reach-remote-checkout")
+
+	if runtime.GOOS != "windows" {
+		realGit, err := exec.LookPath("git")
+		if err != nil {
+			t.Fatalf("find git executable: %v", err)
+		}
+		wrapperDir := t.TempDir()
+		wrapperPath := filepath.Join(wrapperDir, "git")
+		wrapper := `#!/bin/sh
+if [ "$1" = "branch" ] || { [ "$1" = "worktree" ] && [ "$2" = "add" ]; }; then
+	if [ -n "$KWT_GITHUB_TOKEN" ] || [ -n "$KWT_FLEET_TOKEN" ]; then
+		printf '%s\n' 'kwt credential reached remote-source git command' >&2
+		exit 88
+	fi
+fi
+if [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
+	for arg in "$@"; do
+		if [ "$arg" = "--track" ]; then
+			printf '%s\n' 'error: unknown option track' >&2
+			exit 129
+		fi
+	done
+fi
+exec "$REAL_GIT" "$@"
+`
+		if err := os.WriteFile(wrapperPath, []byte(wrapper), 0755); err != nil {
+			t.Fatalf("write git compatibility wrapper: %v", err)
+		}
+		t.Setenv("REAL_GIT", realGit)
+		t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
 
 	worktreePath := filepath.Join(t.TempDir(), "remote-only")
 	err := New(repo.Path).AddWorktreeTracking(
@@ -751,6 +818,39 @@ func TestAddWorktreeTrackingRemoteBranch(t *testing.T) {
 	}
 	if got := gitOutput(t, worktreePath, "rev-parse", "--abbrev-ref", "@{upstream}"); got != "origin/remote-only" {
 		t.Errorf("upstream = %s, want origin/remote-only", got)
+	}
+}
+
+func TestAddWorktreeTrackingRollsBackBranchWhenWorktreeFails(t *testing.T) {
+	repo := NewTestRepository(t)
+	remotePath := filepath.Join(t.TempDir(), "origin.git")
+	gitOutput(t, filepath.Dir(remotePath), "init", "--bare", "-b", "main", remotePath)
+	gitOutput(t, repo.Path, "remote", "add", "origin", remotePath)
+
+	repo.CreateBranch(t, "remote-only")
+	gitOutput(t, repo.Path, "push", "origin", "remote-only")
+	gitOutput(t, repo.Path, "checkout", "main")
+	gitOutput(t, repo.Path, "branch", "-D", "remote-only")
+
+	occupiedPath := filepath.Join(t.TempDir(), "occupied")
+	if err := os.MkdirAll(occupiedPath, 0755); err != nil {
+		t.Fatalf("create occupied path: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(occupiedPath, "keep"), []byte("keep"), 0644); err != nil {
+		t.Fatalf("write occupied path: %v", err)
+	}
+
+	err := New(repo.Path).AddWorktreeTracking(
+		occupiedPath,
+		"remote-only",
+		"refs/remotes/origin/remote-only",
+	)
+
+	if err == nil {
+		t.Fatal("AddWorktreeTracking() expected an error")
+	}
+	if err := repo.run("show-ref", "--verify", "--quiet", "refs/heads/remote-only"); err == nil {
+		t.Error("local tracking branch remained after worktree creation failed")
 	}
 }
 
