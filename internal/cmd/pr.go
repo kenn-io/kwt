@@ -601,26 +601,15 @@ func defaultNewPRService(
 	cfg *models.Config,
 	project pullrequest.Project,
 ) (prService, pullrequest.Project, error) {
+	requestedRepository, err := pullrequest.RepositoryFromProject(project)
+	if err != nil {
+		return nil, project, err
+	}
 	provider, err := newPRGitHubProvider(ctx)
 	if err != nil {
 		return nil, project, err
 	}
-	info, ok := urlutil.CanonicalRepositoryInfo(project.Identity)
-	if !ok {
-		return nil, project, pullrequest.NewError(
-			pullrequest.CodeUnsupportedProvider,
-			fmt.Sprintf("project %q is not a supported github.com repository", project.Identity),
-			false,
-			nil,
-		)
-	}
-	repository, err := provider.ResolveRepository(ctx, pullrequest.Repository{
-		Provider: "github",
-		Identity: pullrequest.NormalizeRepositoryIdentity(info.FullPath),
-		Host:     info.Host,
-		Owner:    info.Owner,
-		Name:     info.Repository,
-	})
+	repository, err := provider.ResolveRepository(ctx, requestedRepository)
 	if err != nil {
 		return nil, project, err
 	}
@@ -634,6 +623,8 @@ func defaultNewPRService(
 		provider,
 		backend,
 		pullrequest.NewFileStore(prStorePath()),
+		requestedRepository.Identity,
+		repository.Identity,
 	), project, nil
 }
 

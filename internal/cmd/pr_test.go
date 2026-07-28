@@ -405,6 +405,29 @@ func TestDefaultNewPRServiceResolvesTransferredRepository(t *testing.T) {
 	assert.Equal(t, "github.com/acme/widget", resolved.Identity)
 }
 
+func TestDefaultNewPRServiceRejectsNestedRepositoryIdentity(t *testing.T) {
+	oldProvider := newPRGitHubProvider
+	t.Cleanup(func() { newPRGitHubProvider = oldProvider })
+	called := false
+	newPRGitHubProvider = func(context.Context) (*pullrequest.GitHubProvider, error) {
+		called = true
+		return nil, errors.New("must not authenticate")
+	}
+
+	_, _, err := defaultNewPRService(
+		context.Background(),
+		&models.Config{},
+		pullrequest.Project{
+			Identity: "github.com/acme/team/widget",
+			Name:     "widget",
+			Path:     "/repos/widget",
+		},
+	)
+
+	assertPRCode(t, err, pullrequest.CodeUnsupportedProvider)
+	assert.False(t, called)
+}
+
 func TestRunPRImportWritesCreatedAndAlreadyImportedResults(t *testing.T) {
 	for _, status := range []pullrequest.ImportStatus{pullrequest.ImportCreated, pullrequest.ImportExisting} {
 		t.Run(string(status), func(t *testing.T) {

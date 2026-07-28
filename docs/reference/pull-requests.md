@@ -114,6 +114,10 @@ identity. This resolution is operation-local and does not rewrite the
 registered project, whose identity may intentionally name an upstream
 repository while the checkout's origin points to a fork. Import selectors may
 use either the registered or resolved repository URL during that transition.
+Existing imports from the same project clone remain discoverable through the
+verified alias pair; the next import migrates their repository, project,
+same-repository source, workspace, and record-key identities to the resolved
+repository atomically.
 
 ## Authentication
 

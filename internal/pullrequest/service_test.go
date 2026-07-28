@@ -365,6 +365,46 @@ func TestListRecognizesLegacyCasedProvenance(t *testing.T) {
 	assert.Equal(t, &workspace, got[0].Workspace)
 }
 
+func TestListRecognizesTransferredRepositoryProvenance(t *testing.T) {
+	pr := testPR(26, false)
+	backend := newFakeBackend()
+	workspace := Workspace{
+		ID: "ws-26", Repository: testProject().Identity,
+		Branch: "pr-26-feature-widgets", Path: "/worktrees/26", State: "ready",
+	}
+	backend.workspaces = []Workspace{workspace}
+	store := newMemoryStore()
+	legacyIdentity := "github.com/legacy/widget"
+	legacyID := OpaqueID(legacyIdentity, pr.Number)
+	store.records[legacyID] = Provenance{
+		PullRequestID: legacyID,
+		Provider:      "github",
+		Repository:    legacyIdentity,
+		Number:        pr.Number,
+		Project: Project{
+			Identity: legacyIdentity,
+			Path:     testProject().Path,
+		},
+		Workspace:    workspace,
+		SourceRepo:   legacyIdentity,
+		SourceBranch: pr.Source.Name,
+	}
+	service := NewService(
+		&fakeProvider{prs: []PullRequest{pr}},
+		backend,
+		store,
+		legacyIdentity,
+		testProject().Identity,
+	)
+
+	got, err := service.List(context.Background(), testProject(), "open")
+
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.True(t, got[0].Imported)
+	assert.Equal(t, &workspace, got[0].Workspace)
+}
+
 func TestImportSameRepositoryUsesMatchingRemoteAndCanonicalName(t *testing.T) {
 	pr := testPR(31, false)
 	backend := newFakeBackend()
@@ -604,6 +644,95 @@ func TestImportMigratesLegacyCasedProvenance(t *testing.T) {
 	assert.Equal(t, pr.Source.Name, store.records[pr.ID].SourceBranch)
 }
 
+func TestImportMigratesTransferredRepositoryProvenance(t *testing.T) {
+	pr := testPR(49, false)
+	backend := newFakeBackend()
+	workspace := Workspace{
+		ID: "ws-49", Repository: testProject().Identity,
+		Branch: "pr-49-feature-widgets", Path: "/worktrees/49", State: "ready",
+	}
+	backend.workspaces = []Workspace{workspace}
+	store := newMemoryStore()
+	legacyIdentity := "github.com/legacy/widget"
+	legacyID := OpaqueID(legacyIdentity, pr.Number)
+	store.records[legacyID] = Provenance{
+		PullRequestID: legacyID,
+		Provider:      "github",
+		Repository:    legacyIdentity,
+		Number:        pr.Number,
+		Project: Project{
+			Identity: legacyIdentity,
+			Path:     testProject().Path,
+		},
+		Workspace: Workspace{
+			ID: "legacy-ws", Repository: legacyIdentity,
+			Branch: workspace.Branch, Path: workspace.Path, State: "ready",
+		},
+		SourceRepo:   legacyIdentity,
+		SourceBranch: pr.Source.Name,
+	}
+	service := NewService(
+		&fakeProvider{prs: []PullRequest{pr}},
+		backend,
+		store,
+		legacyIdentity,
+		testProject().Identity,
+	)
+
+	result, err := service.Import(context.Background(), testProject(), "49")
+
+	require.NoError(t, err)
+	assert.Equal(t, ImportExisting, result.Status)
+	assert.Zero(t, backend.createCalls)
+	assert.NotContains(t, store.records, legacyID)
+	require.Contains(t, store.records, pr.ID)
+	migrated := store.records[pr.ID]
+	assert.Equal(t, pr.ID, migrated.PullRequestID)
+	assert.Equal(t, pr.Repository.Identity, migrated.Repository)
+	assert.Equal(t, testProject().Identity, migrated.Project.Identity)
+	assert.Equal(t, pr.Source.Repository.Identity, migrated.SourceRepo)
+	assert.Equal(t, workspace, migrated.Workspace)
+}
+
+func TestImportDoesNotTreatProjectAliasAsForkSource(t *testing.T) {
+	pr := testPR(50, true)
+	backend := newFakeBackend()
+	workspace := Workspace{
+		ID: "ws-50", Repository: testProject().Identity,
+		Branch: "pr-50-feature-widgets", Path: "/worktrees/50", State: "ready",
+	}
+	backend.workspaces = []Workspace{workspace}
+	store := newMemoryStore()
+	legacyIdentity := "github.com/legacy/widget"
+	legacyID := OpaqueID(legacyIdentity, pr.Number)
+	store.records[legacyID] = Provenance{
+		PullRequestID: legacyID,
+		Provider:      "github",
+		Repository:    legacyIdentity,
+		Number:        pr.Number,
+		Project: Project{
+			Identity: legacyIdentity,
+			Path:     testProject().Path,
+		},
+		Workspace:    workspace,
+		SourceRepo:   legacyIdentity,
+		SourceBranch: pr.Source.Name,
+	}
+	service := NewService(
+		&fakeProvider{prs: []PullRequest{pr}},
+		backend,
+		store,
+		legacyIdentity,
+		testProject().Identity,
+	)
+
+	_, err := service.Import(context.Background(), testProject(), "50")
+
+	assertErrorCode(t, err, CodeConflict)
+	assert.Zero(t, backend.createCalls)
+	assert.Contains(t, store.records, legacyID)
+}
+
 func TestConcurrentImportConverges(t *testing.T) {
 	pr := testPR(42, false)
 	backend := newFakeBackend()
@@ -666,6 +795,14 @@ func TestImportRejectsRepositoryMismatch(t *testing.T) {
 	_, err := service.Import(context.Background(), testProject(), "53")
 
 	assertErrorCode(t, err, CodeRepositoryMismatch)
+}
+
+func TestRepositoryFromProjectRejectsNestedGitHubPath(t *testing.T) {
+	_, err := RepositoryFromProject(Project{
+		Identity: "github.com/acme/team/widget",
+	})
+
+	assertErrorCode(t, err, CodeUnsupportedProvider)
 }
 
 func TestImportPropagatesTypedProviderFailures(t *testing.T) {
