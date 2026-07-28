@@ -1661,6 +1661,12 @@ func TestTUIBackendExistingLocalBranchRemainsUnreviewed(t *testing.T) {
 			BaseDir:   filepath.Join(t.TempDir(), "worktrees"),
 			AutoMkdir: true,
 		},
+		Naming: models.NamingConfig{
+			Template: "{{.Branch}}",
+			SanitizeChars: map[string]string{
+				"/": "-",
+			},
+		},
 	}
 	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
 		Branch: "main",
