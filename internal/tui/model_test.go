@@ -668,6 +668,7 @@ func TestModelProjectPerspectiveCancelKeepsCurrentProject(t *testing.T) {
 	model, _ = updateModel(t, model, press("P"))
 	model, _ = updateModel(t, model, press("k"))
 	model, _ = updateModel(t, model, press("a"))
+	assert.Equal(t, len("ka"), model.input.Position())
 	model, _ = updateModel(t, model, press("esc"))
 
 	assert.Equal(t, "kwt", model.projectPerspective)
@@ -747,6 +748,7 @@ func TestModelExistingBranchPickerCreatesSelectedRemote(t *testing.T) {
 	for _, value := range []string{"r", "e", "m", "o", "t", "e"} {
 		model, _ = updateModel(t, model, press(value))
 	}
+	assert.Equal(t, len("remote"), model.input.Position())
 	_, createCmd := updateModel(t, model, press("enter"))
 
 	require.NotNil(t, createCmd)

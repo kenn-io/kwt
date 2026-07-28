@@ -935,6 +935,7 @@ func (m Model) appendExistingBranchText(text string) Model {
 		return m
 	}
 	m.input.SetValue(m.input.Value() + b.String())
+	m.input.CursorEnd()
 	m.branchCursor = 0
 	return m
 }
@@ -950,6 +951,7 @@ func (m Model) appendProjectSwitchText(text string) Model {
 		return m
 	}
 	m.input.SetValue(m.input.Value() + b.String())
+	m.input.CursorEnd()
 	m.projectSwitchCursor = clampCursor(0, len(m.projectSwitchOptions()))
 	return m
 }
