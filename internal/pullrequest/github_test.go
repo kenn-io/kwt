@@ -96,6 +96,34 @@ func TestGitHubProviderNormalizesRepositoryIdentityCase(t *testing.T) {
 	assert.Equal(t, "Acme", repository.Owner)
 }
 
+func TestGitHubProviderResolvesTransferredRepository(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/repos/legacy/widget", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"name":"widget",
+			"full_name":"acme/widget",
+			"clone_url":"https://github.com/acme/widget.git",
+			"ssh_url":"git@github.com:acme/widget.git"
+		}`)
+	}))
+	defer server.Close()
+	baseURL := server.URL + "/"
+	client, err := github.NewClient(github.WithURLs(&baseURL, nil))
+	require.NoError(t, err)
+	provider := NewGitHubProvider(client)
+
+	repository, err := provider.ResolveRepository(context.Background(), Repository{
+		Provider: "github", Identity: "github.com/legacy/widget",
+		Host: "github.com", Owner: "legacy", Name: "widget",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "github.com/acme/widget", repository.Identity)
+	assert.Equal(t, "acme", repository.Owner)
+	assert.Equal(t, "widget", repository.Name)
+}
+
 func TestGitHubProviderClassifiesFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

@@ -62,6 +62,21 @@ func NewGitHubProvider(client *github.Client) *GitHubProvider {
 	return &GitHubProvider{client: client}
 }
 
+func (p *GitHubProvider) ResolveRepository(
+	ctx context.Context, repository Repository,
+) (Repository, error) {
+	if p == nil || p.client == nil {
+		return Repository{}, NewError(CodeNetwork, "GitHub client is not configured", false, nil)
+	}
+	githubRepository, _, err := p.client.Repositories.Get(
+		ctx, repository.Owner, repository.Name,
+	)
+	if err != nil {
+		return Repository{}, classifyGitHubError(err, "resolve repository")
+	}
+	return mapGitHubRepository(githubRepository)
+}
+
 func (p *GitHubProvider) List(ctx context.Context, repository Repository, state string) ([]PullRequest, error) {
 	if p == nil || p.client == nil {
 		return nil, NewError(CodeNetwork, "GitHub client is not configured", false, nil)

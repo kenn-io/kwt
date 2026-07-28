@@ -34,6 +34,7 @@ var (
 	loadPRConfig                     = config.Load
 	loadPRTargetConfig               = config.LoadForTarget
 	newPRService                     = defaultNewPRService
+	newPRGitHubProvider              = pullrequest.NewAuthenticatedGitHubProvider
 	validatePRProjectRoot            = defaultValidatePRProjectRoot
 	inspectPRProjectClone            = defaultInspectPRProjectClone
 	validatePRWorkspaceSessionConfig = defaultValidatePRWorkspaceSessionConfig
@@ -107,7 +108,7 @@ func runPRList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return writePRError(cmd, err)
 	}
-	service, _, err := preparePRService(cmd.Context(), project)
+	service, _, project, err := preparePRService(cmd.Context(), project)
 	if err != nil {
 		return writePRError(cmd, err)
 	}
@@ -128,12 +129,19 @@ func runPRImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return writePRError(cmd, err)
 	}
-	if _, err := pullrequest.ParseSelector(args[0], project.Identity); err != nil {
-		return writePRError(cmd, err)
-	}
-	service, cfg, err := preparePRService(cmd.Context(), project)
+	number, err := pullrequest.ParseSelectorNumber(args[0])
 	if err != nil {
 		return writePRError(cmd, err)
+	}
+	registeredIdentity := project.Identity
+	service, cfg, project, err := preparePRService(cmd.Context(), project)
+	if err != nil {
+		return writePRError(cmd, err)
+	}
+	if _, err := pullrequest.ParseSelector(args[0], registeredIdentity); err != nil {
+		if _, resolvedErr := pullrequest.ParseSelector(args[0], project.Identity); resolvedErr != nil {
+			return writePRError(cmd, resolvedErr)
+		}
 	}
 	if prStartSession {
 		if err := validatePRWorkspaceSessionConfig(cfg); err != nil {
@@ -145,7 +153,7 @@ func runPRImport(cmd *cobra.Command, args []string) error {
 			))
 		}
 	}
-	result, err := service.Import(cmd.Context(), project, args[0])
+	result, err := service.Import(cmd.Context(), project, fmt.Sprintf("%d", number))
 	if err != nil {
 		return writePRError(cmd, err)
 	}
@@ -452,21 +460,21 @@ func preparePRProject() (pullrequest.Project, error) {
 func preparePRService(
 	ctx context.Context,
 	project pullrequest.Project,
-) (prService, *models.Config, error) {
+) (prService, *models.Config, pullrequest.Project, error) {
 	project, err := validatePRProjectRoot(project)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, project, err
 	}
 	cfg, err := loadPRTargetConfig(project.Path, false)
 	if err != nil {
-		return nil, nil, pullrequest.NewError(
+		return nil, nil, project, pullrequest.NewError(
 			pullrequest.CodeWorkspaceCreation, "failed to load selected project configuration", false, err)
 	}
-	service, err := newPRService(ctx, cfg, project)
+	service, project, err := newPRService(ctx, cfg, project)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, project, err
 	}
-	return service, cfg, nil
+	return service, cfg, project, nil
 }
 
 func defaultStartPRWorkspaceSession(
@@ -588,17 +596,45 @@ func protectedCredentialNames(cfg *models.Config) []string {
 	return protected
 }
 
-func defaultNewPRService(ctx context.Context, cfg *models.Config, project pullrequest.Project) (prService, error) {
-	provider, err := pullrequest.NewAuthenticatedGitHubProvider(ctx)
+func defaultNewPRService(
+	ctx context.Context,
+	cfg *models.Config,
+	project pullrequest.Project,
+) (prService, pullrequest.Project, error) {
+	provider, err := newPRGitHubProvider(ctx)
 	if err != nil {
-		return nil, err
+		return nil, project, err
 	}
+	info, ok := urlutil.CanonicalRepositoryInfo(project.Identity)
+	if !ok {
+		return nil, project, pullrequest.NewError(
+			pullrequest.CodeUnsupportedProvider,
+			fmt.Sprintf("project %q is not a supported github.com repository", project.Identity),
+			false,
+			nil,
+		)
+	}
+	repository, err := provider.ResolveRepository(ctx, pullrequest.Repository{
+		Provider: "github",
+		Identity: pullrequest.NormalizeRepositoryIdentity(info.FullPath),
+		Host:     info.Host,
+		Owner:    info.Owner,
+		Name:     info.Repository,
+	})
+	if err != nil {
+		return nil, project, err
+	}
+	project.Identity = repository.Identity
 	g := gitadapter.New(project.Path)
 	manager := worktree.New(g, cfg)
 	backend := pullrequest.NewGitBackend(
 		g, manager, project, cfg.Fleet.TokenEnv,
 	)
-	return pullrequest.NewService(provider, backend, pullrequest.NewFileStore(prStorePath())), nil
+	return pullrequest.NewService(
+		provider,
+		backend,
+		pullrequest.NewFileStore(prStorePath()),
+	), project, nil
 }
 
 func resolvePRProject(cfg *models.Config, selector string) (pullrequest.Project, error) {

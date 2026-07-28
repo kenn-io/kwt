@@ -106,6 +106,15 @@ multiple projects, kwt returns `repository_mismatch`; callers must use the
 repository identity or path. `--state` accepts `open`, `closed`, or `all` and
 defaults to `open`.
 
+Before listing or importing pull requests, kwt resolves the selected repository
+through GitHub and uses the current canonical identity for the provider request,
+workspace, and provenance. GitHub repository transfers and renames therefore
+continue to work when the project registry still contains the previous
+identity. This resolution is operation-local and does not rewrite the
+registered project, whose identity may intentionally name an upstream
+repository while the checkout's origin points to a fork. Import selectors may
+use either the registered or resolved repository URL during that transition.
+
 ## Authentication
 
 GitHub API authentication is resolved without prompting:

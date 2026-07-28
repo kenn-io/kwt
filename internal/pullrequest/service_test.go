@@ -433,6 +433,21 @@ func TestParseSelectorAcceptsMixedCaseGitHubIdentity(t *testing.T) {
 	}
 }
 
+func TestParseSelectorNumberValidatesShapeWithoutRepositoryIdentity(t *testing.T) {
+	for _, selector := range []string{
+		"17",
+		"github:github.com/legacy/widget#17",
+		"https://github.com/acme/widget/pull/17",
+	} {
+		number, err := ParseSelectorNumber(selector)
+		require.NoError(t, err)
+		assert.Equal(t, 17, number)
+	}
+
+	_, err := ParseSelectorNumber("https://github.com/acme/widget/issues/17")
+	assertErrorCode(t, err, CodeInvalidSelector)
+}
+
 func TestImportForkCreatesAndUsesForkRemote(t *testing.T) {
 	pr := testPR(32, true)
 	backend := newFakeBackend()

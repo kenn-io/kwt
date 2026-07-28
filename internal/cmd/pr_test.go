@@ -5,11 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
+	"github.com/google/go-github/v89/github"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,6 +50,7 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 	oldLoad := loadPRConfig
 	oldTargetLoad := loadPRTargetConfig
 	oldNew := newPRService
+	oldProvider := newPRGitHubProvider
 	oldValidateRoot := validatePRProjectRoot
 	oldProject := prProject
 	oldState := prState
@@ -58,6 +63,7 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 		loadPRConfig = oldLoad
 		loadPRTargetConfig = oldTargetLoad
 		newPRService = oldNew
+		newPRGitHubProvider = oldProvider
 		validatePRProjectRoot = oldValidateRoot
 		prProject = oldProject
 		prState = oldState
@@ -69,7 +75,13 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 	})
 	loadPRConfig = func() (*models.Config, error) { return cfg, nil }
 	loadPRTargetConfig = func(string, bool) (*models.Config, error) { return cfg, nil }
-	newPRService = func(context.Context, *models.Config, pullrequest.Project) (prService, error) { return service, nil }
+	newPRService = func(
+		_ context.Context,
+		_ *models.Config,
+		project pullrequest.Project,
+	) (prService, pullrequest.Project, error) {
+		return service, project, nil
+	}
 	validatePRProjectRoot = func(project pullrequest.Project) (pullrequest.Project, error) { return project, nil }
 	inspectPRProjectClone = func(
 		context.Context,
@@ -88,9 +100,18 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 func TestRunPRImportValidatesSelectorBeforeAuthentication(t *testing.T) {
 	withPRCommandDeps(t, testPRConfig(), &fakePRService{})
 	called := false
-	newPRService = func(context.Context, *models.Config, pullrequest.Project) (prService, error) {
+	newPRService = func(
+		_ context.Context,
+		_ *models.Config,
+		project pullrequest.Project,
+	) (prService, pullrequest.Project, error) {
 		called = true
-		return nil, pullrequest.NewError(pullrequest.CodeAuthentication, "authentication required", false, nil)
+		return nil, project, pullrequest.NewError(
+			pullrequest.CodeAuthentication,
+			"authentication required",
+			false,
+			nil,
+		)
 	}
 	cmd, stdout, _ := prTestCommand()
 
@@ -151,14 +172,18 @@ func TestPreparePRServiceLoadsSelectedTargetConfiguration(t *testing.T) {
 		return target, nil
 	}
 	var received *models.Config
-	newPRService = func(_ context.Context, cfg *models.Config, _ pullrequest.Project) (prService, error) {
+	newPRService = func(
+		_ context.Context,
+		cfg *models.Config,
+		project pullrequest.Project,
+	) (prService, pullrequest.Project, error) {
 		received = cfg
-		return &fakePRService{}, nil
+		return &fakePRService{}, project, nil
 	}
 
 	project, err := preparePRProject()
 	require.NoError(t, err)
-	_, _, err = preparePRService(context.Background(), project)
+	_, _, _, err = preparePRService(context.Background(), project)
 
 	require.NoError(t, err)
 	assert.Equal(t, "/repos/widget", loadedPath)
@@ -185,7 +210,7 @@ func TestPreparePRServiceRejectsPathOutsideMainRepositoryRootBeforeLoadingConfig
 		return testPRConfig(), nil
 	}
 
-	_, _, err := preparePRService(context.Background(), pullrequest.Project{
+	_, _, _, err := preparePRService(context.Background(), pullrequest.Project{
 		Identity: "github.com/acme/widget", Name: "widget", Path: subdir,
 	})
 
@@ -267,6 +292,119 @@ func TestRunPRListWritesStructuredOutput(t *testing.T) {
 	assert.Empty(t, stderr.String())
 }
 
+func TestRunPRListUsesResolvedTransferredRepository(t *testing.T) {
+	service := &fakePRService{}
+	cfg := testPRConfig()
+	cfg.Projects[0].Repository = "github.com/legacy/widget"
+	withPRCommandDeps(t, cfg, service)
+	newPRService = func(
+		_ context.Context,
+		_ *models.Config,
+		project pullrequest.Project,
+	) (prService, pullrequest.Project, error) {
+		project.Identity = "github.com/acme/widget"
+		return service, project, nil
+	}
+	cmd, _, _ := prTestCommand()
+
+	err := runPRList(cmd, nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, "github.com/acme/widget", service.gotProject.Identity)
+}
+
+func TestRunPRImportUsesResolvedTransferredRepository(t *testing.T) {
+	for _, selector := range []string{
+		"1166",
+		"https://github.com/legacy/widget/pull/1166",
+		"https://github.com/acme/widget/pull/1166",
+	} {
+		t.Run(selector, func(t *testing.T) {
+			service := &fakePRService{result: pullrequest.ImportResult{
+				Status: pullrequest.ImportCreated,
+				Workspace: pullrequest.Workspace{
+					ID: "ws", Path: "/worktrees/ws", SessionName: "kwt-workspace-ws",
+				},
+			}}
+			cfg := testPRConfig()
+			cfg.Projects[0].Repository = "github.com/legacy/widget"
+			withPRCommandDeps(t, cfg, service)
+			newPRService = func(
+				_ context.Context,
+				_ *models.Config,
+				project pullrequest.Project,
+			) (prService, pullrequest.Project, error) {
+				project.Identity = "github.com/acme/widget"
+				return service, project, nil
+			}
+			cmd, _, _ := prTestCommand()
+
+			err := runPRImport(cmd, []string{selector})
+
+			require.NoError(t, err)
+			assert.Equal(t, "github.com/acme/widget", service.gotProject.Identity)
+			assert.Equal(t, "1166", service.gotSelector)
+		})
+	}
+}
+
+func TestRunPRImportRejectsSelectorOutsideRegisteredAndResolvedRepositories(t *testing.T) {
+	service := &fakePRService{}
+	cfg := testPRConfig()
+	cfg.Projects[0].Repository = "github.com/legacy/widget"
+	withPRCommandDeps(t, cfg, service)
+	newPRService = func(
+		_ context.Context,
+		_ *models.Config,
+		project pullrequest.Project,
+	) (prService, pullrequest.Project, error) {
+		project.Identity = "github.com/acme/widget"
+		return service, project, nil
+	}
+	cmd, _, _ := prTestCommand()
+
+	err := runPRImport(cmd, []string{"https://github.com/other/widget/pull/1166"})
+
+	assertPRCode(t, err, pullrequest.CodeInvalidSelector)
+	assert.Empty(t, service.gotSelector)
+}
+
+func TestDefaultNewPRServiceResolvesTransferredRepository(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/repos/legacy/widget", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"name":"widget",
+			"full_name":"acme/widget",
+			"clone_url":"https://github.com/acme/widget.git"
+		}`)
+	}))
+	defer server.Close()
+	baseURL := server.URL + "/"
+	client, err := github.NewClient(github.WithURLs(&baseURL, nil))
+	require.NoError(t, err)
+	oldProvider := newPRGitHubProvider
+	t.Cleanup(func() { newPRGitHubProvider = oldProvider })
+	newPRGitHubProvider = func(context.Context) (*pullrequest.GitHubProvider, error) {
+		return pullrequest.NewGitHubProvider(client), nil
+	}
+	project := pullrequest.Project{
+		Identity: "github.com/legacy/widget",
+		Name:     "widget",
+		Path:     "/repos/widget",
+	}
+
+	service, resolved, err := defaultNewPRService(
+		context.Background(),
+		&models.Config{},
+		project,
+	)
+
+	require.NoError(t, err)
+	assert.NotNil(t, service)
+	assert.Equal(t, "github.com/acme/widget", resolved.Identity)
+}
+
 func TestRunPRImportWritesCreatedAndAlreadyImportedResults(t *testing.T) {
 	for _, status := range []pullrequest.ImportStatus{pullrequest.ImportCreated, pullrequest.ImportExisting} {
 		t.Run(string(status), func(t *testing.T) {
@@ -283,7 +421,7 @@ func TestRunPRImportWritesCreatedAndAlreadyImportedResults(t *testing.T) {
 			var got pullrequest.ImportResult
 			require.NoError(t, json.Unmarshal(stdout.Bytes(), &got))
 			assert.Equal(t, status, got.Status)
-			assert.Equal(t, "https://github.com/acme/widget/pull/17", service.gotSelector)
+			assert.Equal(t, "17", service.gotSelector)
 			socketName := tmux.ProtectedWorkspaceSocketName(
 				got.Workspace.SessionName,
 				got.Workspace.Path,

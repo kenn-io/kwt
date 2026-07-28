@@ -263,29 +263,70 @@ func repositoryFromProject(project Project) (Repository, error) {
 }
 
 func ParseSelector(selector, repository string) (int, error) {
+	number, selectorRepository, err := parseSelector(selector)
+	if err != nil {
+		return 0, err
+	}
+	if selectorRepository != "" &&
+		!EqualRepositoryIdentity(selectorRepository, repository) {
+		return 0, NewError(
+			CodeInvalidSelector,
+			"pull-request selector does not match the selected repository",
+			false,
+			nil,
+		)
+	}
+	return number, nil
+}
+
+// ParseSelectorNumber validates a selector's provider syntax and returns its
+// pull-request number without authorizing its repository identity.
+func ParseSelectorNumber(selector string) (int, error) {
+	number, _, err := parseSelector(selector)
+	return number, err
+}
+
+func parseSelector(selector string) (int, string, error) {
 	selector = strings.TrimSpace(selector)
 	if selector == "" {
-		return 0, NewError(CodeInvalidSelector, "pull-request selector is empty", false, nil)
+		return 0, "", NewError(
+			CodeInvalidSelector,
+			"pull-request selector is empty",
+			false,
+			nil,
+		)
 	}
 	if number, err := strconv.Atoi(selector); err == nil && number > 0 {
-		return number, nil
+		return number, "", nil
 	}
-	prefix := "github:" + NormalizeRepositoryIdentity(repository) + "#"
-	if strings.HasPrefix(strings.ToLower(selector), prefix) {
-		if number, err := strconv.Atoi(selector[len(prefix):]); err == nil && number > 0 {
-			return number, nil
+	if strings.HasPrefix(strings.ToLower(selector), "github:") {
+		identity, numberText, ok := strings.Cut(selector[len("github:"):], "#")
+		parts := strings.Split(NormalizeRepositoryIdentity(identity), "/")
+		if ok && len(parts) == 3 && parts[0] == "github.com" &&
+			parts[1] != "" && parts[2] != "" {
+			if number, err := strconv.Atoi(numberText); err == nil && number > 0 {
+				return number, strings.Join(parts, "/"), nil
+			}
 		}
 	}
 	parsed, err := url.Parse(selector)
 	if err == nil && strings.EqualFold(parsed.Host, "github.com") {
 		parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-		if len(parts) == 4 && strings.EqualFold(parts[2], "pull") && EqualRepositoryIdentity("github.com/"+parts[0]+"/"+parts[1], repository) {
+		if len(parts) == 4 && parts[0] != "" && parts[1] != "" &&
+			strings.EqualFold(parts[2], "pull") {
 			if number, convertErr := strconv.Atoi(parts[3]); convertErr == nil && number > 0 {
-				return number, nil
+				return number, NormalizeRepositoryIdentity(
+					"github.com/" + parts[0] + "/" + parts[1],
+				), nil
 			}
 		}
 	}
-	return 0, NewError(CodeInvalidSelector, "pull-request selector does not match the selected repository", false, nil)
+	return 0, "", NewError(
+		CodeInvalidSelector,
+		"pull-request selector does not match the selected repository",
+		false,
+		nil,
+	)
 }
 
 func importBranchName(pr PullRequest) string {
