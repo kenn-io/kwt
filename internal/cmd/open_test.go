@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/kwt/internal/pullrequest"
 	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/url"
+	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
 )
 
@@ -93,6 +94,53 @@ func TestOpenStartSessionFlagGroups(t *testing.T) {
 	selectLayout.Changed = false
 	layout.Changed = true
 	require.NoError(t, openCmd.ValidateFlagGroups())
+}
+
+func TestResolveOpenWorktreeAcceptsExactPrimaryPathOutsideGlobalBase(
+	t *testing.T,
+) {
+	t.Setenv("GIT_AUTHOR_NAME", "Test User")
+	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.com")
+	t.Setenv("GIT_COMMITTER_NAME", "Test User")
+	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.com")
+
+	repo := filepath.Join(t.TempDir(), "registered", "widget")
+	require.NoError(t, os.MkdirAll(repo, 0o755))
+	require.NoError(t, exec.Command("git", "init", "-b", "main", repo).Run())
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repo, "README.md"),
+		[]byte("# widget\n"),
+		0o644,
+	))
+	gitCommand := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		require.NoError(t, cmd.Run())
+	}
+	gitCommand("add", "README.md")
+	gitCommand("commit", "-m", "initial")
+
+	entry, requestedPath, err := resolveOpenWorktree(
+		&CommandContext{Config: &models.Config{
+			Worktree: models.WorktreeConfig{
+				BaseDir: filepath.Join(t.TempDir(), "global-worktrees"),
+			},
+			Projects: []models.Project{{
+				Repository: "github.com/acme/widget",
+				Path:       repo,
+			}},
+		}},
+		[]string{repo},
+		false,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	assert.Equal(t, repo, requestedPath)
+	assert.Equal(t, utils.CanonicalPath(repo), utils.CanonicalPath(entry.Path))
+	assert.True(t, entry.IsMain)
+	require.NotNil(t, entry.RepositoryInfo)
+	assert.Equal(t, "github.com/acme/widget", entry.RepositoryInfo.FullPath)
 }
 
 func TestOpenSelectedWorktreeRefusesProtectedPullRequestWorkspace(

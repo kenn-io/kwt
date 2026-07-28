@@ -37,7 +37,10 @@ kwt add --no-launch -b feature/new-ui
 # Open a worktree workspace, creating its session when needed
 kwt open
 
-# Establish an exact workspace session for another tmux client
+# Open an exact worktree, even when it is outside the global worktree base
+kwt open /path/to/worktree
+
+# Establish that exact workspace session for another tmux client
 kwt open /path/to/worktree --start-session
 
 # Inspect worktrees and git status

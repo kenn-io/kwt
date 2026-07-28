@@ -41,10 +41,14 @@ var openCmd = &cobra.Command{
 	Long: `Fuzzy-pick a worktree across all repositories in the configured base
 directory and attach to its tmux workspace, creating the workspace with the
 resolved layout if it does not yet exist. A pattern filters the worktree list.
-Pass an exact worktree path with --start-session to create or repair the
-workspace without attaching.`,
+An exact worktree path resolves directly even when it is outside the configured
+base directory. Add --start-session to create or repair the workspace without
+attaching.`,
 	Example: `  # Pick a worktree and open its workspace
   kwt open
+
+  # Open one exact worktree path directly
+  kwt open /path/to/worktree
 
   # Ensure an exact worktree workspace exists without attaching
   kwt open /path/to/worktree --start-session
@@ -86,77 +90,24 @@ func runOpen(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("--start-session requires an exact worktree path")
 		}
 
-		finder := ctx.GetGlobalFinder()
-		var entry *discovery.GlobalWorktreeEntry
-		requestedPath := ""
-		if openStartSession {
-			requestedPath = args[0]
-			var err error
-			entry, err = discovery.DiscoverWorktree(
+		entry, requestedPath, err := resolveOpenWorktree(
+			ctx,
+			args,
+			openStartSession,
+		)
+		if err != nil {
+			return err
+		}
+		if entry == nil {
+			return nil
+		}
+		if entry.RepositoryInfo == nil {
+			return fmt.Errorf(
+				"could not resolve worktree %s",
 				requestedPath,
-				ctx.Config.Projects,
 			)
-			if err != nil {
-				return fmt.Errorf(
-					"could not resolve worktree %s: %w",
-					requestedPath,
-					err,
-				)
-			}
-		} else {
-			entries, err := discovery.DiscoverGlobalWorktrees(
-				ctx.Config.Worktree.BaseDir,
-				ctx.Config.Projects,
-			)
-			if err != nil {
-				return fmt.Errorf("failed to discover worktrees: %w", err)
-			}
-			if len(entries) == 0 {
-				if len(args) == 1 {
-					return fmt.Errorf("could not resolve worktree %s", args[0])
-				}
-				ctx.Printer.PrintInfo(
-					"No worktrees found in " + ctx.Config.Worktree.BaseDir,
-				)
-				return nil
-			}
-
-			if len(args) == 1 {
-				requestedPath = args[0]
-				matches := discovery.FilterGlobalWorktrees(
-					entries,
-					requestedPath,
-				)
-				switch len(matches) {
-				case 0:
-				case 1:
-					entry = matches[0]
-				default:
-					selected, selectErr := finder.SelectWorktree(
-						discovery.ConvertToWorktreeModels(matches, true),
-					)
-					if selectErr != nil {
-						return fmt.Errorf(
-							"selection cancelled: %w",
-							selectErr,
-						)
-					}
-					entry = findEntryByPath(matches, selected.Path)
-				}
-			} else {
-				worktrees := discovery.ConvertToWorktreeModels(entries, false)
-				selected, err := finder.SelectWorktree(worktrees)
-				if err != nil {
-					return fmt.Errorf("selection cancelled: %w", err)
-				}
-				requestedPath = selected.Path
-				entry = findEntryByPath(entries, requestedPath)
-			}
 		}
-
-		if entry == nil || entry.RepositoryInfo == nil {
-			return fmt.Errorf("could not resolve worktree %s", requestedPath)
-		}
+		finder := ctx.GetGlobalFinder()
 
 		return openSelectedWorktree(
 			cmd.Context(),
@@ -173,6 +124,103 @@ func runOpen(cmd *cobra.Command, args []string) error {
 			config.StdinInteractive(),
 		)
 	})(cmd, args)
+}
+
+func resolveOpenWorktree(
+	ctx *CommandContext,
+	args []string,
+	startSession bool,
+) (*discovery.GlobalWorktreeEntry, string, error) {
+	requestedPath := ""
+	if startSession {
+		requestedPath = args[0]
+		entry, err := discovery.DiscoverWorktree(
+			requestedPath,
+			ctx.Config.Projects,
+		)
+		if err != nil {
+			return nil, requestedPath, fmt.Errorf(
+				"could not resolve worktree %s: %w",
+				requestedPath,
+				err,
+			)
+		}
+		return entry, requestedPath, nil
+	}
+
+	if len(args) == 1 {
+		requestedPath = args[0]
+		if entry, err := discovery.DiscoverWorktree(
+			requestedPath,
+			ctx.Config.Projects,
+		); err == nil {
+			return entry, requestedPath, nil
+		}
+	}
+
+	entries, err := discovery.DiscoverGlobalWorktrees(
+		ctx.Config.Worktree.BaseDir,
+		ctx.Config.Projects,
+	)
+	if err != nil {
+		return nil, requestedPath, fmt.Errorf(
+			"failed to discover worktrees: %w",
+			err,
+		)
+	}
+	if len(entries) == 0 {
+		if len(args) == 1 {
+			return nil, requestedPath, fmt.Errorf(
+				"could not resolve worktree %s",
+				args[0],
+			)
+		}
+		ctx.Printer.PrintInfo(
+			"No worktrees found in " + ctx.Config.Worktree.BaseDir,
+		)
+		return nil, requestedPath, nil
+	}
+
+	var entry *discovery.GlobalWorktreeEntry
+	finder := ctx.GetGlobalFinder()
+	if len(args) == 1 {
+		matches := discovery.FilterGlobalWorktrees(entries, requestedPath)
+		switch len(matches) {
+		case 0:
+		case 1:
+			entry = matches[0]
+		default:
+			selected, selectErr := finder.SelectWorktree(
+				discovery.ConvertToWorktreeModels(matches, true),
+			)
+			if selectErr != nil {
+				return nil, requestedPath, fmt.Errorf(
+					"selection cancelled: %w",
+					selectErr,
+				)
+			}
+			entry = findEntryByPath(matches, selected.Path)
+		}
+	} else {
+		worktrees := discovery.ConvertToWorktreeModels(entries, false)
+		selected, selectErr := finder.SelectWorktree(worktrees)
+		if selectErr != nil {
+			return nil, requestedPath, fmt.Errorf(
+				"selection cancelled: %w",
+				selectErr,
+			)
+		}
+		requestedPath = selected.Path
+		entry = findEntryByPath(entries, requestedPath)
+	}
+
+	if entry == nil || entry.RepositoryInfo == nil {
+		return nil, requestedPath, fmt.Errorf(
+			"could not resolve worktree %s",
+			requestedPath,
+		)
+	}
+	return entry, requestedPath, nil
 }
 
 func openSelectedWorktree(

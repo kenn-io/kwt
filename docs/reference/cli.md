@@ -51,6 +51,10 @@ With no argument, `kwt open` fuzzy-picks a worktree. A pattern narrows the
 cross-project list and opens the sole match directly. Kwt creates or repairs
 the canonical tmux workspace with its resolved layout before attaching.
 
+An exact worktree-root path is resolved directly from Git before pattern
+matching, including registered primary checkouts and linked worktrees outside
+the configured global worktree base.
+
 `kwt open <exact-worktree-path> --start-session` performs the same layout and
 session bootstrap without attaching a client. Use it before an external
 ordinary tmux client attaches to a session that may not exist yet. The exact
