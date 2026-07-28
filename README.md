@@ -77,8 +77,8 @@ branch. If that remote base is unavailable, it falls back to local `main`, then
 | --------- | --------------------------------------- |
 | `up/down` | Move selection                          |
 | `enter`   | Attach to selected workspace            |
-| `n`       | Create a new branch and worktree         |
-| `b`       | Search existing branches for a worktree  |
+| `n`       | Create a new branch and worktree        |
+| `b`       | Search existing branches for a worktree |
 | `L`       | Select workspace layout                 |
 | `P`       | Switch active project perspective       |
 | `p`       | Filter visible projects                 |

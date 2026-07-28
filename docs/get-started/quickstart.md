@@ -33,8 +33,8 @@ Useful keys:
 | Key     | Action                                                  |
 | ------- | ------------------------------------------------------- |
 | `enter` | Attach to the selected workspace.                       |
-| `n`     | Create a new branch and worktree.                        |
-| `b`     | Search local and remote branches for a worktree.         |
+| `n`     | Create a new branch and worktree.                       |
+| `b`     | Search local and remote branches for a worktree.        |
 | `P`     | Switch the active project perspective.                  |
 | `p`     | Filter visible projects by name.                        |
 | `/`     | Search rows within the active perspective/filter.       |
