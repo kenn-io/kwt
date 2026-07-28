@@ -412,19 +412,19 @@ and return a stable nonzero status. For example:
 }
 ```
 
-| Exit | Error code                     | Meaning |
-| ---: | ------------------------------ | ------- |
-| 2    | `invalid_pull_request_selector` | Invalid state, URL, opaque ID, or number. |
-| 3    | `authentication_failed`         | GitHub API or Git authentication failed. |
-| 4    | `repository_mismatch` / `unsupported_provider` | Project selection or provider mismatch. |
-| 5    | `pull_request_not_found`        | The selected PR or repository is missing. |
-| 6    | `inaccessible_head`             | The fork or source branch is unavailable. |
-| 7    | `naming_conflict`               | The generated branch or workspace is occupied. |
-| 8    | `network_failure`               | A retryable provider or Git network failure. |
-| 9    | `workspace_creation_failed`     | Worktree creation, setup, push config, persistence, or session-configuration preflight failed. |
-| 10   | `malformed_provider_response`   | GitHub returned an invalid success response. |
-| 11   | `import_conflict`               | Concurrent state or the selected head SHA changed. |
-| 12   | `unsupported_git_version`        | Git is too old for isolated per-worktree push configuration. |
+| Exit | Error code                                     | Meaning                                                                                        |
+| ---: | ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+|    2 | `invalid_pull_request_selector`                | Invalid state, URL, opaque ID, or number.                                                      |
+|    3 | `authentication_failed`                        | GitHub API or Git authentication failed.                                                       |
+|    4 | `repository_mismatch` / `unsupported_provider` | Project selection or provider mismatch.                                                        |
+|    5 | `pull_request_not_found`                       | The selected PR or repository is missing.                                                      |
+|    6 | `inaccessible_head`                            | The fork or source branch is unavailable.                                                      |
+|    7 | `naming_conflict`                              | The generated branch or workspace is occupied.                                                 |
+|    8 | `network_failure`                              | A retryable provider or Git network failure.                                                   |
+|    9 | `workspace_creation_failed`                    | Worktree creation, setup, push config, persistence, or session-configuration preflight failed. |
+|   10 | `malformed_provider_response`                  | GitHub returned an invalid success response.                                                   |
+|   11 | `import_conflict`                              | Concurrent state or the selected head SHA changed.                                             |
+|   12 | `unsupported_git_version`                      | Git is too old for isolated per-worktree push configuration.                                   |
 
 GitHub primary and secondary rate limits, including HTTP 429 responses, use
 `network_failure` with `retryable: true`.
