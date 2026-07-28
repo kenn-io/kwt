@@ -2,6 +2,9 @@ package cmd
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -91,6 +94,7 @@ func TestOpenSelectedWorktreeRefusesProtectedPullRequestWorkspace(
 		},
 		nil,
 		false,
+		false,
 	)
 
 	require.Error(t, err)
@@ -123,9 +127,63 @@ func TestOpenSelectedWorktreeStartsSessionWithoutAttaching(t *testing.T) {
 		},
 		nil,
 		true,
+		false,
 	)
 
 	require.NoError(t, err)
+	assert.True(t, runner.ensured)
+	assert.False(t, runner.attached)
+}
+
+func TestOpenSelectedWorktreeStartSessionDoesNotPromptForTargetTrust(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
+	repo := t.TempDir()
+	gitInit := exec.Command("git", "init", "-b", "main", repo)
+	require.NoError(t, gitInit.Run())
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repo, ".kwt.toml"),
+		[]byte("[layouts]\ndefault = \"focus\"\n"),
+		0o644,
+	))
+
+	runner := &recordingOpenWorkspaceRunner{}
+	oldNewRunner := newOpenWorkspaceRunner
+	oldLayout := openLayout
+	oldSelectLayout := openSelectLayout
+	t.Cleanup(func() {
+		newOpenWorkspaceRunner = oldNewRunner
+		openLayout = oldLayout
+		openSelectLayout = oldSelectLayout
+	})
+	newOpenWorkspaceRunner = func() openWorkspaceRunner { return runner }
+	openLayout = ""
+	openSelectLayout = false
+
+	stderr, err := os.Create(filepath.Join(t.TempDir(), "stderr"))
+	require.NoError(t, err)
+	oldStderr := os.Stderr
+	os.Stderr = stderr
+	err = openSelectedWorktree(
+		context.Background(),
+		&CommandContext{Config: &models.Config{}},
+		&discovery.GlobalWorktreeEntry{
+			Path:   repo,
+			Branch: "feature",
+			RepositoryInfo: &url.RepositoryInfo{
+				FullPath: "github.com/acme/widget",
+			},
+		},
+		nil,
+		true,
+		true,
+	)
+	os.Stderr = oldStderr
+	require.NoError(t, stderr.Close())
+	output, readErr := os.ReadFile(stderr.Name())
+	require.NoError(t, readErr)
+
+	require.NoError(t, err)
+	assert.NotContains(t, string(output), "Trust this file and load it?")
 	assert.True(t, runner.ensured)
 	assert.False(t, runner.attached)
 }

@@ -169,6 +169,7 @@ func runOpen(cmd *cobra.Command, args []string) error {
 				return *sel, nil
 			},
 			openStartSession,
+			config.StdinInteractive(),
 		)
 	})(cmd, args)
 }
@@ -179,6 +180,7 @@ func openSelectedWorktree(
 	entry *discovery.GlobalWorktreeEntry,
 	selectLayout func([]models.Layout) (models.Layout, error),
 	startSession bool,
+	stdinInteractive bool,
 ) error {
 	if err := rejectProtectedWorkspaceOpen(commandCtx, entry.Path); err != nil {
 		return err
@@ -195,7 +197,10 @@ func openSelectedWorktree(
 		if err != nil {
 			return fmt.Errorf("failed to find repository root: %w", err)
 		}
-		targetDefault, err = config.LoadRepoLayoutDefault(repoRoot, config.StdinInteractive())
+		targetDefault, err = config.LoadRepoLayoutDefault(
+			repoRoot,
+			stdinInteractive && !startSession,
+		)
 		if err != nil {
 			return err
 		}
