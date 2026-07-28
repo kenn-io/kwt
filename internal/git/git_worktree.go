@@ -131,7 +131,11 @@ func (g *Git) AddWorktreeFromBase(path, branch, baseBranch string) error {
 // RemoveWorktree removes a worktree.
 func (g *Git) RemoveWorktree(path string, force bool) error {
 	canonicalPath := utils.CanonicalPath(path)
-	wasRegistered, _ := g.hasRegisteredWorktree(canonicalPath)
+	registryGit := g
+	if mainRoot, err := g.getMainRepoRoot(); err == nil {
+		registryGit = New(mainRoot)
+	}
+	wasRegistered, _ := registryGit.hasRegisteredWorktree(canonicalPath)
 
 	args := []string{"worktree", "remove"}
 	if force {
@@ -139,7 +143,7 @@ func (g *Git) RemoveWorktree(path string, force bool) error {
 	}
 	args = append(args, path)
 	if _, err := g.run(args...); err != nil {
-		stillRegistered, listErr := g.hasRegisteredWorktree(canonicalPath)
+		stillRegistered, listErr := registryGit.hasRegisteredWorktree(canonicalPath)
 		if wasRegistered && listErr == nil && !stillRegistered {
 			if removeErr := os.RemoveAll(path); removeErr != nil {
 				return fmt.Errorf(

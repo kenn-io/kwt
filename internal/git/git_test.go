@@ -574,7 +574,7 @@ exec "$REAL_GIT" "$@"
 	t.Setenv("REAL_GIT", realGit)
 	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	err = New(repo.Path).RemoveWorktree(worktreePath, false)
+	err = New(worktreePath).RemoveWorktree(worktreePath, false)
 
 	if err != nil {
 		t.Fatalf("RemoveWorktree() error = %v", err)
