@@ -68,6 +68,33 @@ func TestShouldLoadTargetDefault(t *testing.T) {
 	}
 }
 
+func TestOpenStartSessionFlagGroups(t *testing.T) {
+	startSession := openCmd.Flags().Lookup("start-session")
+	selectLayout := openCmd.Flags().Lookup("select-layout")
+	layout := openCmd.Flags().Lookup("layout")
+	require.NotNil(t, startSession)
+	require.NotNil(t, selectLayout)
+	require.NotNil(t, layout)
+
+	oldStartSessionChanged := startSession.Changed
+	oldSelectLayoutChanged := selectLayout.Changed
+	oldLayoutChanged := layout.Changed
+	t.Cleanup(func() {
+		startSession.Changed = oldStartSessionChanged
+		selectLayout.Changed = oldSelectLayoutChanged
+		layout.Changed = oldLayoutChanged
+	})
+
+	startSession.Changed = true
+	selectLayout.Changed = true
+	layout.Changed = false
+	require.Error(t, openCmd.ValidateFlagGroups())
+
+	selectLayout.Changed = false
+	layout.Changed = true
+	require.NoError(t, openCmd.ValidateFlagGroups())
+}
+
 func TestOpenSelectedWorktreeRefusesProtectedPullRequestWorkspace(
 	t *testing.T,
 ) {

@@ -74,6 +74,7 @@ func init() {
 		"ensure an exact worktree's workspace exists without attaching",
 	)
 	openCmd.MarkFlagsMutuallyExclusive("layout", "select-layout")
+	openCmd.MarkFlagsMutuallyExclusive("start-session", "select-layout")
 }
 
 func runOpen(cmd *cobra.Command, args []string) error {
