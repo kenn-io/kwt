@@ -65,12 +65,12 @@ kwt add feature/local
 kwt add --from origin/feature/review feature/review
 ```
 
-An existing remote branch is untrusted until you inspect it. Remote-source
-creation disables repository-configured Git hooks and checkout filters,
-removes kwt credential variables from Git, treats branch names literally in
-destination paths, and skips `copy_files`, `setup_commands`, status and fleet
-inspection, and workspace launch. After reviewing the checkout, explicitly
-acknowledge it and create its workspace:
+An existing local or remote branch is untrusted until you inspect it.
+Existing-branch creation disables repository-configured Git hooks and checkout
+filters, removes kwt credential variables from Git, treats branch names
+literally in destination paths, and skips `copy_files`, `setup_commands`,
+status and fleet inspection, and workspace launch. After reviewing the
+checkout, explicitly acknowledge it and create its workspace:
 
 ```sh
 kwt open "$(kwt get feature/review)"

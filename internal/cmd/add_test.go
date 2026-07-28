@@ -130,6 +130,36 @@ func TestAddFromRemoteBranchCreatesTrackingWorktreeWithoutLaunching(t *testing.T
 	assert.NotNil(t, entry.ExpiresAt)
 }
 
+func TestAddExistingLocalBranchDefersWorkspaceLaunchUntilReview(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetAddCommandFlags(t)
+
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	viper.Set("layouts.auto_launch_on_add", true)
+	putFakeTmuxOnPath(t)
+	runTUITestGit(t, repoPath, "checkout", "-b", "feature/local")
+	runTUITestGit(t, repoPath, "checkout", "main")
+	t.Chdir(repoPath)
+
+	runner := &recordingOpenWorkspaceRunner{}
+	oldNewRunner := newAddWorkspaceRunner
+	t.Cleanup(func() { newAddWorkspaceRunner = oldNewRunner })
+	newAddWorkspaceRunner = func([]string) openWorkspaceRunner {
+		return runner
+	}
+	worktreePath := filepath.Join(t.TempDir(), "feature-local")
+
+	cmd, _, _ := fleetTestCommand()
+	err := runAdd(cmd, []string{"feature/local", worktreePath})
+
+	require.NoError(t, err)
+	assert.False(t, runner.attached)
+	reg, err := registry.New()
+	require.NoError(t, err)
+	assert.True(t, reg.IsUnreviewedRemoteSource(worktreePath))
+}
+
 func TestAddFromRemoteBranchRejectsImmediateLayoutLaunch(t *testing.T) {
 	resetFleetCommandDeps(t)
 	resetAddCommandFlags(t)
@@ -146,7 +176,7 @@ func TestAddFromRemoteBranchRejectsImmediateLayoutLaunch(t *testing.T) {
 	err := runAdd(cmd, []string{"feature/remote", worktreePath})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "inspect the remote checkout")
+	assert.Contains(t, err.Error(), "inspect the checkout")
 	assert.NoDirExists(t, worktreePath)
 }
 

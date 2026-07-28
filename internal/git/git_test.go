@@ -518,6 +518,40 @@ exec "$REAL_GIT" "$@"
 	})
 }
 
+func TestAddWorktreeExistingDisablesCheckoutHooks(t *testing.T) {
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "existing-unreviewed")
+	commitTestFile(t, repo.Path, "branch.txt", "branch\n", "Existing branch")
+	gitOutput(t, repo.Path, "checkout", "main")
+
+	hookMarker := filepath.Join(t.TempDir(), "hook-ran")
+	hooksDir := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(hooksDir, "post-checkout"),
+		fmt.Appendf(nil, "#!/bin/sh\nprintf hook > %q\n", hookMarker),
+		0755,
+	); err != nil {
+		t.Fatalf("write checkout hook: %v", err)
+	}
+	gitOutput(t, repo.Path, "config", "core.hooksPath", hooksDir)
+
+	worktreePath := filepath.Join(t.TempDir(), "existing-unreviewed")
+	if err := New(repo.Path).AddWorktreeExisting(
+		worktreePath,
+		"existing-unreviewed",
+		nil,
+	); err != nil {
+		t.Fatalf("AddWorktreeExisting() error = %v", err)
+	}
+
+	if _, err := os.Stat(hookMarker); !os.IsNotExist(err) {
+		t.Errorf("checkout hook ran against existing branch: stat error = %v", err)
+	}
+	if got := gitOutput(t, worktreePath, "branch", "--show-current"); got != "existing-unreviewed" {
+		t.Errorf("branch = %q, want existing-unreviewed", got)
+	}
+}
+
 func TestRemoveWorktree(t *testing.T) {
 	repo := NewTestRepository(t)
 	g := New(repo.Path)

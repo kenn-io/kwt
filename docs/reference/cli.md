@@ -50,11 +50,11 @@ default branch. If that remote base is unavailable, it falls back to local
 
 `kwt add <branch>` checks out an existing local branch. Use
 `kwt add --from <remote-ref> <branch>` when a remote candidate must become a
-local tracking branch. This remote-source path does not copy files, run setup
-commands, or launch a workspace; `--layout` and `--select-layout` are rejected.
+local tracking branch. Neither existing-branch path copies files, runs setup
+commands, or launches a workspace; `--layout` and `--select-layout` are rejected.
 Git branch mutation and checkout run with an empty hooks directory, configured
 smudge and process filters disabled, and kwt credential variables removed.
-Environment references in the remote-derived branch name remain literal when
+Environment references in the source-derived branch name remain literal when
 kwt builds the destination path.
 
 The created worktree remains marked unreviewed, so automatic status collection

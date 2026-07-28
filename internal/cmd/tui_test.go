@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/fleet"
 	"go.kenn.io/kwt/internal/pullrequest"
+	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/tmux"
 	dashboard "go.kenn.io/kwt/internal/tui"
 	"go.kenn.io/kwt/internal/url"
@@ -1646,6 +1647,41 @@ func TestTUIBackendCreateWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 	require.NoError(t, err)
 	assert.DirExists(t, path)
 	assert.Equal(t, 1, published)
+}
+
+func TestTUIBackendExistingLocalBranchRemainsUnreviewed(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	repoPath := newTUITestRepo(t)
+	runTUITestGit(t, repoPath, "checkout", "-b", "feature/local")
+	runTUITestGit(t, repoPath, "checkout", "main")
+	cfg := &models.Config{
+		Worktree: models.WorktreeConfig{
+			BaseDir:   filepath.Join(t.TempDir(), "worktrees"),
+			AutoMkdir: true,
+		},
+	}
+	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
+		Branch: "main",
+		Path:   repoPath,
+	}}
+	backend := newTUIBackendWithLaunchDir(cfg, "")
+	backend.loadTargetConfig = func(string, bool) (*models.Config, error) {
+		return cfg, nil
+	}
+
+	path, err := backend.CreateWorktree(
+		context.Background(),
+		row,
+		"feature/local",
+		"feature/local",
+	)
+
+	require.NoError(t, err)
+	reg, err := registry.New()
+	require.NoError(t, err)
+	assert.True(t, reg.IsUnreviewedRemoteSource(path))
 }
 
 func TestTUIBackendWorktreeCreationUsesSelectedRepositoryConfig(t *testing.T) {

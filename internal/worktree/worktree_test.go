@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,6 +31,7 @@ type mockGit struct {
 	recentCommits     []models.CommitInfo
 	mainRepoPathError error
 	trackingSource    string
+	existingSource    string
 	protectedNames    []string
 }
 
@@ -49,6 +51,17 @@ func (m *mockRemoteSourceState) Register(entry *registry.WorktreeEntry) error {
 func (m *mockRemoteSourceState) Unregister(path string) error {
 	delete(m.entries, path)
 	return nil
+}
+
+func (m *mockRemoteSourceState) Get(
+	path string,
+) (*registry.WorktreeEntry, bool) {
+	entry, ok := m.entries[path]
+	if !ok {
+		return nil, false
+	}
+	copied := *entry
+	return &copied, true
 }
 
 func (m *mockGit) ListWorktrees() ([]models.Worktree, error) {
@@ -77,6 +90,22 @@ func (m *mockGit) AddWorktreeTracking(
 		return m.addError
 	}
 	m.trackingSource = remoteBranch
+	m.protectedNames = append([]string(nil), protectedNames...)
+	m.worktrees = append(m.worktrees, models.Worktree{
+		Path:   path,
+		Branch: branch,
+	})
+	return nil
+}
+
+func (m *mockGit) AddWorktreeExisting(
+	path, branch string,
+	protectedNames []string,
+) error {
+	if m.addError != nil {
+		return m.addError
+	}
+	m.existingSource = branch
 	m.protectedNames = append([]string(nil), protectedNames...)
 	m.worktrees = append(m.worktrees, models.Worktree{
 		Path:   path,
@@ -272,6 +301,99 @@ func TestManagerAddTrackingUsesRemoteSource(t *testing.T) {
 	assert.True(t, state.entries[worktreePath].UnreviewedRemoteSource)
 	assert.NoFileExists(t, filepath.Join(worktreePath, "copy-me"))
 	assert.NoFileExists(t, filepath.Join(worktreePath, "setup-ran"))
+}
+
+func TestManagerAddExistingMarksSourceUnreviewedAndSkipsSetup(t *testing.T) {
+	baseDir := t.TempDir()
+	repoDir := t.TempDir()
+	worktreePath := filepath.Join(baseDir, "local-worktree")
+	require.NoError(t, os.MkdirAll(worktreePath, 0755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repoDir, "copy-me"),
+		[]byte("trusted config, untrusted branch"),
+		0644,
+	))
+	mockG := &mockGit{repoPath: repoDir}
+	state := &mockRemoteSourceState{}
+	manager := New(mockG, &models.Config{
+		Worktree: models.WorktreeConfig{
+			BaseDir:   baseDir,
+			AutoMkdir: true,
+		},
+		RepositorySettings: []models.RepositorySetting{{
+			Repository: repoDir,
+			CopyFiles:  []string{"copy-me"},
+		}},
+		Fleet: models.FleetConfig{TokenEnv: "Custom_Fleet_Token"},
+	})
+	manager.openRemoteSourceState = func() (remoteSourceState, error) {
+		return state, nil
+	}
+
+	path, err := manager.Add("feature/local", worktreePath, false)
+
+	require.NoError(t, err)
+	assert.Equal(t, worktreePath, path)
+	assert.Equal(t, "feature/local", mockG.existingSource)
+	assert.ElementsMatch(
+		t,
+		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN", "Custom_Fleet_Token"},
+		mockG.protectedNames,
+	)
+	require.Contains(t, state.entries, worktreePath)
+	assert.True(t, state.entries[worktreePath].UnreviewedRemoteSource)
+	assert.NoFileExists(t, filepath.Join(worktreePath, "copy-me"))
+}
+
+func TestManagerAddTrackingRestoresExistingMarkerAfterGitFailure(t *testing.T) {
+	worktreePath := t.TempDir()
+	future := time.Now().Add(time.Hour)
+	state := &mockRemoteSourceState{entries: map[string]*registry.WorktreeEntry{
+		worktreePath: {
+			Path:                   worktreePath,
+			Branch:                 "feature/existing",
+			Repository:             "github.com/acme/widget",
+			ExpiresAt:              &future,
+			UnreviewedRemoteSource: true,
+		},
+	}}
+	manager := New(&mockGit{addError: errors.New("already checked out")}, &models.Config{})
+	manager.openRemoteSourceState = func() (remoteSourceState, error) {
+		return state, nil
+	}
+
+	_, err := manager.AddTracking(
+		"feature/existing",
+		"refs/remotes/origin/feature/existing",
+		worktreePath,
+	)
+
+	require.Error(t, err)
+	entry, ok := state.entries[worktreePath]
+	require.True(t, ok, "failed repeated add must retain the safety marker")
+	assert.True(t, entry.UnreviewedRemoteSource)
+	assert.Equal(t, "github.com/acme/widget", entry.Repository)
+	assert.Equal(t, &future, entry.ExpiresAt)
+}
+
+func TestManagerAddTrackingRetainsMarkerWhenFailedCheckoutPathExists(t *testing.T) {
+	worktreePath := t.TempDir()
+	state := &mockRemoteSourceState{}
+	manager := New(&mockGit{addError: errors.New("checkout failed")}, &models.Config{})
+	manager.openRemoteSourceState = func() (remoteSourceState, error) {
+		return state, nil
+	}
+
+	_, err := manager.AddTracking(
+		"feature/partial",
+		"refs/remotes/origin/feature/partial",
+		worktreePath,
+	)
+
+	require.Error(t, err)
+	entry, ok := state.entries[worktreePath]
+	require.True(t, ok, "a possibly materialized checkout must remain isolated")
+	assert.True(t, entry.UnreviewedRemoteSource)
 }
 
 func TestManagerAddTrackingDoesNotExpandRemoteBranchEnvironmentReferences(
@@ -1107,7 +1229,7 @@ func TestManagerAdd_ConfigurableSetupIntegration(t *testing.T) {
 	mockG := &mockGit{repoPath: repoDir}
 	m := New(mockG, cfg)
 
-	_, err = m.Add("feature/test", filepath.Join(worktreeDir, "wt1"), false)
+	_, err = m.Add("feature/test", filepath.Join(worktreeDir, "wt1"), true)
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -1150,7 +1272,7 @@ func TestManagerAdd_SetupFromWorktreeContext(t *testing.T) {
 	mockG := &mockGit{repoPath: repoDir}
 	m := New(mockG, cfg)
 
-	_, err = m.Add("feature/wt-test", filepath.Join(worktreeDir, "wt1"), false)
+	_, err = m.Add("feature/wt-test", filepath.Join(worktreeDir, "wt1"), true)
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}

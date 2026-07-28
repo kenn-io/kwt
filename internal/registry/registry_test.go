@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -165,6 +166,111 @@ func TestRegistryAcknowledgesUnreviewedRemoteSourceWithoutLosingExpiration(
 	if entry.ExpiresAt.Sub(future) > time.Second ||
 		future.Sub(*entry.ExpiresAt) > time.Second {
 		t.Fatalf("expiration = %v, want %v", entry.ExpiresAt, future)
+	}
+}
+
+func TestRegistryConcurrentRegistrationsPreserveBothMarkers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.json")
+	left := &Registry{entries: make(map[string]*WorktreeEntry), path: path}
+	right := &Registry{entries: make(map[string]*WorktreeEntry), path: path}
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+	var done sync.WaitGroup
+	done.Add(2)
+
+	register := func(r *Registry, worktreePath string) {
+		defer done.Done()
+		ready.Done()
+		<-start
+		errs <- r.Register(&WorktreeEntry{
+			Path:                   worktreePath,
+			UnreviewedRemoteSource: true,
+		})
+	}
+	go register(left, "/worktrees/left")
+	go register(right, "/worktrees/right")
+	ready.Wait()
+	close(start)
+	done.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("Register() error = %v", err)
+		}
+	}
+
+	reloaded := &Registry{entries: make(map[string]*WorktreeEntry), path: path}
+	if err := reloaded.load(); err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+	if !reloaded.IsUnreviewedRemoteSource("/worktrees/left") {
+		t.Error("left registration was lost")
+	}
+	if !reloaded.IsUnreviewedRemoteSource("/worktrees/right") {
+		t.Error("right registration was lost")
+	}
+}
+
+func TestRegistryConcurrentAcknowledgementPreservesOtherMutation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.json")
+	seed := &Registry{entries: make(map[string]*WorktreeEntry), path: path}
+	if err := seed.Register(&WorktreeEntry{
+		Path:                   "/worktrees/reviewed",
+		UnreviewedRemoteSource: true,
+	}); err != nil {
+		t.Fatalf("seed Register() error = %v", err)
+	}
+	acknowledger := &Registry{entries: make(map[string]*WorktreeEntry), path: path}
+	registrar := &Registry{entries: make(map[string]*WorktreeEntry), path: path}
+	if err := acknowledger.load(); err != nil {
+		t.Fatalf("load acknowledger: %v", err)
+	}
+	if err := registrar.load(); err != nil {
+		t.Fatalf("load registrar: %v", err)
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+	var done sync.WaitGroup
+	done.Add(2)
+	go func() {
+		defer done.Done()
+		ready.Done()
+		<-start
+		errs <- acknowledger.AcknowledgeRemoteSource("/worktrees/reviewed")
+	}()
+	go func() {
+		defer done.Done()
+		ready.Done()
+		<-start
+		errs <- registrar.Register(&WorktreeEntry{
+			Path:                   "/worktrees/new",
+			UnreviewedRemoteSource: true,
+		})
+	}()
+	ready.Wait()
+	close(start)
+	done.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("registry mutation error = %v", err)
+		}
+	}
+
+	reloaded := &Registry{entries: make(map[string]*WorktreeEntry), path: path}
+	if err := reloaded.load(); err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+	if reloaded.IsUnreviewedRemoteSource("/worktrees/reviewed") {
+		t.Error("acknowledgement was overwritten")
+	}
+	if !reloaded.IsUnreviewedRemoteSource("/worktrees/new") {
+		t.Error("concurrent registration was lost")
 	}
 }
 

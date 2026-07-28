@@ -72,6 +72,32 @@ func (g *Git) AddWorktree(path, branch string, createBranch bool) error {
 	return nil
 }
 
+// AddWorktreeExisting checks out an existing branch without allowing the
+// checkout to run repository-configured hooks or filters, and without exposing
+// protected credentials to Git.
+func (g *Git) AddWorktreeExisting(
+	path, branch string,
+	protectedNames []string,
+) error {
+	isolationArgs, err := g.remoteCheckoutIsolationArgs(protectedNames)
+	if err != nil {
+		return err
+	}
+	hooksDir, err := os.MkdirTemp("", "kwt-empty-hooks-")
+	if err != nil {
+		return fmt.Errorf("create empty hooks directory: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(hooksDir) }()
+
+	args := []string{"-c", "core.hooksPath=" + hooksDir}
+	args = append(args, isolationArgs...)
+	args = append(args, "worktree", "add", path, branch)
+	if _, err := g.runWithoutCredentials(protectedNames, args...); err != nil {
+		return fmt.Errorf("failed to add existing-branch worktree: %w", err)
+	}
+	return nil
+}
+
 // AddWorktreeTracking creates a local branch and worktree that track a
 // specific remote branch.
 func (g *Git) AddWorktreeTracking(

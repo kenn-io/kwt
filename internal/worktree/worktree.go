@@ -20,6 +20,7 @@ import (
 type GitInterface interface {
 	ListWorktrees() ([]models.Worktree, error)
 	AddWorktree(path, branch string, createBranch bool) error
+	AddWorktreeExisting(path, branch string, protectedNames []string) error
 	AddWorktreeTracking(
 		path, branch, remoteBranch string,
 		protectedNames []string,
@@ -44,6 +45,7 @@ type Manager struct {
 type remoteSourceState interface {
 	Register(*registry.WorktreeEntry) error
 	Unregister(string) error
+	Get(string) (*registry.WorktreeEntry, bool)
 }
 
 // AddOptions controls optional behavior for creating a worktree.
@@ -69,6 +71,10 @@ func (m *Manager) Add(branch string, customPath string, createBranch bool) (stri
 
 // AddWithOptions creates a new worktree and returns the path of the created worktree.
 func (m *Manager) AddWithOptions(branch string, customPath string, createBranch bool, opts AddOptions) (string, error) {
+	if !createBranch {
+		return m.addExisting(branch, customPath)
+	}
+
 	path, err := m.preparePath(customPath, branch, nil)
 	if err != nil {
 		return "", err
@@ -84,6 +90,20 @@ func (m *Manager) AddWithOptions(branch string, customPath string, createBranch 
 	return path, nil
 }
 
+func (m *Manager) addExisting(branch, customPath string) (string, error) {
+	path, err := m.preparePath(customPath, branch, nil)
+	if err != nil {
+		return "", err
+	}
+	return m.addUnreviewedSource(path, branch, func() error {
+		return m.git.AddWorktreeExisting(
+			path,
+			branch,
+			credentials.ProtectedNames(m.config),
+		)
+	})
+}
+
 // AddTracking creates a worktree on a local branch that tracks remoteBranch.
 // Repository setup is intentionally deferred: the remote checkout is
 // untrusted until the user has reviewed it.
@@ -93,25 +113,53 @@ func (m *Manager) AddTracking(branch, remoteBranch, customPath string) (string, 
 		return "", err
 	}
 
+	return m.addUnreviewedSource(path, branch, func() error {
+		return m.git.AddWorktreeTracking(
+			path,
+			branch,
+			remoteBranch,
+			credentials.ProtectedNames(m.config),
+		)
+	})
+}
+
+func (m *Manager) addUnreviewedSource(
+	path, branch string,
+	add func() error,
+) (string, error) {
 	state, err := m.openRemoteSourceState()
 	if err != nil {
 		return "", fmt.Errorf("open remote-source state: %w", err)
 	}
-	if err := state.Register(&registry.WorktreeEntry{
-		Branch:                 branch,
-		Path:                   path,
-		UnreviewedRemoteSource: true,
-	}); err != nil {
+	previous, existed := state.Get(path)
+	entry := &registry.WorktreeEntry{}
+	if existed {
+		*entry = *previous
+	}
+	entry.Branch = branch
+	entry.Path = path
+	entry.UnreviewedRemoteSource = true
+	if err := state.Register(entry); err != nil {
 		return "", fmt.Errorf("mark remote-source worktree unreviewed: %w", err)
 	}
 
-	if err := m.git.AddWorktreeTracking(
-		path,
-		branch,
-		remoteBranch,
-		credentials.ProtectedNames(m.config),
-	); err != nil {
-		_ = state.Unregister(path)
+	if err := add(); err != nil {
+		var restoreErr error
+		switch {
+		case existed:
+			restoreErr = state.Register(previous)
+		default:
+			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+				restoreErr = state.Unregister(path)
+			}
+		}
+		if restoreErr != nil {
+			return "", fmt.Errorf(
+				"%w (failed to restore remote-source state: %v)",
+				err,
+				restoreErr,
+			)
+		}
 		return "", err
 	}
 

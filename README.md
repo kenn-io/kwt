@@ -74,11 +74,11 @@ When `-b` creates a branch, `kwt` fetches `origin` and starts from its default
 branch. If that remote base is unavailable, it falls back to local `main`, then
 `master`, then the branch checked out in the primary worktree.
 
-Remote-source worktrees are inert on creation: branch mutation and checkout
+Existing-branch worktrees are inert on creation: branch mutation and checkout
 run without repository-configured hooks or filters and without kwt credential
 variables, and `kwt` does not copy configured files, run setup commands,
 inspect status, publish the worktree to fleet, or launch a layout against
-contributor-controlled content. Remote branch names are treated literally
+contributor-controlled content. Existing branch names are treated literally
 when building the destination path. Review the checkout first, then use
 `kwt open` to acknowledge it and explicitly create and attach its workspace.
 
@@ -191,8 +191,8 @@ visible at roughly 100 columns. Select a remote-only branch row and press `s` to
 sync that branch locally. Press `c` on a local row to open a shell there.
 Remote-only sync verifies the created worktree against the hub-reported commit
 when one is available, and skips repository setup (`copy_files` and
-`setup_commands`). Remote-source `kwt add --from` worktrees have the same inert
-creation boundary; setup hooks run only for local and newly created branches.
+`setup_commands`). Existing local and remote branches use the same inert
+creation boundary; setup hooks run only for newly created branches.
 
 Useful commands:
 

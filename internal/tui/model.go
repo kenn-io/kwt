@@ -1275,7 +1275,7 @@ func (m Model) createWorktreeCmd(row Row, branch, source, pendingPath string) te
 			return actionDoneMsg{err: err, pendingPath: pendingPath}
 		}
 		message := fmt.Sprintf("created %s", branch)
-		if source != "" && source != branch {
+		if source != "" {
 			message = fmt.Sprintf("created %s; review it before attaching", branch)
 		}
 		return actionDoneMsg{

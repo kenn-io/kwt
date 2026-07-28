@@ -759,6 +759,30 @@ func TestModelExistingBranchPickerCreatesSelectedRemote(t *testing.T) {
 	assert.Equal(t, []string{"refs/remotes/origin/remote-ready"}, backend.createSources)
 }
 
+func TestModelExistingLocalBranchRequiresReviewBeforeAttaching(t *testing.T) {
+	backend := &fakeBackend{
+		createPath: "/w/kwt/local-ready",
+		branches: []models.Branch{{
+			Name:   "local-ready",
+			Source: "local-ready",
+		}},
+	}
+	model := NewModel(backend, "/worktrees")
+	model, _ = updateModel(t, model, rowsMsg{rows: []Row{
+		testRow("kwt", "main", "/w/kwt/main"),
+	}})
+
+	model, loadCmd := updateModel(t, model, press("b"))
+	require.NotNil(t, loadCmd)
+	model, _ = updateModel(t, model, loadCmd())
+	_, createCmd := updateModel(t, model, press("enter"))
+
+	require.NotNil(t, createCmd)
+	result := createCmd()
+	assert.Contains(t, result.(actionDoneMsg).message, "review")
+	assert.Equal(t, []string{"local-ready"}, backend.createSources)
+}
+
 func TestModelShowsNewWorktreeWhileCreateIsInFlight(t *testing.T) {
 	backend := &fakeBackend{createPath: "/w/kwt/feature-fast"}
 	model := NewModel(backend, "/worktrees")

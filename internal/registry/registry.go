@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/gofrs/flock"
 )
 
 // WorktreeEntry represents a registered worktree.
@@ -66,73 +68,131 @@ func New() (*Registry, error) {
 
 // load reads the registry from disk.
 func (r *Registry) load() error {
-	data, err := os.ReadFile(r.path)
+	entries, err := loadEntries(r.path)
+	if err != nil {
+		return err
+	}
+
+	r.mu.Lock()
+	r.entries = entries
+	r.mu.Unlock()
+	return nil
+}
+
+func loadEntries(path string) (map[string]*WorktreeEntry, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Registry doesn't exist yet, that's OK
-			return nil
+			return make(map[string]*WorktreeEntry), nil
 		}
-		return fmt.Errorf("failed to read registry: %w", err)
+		return nil, fmt.Errorf("failed to read registry: %w", err)
 	}
 
 	if len(data) == 0 {
-		return nil
+		return make(map[string]*WorktreeEntry), nil
 	}
 
 	var entries []*WorktreeEntry
 	if err := json.Unmarshal(data, &entries); err != nil {
-		return fmt.Errorf("failed to unmarshal registry: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal registry: %w", err)
 	}
 
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.entries = make(map[string]*WorktreeEntry)
+	result := make(map[string]*WorktreeEntry, len(entries))
 	for _, entry := range entries {
-		r.entries[entry.Path] = entry
+		result[entry.Path] = entry
 	}
-
-	return nil
+	return result, nil
 }
 
-// save writes the registry to disk.
-func (r *Registry) save() error {
-	r.mu.RLock()
-	entries := make([]*WorktreeEntry, 0, len(r.entries))
-	for _, entry := range r.entries {
+func saveEntries(path string, entriesByPath map[string]*WorktreeEntry) error {
+	entries := make([]*WorktreeEntry, 0, len(entriesByPath))
+	for _, entry := range entriesByPath {
 		entries = append(entries, entry)
 	}
-	r.mu.RUnlock()
 
 	data, err := json.MarshalIndent(entries, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal registry: %w", err)
 	}
+	data = append(data, '\n')
 
-	if err := os.WriteFile(r.path, data, 0644); err != nil {
-		return fmt.Errorf("failed to write registry: %w", err)
+	temp, err := os.CreateTemp(filepath.Dir(path), ".registry-*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create registry temp file: %w", err)
 	}
+	tempPath := temp.Name()
+	defer func() { _ = os.Remove(tempPath) }()
+	if err := temp.Chmod(0644); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("failed to set registry temp permissions: %w", err)
+	}
+	if _, err := temp.Write(data); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("failed to write registry temp file: %w", err)
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("failed to sync registry temp file: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("failed to close registry temp file: %w", err)
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("failed to replace registry: %w", err)
+	}
+	return nil
+}
 
+func (r *Registry) mutate(
+	change func(map[string]*WorktreeEntry) bool,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err := os.MkdirAll(filepath.Dir(r.path), 0755); err != nil {
+		return fmt.Errorf("failed to create registry directory: %w", err)
+	}
+	lock := flock.New(r.path+".lock", flock.SetPermissions(0600))
+	if err := lock.Lock(); err != nil {
+		return fmt.Errorf("failed to lock registry: %w", err)
+	}
+	defer func() { _ = lock.Unlock() }()
+
+	entries, err := loadEntries(r.path)
+	if err != nil {
+		return err
+	}
+	changed := change(entries)
+	if changed {
+		if err := saveEntries(r.path, entries); err != nil {
+			return err
+		}
+	}
+	r.entries = entries
 	return nil
 }
 
 // Register adds or updates a worktree entry.
 func (r *Registry) Register(entry *WorktreeEntry) error {
-	r.mu.Lock()
-	entry.RegisteredAt = time.Now()
-	r.entries[entry.Path] = entry
-	r.mu.Unlock()
-
-	return r.save()
+	copied := *entry
+	if copied.RegisteredAt.IsZero() {
+		copied.RegisteredAt = time.Now()
+	}
+	return r.mutate(func(entries map[string]*WorktreeEntry) bool {
+		entries[copied.Path] = &copied
+		return true
+	})
 }
 
 // Unregister removes a worktree entry by path.
 func (r *Registry) Unregister(path string) error {
-	r.mu.Lock()
-	delete(r.entries, path)
-	r.mu.Unlock()
-
-	return r.save()
+	return r.mutate(func(entries map[string]*WorktreeEntry) bool {
+		if _, ok := entries[path]; !ok {
+			return false
+		}
+		delete(entries, path)
+		return true
+	})
 }
 
 // List returns all registered worktrees.
@@ -168,8 +228,12 @@ func (r *Registry) Get(path string) (*WorktreeEntry, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	entry, ok := r.entries[path]
-	return entry, ok
+	entry, ok := r.entryForPath(path)
+	if !ok {
+		return nil, false
+	}
+	copied := *entry
+	return &copied, true
 }
 
 // IsUnreviewedRemoteSource reports whether path was created from remote
@@ -185,23 +249,29 @@ func (r *Registry) IsUnreviewedRemoteSource(path string) bool {
 // AcknowledgeRemoteSource marks a remote-source worktree as reviewed while
 // preserving any other registry metadata such as its expiration.
 func (r *Registry) AcknowledgeRemoteSource(path string) error {
-	r.mu.Lock()
-	entry, ok := r.entryForPath(path)
-	if !ok || !entry.UnreviewedRemoteSource {
-		r.mu.Unlock()
-		return nil
-	}
-	entry.UnreviewedRemoteSource = false
-	r.mu.Unlock()
-	return r.save()
+	return r.mutate(func(entries map[string]*WorktreeEntry) bool {
+		entry, ok := entryForPath(entries, path)
+		if !ok || !entry.UnreviewedRemoteSource {
+			return false
+		}
+		entry.UnreviewedRemoteSource = false
+		return true
+	})
 }
 
 func (r *Registry) entryForPath(path string) (*WorktreeEntry, bool) {
-	if entry, ok := r.entries[path]; ok {
+	return entryForPath(r.entries, path)
+}
+
+func entryForPath(
+	entries map[string]*WorktreeEntry,
+	path string,
+) (*WorktreeEntry, bool) {
+	if entry, ok := entries[path]; ok {
 		return entry, true
 	}
 	want := comparableRegistryPath(path)
-	for _, entry := range r.entries {
+	for _, entry := range entries {
 		if comparableRegistryPath(entry.Path) == want {
 			return entry, true
 		}
@@ -251,25 +321,15 @@ func (r *Registry) ListExpired() []*WorktreeEntry {
 
 // Cleanup removes entries that no longer exist on disk.
 func (r *Registry) Cleanup() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	var toRemove []string
-	for path, entry := range r.entries {
-		// Check if the worktree directory still exists
-		gitDir := filepath.Join(path, ".git")
-		if _, err := os.Stat(gitDir); os.IsNotExist(err) {
-			toRemove = append(toRemove, entry.Path)
+	return r.mutate(func(entries map[string]*WorktreeEntry) bool {
+		changed := false
+		for path := range entries {
+			gitDir := filepath.Join(path, ".git")
+			if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+				delete(entries, path)
+				changed = true
+			}
 		}
-	}
-
-	for _, path := range toRemove {
-		delete(r.entries, path)
-	}
-
-	if len(toRemove) > 0 {
-		return r.save()
-	}
-
-	return nil
+		return changed
+	})
 }
