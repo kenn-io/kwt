@@ -577,6 +577,7 @@ func TestAddWorktreeExistingDisablesCheckoutHooks(t *testing.T) {
 		"includeIf.onbranch:existing-unreviewed.path",
 		includePath,
 	)
+	gitOutput(t, repo.Path, "config", "core.autocrlf", "true")
 
 	worktreePath := filepath.Join(t.TempDir(), "existing-unreviewed")
 	if err := New(repo.Path).AddWorktreeExisting(
@@ -600,7 +601,7 @@ func TestAddWorktreeExistingDisablesCheckoutHooks(t *testing.T) {
 	}
 	if contents, err := os.ReadFile(filepath.Join(worktreePath, "branch.txt")); err != nil {
 		t.Errorf("read checked-out branch file: %v", err)
-	} else if string(contents) != "branch\n" {
+	} else if strings.ReplaceAll(string(contents), "\r\n", "\n") != "branch\n" {
 		t.Errorf("branch.txt = %q, want branch content", contents)
 	}
 	if got := gitOutput(t, worktreePath, "branch", "--show-current"); got != "existing-unreviewed" {
@@ -1017,6 +1018,7 @@ func TestAddWorktreeTrackingRemoteBranch(t *testing.T) {
 		"includeIf.gitdir:**/worktrees/remote-only.path",
 		includePath,
 	)
+	gitOutput(t, repo.Path, "config", "core.autocrlf", "true")
 
 	if runtime.GOOS != "windows" {
 		realGit, err := exec.LookPath("git")
@@ -1096,7 +1098,7 @@ exec "$REAL_GIT" "$@"
 	}
 	if contents, err := os.ReadFile(filepath.Join(worktreePath, "conditional.txt")); err != nil {
 		t.Errorf("read checked-out remote file: %v", err)
-	} else if string(contents) != "conditional content\n" {
+	} else if strings.ReplaceAll(string(contents), "\r\n", "\n") != "conditional content\n" {
 		t.Errorf("conditional.txt = %q, want remote content", contents)
 	}
 }
