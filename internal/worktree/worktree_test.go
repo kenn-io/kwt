@@ -29,6 +29,7 @@ type mockGit struct {
 	recentCommits     []models.CommitInfo
 	mainRepoPathError error
 	trackingSource    string
+	protectedNames    []string
 }
 
 func (m *mockGit) ListWorktrees() ([]models.Worktree, error) {
@@ -49,11 +50,15 @@ func (m *mockGit) AddWorktree(path, branch string, createBranch bool) error {
 	return nil
 }
 
-func (m *mockGit) AddWorktreeTracking(path, branch, remoteBranch string) error {
+func (m *mockGit) AddWorktreeTracking(
+	path, branch, remoteBranch string,
+	protectedNames []string,
+) error {
 	if m.addError != nil {
 		return m.addError
 	}
 	m.trackingSource = remoteBranch
+	m.protectedNames = append([]string(nil), protectedNames...)
 	m.worktrees = append(m.worktrees, models.Worktree{
 		Path:   path,
 		Branch: branch,
@@ -221,6 +226,7 @@ func TestManagerAddTrackingUsesRemoteSource(t *testing.T) {
 			CopyFiles:     []string{"copy-me"},
 			SetupCommands: []string{"touch setup-ran"},
 		}},
+		Fleet: models.FleetConfig{TokenEnv: "Custom_Fleet_Token"},
 	})
 
 	path, err := manager.AddTracking(
@@ -234,6 +240,11 @@ func TestManagerAddTrackingUsesRemoteSource(t *testing.T) {
 	require.Len(t, mockG.worktrees, 1)
 	assert.Equal(t, "feature/remote", mockG.worktrees[0].Branch)
 	assert.Equal(t, "origin/feature/remote", mockG.trackingSource)
+	assert.ElementsMatch(
+		t,
+		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN", "Custom_Fleet_Token"},
+		mockG.protectedNames,
+	)
 	assert.NoFileExists(t, filepath.Join(worktreePath, "copy-me"))
 	assert.NoFileExists(t, filepath.Join(worktreePath, "setup-ran"))
 }

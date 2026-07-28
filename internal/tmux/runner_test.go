@@ -158,7 +158,7 @@ func (m *mockWorkspaceTmux) KillSession(session string) error {
 // capture boundary includes the third (last) pane-creating command.
 func TestEnsureAndAttachCreatesSendsToCapturedIDsAndAttaches(t *testing.T) {
 	m := &mockWorkspaceTmux{hasSession: false}
-	r := NewWorkspaceRunner(m)
+	r := NewWorkspaceRunner(m, nil)
 	layout := models.Layout{Arrange: "even-horizontal", Panes: []string{"codex", "", "vim"}}
 
 	err := r.EnsureAndAttach(context.Background(), "s", "/wt", layout, false)
@@ -196,7 +196,7 @@ func TestEnsureAndAttachCreatesSendsToCapturedIDsAndAttaches(t *testing.T) {
 
 func TestEnsureCreatesWorkspaceWithoutAttaching(t *testing.T) {
 	m := &mockWorkspaceTmux{hasSession: false}
-	r := NewWorkspaceRunner(m)
+	r := NewWorkspaceRunner(m, nil)
 
 	err := r.Ensure(
 		context.Background(),
@@ -216,7 +216,7 @@ func TestEnsureAndAttachQueriesServerDefaultShell(t *testing.T) {
 		hasSession:         false,
 		globalDefaultShell: "/opt/homebrew/bin/fish",
 	}
-	r := NewWorkspaceRunner(m)
+	r := NewWorkspaceRunner(m, nil)
 
 	err := r.EnsureAndAttach(
 		context.Background(), "workspace", "/wt",
@@ -243,7 +243,7 @@ func TestEnsureAndAttachPrefersSessionDefaultShell(t *testing.T) {
 		sessionDefaultShell: "/bin/bash",
 		globalDefaultShell:  "/opt/homebrew/bin/fish",
 	}
-	r := NewWorkspaceRunner(m)
+	r := NewWorkspaceRunner(m, nil)
 
 	err := r.EnsureAndAttach(
 		context.Background(), "workspace", "/wt",
@@ -487,7 +487,7 @@ func TestEnsureAndAttachRepairsExistingSessionBootstrapWithoutConstructing(t *te
 		globalEnv:  "KWT_GITHUB_TOKEN=secret\nSTARSHIP_SESSION_KEY=abc\nHOME=/home/u",
 		sessionEnv: "VSCODE_GIT_IPC_HANDLE=/tmp/ipc\nPATH=/bin",
 	}
-	r := NewWorkspaceRunner(m)
+	r := NewWorkspaceRunner(m, nil)
 	layout := models.Layout{Arrange: "tiled", Panes: []string{"codex"}}
 
 	err := r.EnsureAndAttach(context.Background(), "s", "/wt", layout, false)
@@ -504,6 +504,29 @@ func TestEnsureAndAttachRepairsExistingSessionBootstrapWithoutConstructing(t *te
 	assert.Empty(t, m.switchedTo)
 }
 
+func TestEnsureAndAttachStripsConfiguredCredentialCaseVariants(t *testing.T) {
+	m := &mockWorkspaceTmux{
+		hasSession: true,
+		globalEnv:  "custom_fleet_token=server-secret",
+		sessionEnv: "Custom_Fleet_Token=session-secret",
+	}
+	r := NewWorkspaceRunner(m, []string{"CUSTOM_FLEET_TOKEN"})
+
+	err := r.EnsureAndAttach(
+		context.Background(),
+		"s",
+		"/wt",
+		models.Layout{Arrange: "tiled", Panes: []string{""}},
+		false,
+	)
+
+	require.NoError(t, err)
+	require.Len(t, m.calls, 1)
+	assert.Contains(t, m.calls[0], "CUSTOM_FLEET_TOKEN")
+	assert.Contains(t, m.calls[0], "custom_fleet_token")
+	assert.Contains(t, m.calls[0], "Custom_Fleet_Token")
+}
+
 // TestEnsureAndAttachRepairSurvivesEnvReadFailures pins the graceful
 // degradation of the strip-name derivation: a show-environment failure on
 // either table drops that source but never fails the attach.
@@ -513,7 +536,7 @@ func TestEnsureAndAttachRepairSurvivesEnvReadFailures(t *testing.T) {
 		globalEnvErr:  errors.New("no server"),
 		sessionEnvErr: errors.New("no session"),
 	}
-	r := NewWorkspaceRunner(m)
+	r := NewWorkspaceRunner(m, nil)
 
 	err := r.EnsureAndAttach(context.Background(), "s", "/wt",
 		models.Layout{Arrange: "tiled", Panes: []string{""}}, false)
@@ -526,7 +549,7 @@ func TestEnsureAndAttachRepairSurvivesEnvReadFailures(t *testing.T) {
 
 func TestEnsureAndAttachSwitchesClientInsideTmux(t *testing.T) {
 	m := &mockWorkspaceTmux{hasSession: false}
-	r := NewWorkspaceRunner(m)
+	r := NewWorkspaceRunner(m, nil)
 	layout := models.Layout{Arrange: "tiled", Panes: []string{"codex"}}
 
 	err := r.EnsureAndAttach(context.Background(), "s", "/wt", layout, true)
@@ -538,7 +561,7 @@ func TestEnsureAndAttachSwitchesClientInsideTmux(t *testing.T) {
 
 func TestEnsureAndAttachReturnsErrorOnCaptureFailure(t *testing.T) {
 	m := &mockWorkspaceTmux{hasSession: false, outputErr: errors.New("boom")}
-	r := NewWorkspaceRunner(m)
+	r := NewWorkspaceRunner(m, nil)
 	layout := models.Layout{Arrange: "tiled", Panes: []string{"codex"}}
 
 	err := r.EnsureAndAttach(context.Background(), "s", "/wt", layout, false)
@@ -555,7 +578,7 @@ func TestEnsureAndAttachReturnsErrorOnCaptureFailure(t *testing.T) {
 // a subsequent EnsureAndAttach rebuilds instead of attaching to it broken.
 func TestEnsureAndAttachKillsPartialSessionOnCreateFailure(t *testing.T) {
 	m := &mockWorkspaceTmux{hasSession: false, failOutputOnCall: 4}
-	r := NewWorkspaceRunner(m)
+	r := NewWorkspaceRunner(m, nil)
 	layout := models.Layout{Arrange: "even-horizontal", Panes: []string{"codex", "vim"}}
 
 	err := r.EnsureAndAttach(context.Background(), "s", "/wt", layout, false)
@@ -574,7 +597,7 @@ func TestEnsureAndAttachKillsPartialSessionOnCreateFailure(t *testing.T) {
 // killed rather than left half-built.
 func TestEnsureAndAttachKillsPartialSessionOnRespawnFailure(t *testing.T) {
 	m := &mockWorkspaceTmux{hasSession: false, failRunOnCall: 2}
-	r := NewWorkspaceRunner(m)
+	r := NewWorkspaceRunner(m, nil)
 	layout := models.Layout{Arrange: "even-horizontal", Panes: []string{"codex", "vim"}}
 
 	err := r.EnsureAndAttach(context.Background(), "s", "/wt", layout, false)
@@ -597,7 +620,7 @@ func TestEnsureAndAttachKillsPartialSessionOnRespawnFailure(t *testing.T) {
 // BuildPaneCommandSequence branch by the pane-command test below.
 func TestEnsureAndAttachKillsPartialSessionOnLayoutFailure(t *testing.T) {
 	m := &mockWorkspaceTmux{hasSession: false, failRunOnCall: 3}
-	r := NewWorkspaceRunner(m)
+	r := NewWorkspaceRunner(m, nil)
 	layout := models.Layout{Arrange: "even-horizontal", Panes: []string{"codex", "vim"}}
 
 	err := r.EnsureAndAttach(context.Background(), "s", "/wt", layout, false)
@@ -617,7 +640,7 @@ func TestEnsureAndAttachKillsPartialSessionOnLayoutFailure(t *testing.T) {
 // the first-pane respawn, call 3 is select-layout).
 func TestEnsureAndAttachKillsPartialSessionOnPaneCommandFailure(t *testing.T) {
 	m := &mockWorkspaceTmux{hasSession: false, failRunOnCall: 4}
-	r := NewWorkspaceRunner(m)
+	r := NewWorkspaceRunner(m, nil)
 	layout := models.Layout{Arrange: "even-horizontal", Panes: []string{"codex", "vim"}}
 
 	err := r.EnsureAndAttach(context.Background(), "s", "/wt", layout, false)

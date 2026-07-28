@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/pullrequest"
 	"go.kenn.io/kwt/internal/tmux"
 	urlutil "go.kenn.io/kwt/internal/url"
@@ -541,7 +542,7 @@ func tryRequireWorkspace(
 
 func TestProtectedCredentialNamesAlwaysIncludeFleetDefaults(t *testing.T) {
 	for _, configured := range []string{"", "CUSTOM_FLEET_TOKEN"} {
-		names := protectedCredentialNames(&models.Config{
+		names := credentials.ProtectedNames(&models.Config{
 			Fleet: models.FleetConfig{TokenEnv: configured},
 		})
 		want := []string{

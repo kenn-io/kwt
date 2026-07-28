@@ -178,6 +178,7 @@ func TestOpenSelectedWorktreeRefusesProtectedPullRequestWorkspace(
 
 func TestOpenSelectedWorktreeStartsSessionWithoutAttaching(t *testing.T) {
 	runner := &recordingOpenWorkspaceRunner{}
+	var protectedNames []string
 	oldNewRunner := newOpenWorkspaceRunner
 	oldLayout := openLayout
 	oldSelectLayout := openSelectLayout
@@ -186,13 +187,18 @@ func TestOpenSelectedWorktreeStartsSessionWithoutAttaching(t *testing.T) {
 		openLayout = oldLayout
 		openSelectLayout = oldSelectLayout
 	})
-	newOpenWorkspaceRunner = func() openWorkspaceRunner { return runner }
+	newOpenWorkspaceRunner = func(names []string) openWorkspaceRunner {
+		protectedNames = append([]string(nil), names...)
+		return runner
+	}
 	openLayout = tmux.BlankLayoutName
 	openSelectLayout = false
 
 	err := openSelectedWorktree(
 		context.Background(),
-		&CommandContext{Config: &models.Config{}},
+		&CommandContext{Config: &models.Config{
+			Fleet: models.FleetConfig{TokenEnv: "CUSTOM_FLEET_TOKEN"},
+		}},
 		&discovery.GlobalWorktreeEntry{
 			Path:   t.TempDir(),
 			Branch: "feature",
@@ -208,6 +214,11 @@ func TestOpenSelectedWorktreeStartsSessionWithoutAttaching(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, runner.ensured)
 	assert.False(t, runner.attached)
+	assert.ElementsMatch(
+		t,
+		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN", "CUSTOM_FLEET_TOKEN"},
+		protectedNames,
+	)
 }
 
 func TestOpenSelectedWorktreeStartSessionDoesNotPromptForTargetTrust(t *testing.T) {
@@ -230,7 +241,7 @@ func TestOpenSelectedWorktreeStartSessionDoesNotPromptForTargetTrust(t *testing.
 		openLayout = oldLayout
 		openSelectLayout = oldSelectLayout
 	})
-	newOpenWorkspaceRunner = func() openWorkspaceRunner { return runner }
+	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
 	openLayout = ""
 	openSelectLayout = false
 

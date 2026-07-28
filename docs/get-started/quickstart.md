@@ -66,8 +66,10 @@ kwt add --from origin/feature/review feature/review
 ```
 
 An existing remote branch is untrusted until you inspect it. Remote-source
-creation skips `copy_files`, `setup_commands`, and workspace launch. After
-reviewing the checkout, explicitly create and attach its workspace:
+creation disables repository-configured checkout hooks and filters, removes
+kwt credential variables from Git, and skips `copy_files`, `setup_commands`,
+and workspace launch. After reviewing the checkout, explicitly create and
+attach its workspace:
 
 ```sh
 kwt open "$(kwt get feature/review)"

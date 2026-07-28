@@ -2554,6 +2554,18 @@ func TestTUIBackendLayoutNamesBlankOnly(t *testing.T) {
 	assert.Equal(t, []string{"none"}, backend.LayoutNames())
 }
 
+func TestTUIBackendCarriesConfiguredCredentialName(t *testing.T) {
+	backend := newTUIBackend(&models.Config{
+		Fleet: models.FleetConfig{TokenEnv: "Custom_Fleet_Token"},
+	})
+
+	assert.ElementsMatch(
+		t,
+		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN", "Custom_Fleet_Token"},
+		backend.protectedNames,
+	)
+}
+
 func TestTUIBackendAttachWorkspaceGuardRejectsEmptyRow(t *testing.T) {
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
 

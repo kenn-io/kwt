@@ -50,12 +50,12 @@ func TestNewCmdSanitizesEnvironment(t *testing.T) {
 }
 
 func TestNewCmdStripsConfiguredSensitiveEnvironmentName(t *testing.T) {
-	t.Setenv("CUSTOM_FLEET_TOKEN", "secret")
+	t.Setenv("Custom_Fleet_Token", "secret")
 	t.Setenv("UNRELATED_VAR", "keep-me")
 
 	tc := NewTmuxCommandWithStripNames(
 		"tmux",
-		[]string{"CUSTOM_FLEET_TOKEN"},
+		[]string{"custom_fleet_token"},
 	)
 	cmd := tc.newCmd(
 		context.Background(),
@@ -63,7 +63,7 @@ func TestNewCmdStripsConfiguredSensitiveEnvironmentName(t *testing.T) {
 	)
 
 	for _, entry := range cmd.Env {
-		if hasEnvName(entry, "CUSTOM_FLEET_TOKEN") {
+		if hasEnvName(entry, "Custom_Fleet_Token") {
 			t.Errorf("newCmd().Env leaked configured credential: %v", cmd.Env)
 		}
 	}

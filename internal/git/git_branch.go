@@ -11,9 +11,13 @@ import (
 
 // ListBranches returns a list of all branches.
 func (g *Git) ListBranches(includeRemote bool) ([]models.Branch, error) {
-	args := []string{"branch", "-v", "--format=%(refname)|%(HEAD)|%(committerdate:iso)|%(objectname)|%(subject)|%(authorname)"}
+	args := []string{
+		"for-each-ref",
+		"--format=%(refname)%00%(HEAD)%00%(committerdate:iso)%00%(objectname)%00%(subject)%00%(authorname)",
+		"refs/heads",
+	}
 	if includeRemote {
-		args = append(args, "-a")
+		args = append(args, "refs/remotes")
 	}
 
 	output, err := g.run(args...)
@@ -22,14 +26,14 @@ func (g *Git) ListBranches(includeRemote bool) ([]models.Branch, error) {
 	}
 
 	var branches []models.Branch
-	lines := strings.SplitSeq(strings.TrimSpace(output), "\n")
+	lines := strings.SplitSeq(strings.TrimSuffix(output, "\n"), "\n")
 
 	for line := range lines {
 		if line == "" {
 			continue
 		}
 
-		parts := strings.Split(line, "|")
+		parts := strings.Split(line, "\x00")
 		if len(parts) < 6 {
 			continue
 		}

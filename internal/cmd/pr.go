@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/credentials"
 	gitadapter "go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/pullrequest"
 	"go.kenn.io/kwt/internal/tmux"
@@ -550,7 +551,7 @@ func defaultStartPRWorkspaceSession(
 	if err != nil {
 		return "", err
 	}
-	stripNames := protectedCredentialNames(cfg)
+	stripNames := credentials.ProtectedNames(cfg)
 	socketName := tmux.ProtectedWorkspaceSocketName(
 		workspace.SessionName,
 		workspace.Path,
@@ -614,7 +615,7 @@ func defaultAttachPRWorkspaceSession(
 	if err != nil {
 		return err
 	}
-	stripNames := protectedCredentialNames(cfg)
+	stripNames := credentials.ProtectedNames(cfg)
 	socketName := tmux.ProtectedWorkspaceSocketName(
 		workspace.SessionName,
 		workspace.Path,
@@ -633,24 +634,6 @@ func defaultAttachPRWorkspaceSession(
 		workspace.Path,
 		layout,
 	)
-}
-
-func protectedCredentialNames(cfg *models.Config) []string {
-	names := []string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN"}
-	if cfg != nil {
-		names = append(names, cfg.Fleet.TokenEnv)
-	}
-	seen := make(map[string]bool, len(names))
-	protected := make([]string, 0, len(names))
-	for _, name := range names {
-		name = strings.TrimSpace(name)
-		if name == "" || seen[name] {
-			continue
-		}
-		seen[name] = true
-		protected = append(protected, name)
-	}
-	return protected
 }
 
 func defaultNewPRService(

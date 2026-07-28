@@ -43,6 +43,7 @@ quiet.
 The dashboard is project-aware. Use `P` to set the active project perspective
 before creating a worktree. Press `n` for a new branch or `b` to search local
 and remote branches that are not already checked out. A selected remote branch
-is checked out without setup hooks or workspace commands; review it before
-pressing `enter` to create and attach its session. Use lowercase `p` for a
-temporary project-name filter and `/` for row search.
+is checked out without repository hooks, configured filters, setup commands,
+or workspace commands; review it before pressing `enter` to create and attach
+its session. Use lowercase `p` for a temporary project-name filter and `/` for
+row search.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	gitworktree "go.kenn.io/kit/git/worktree"
@@ -73,8 +74,22 @@ func (g *Git) AddWorktree(path, branch string, createBranch bool) error {
 
 // AddWorktreeTracking creates a local branch and worktree that track a
 // specific remote branch.
-func (g *Git) AddWorktreeTracking(path, branch, remoteBranch string) error {
-	if _, err := g.runWithoutKWTCredentials(
+func (g *Git) AddWorktreeTracking(
+	path, branch, remoteBranch string,
+	protectedNames []string,
+) error {
+	isolationArgs, err := g.remoteCheckoutIsolationArgs(protectedNames)
+	if err != nil {
+		return err
+	}
+	hooksDir, err := os.MkdirTemp("", "kwt-empty-hooks-")
+	if err != nil {
+		return fmt.Errorf("create empty hooks directory: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(hooksDir) }()
+
+	if _, err := g.runWithoutCredentials(
+		protectedNames,
 		"branch", "--track", branch, remoteBranch,
 	); err != nil {
 		return fmt.Errorf(
@@ -83,10 +98,17 @@ func (g *Git) AddWorktreeTracking(path, branch, remoteBranch string) error {
 			err,
 		)
 	}
-	if _, err := g.runWithoutKWTCredentials(
-		"worktree", "add", path, branch,
+	worktreeArgs := append(
+		[]string{"-c", "core.hooksPath=" + hooksDir},
+		isolationArgs...,
+	)
+	worktreeArgs = append(worktreeArgs, "worktree", "add", path, branch)
+	if _, err := g.runWithoutCredentials(
+		protectedNames,
+		worktreeArgs...,
 	); err != nil {
-		if _, rollbackErr := g.runWithoutKWTCredentials(
+		if _, rollbackErr := g.runWithoutCredentials(
+			protectedNames,
 			"branch", "-D", branch,
 		); rollbackErr != nil {
 			return fmt.Errorf(
@@ -104,6 +126,52 @@ func (g *Git) AddWorktreeTracking(path, branch, remoteBranch string) error {
 		)
 	}
 	return nil
+}
+
+func (g *Git) remoteCheckoutIsolationArgs(
+	protectedNames []string,
+) ([]string, error) {
+	output, err := g.runWithoutCredentials(
+		protectedNames,
+		"config", "--null", "--list",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list configured checkout filters: %w", err)
+	}
+	drivers := make(map[string]bool)
+	for record := range strings.SplitSeq(output, "\x00") {
+		key, _, _ := strings.Cut(record, "\n")
+		key = strings.TrimSpace(key)
+		if !strings.HasPrefix(key, "filter.") {
+			continue
+		}
+		rest := strings.TrimPrefix(key, "filter.")
+		propertyAt := strings.LastIndex(rest, ".")
+		if propertyAt <= 0 {
+			continue
+		}
+		switch rest[propertyAt+1:] {
+		case "smudge", "process", "required":
+			drivers[rest[:propertyAt]] = true
+		}
+	}
+	names := make([]string, 0, len(drivers))
+	for driver := range drivers {
+		names = append(names, driver)
+	}
+	sort.Strings(names)
+
+	args := make([]string, 0, len(names)*6)
+	for _, driver := range names {
+		prefix := "filter." + driver + "."
+		args = append(
+			args,
+			"-c", prefix+"smudge=cat",
+			"-c", prefix+"process=",
+			"-c", prefix+"required=false",
+		)
+	}
+	return args, nil
 }
 
 func (g *Git) defaultWorktreeBase() (string, error) {

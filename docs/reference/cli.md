@@ -52,8 +52,10 @@ default branch. If that remote base is unavailable, it falls back to local
 `kwt add --from <remote-ref> <branch>` when a remote candidate must become a
 local tracking branch. This remote-source path does not copy files, run setup
 commands, or launch a workspace; `--layout` and `--select-layout` are rejected.
-Review the checkout and run `kwt open <worktree>` as the separate opt-in to its
-layout and pane commands.
+Git checkout runs with an empty hooks directory, configured smudge and process
+filters disabled, and kwt credential variables removed. Review the checkout
+and run `kwt open <worktree>` as the separate opt-in to its layout and pane
+commands.
 
 `kwt branches --json` emits only candidates not already checked out, with
 `name`, full source ref, and `is_remote` fields for interactive clients.
@@ -209,15 +211,16 @@ explicit, documented exception, so they cannot silently drift apart:
   itself now keeps them.
 
 The full list: exact names `__CFBundleIdentifier`, `EDITOR`,
-`KWT_GITHUB_TOKEN`, `OLDPWD`, `PROMPT`, `PROMPT_COMMAND`, `PWD`, `RPROMPT`,
-`SHLVL`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, `VISUAL`, `WINDOWID`, `_`; and
-prefixes `ALACRITTY_`, `CONDA_`, `FZF_`, `ITERM`, `KITTY_`, `NVM_`, `PYENV_`,
-`STARSHIP_`, `VIRTUAL_ENV`, `WEZTERM_`, `WT_`, `VSCODE_`. Operational kwt
-variables such as `KWT_HOME` are preserved. PR workspace bootstrap additionally
-removes the exact variable named by `fleet.token_env`, both from tmux
-subprocesses and from the session environment. `EDITOR` and
-`VISUAL` are excluded from exec-time sanitization only, per above; every
-other name in this list is treated identically by both mechanisms.
+`KWT_FLEET_TOKEN`, `KWT_GITHUB_TOKEN`, `OLDPWD`, `PROMPT`, `PROMPT_COMMAND`,
+`PWD`, `RPROMPT`, `SHLVL`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, `VISUAL`,
+`WINDOWID`, `_`; and prefixes `ALACRITTY_`, `CONDA_`, `FZF_`, `ITERM`,
+`KITTY_`, `NVM_`, `PYENV_`, `STARSHIP_`, `VIRTUAL_ENV`, `WEZTERM_`, `WT_`,
+`VSCODE_`. Every kwt workspace also removes the exact variable named by
+`fleet.token_env`, case-insensitively, both from tmux subprocesses and from
+the session environment. Operational kwt variables such as `KWT_HOME` are
+preserved. `EDITOR` and `VISUAL` are excluded from exec-time sanitization
+only, per above; every other name in this list is treated identically by both
+mechanisms.
 
 `TERMINFO` is deliberately excluded from the whole list: it is functional
 terminal configuration (a custom terminfo database path), not transient

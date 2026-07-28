@@ -18,6 +18,8 @@ import (
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/fleet"
 	"go.kenn.io/kwt/internal/git"
+	"go.kenn.io/kwt/internal/tmux"
+	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/pkg/models"
 )
 
@@ -200,6 +202,36 @@ func TestPrepareLaunchUsesLocalRepositoryFallback(t *testing.T) {
 	require.NotNil(t, info)
 	assert.Equal(t, filepath.Base(repoPath), info.Repository)
 	assert.True(t, strings.HasPrefix(info.FullPath, "local/"), info.FullPath)
+}
+
+func TestAttachWorkspacePassesConfiguredCredentialName(t *testing.T) {
+	runner := &recordingOpenWorkspaceRunner{}
+	var protectedNames []string
+	oldNewRunner := newAddWorkspaceRunner
+	t.Cleanup(func() { newAddWorkspaceRunner = oldNewRunner })
+	newAddWorkspaceRunner = func(names []string) openWorkspaceRunner {
+		protectedNames = append([]string(nil), names...)
+		return runner
+	}
+	cfg := &models.Config{
+		Fleet: models.FleetConfig{TokenEnv: "Custom_Fleet_Token"},
+	}
+
+	err := attachWorkspace(
+		&url.RepositoryInfo{FullPath: "github.com/acme/widget"},
+		"feature",
+		t.TempDir(),
+		tmux.BlankLayout(),
+		cfg,
+	)
+
+	require.NoError(t, err)
+	assert.True(t, runner.attached)
+	assert.ElementsMatch(
+		t,
+		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN", "Custom_Fleet_Token"},
+		protectedNames,
+	)
 }
 
 func putFakeTmuxOnPath(t *testing.T) {

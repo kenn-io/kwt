@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"go.kenn.io/kwt/internal/credentials"
 )
 
 // Git provides Git command operations.
@@ -60,21 +62,17 @@ func (g *Git) run(args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
-// runWithoutKWTCredentials executes a Git operation that may run checkout
-// hooks or filters against untrusted content without exposing kwt tokens.
-func (g *Git) runWithoutKWTCredentials(args ...string) (string, error) {
+// runWithoutCredentials executes a Git operation that may run against
+// untrusted content without exposing caller-supplied credentials.
+func (g *Git) runWithoutCredentials(
+	protectedNames []string,
+	args ...string,
+) (string, error) {
 	cmd := exec.Command("git", args...)
 	if g.workDir != "" {
 		cmd.Dir = g.workDir
 	}
-	cmd.Env = make([]string, 0, len(os.Environ()))
-	for _, entry := range os.Environ() {
-		name, _, ok := strings.Cut(entry, "=")
-		if ok && (name == "KWT_GITHUB_TOKEN" || name == "KWT_FLEET_TOKEN") {
-			continue
-		}
-		cmd.Env = append(cmd.Env, entry)
-	}
+	cmd.Env = credentials.StripEnvironment(os.Environ(), protectedNames)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

@@ -758,6 +758,42 @@ func TestListAvailableBranchesUsesFullRefsAcrossNamespaceCollisions(t *testing.T
 	}
 }
 
+func TestListAvailableBranchesPreservesDelimiterCharacters(t *testing.T) {
+	repo := NewTestRepository(t)
+	remotePath := filepath.Join(t.TempDir(), "origin.git")
+	gitOutput(t, filepath.Dir(remotePath), "init", "--bare", "-b", "main", remotePath)
+	gitOutput(t, repo.Path, "remote", "add", "origin", remotePath)
+
+	repo.CreateBranch(t, "topic|review")
+	commitTestFile(t, repo.Path, "topic.txt", "topic\n", "Subject | details")
+	gitOutput(t, repo.Path, "push", "origin", "topic|review")
+	gitOutput(t, repo.Path, "checkout", "main")
+	gitOutput(t, repo.Path, "branch", "-D", "topic|review")
+
+	branches, err := New(repo.Path).ListAvailableBranches()
+	if err != nil {
+		t.Fatalf("ListAvailableBranches() error = %v", err)
+	}
+
+	const source = "refs/remotes/origin/topic|review"
+	for _, branch := range branches {
+		if branch.Source != source {
+			continue
+		}
+		if branch.Name != "topic|review" {
+			t.Errorf("branch name = %q, want topic|review", branch.Name)
+		}
+		if branch.LastCommit.Message != "Subject | details" {
+			t.Errorf(
+				"commit subject = %q, want Subject | details",
+				branch.LastCommit.Message,
+			)
+		}
+		return
+	}
+	t.Fatalf("remote branch %s not found: %+v", source, branches)
+}
+
 func TestAddWorktreeTrackingRemoteBranch(t *testing.T) {
 	repo := NewTestRepository(t)
 	remotePath := filepath.Join(t.TempDir(), "origin.git")
@@ -765,6 +801,20 @@ func TestAddWorktreeTrackingRemoteBranch(t *testing.T) {
 	gitOutput(t, repo.Path, "remote", "add", "origin", remotePath)
 
 	repo.CreateBranch(t, "remote-only")
+	if err := os.WriteFile(
+		filepath.Join(repo.Path, ".gitattributes"),
+		[]byte("remote.txt filter=smudge-attack\nprocess.txt filter=process-attack\n"),
+		0644,
+	); err != nil {
+		t.Fatalf("write attributes: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(repo.Path, "process.txt"),
+		[]byte("process content\n"),
+		0644,
+	); err != nil {
+		t.Fatalf("write process input: %v", err)
+	}
 	commitTestFile(t, repo.Path, "remote.txt", "remote\n", "Remote branch")
 	wantHead := gitOutput(t, repo.Path, "rev-parse", "HEAD")
 	gitOutput(t, repo.Path, "push", "origin", "remote-only")
@@ -772,6 +822,40 @@ func TestAddWorktreeTrackingRemoteBranch(t *testing.T) {
 	gitOutput(t, repo.Path, "branch", "-D", "remote-only")
 	t.Setenv("KWT_GITHUB_TOKEN", "must-not-reach-remote-checkout")
 	t.Setenv("KWT_FLEET_TOKEN", "must-not-reach-remote-checkout")
+	t.Setenv("Custom_Fleet_Token", "must-not-reach-remote-checkout")
+
+	hookMarker := filepath.Join(t.TempDir(), "hook-ran")
+	filterMarker := filepath.Join(t.TempDir(), "filter-ran")
+	processMarker := filepath.Join(t.TempDir(), "process-ran")
+	hooksDir := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(hooksDir, "post-checkout"),
+		fmt.Appendf(nil, "#!/bin/sh\nprintf hook > %q\n", hookMarker),
+		0755,
+	); err != nil {
+		t.Fatalf("write checkout hook: %v", err)
+	}
+	filterDir := t.TempDir()
+	smudgePath := filepath.Join(filterDir, "smudge")
+	if err := os.WriteFile(
+		smudgePath,
+		fmt.Appendf(nil, "#!/bin/sh\nprintf filter > %q\ncat\n", filterMarker),
+		0755,
+	); err != nil {
+		t.Fatalf("write smudge filter: %v", err)
+	}
+	processPath := filepath.Join(filterDir, "process")
+	if err := os.WriteFile(
+		processPath,
+		fmt.Appendf(nil, "#!/bin/sh\nprintf process > %q\nexit 1\n", processMarker),
+		0755,
+	); err != nil {
+		t.Fatalf("write process filter: %v", err)
+	}
+	gitOutput(t, repo.Path, "config", "core.hooksPath", hooksDir)
+	gitOutput(t, repo.Path, "config", "filter.smudge-attack.smudge", smudgePath)
+	gitOutput(t, repo.Path, "config", "filter.process-attack.process", processPath)
+	gitOutput(t, repo.Path, "config", "filter.process-attack.required", "true")
 
 	if runtime.GOOS != "windows" {
 		realGit, err := exec.LookPath("git")
@@ -781,13 +865,19 @@ func TestAddWorktreeTrackingRemoteBranch(t *testing.T) {
 		wrapperDir := t.TempDir()
 		wrapperPath := filepath.Join(wrapperDir, "git")
 		wrapper := `#!/bin/sh
-if [ "$1" = "branch" ] || { [ "$1" = "worktree" ] && [ "$2" = "add" ]; }; then
-	if [ -n "$KWT_GITHUB_TOKEN" ] || [ -n "$KWT_FLEET_TOKEN" ]; then
-		printf '%s\n' 'kwt credential reached remote-source git command' >&2
-		exit 88
-	fi
+if [ -n "$KWT_GITHUB_TOKEN" ] || [ -n "$KWT_FLEET_TOKEN" ] || [ -n "$Custom_Fleet_Token" ]; then
+	printf '%s\n' 'kwt credential reached remote-source git command' >&2
+	exit 88
 fi
-if [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
+worktree_add=false
+previous=
+for arg in "$@"; do
+	if [ "$previous" = "worktree" ] && [ "$arg" = "add" ]; then
+		worktree_add=true
+	fi
+	previous=$arg
+done
+if $worktree_add; then
 	for arg in "$@"; do
 		if [ "$arg" = "--track" ]; then
 			printf '%s\n' 'error: unknown option track' >&2
@@ -809,7 +899,11 @@ exec "$REAL_GIT" "$@"
 		worktreePath,
 		"remote-only",
 		"origin/remote-only",
+		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN", "custom_fleet_token"},
 	)
+	t.Setenv("KWT_GITHUB_TOKEN", "")
+	t.Setenv("KWT_FLEET_TOKEN", "")
+	t.Setenv("Custom_Fleet_Token", "")
 	if err != nil {
 		t.Fatalf("AddWorktreeTracking() error = %v", err)
 	}
@@ -818,6 +912,15 @@ exec "$REAL_GIT" "$@"
 	}
 	if got := gitOutput(t, worktreePath, "rev-parse", "--abbrev-ref", "@{upstream}"); got != "origin/remote-only" {
 		t.Errorf("upstream = %s, want origin/remote-only", got)
+	}
+	if _, err := os.Stat(hookMarker); !os.IsNotExist(err) {
+		t.Errorf("checkout hook ran against remote content: stat error = %v", err)
+	}
+	if _, err := os.Stat(filterMarker); !os.IsNotExist(err) {
+		t.Errorf("smudge filter ran against remote content: stat error = %v", err)
+	}
+	if _, err := os.Stat(processMarker); !os.IsNotExist(err) {
+		t.Errorf("process filter ran against remote content: stat error = %v", err)
 	}
 }
 
@@ -844,6 +947,7 @@ func TestAddWorktreeTrackingRollsBackBranchWhenWorktreeFails(t *testing.T) {
 		occupiedPath,
 		"remote-only",
 		"refs/remotes/origin/remote-only",
+		nil,
 	)
 
 	if err == nil {

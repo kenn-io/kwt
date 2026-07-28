@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/template"
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
@@ -18,7 +19,10 @@ import (
 type GitInterface interface {
 	ListWorktrees() ([]models.Worktree, error)
 	AddWorktree(path, branch string, createBranch bool) error
-	AddWorktreeTracking(path, branch, remoteBranch string) error
+	AddWorktreeTracking(
+		path, branch, remoteBranch string,
+		protectedNames []string,
+	) error
 	AddWorktreeFromBase(path, branch, baseBranch string) error
 	RemoveWorktree(path string, force bool) error
 	DeleteBranch(branch string, force bool) error
@@ -79,7 +83,12 @@ func (m *Manager) AddTracking(branch, remoteBranch, customPath string) (string, 
 		return "", err
 	}
 
-	if err := m.git.AddWorktreeTracking(path, branch, remoteBranch); err != nil {
+	if err := m.git.AddWorktreeTracking(
+		path,
+		branch,
+		remoteBranch,
+		credentials.ProtectedNames(m.config),
+	); err != nil {
 		return "", err
 	}
 

@@ -68,7 +68,7 @@ func NewTmuxCommandForSocketWithStripNames(
 	extra := make(map[string]bool, len(names))
 	for _, name := range names {
 		if name = strings.TrimSpace(name); name != "" {
-			extra[name] = true
+			extra[strings.ToLower(name)] = true
 		}
 	}
 	return &TmuxCommand{
@@ -400,6 +400,6 @@ func (t *TmuxCommand) stripExtraNames(env []string) []string {
 		return env
 	}
 	return filteredEnviron(env, func(name string) bool {
-		return t.extraStripNames[name]
+		return t.extraStripNames[strings.ToLower(name)]
 	})
 }

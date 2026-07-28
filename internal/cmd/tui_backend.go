@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/fleet"
 	"go.kenn.io/kwt/internal/git"
@@ -34,6 +35,7 @@ type tuiBackend struct {
 	mu                        sync.Mutex
 	cfg                       *models.Config
 	tmux                      *tmux.TmuxCommand
+	protectedNames            []string
 	launchDir                 string
 	launchProjectRegistered   bool
 	launchWorkspaceRegistered bool
@@ -57,11 +59,13 @@ func newTUIBackend(cfg *models.Config) *tuiBackend {
 }
 
 func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBackend {
-	tmuxCmd := tmux.NewTmuxCommand("")
+	protectedNames := credentials.ProtectedNames(cfg)
+	tmuxCmd := tmux.NewTmuxCommandWithStripNames("", protectedNames)
 	return &tuiBackend{
-		cfg:       cfg,
-		tmux:      tmuxCmd,
-		launchDir: launchDir,
+		cfg:            cfg,
+		tmux:           tmuxCmd,
+		protectedNames: protectedNames,
+		launchDir:      launchDir,
 		// Registered projects flow into base-dir discovery so a registered
 		// canonical identity wins over a fork origin (the same precedence
 		// applyProjectIdentityFallback applies to per-project discovery).
@@ -72,13 +76,16 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 		discoverLaunchWorktrees:  discoverLaunchRepoWorktrees,
 		collectStatuses:          collectTUIStatuses,
 		listSessions:             tmuxCmd.ListSessions,
-		ensureAndAttach:          tmux.NewWorkspaceRunner(tmuxCmd).EnsureAndAttach,
-		registerProject:          config.RegisterProject,
-		registerWorkspace:        config.RegisterWorkspace,
-		unregisterWorkspace:      config.UnregisterWorkspace,
-		readFleetState:           readTUIFleetState,
-		loadTargetConfig:         config.LoadForTarget,
-		now:                      time.Now,
+		ensureAndAttach: tmux.NewWorkspaceRunner(
+			tmuxCmd,
+			protectedNames,
+		).EnsureAndAttach,
+		registerProject:     config.RegisterProject,
+		registerWorkspace:   config.RegisterWorkspace,
+		unregisterWorkspace: config.UnregisterWorkspace,
+		readFleetState:      readTUIFleetState,
+		loadTargetConfig:    config.LoadForTarget,
+		now:                 time.Now,
 	}
 }
 

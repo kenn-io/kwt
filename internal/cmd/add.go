@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/duration"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/tmux"
@@ -26,6 +27,11 @@ var (
 	addSelectLayout bool
 	addNoLaunch     bool
 	addFrom         string
+
+	newAddWorkspaceRunner = func(names []string) openWorkspaceRunner {
+		tmuxCommand := tmux.NewTmuxCommandWithStripNames("", names)
+		return tmux.NewWorkspaceRunner(tmuxCommand, names)
+	}
 )
 
 // addCmd represents the add command.
@@ -219,7 +225,13 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		publishFleetBestEffortForCommand(cmd, ctx.Config)
 
 		if launch {
-			return attachWorkspace(info, branch, worktreePath, layout)
+			return attachWorkspace(
+				info,
+				branch,
+				worktreePath,
+				layout,
+				ctx.Config,
+			)
 		}
 		return nil
 	})(cmd, args)
@@ -288,9 +300,14 @@ func prepareLaunch(ctx *CommandContext) (models.Layout, *url.RepositoryInfo, err
 // creating the session first if needed. Called only after prepareLaunch has
 // already validated tmux, resolved the layout, and parsed the repository
 // URL, and after the worktree exists.
-func attachWorkspace(info *url.RepositoryInfo, branch, worktreePath string, layout models.Layout) error {
+func attachWorkspace(
+	info *url.RepositoryInfo,
+	branch, worktreePath string,
+	layout models.Layout,
+	cfg *models.Config,
+) error {
 	session := tmux.WorkspaceSessionName(info, branch, worktreePath)
-	runner := tmux.NewWorkspaceRunner(tmux.NewTmuxCommand(""))
+	runner := newAddWorkspaceRunner(credentials.ProtectedNames(cfg))
 	return runner.EnsureAndAttach(
 		context.Background(), session, worktreePath, layout, os.Getenv("TMUX") != "",
 	)
