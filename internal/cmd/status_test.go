@@ -92,6 +92,7 @@ func TestUnreviewedRemoteSourceSkipsAutomaticStatusAndFleetInspection(t *testing
 		0755,
 	))
 	require.NoError(t, cmdStatusTestGit(repoDir, "config", "core.fsmonitor", hook))
+	builder := newFleetManifestBuilder()
 	reg, err := registry.New()
 	require.NoError(t, err)
 	require.NoError(t, reg.Register(&registry.WorktreeEntry{
@@ -119,7 +120,7 @@ func TestUnreviewedRemoteSourceSkipsAutomaticStatusAndFleetInspection(t *testing
 	require.Equal(t, models.WorktreeStatusUnknown, statuses[0].Status)
 	require.NoFileExists(t, marker)
 
-	manifest, err := newFleetManifestBuilder().Build(context.Background(), cfg)
+	manifest, err := builder.Build(context.Background(), cfg)
 	require.NoError(t, err)
 	require.Empty(t, manifest.Worktrees)
 	require.NoFileExists(t, marker)

@@ -245,10 +245,10 @@ func (r *WorkspaceRunner) validateProtectedState(
 func firstMatchingName(names, sensitive []string) (string, bool) {
 	sensitiveSet := make(map[string]bool, len(sensitive))
 	for _, name := range sensitive {
-		sensitiveSet[name] = true
+		sensitiveSet[strings.ToLower(name)] = true
 	}
 	for _, name := range names {
-		if sensitiveSet[name] {
+		if sensitiveSet[strings.ToLower(name)] {
 			return name, true
 		}
 	}

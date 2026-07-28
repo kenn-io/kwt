@@ -262,7 +262,7 @@ func TestEnsureAndAttachPrefersSessionDefaultShell(t *testing.T) {
 
 func TestProtectedEnsureRejectsSensitiveServerEnvironment(t *testing.T) {
 	m := &mockWorkspaceTmux{
-		globalEnv: "KWT_GITHUB_TOKEN=secret\nKWT_HOME=/tmp/kwt\n",
+		globalEnv: "kwt_github_token=secret\nKWT_HOME=/tmp/kwt\n",
 	}
 	r := NewProtectedWorkspaceRunner(
 		m,
@@ -277,7 +277,7 @@ func TestProtectedEnsureRejectsSensitiveServerEnvironment(t *testing.T) {
 	)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "KWT_GITHUB_TOKEN")
+	assert.Contains(t, err.Error(), "kwt_github_token")
 	assert.Empty(t, m.calls)
 }
 
@@ -308,7 +308,7 @@ func TestProtectedEnsureRejectsSensitiveExistingSession(t *testing.T) {
 	m := &mockWorkspaceTmux{
 		hasSession:       true,
 		globalEnv:        "PATH=/bin\n",
-		sessionEnv:       "CUSTOM_FLEET_TOKEN=secret\n",
+		sessionEnv:       "Custom_Fleet_Token=secret\n",
 		sessionWorkspace: "/wt",
 	}
 	r := NewProtectedWorkspaceRunner(
@@ -324,7 +324,7 @@ func TestProtectedEnsureRejectsSensitiveExistingSession(t *testing.T) {
 	)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "CUSTOM_FLEET_TOKEN")
+	assert.Contains(t, err.Error(), "Custom_Fleet_Token")
 	assert.Empty(t, m.calls)
 }
 

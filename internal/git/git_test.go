@@ -521,10 +521,20 @@ exec "$REAL_GIT" "$@"
 func TestAddWorktreeExistingDisablesCheckoutHooks(t *testing.T) {
 	repo := NewTestRepository(t)
 	repo.CreateBranch(t, "existing-unreviewed")
+	if err := os.WriteFile(
+		filepath.Join(repo.Path, ".gitattributes"),
+		[]byte("branch.txt filter=conditional-attack\n"),
+		0644,
+	); err != nil {
+		t.Fatalf("write attributes: %v", err)
+	}
+	gitOutput(t, repo.Path, "add", ".gitattributes")
 	commitTestFile(t, repo.Path, "branch.txt", "branch\n", "Existing branch")
 	gitOutput(t, repo.Path, "checkout", "main")
 
 	hookMarker := filepath.Join(t.TempDir(), "hook-ran")
+	configuredHookMarker := filepath.Join(t.TempDir(), "configured-hook-ran")
+	filterMarker := filepath.Join(t.TempDir(), "conditional-filter-ran")
 	hooksDir := t.TempDir()
 	if err := os.WriteFile(
 		filepath.Join(hooksDir, "post-checkout"),
@@ -534,6 +544,39 @@ func TestAddWorktreeExistingDisablesCheckoutHooks(t *testing.T) {
 		t.Fatalf("write checkout hook: %v", err)
 	}
 	gitOutput(t, repo.Path, "config", "core.hooksPath", hooksDir)
+	configuredHook := filepath.Join(t.TempDir(), "configured-hook")
+	if err := os.WriteFile(
+		configuredHook,
+		fmt.Appendf(nil, "#!/bin/sh\nprintf hook > %q\n", configuredHookMarker),
+		0755,
+	); err != nil {
+		t.Fatalf("write configured hook: %v", err)
+	}
+	gitOutput(t, repo.Path, "config", "hook.configured-attack.command", configuredHook)
+	gitOutput(t, repo.Path, "config", "--add", "hook.configured-attack.event", "post-checkout")
+	gitOutput(t, repo.Path, "config", "--add", "hook.configured-attack.event", "post-index-change")
+	configuredHooksSupported := exec.Command(
+		"git", "-C", repo.Path, "hook", "list", "post-checkout",
+	).Run() == nil
+
+	filterCommand := filepath.Join(t.TempDir(), "conditional-filter")
+	if err := os.WriteFile(
+		filterCommand,
+		fmt.Appendf(nil, "#!/bin/sh\nprintf filter > %q\ncat\n", filterMarker),
+		0755,
+	); err != nil {
+		t.Fatalf("write conditional filter: %v", err)
+	}
+	includePath := filepath.Join(t.TempDir(), "onbranch.config")
+	gitOutput(t, repo.Path, "config", "-f", includePath, "filter.conditional-attack.smudge", filterCommand)
+	gitOutput(t, repo.Path, "config", "-f", includePath, "filter.conditional-attack.required", "true")
+	gitOutput(
+		t,
+		repo.Path,
+		"config",
+		"includeIf.onbranch:existing-unreviewed.path",
+		includePath,
+	)
 
 	worktreePath := filepath.Join(t.TempDir(), "existing-unreviewed")
 	if err := New(repo.Path).AddWorktreeExisting(
@@ -546,6 +589,19 @@ func TestAddWorktreeExistingDisablesCheckoutHooks(t *testing.T) {
 
 	if _, err := os.Stat(hookMarker); !os.IsNotExist(err) {
 		t.Errorf("checkout hook ran against existing branch: stat error = %v", err)
+	}
+	if configuredHooksSupported {
+		if _, err := os.Stat(configuredHookMarker); !os.IsNotExist(err) {
+			t.Errorf("configured hook ran against existing branch: stat error = %v", err)
+		}
+	}
+	if _, err := os.Stat(filterMarker); !os.IsNotExist(err) {
+		t.Errorf("branch-conditional filter ran against existing branch: stat error = %v", err)
+	}
+	if contents, err := os.ReadFile(filepath.Join(worktreePath, "branch.txt")); err != nil {
+		t.Errorf("read checked-out branch file: %v", err)
+	} else if string(contents) != "branch\n" {
+		t.Errorf("branch.txt = %q, want branch content", contents)
 	}
 	if got := gitOutput(t, worktreePath, "branch", "--show-current"); got != "existing-unreviewed" {
 		t.Errorf("branch = %q, want existing-unreviewed", got)
@@ -844,7 +900,11 @@ func TestAddWorktreeTrackingRemoteBranch(t *testing.T) {
 	repo.CreateBranch(t, "remote-only")
 	if err := os.WriteFile(
 		filepath.Join(repo.Path, ".gitattributes"),
-		[]byte("remote.txt filter=smudge-attack\nprocess.txt filter=process-attack\n"),
+		[]byte(
+			"remote.txt filter=smudge-attack\n"+
+				"process.txt filter=process-attack\n"+
+				"conditional.txt filter=conditional-attack\n",
+		),
 		0644,
 	); err != nil {
 		t.Fatalf("write attributes: %v", err)
@@ -856,6 +916,14 @@ func TestAddWorktreeTrackingRemoteBranch(t *testing.T) {
 	); err != nil {
 		t.Fatalf("write process input: %v", err)
 	}
+	if err := os.WriteFile(
+		filepath.Join(repo.Path, "conditional.txt"),
+		[]byte("conditional content\n"),
+		0644,
+	); err != nil {
+		t.Fatalf("write conditional input: %v", err)
+	}
+	gitOutput(t, repo.Path, "add", ".gitattributes", "process.txt", "conditional.txt")
 	commitTestFile(t, repo.Path, "remote.txt", "remote\n", "Remote branch")
 	wantHead := gitOutput(t, repo.Path, "rev-parse", "HEAD")
 	gitOutput(t, repo.Path, "push", "origin", "remote-only")
@@ -867,8 +935,10 @@ func TestAddWorktreeTrackingRemoteBranch(t *testing.T) {
 
 	hookMarker := filepath.Join(t.TempDir(), "hook-ran")
 	referenceHookMarker := filepath.Join(t.TempDir(), "reference-hook-ran")
+	configuredHookMarker := filepath.Join(t.TempDir(), "configured-hook-ran")
 	filterMarker := filepath.Join(t.TempDir(), "filter-ran")
 	processMarker := filepath.Join(t.TempDir(), "process-ran")
+	conditionalFilterMarker := filepath.Join(t.TempDir(), "conditional-filter-ran")
 	hooksDir := t.TempDir()
 	if err := os.WriteFile(
 		filepath.Join(hooksDir, "post-checkout"),
@@ -905,6 +975,48 @@ func TestAddWorktreeTrackingRemoteBranch(t *testing.T) {
 	gitOutput(t, repo.Path, "config", "filter.smudge-attack.smudge", smudgePath)
 	gitOutput(t, repo.Path, "config", "filter.process-attack.process", processPath)
 	gitOutput(t, repo.Path, "config", "filter.process-attack.required", "true")
+	configuredHook := filepath.Join(t.TempDir(), "configured-hook")
+	if err := os.WriteFile(
+		configuredHook,
+		fmt.Appendf(nil, "#!/bin/sh\nprintf hook > %q\n", configuredHookMarker),
+		0755,
+	); err != nil {
+		t.Fatalf("write configured hook: %v", err)
+	}
+	gitOutput(t, repo.Path, "config", "hook.configured-attack.command", configuredHook)
+	for _, event := range []string{
+		"post-checkout",
+		"post-index-change",
+		"reference-transaction",
+	} {
+		gitOutput(t, repo.Path, "config", "--add", "hook.configured-attack.event", event)
+	}
+	configuredHooksSupported := exec.Command(
+		"git", "-C", repo.Path, "hook", "list", "post-checkout",
+	).Run() == nil
+
+	conditionalFilter := filepath.Join(t.TempDir(), "conditional-filter")
+	if err := os.WriteFile(
+		conditionalFilter,
+		fmt.Appendf(
+			nil,
+			"#!/bin/sh\nprintf filter > %q\ncat\n",
+			conditionalFilterMarker,
+		),
+		0755,
+	); err != nil {
+		t.Fatalf("write conditional filter: %v", err)
+	}
+	includePath := filepath.Join(t.TempDir(), "gitdir.config")
+	gitOutput(t, repo.Path, "config", "-f", includePath, "filter.conditional-attack.smudge", conditionalFilter)
+	gitOutput(t, repo.Path, "config", "-f", includePath, "filter.conditional-attack.required", "true")
+	gitOutput(
+		t,
+		repo.Path,
+		"config",
+		"includeIf.gitdir:**/worktrees/remote-only.path",
+		includePath,
+	)
 
 	if runtime.GOOS != "windows" {
 		realGit, err := exec.LookPath("git")
@@ -968,11 +1080,24 @@ exec "$REAL_GIT" "$@"
 	if _, err := os.Stat(referenceHookMarker); !os.IsNotExist(err) {
 		t.Errorf("reference transaction hook ran during remote creation: stat error = %v", err)
 	}
+	if configuredHooksSupported {
+		if _, err := os.Stat(configuredHookMarker); !os.IsNotExist(err) {
+			t.Errorf("configured hook ran during remote creation: stat error = %v", err)
+		}
+	}
 	if _, err := os.Stat(filterMarker); !os.IsNotExist(err) {
 		t.Errorf("smudge filter ran against remote content: stat error = %v", err)
 	}
 	if _, err := os.Stat(processMarker); !os.IsNotExist(err) {
 		t.Errorf("process filter ran against remote content: stat error = %v", err)
+	}
+	if _, err := os.Stat(conditionalFilterMarker); !os.IsNotExist(err) {
+		t.Errorf("gitdir-conditional filter ran against remote content: stat error = %v", err)
+	}
+	if contents, err := os.ReadFile(filepath.Join(worktreePath, "conditional.txt")); err != nil {
+		t.Errorf("read checked-out remote file: %v", err)
+	} else if string(contents) != "conditional content\n" {
+		t.Errorf("conditional.txt = %q, want remote content", contents)
 	}
 }
 
@@ -996,6 +1121,20 @@ func TestAddWorktreeTrackingRollsBackBranchWhenWorktreeFails(t *testing.T) {
 		t.Fatalf("write reference transaction hook: %v", err)
 	}
 	gitOutput(t, repo.Path, "config", "core.hooksPath", hooksDir)
+	configuredHookMarker := filepath.Join(t.TempDir(), "configured-hook-ran")
+	configuredHook := filepath.Join(t.TempDir(), "configured-hook")
+	if err := os.WriteFile(
+		configuredHook,
+		fmt.Appendf(nil, "#!/bin/sh\nprintf hook > %q\n", configuredHookMarker),
+		0755,
+	); err != nil {
+		t.Fatalf("write configured hook: %v", err)
+	}
+	gitOutput(t, repo.Path, "config", "hook.configured-attack.command", configuredHook)
+	gitOutput(t, repo.Path, "config", "--add", "hook.configured-attack.event", "reference-transaction")
+	configuredHooksSupported := exec.Command(
+		"git", "-C", repo.Path, "hook", "list", "reference-transaction",
+	).Run() == nil
 
 	occupiedPath := filepath.Join(t.TempDir(), "occupied")
 	if err := os.MkdirAll(occupiedPath, 0755); err != nil {
@@ -1020,6 +1159,11 @@ func TestAddWorktreeTrackingRollsBackBranchWhenWorktreeFails(t *testing.T) {
 	}
 	if _, err := os.Stat(referenceHookMarker); !os.IsNotExist(err) {
 		t.Errorf("reference transaction hook ran during rollback: stat error = %v", err)
+	}
+	if configuredHooksSupported {
+		if _, err := os.Stat(configuredHookMarker); !os.IsNotExist(err) {
+			t.Errorf("configured hook ran during rollback: stat error = %v", err)
+		}
 	}
 }
 

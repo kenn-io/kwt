@@ -25,6 +25,19 @@ func pathSetContains(paths map[string]struct{}, path string) bool {
 	return ok
 }
 
+func isUnreviewedRemoteSourcePath(path string) (bool, error) {
+	reg, err := registry.New()
+	if err != nil {
+		return false, fmt.Errorf("open worktree registry: %w", err)
+	}
+	paths := reg.UnreviewedRemoteSourcePaths()
+	live := make(map[string]struct{}, len(paths))
+	for _, registeredPath := range paths {
+		live[utils.CanonicalPath(registeredPath)] = struct{}{}
+	}
+	return pathSetContains(live, path), nil
+}
+
 var acknowledgeRemoteSourcePath = func(path string) error {
 	reg, err := registry.New()
 	if err != nil {

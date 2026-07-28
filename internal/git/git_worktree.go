@@ -79,21 +79,31 @@ func (g *Git) AddWorktreeExisting(
 	path, branch string,
 	protectedNames []string,
 ) error {
-	isolationArgs, err := g.remoteCheckoutIsolationArgs(protectedNames)
-	if err != nil {
-		return err
-	}
 	hooksDir, err := os.MkdirTemp("", "kwt-empty-hooks-")
 	if err != nil {
 		return fmt.Errorf("create empty hooks directory: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(hooksDir) }()
 
-	args := []string{"-c", "core.hooksPath=" + hooksDir}
-	args = append(args, isolationArgs...)
-	args = append(args, "worktree", "add", path, branch)
+	isolationArgs, err := g.checkoutIsolationArgs(
+		protectedNames,
+		"",
+		hooksDir,
+	)
+	if err != nil {
+		return err
+	}
+	args := append([]string(nil), isolationArgs...)
+	args = append(args, "worktree", "add", "--no-checkout", path, branch)
 	if _, err := g.runWithoutCredentials(protectedNames, args...); err != nil {
 		return fmt.Errorf("failed to add existing-branch worktree: %w", err)
+	}
+	if err := g.checkoutIsolatedWorktree(
+		path,
+		protectedNames,
+		hooksDir,
+	); err != nil {
+		return fmt.Errorf("failed to check out existing-branch worktree: %w", err)
 	}
 	return nil
 }
@@ -104,21 +114,24 @@ func (g *Git) AddWorktreeTracking(
 	path, branch, remoteBranch string,
 	protectedNames []string,
 ) error {
-	isolationArgs, err := g.remoteCheckoutIsolationArgs(protectedNames)
-	if err != nil {
-		return err
-	}
 	hooksDir, err := os.MkdirTemp("", "kwt-empty-hooks-")
 	if err != nil {
 		return fmt.Errorf("create empty hooks directory: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(hooksDir) }()
-	hookIsolation := []string{"-c", "core.hooksPath=" + hooksDir}
+	isolationArgs, err := g.checkoutIsolationArgs(
+		protectedNames,
+		"",
+		hooksDir,
+	)
+	if err != nil {
+		return err
+	}
 
 	if _, err := g.runWithoutCredentials(
 		protectedNames,
 		append(
-			append([]string(nil), hookIsolation...),
+			append([]string(nil), isolationArgs...),
 			"branch", "--track", branch, remoteBranch,
 		)...,
 	); err != nil {
@@ -128,11 +141,11 @@ func (g *Git) AddWorktreeTracking(
 			err,
 		)
 	}
-	worktreeArgs := append(
-		append([]string(nil), hookIsolation...),
-		isolationArgs...,
+	worktreeArgs := append([]string(nil), isolationArgs...)
+	worktreeArgs = append(
+		worktreeArgs,
+		"worktree", "add", "--no-checkout", path, branch,
 	)
-	worktreeArgs = append(worktreeArgs, "worktree", "add", path, branch)
 	if _, err := g.runWithoutCredentials(
 		protectedNames,
 		worktreeArgs...,
@@ -140,7 +153,7 @@ func (g *Git) AddWorktreeTracking(
 		if _, rollbackErr := g.runWithoutCredentials(
 			protectedNames,
 			append(
-				append([]string(nil), hookIsolation...),
+				append([]string(nil), isolationArgs...),
 				"branch", "-D", branch,
 			)...,
 		); rollbackErr != nil {
@@ -158,44 +171,84 @@ func (g *Git) AddWorktreeTracking(
 			err,
 		)
 	}
+	if err := g.checkoutIsolatedWorktree(
+		path,
+		protectedNames,
+		hooksDir,
+	); err != nil {
+		return fmt.Errorf(
+			"failed to check out worktree tracking %s: %w",
+			remoteBranch,
+			err,
+		)
+	}
 	return nil
 }
 
-func (g *Git) remoteCheckoutIsolationArgs(
+func (g *Git) checkoutIsolationArgs(
 	protectedNames []string,
+	workDir string,
+	hooksDir string,
 ) ([]string, error) {
-	output, err := g.runWithoutCredentials(
-		protectedNames,
-		"config", "--null", "--list",
-	)
+	configArgs := make([]string, 0, 5)
+	if workDir != "" {
+		configArgs = append(configArgs, "-C", workDir)
+	}
+	configArgs = append(configArgs, "config", "--null", "--list")
+	output, err := g.runWithoutCredentials(protectedNames, configArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("list configured checkout filters: %w", err)
+		return nil, fmt.Errorf("list configured checkout isolation: %w", err)
 	}
 	drivers := make(map[string]bool)
+	hooks := make(map[string]bool)
 	for record := range strings.SplitSeq(output, "\x00") {
 		key, _, _ := strings.Cut(record, "\n")
 		key = strings.TrimSpace(key)
-		if !strings.HasPrefix(key, "filter.") {
-			continue
-		}
-		rest := strings.TrimPrefix(key, "filter.")
-		propertyAt := strings.LastIndex(rest, ".")
-		if propertyAt <= 0 {
-			continue
-		}
-		switch rest[propertyAt+1:] {
-		case "smudge", "process", "required":
-			drivers[rest[:propertyAt]] = true
+		lowerKey := strings.ToLower(key)
+		switch {
+		case strings.HasPrefix(lowerKey, "filter."):
+			rest := key[len("filter."):]
+			propertyAt := strings.LastIndex(rest, ".")
+			if propertyAt <= 0 {
+				continue
+			}
+			switch strings.ToLower(rest[propertyAt+1:]) {
+			case "smudge", "process", "required":
+				drivers[rest[:propertyAt]] = true
+			}
+		case strings.HasPrefix(lowerKey, "hook."):
+			rest := key[len("hook."):]
+			propertyAt := strings.LastIndex(rest, ".")
+			if propertyAt <= 0 {
+				continue
+			}
+			switch strings.ToLower(rest[propertyAt+1:]) {
+			case "command", "enabled", "event", "parallel":
+				hooks[rest[:propertyAt]] = true
+			}
 		}
 	}
-	names := make([]string, 0, len(drivers))
+	hookNames := make([]string, 0, len(hooks))
+	for hook := range hooks {
+		hookNames = append(hookNames, hook)
+	}
+	sort.Strings(hookNames)
+	driverNames := make([]string, 0, len(drivers))
 	for driver := range drivers {
-		names = append(names, driver)
+		driverNames = append(driverNames, driver)
 	}
-	sort.Strings(names)
+	sort.Strings(driverNames)
 
-	args := make([]string, 0, len(names)*6)
-	for _, driver := range names {
+	args := make([]string, 0, 4+len(hookNames)*2+len(driverNames)*6)
+	args = append(
+		args,
+		"-c", "core.hooksPath="+hooksDir,
+		"-c", "core.fsmonitor=false",
+	)
+	for _, hook := range hookNames {
+		args = append(args, "-c", "hook."+hook+".enabled=false")
+	}
+	for _, driver := range driverNames {
 		prefix := "filter." + driver + "."
 		args = append(
 			args,
@@ -205,6 +258,28 @@ func (g *Git) remoteCheckoutIsolationArgs(
 		)
 	}
 	return args, nil
+}
+
+func (g *Git) checkoutIsolatedWorktree(
+	path string,
+	protectedNames []string,
+	hooksDir string,
+) error {
+	isolationArgs, err := g.checkoutIsolationArgs(
+		protectedNames,
+		path,
+		hooksDir,
+	)
+	if err != nil {
+		return err
+	}
+	args := []string{"-C", path}
+	args = append(args, isolationArgs...)
+	args = append(args, "checkout", "--force")
+	if _, err := g.runWithoutCredentials(protectedNames, args...); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (g *Git) defaultWorktreeBase() (string, error) {

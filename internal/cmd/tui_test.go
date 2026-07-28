@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/fleet"
+	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/pullrequest"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/tmux"
@@ -1953,6 +1954,11 @@ func TestTUIBackendMaterializeWorktreeRejectsStaleLocalHead(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(baseDir, "github.com", "example", "kwt", "feature-studio-only"))
 	assert.True(t, tuiTestBranchExists(repoPath, "feature/studio-only"),
 		"pre-existing branch must survive a failed sync")
+	reg, registryErr := registry.New()
+	require.NoError(t, registryErr)
+	assert.False(t, reg.IsUnreviewedRemoteSource(
+		filepath.Join(baseDir, "github.com", "example", "kwt", "feature-studio-only"),
+	))
 }
 
 func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnStaleHead(t *testing.T) {
@@ -1990,6 +1996,51 @@ func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnStaleHead(t *tes
 	assert.Empty(t, path)
 	assert.False(t, tuiTestBranchExists(repoPath, "feature/studio-only"),
 		"auto-created branch must be removed when verification fails")
+	reg, registryErr := registry.New()
+	require.NoError(t, registryErr)
+	assert.False(t, reg.IsUnreviewedRemoteSource(
+		filepath.Join(baseDir, "github.com", "example", "kwt", "feature-studio-only"),
+	))
+}
+
+func TestTUIBackendMaterializeWorktreeUnregistersWhenHeadCannotBeRead(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	repoPath := newTUITestRepo(t)
+	runTUITestGit(t, repoPath, "remote", "add", "origin", "https://github.com/example/kwt.git")
+	runTUITestGit(t, repoPath, "branch", "feature/studio-only")
+	baseDir := filepath.Join(t.TempDir(), "worktrees")
+	cfg := &models.Config{
+		Worktree: models.WorktreeConfig{BaseDir: baseDir, AutoMkdir: true},
+	}
+	manager := worktree.New(git.New(repoPath), cfg)
+	worktreePath, err := manager.AddWithOptions(
+		"feature/studio-only",
+		"",
+		false,
+		worktree.AddOptions{SkipSetup: true},
+	)
+	require.NoError(t, err)
+	runTUITestGit(t, worktreePath, "symbolic-ref", "HEAD", "refs/heads/missing")
+
+	backend := newTUIBackendWithLaunchDir(cfg, "")
+	err = backend.verifyMaterializedHead(
+		context.Background(),
+		repoPath,
+		worktreePath,
+		&dashboard.FleetInfo{
+			Branch:     "feature/studio-only",
+			RemoteHead: strings.Repeat("b", 40),
+		},
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not verify synced head")
+	assert.NoDirExists(t, worktreePath)
+	reg, registryErr := registry.New()
+	require.NoError(t, registryErr)
+	assert.False(t, reg.IsUnreviewedRemoteSource(worktreePath))
 }
 
 func tuiTestBranchExists(repoPath string, branch string) bool {

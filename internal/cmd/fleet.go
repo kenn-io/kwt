@@ -30,13 +30,9 @@ type fleetHubClient interface {
 var (
 	loadFleetConfig         = config.Load
 	newFleetManifestBuilder = func() fleet.ManifestBuildProvider {
-		unreviewed, stateErr := unreviewedRemoteSourcePaths()
 		return fleet.NewManifestBuilder(fleet.ManifestBuilderOptions{
 			ExcludeWorktree: func(path string) (bool, error) {
-				if stateErr != nil {
-					return false, stateErr
-				}
-				return pathSetContains(unreviewed, path), nil
+				return isUnreviewedRemoteSourcePath(path)
 			},
 		})
 	}

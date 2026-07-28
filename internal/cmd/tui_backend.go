@@ -1018,20 +1018,63 @@ func (b *tuiBackend) verifyMaterializedHead(ctx context.Context, repoRoot string
 	want := strings.TrimSpace(info.RemoteHead)
 	got, err := git.New(worktreePath).RunWithContext(ctx, "rev-parse", "HEAD")
 	if err != nil {
-		_ = worktree.New(git.New(repoRoot), b.cfg).Remove(worktreePath, true)
-		return fmt.Errorf("could not verify synced head for %s; push or fetch it first: %w", info.Branch, err)
+		return b.failMaterializedHeadVerification(
+			repoRoot,
+			worktreePath,
+			fmt.Errorf(
+				"could not verify synced head for %s; push or fetch it first: %w",
+				info.Branch,
+				err,
+			),
+		)
 	}
 	got = strings.TrimSpace(got)
 	if strings.EqualFold(got, want) {
 		return nil
 	}
-	_ = worktree.New(git.New(repoRoot), b.cfg).Remove(worktreePath, true)
-	return fmt.Errorf(
-		"synced %s at %s, but hub reported head %s; push or fetch the reported commit first",
-		info.Branch,
-		shortCommit(got),
-		shortCommit(want),
+	return b.failMaterializedHeadVerification(
+		repoRoot,
+		worktreePath,
+		fmt.Errorf(
+			"synced %s at %s, but hub reported head %s; push or fetch the reported commit first",
+			info.Branch,
+			shortCommit(got),
+			shortCommit(want),
+		),
 	)
+}
+
+func (b *tuiBackend) failMaterializedHeadVerification(
+	repoRoot string,
+	worktreePath string,
+	verificationErr error,
+) error {
+	if err := worktree.New(git.New(repoRoot), b.cfg).Remove(
+		worktreePath,
+		true,
+	); err != nil {
+		return fmt.Errorf(
+			"%w (failed to remove rejected worktree: %v)",
+			verificationErr,
+			err,
+		)
+	}
+	reg, err := registry.New()
+	if err != nil {
+		return fmt.Errorf(
+			"%w (worktree removed, but failed to open registry: %v)",
+			verificationErr,
+			err,
+		)
+	}
+	if err := reg.Unregister(worktreePath); err != nil {
+		return fmt.Errorf(
+			"%w (worktree removed, but failed to unregister it: %v)",
+			verificationErr,
+			err,
+		)
+	}
+	return verificationErr
 }
 
 func localBranchExists(ctx context.Context, g *git.Git, branch string) bool {
