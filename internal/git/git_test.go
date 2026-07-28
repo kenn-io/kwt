@@ -542,6 +542,48 @@ func TestRemoveWorktree(t *testing.T) {
 	}
 }
 
+func TestRemoveWorktreeCleansDirectoryAfterGitDeregistersWorktree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a POSIX shell wrapper")
+	}
+
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "partially-removed")
+	worktreePath := filepath.Join(t.TempDir(), "remove-wt")
+	repo.CreateWorktree(t, worktreePath, "partially-removed")
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("find git executable: %v", err)
+	}
+	wrapperDir := t.TempDir()
+	wrapperPath := filepath.Join(wrapperDir, "git")
+	wrapper := `#!/bin/sh
+if [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
+	"$REAL_GIT" "$@" || exit $?
+	mkdir -p "$3"
+	printf 'created during removal\n' > "$3/residual"
+	printf "error: failed to delete '%s': Directory not empty\n" "$3" >&2
+	exit 1
+fi
+exec "$REAL_GIT" "$@"
+`
+	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0755); err != nil {
+		t.Fatalf("write git wrapper: %v", err)
+	}
+	t.Setenv("REAL_GIT", realGit)
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	err = New(repo.Path).RemoveWorktree(worktreePath, false)
+
+	if err != nil {
+		t.Fatalf("RemoveWorktree() error = %v", err)
+	}
+	if _, statErr := os.Stat(worktreePath); !os.IsNotExist(statErr) {
+		t.Fatalf("worktree path still exists after removal: stat error = %v", statErr)
+	}
+}
+
 func TestPruneWorktrees(t *testing.T) {
 	repo := NewTestRepository(t)
 	g := New(repo.Path)

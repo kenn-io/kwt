@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	gitworktree "go.kenn.io/kit/git/worktree"
+	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
 )
 
@@ -129,15 +130,42 @@ func (g *Git) AddWorktreeFromBase(path, branch, baseBranch string) error {
 
 // RemoveWorktree removes a worktree.
 func (g *Git) RemoveWorktree(path string, force bool) error {
+	canonicalPath := utils.CanonicalPath(path)
+	wasRegistered, _ := g.hasRegisteredWorktree(canonicalPath)
+
 	args := []string{"worktree", "remove"}
 	if force {
 		args = append(args, "--force")
 	}
 	args = append(args, path)
 	if _, err := g.run(args...); err != nil {
+		stillRegistered, listErr := g.hasRegisteredWorktree(canonicalPath)
+		if wasRegistered && listErr == nil && !stillRegistered {
+			if removeErr := os.RemoveAll(path); removeErr != nil {
+				return fmt.Errorf(
+					"failed to remove worktree: %w (Git deregistered the worktree but directory cleanup failed: %v)",
+					err,
+					removeErr,
+				)
+			}
+			return nil
+		}
 		return fmt.Errorf("failed to remove worktree: %w", err)
 	}
 	return nil
+}
+
+func (g *Git) hasRegisteredWorktree(canonicalPath string) (bool, error) {
+	output, err := g.run("worktree", "list", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range gitworktree.ParsePorcelain(output) {
+		if utils.CanonicalPath(entry.Path) == canonicalPath {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // PruneWorktrees removes worktree information for deleted directories.
