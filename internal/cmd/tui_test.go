@@ -1920,6 +1920,72 @@ func TestTUIBackendMaterializeWorktreeUsesRegisteredProjectRoot(t *testing.T) {
 	assert.Equal(t, "feature/studio-only", branch)
 }
 
+func TestTUIBackendMaterializeWorktreeTracksRemoteOnlyBranch(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	repoPath := newTUITestRepo(t)
+	runTUITestGit(
+		t,
+		repoPath,
+		"remote",
+		"add",
+		"origin",
+		"https://github.com/example/kwt.git",
+	)
+	runTUITestGit(
+		t,
+		repoPath,
+		"update-ref",
+		"refs/remotes/origin/feature/remote-only",
+		"HEAD",
+	)
+	baseDir := filepath.Join(t.TempDir(), "worktrees")
+	cfg := &models.Config{
+		Worktree: models.WorktreeConfig{BaseDir: baseDir, AutoMkdir: true},
+		Projects: []models.Project{{
+			Repository: "github.com/example/kwt",
+			Name:       "kwt",
+			Path:       repoPath,
+		}},
+	}
+	backend := newTUIBackendWithLaunchDir(cfg, "")
+	row := dashboard.Row{Fleet: &dashboard.FleetInfo{
+		ProjectIdentity: "github.com/example/kwt",
+		ProjectName:     "kwt",
+		Kind:            "branch",
+		Ref:             "feature/remote-only",
+		Branch:          "feature/remote-only",
+		Hosts:           []string{"host-b"},
+	}}
+
+	path, err := backend.MaterializeWorktree(context.Background(), row)
+
+	require.NoError(t, err)
+	assert.DirExists(t, path)
+	assert.Equal(
+		t,
+		"feature/remote-only",
+		strings.TrimSpace(runTUITestGitOutput(
+			t,
+			path,
+			"branch",
+			"--show-current",
+		)),
+	)
+	assert.Equal(
+		t,
+		"origin/feature/remote-only",
+		strings.TrimSpace(runTUITestGitOutput(
+			t,
+			path,
+			"rev-parse",
+			"--abbrev-ref",
+			"@{upstream}",
+		)),
+	)
+}
+
 func TestTUIBackendMaterializeWorktreeRejectsStaleLocalHead(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

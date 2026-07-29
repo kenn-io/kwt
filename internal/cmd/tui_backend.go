@@ -974,32 +974,42 @@ func (b *tuiBackend) MaterializeWorktree(ctx context.Context, row dashboard.Row)
 		return "", fmt.Errorf("no local project configured for %s", row.Fleet.ProjectIdentity)
 	}
 	repo := git.New(project.Path)
-	// `git worktree add` auto-creates a local branch from a fetched remote;
-	// remember whether one existed so a failed verification can clean it up.
 	branchExisted := localBranchExists(ctx, repo, row.Fleet.Branch)
-	path, err := worktree.New(repo, b.cfg).AddWithOptions(
-		row.Fleet.Branch,
-		"",
-		false,
-		worktree.AddOptions{SkipSetup: true},
+	manager := worktree.New(repo, b.cfg)
+	var (
+		path          string
+		err           error
+		branchCreated bool
 	)
+	if branchExisted {
+		path, err = manager.AddWithOptions(
+			row.Fleet.Branch,
+			"",
+			false,
+			worktree.AddOptions{SkipSetup: true},
+		)
+	} else {
+		var source string
+		source, err = resolveFetchedRemoteSource(repo, row.Fleet.Branch)
+		if err == nil {
+			path, err = manager.AddTracking(
+				row.Fleet.Branch,
+				source,
+				"",
+			)
+			branchCreated = err == nil
+		}
+	}
 	if err != nil {
 		syncErr := fmt.Errorf(
 			"could not sync %s: branch must exist locally or on a fetched remote; push or fetch it first: %w",
 			row.Fleet.Branch,
 			err,
 		)
-		if !branchExisted {
-			return "", b.rollbackMaterializedBranch(
-				repo,
-				row.Fleet.Branch,
-				syncErr,
-			)
-		}
 		return "", syncErr
 	}
 	if err := b.verifyMaterializedHead(ctx, project.Path, path, row.Fleet); err != nil {
-		if !branchExisted {
+		if branchCreated {
 			err = b.rollbackMaterializedBranch(
 				repo,
 				row.Fleet.Branch,
@@ -1010,6 +1020,33 @@ func (b *tuiBackend) MaterializeWorktree(ctx context.Context, row dashboard.Row)
 	}
 	publishTUIFleetBestEffort(ctx, b.cfg)
 	return path, nil
+}
+
+func resolveFetchedRemoteSource(repo *git.Git, branch string) (string, error) {
+	branches, err := repo.ListAvailableBranches()
+	if err != nil {
+		return "", fmt.Errorf("list fetched branches: %w", err)
+	}
+	var source string
+	for _, candidate := range branches {
+		if !candidate.IsRemote || candidate.Name != branch {
+			continue
+		}
+		if source != "" {
+			return "", fmt.Errorf(
+				"branch %s matches multiple fetched remotes",
+				branch,
+			)
+		}
+		source = candidate.Source
+	}
+	if source == "" {
+		return "", fmt.Errorf(
+			"branch %s has no matching fetched remote",
+			branch,
+		)
+	}
+	return source, nil
 }
 
 func (b *tuiBackend) rollbackMaterializedBranch(
