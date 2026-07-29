@@ -23,6 +23,10 @@ states:
   characters of its commit hash, for example `detached@be094b1b`.
 - An ordinary linked worktree will continue to display its branch unchanged.
 
+The states compose in that order. A primary checkout with a detached HEAD will
+display as `detached@be094b1b [primary]`, preserving both the commit identity
+and the checkout's protected role.
+
 The same presentation applies to remote-only fleet rows. A remote detached row
 will derive its short hash from the fleet ref. A remote-only branch row will
 append `[primary]` when every observation represented by that row identifies
@@ -76,6 +80,7 @@ Focused TUI tests will cover:
 
 - primary checkout display labels;
 - detached local display labels with full, short, and missing commit hashes;
+- detached primary display labels for local and remote-only rows;
 - remote-only detached display labels derived from fleet refs;
 - uniformly primary and mixed-primary remote-only fleet rows;
 - unchanged labels for ordinary linked worktrees;

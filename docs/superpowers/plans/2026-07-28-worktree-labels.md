@@ -12,6 +12,7 @@
 
 - Primary checkouts display as `<branch> [primary]`.
 - Detached checkouts display as `detached@<first-eight-commit-characters>`, or `detached` when no commit is available.
+- A checkout that is both detached and primary displays as `detached@<first-eight-commit-characters> [primary]`.
 - A remote-only fleet row displays `[primary]` only when it has at least one observation and every observation is primary.
 - A fleet row with mixed primary and linked observations remains unmarked.
 - Raw branch values, fleet refs, sorting identity, Git operations, backend APIs, and `FleetInfo.MaterializeLabel` semantics remain unchanged.
@@ -245,12 +246,31 @@ func TestRowDisplayBranch(t *testing.T) {
 			want: "detached",
 		},
 		{
+			name: "detached primary checkout",
+			row: func() Row {
+				row := testRow("kwt", "HEAD", "/w/kwt/detached-primary")
+				row.Entry.CommitHash = fullHash
+				row.Entry.IsMain = true
+				return row
+			}(),
+			want: "detached@be094b1b [primary]",
+		},
+		{
 			name: "remote detached",
 			row: Row{Fleet: &FleetInfo{
 				Kind: "detached",
 				Ref:  fullHash,
 			}},
 			want: "detached@be094b1b",
+		},
+		{
+			name: "remote detached primary",
+			row: Row{Fleet: &FleetInfo{
+				Kind:       "detached",
+				Ref:        fullHash,
+				AllPrimary: true,
+			}},
+			want: "detached@be094b1b [primary]",
 		},
 		{
 			name: "remote uniformly primary",
