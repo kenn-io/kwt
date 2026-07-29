@@ -87,7 +87,7 @@ func (g *Git) ListAvailableBranches() ([]models.Branch, error) {
 	if err != nil {
 		return nil, err
 	}
-	remotes, err := g.remoteNames()
+	fetchRefspecs, err := g.remoteFetchRefspecs()
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func (g *Git) ListAvailableBranches() ([]models.Branch, error) {
 		if !branch.IsRemote {
 			continue
 		}
-		name, ok := remoteBranchName(branch.Source, remotes)
+		name, ok := remoteBranchName(branch.Source, fetchRefspecs)
 		if !ok || name == "HEAD" ||
 			local[name] || checkedOut[name] {
 			continue
@@ -155,18 +155,82 @@ func (g *Git) remoteNames() ([]string, error) {
 	return remotes, nil
 }
 
-func remoteBranchName(source string, remotes []string) (string, bool) {
-	const prefix = "refs/remotes/"
-	ref, ok := strings.CutPrefix(source, prefix)
-	if !ok {
-		return "", false
+type remoteFetchRefspec struct {
+	source      string
+	destination string
+}
+
+func (g *Git) remoteFetchRefspecs() ([]remoteFetchRefspec, error) {
+	remotes, err := g.remoteNames()
+	if err != nil {
+		return nil, err
 	}
+	var refspecs []remoteFetchRefspec
 	for _, remote := range remotes {
-		if name, found := strings.CutPrefix(ref, remote+"/"); found && name != "" {
+		output, configErr := g.run(
+			"config",
+			"--get-all",
+			"remote."+remote+".fetch",
+		)
+		if configErr != nil {
+			continue
+		}
+		for value := range strings.SplitSeq(strings.TrimSpace(output), "\n") {
+			value = strings.TrimSpace(value)
+			value = strings.TrimPrefix(value, "+")
+			if value == "" || strings.HasPrefix(value, "^") {
+				continue
+			}
+			source, destination, ok := strings.Cut(value, ":")
+			if !ok || source == "" || destination == "" {
+				continue
+			}
+			refspecs = append(refspecs, remoteFetchRefspec{
+				source:      source,
+				destination: destination,
+			})
+		}
+	}
+	return refspecs, nil
+}
+
+func remoteBranchName(
+	destination string,
+	refspecs []remoteFetchRefspec,
+) (string, bool) {
+	for _, refspec := range refspecs {
+		source, ok := refspec.sourceForDestination(destination)
+		if !ok {
+			continue
+		}
+		name, ok := strings.CutPrefix(source, "refs/heads/")
+		if ok && name != "" {
 			return name, true
 		}
 	}
 	return "", false
+}
+
+func (r remoteFetchRefspec) sourceForDestination(
+	destination string,
+) (string, bool) {
+	star := strings.IndexByte(r.destination, '*')
+	if star < 0 {
+		return r.source, destination == r.destination
+	}
+	if strings.Count(r.destination, "*") != 1 ||
+		strings.Count(r.source, "*") != 1 {
+		return "", false
+	}
+	prefix := r.destination[:star]
+	suffix := r.destination[star+1:]
+	if !strings.HasPrefix(destination, prefix) ||
+		!strings.HasSuffix(destination, suffix) ||
+		len(destination) < len(prefix)+len(suffix) {
+		return "", false
+	}
+	match := destination[len(prefix) : len(destination)-len(suffix)]
+	return strings.Replace(r.source, "*", match, 1), true
 }
 
 // DeleteBranch deletes a branch.

@@ -926,6 +926,41 @@ func TestListAvailableBranchesNormalizesRemoteAndExcludesCheckedOut(t *testing.T
 	}
 }
 
+func TestListAvailableBranchesUsesCustomRemoteFetchRefspec(t *testing.T) {
+	repo := NewTestRepository(t)
+	remotePath := filepath.Join(t.TempDir(), "origin.git")
+	gitOutput(t, filepath.Dir(remotePath), "init", "--bare", "-b", "main", remotePath)
+	gitOutput(t, repo.Path, "remote", "add", "origin", remotePath)
+	gitOutput(t, repo.Path, "config", "--unset-all", "remote.origin.fetch")
+	gitOutput(
+		t,
+		repo.Path,
+		"config",
+		"--add",
+		"remote.origin.fetch",
+		"+refs/heads/*:refs/remotes/pull/*",
+	)
+
+	repo.CreateBranch(t, "custom-fetch")
+	gitOutput(t, repo.Path, "push", "origin", "custom-fetch")
+	gitOutput(t, repo.Path, "checkout", "main")
+	gitOutput(t, repo.Path, "branch", "-D", "custom-fetch")
+	gitOutput(t, repo.Path, "fetch", "origin")
+
+	branches, err := New(repo.Path).ListAvailableBranches()
+	require.NoError(t, err)
+
+	for _, branch := range branches {
+		if branch.Source != "refs/remotes/pull/custom-fetch" {
+			continue
+		}
+		assert.Equal(t, "custom-fetch", branch.Name)
+		assert.True(t, branch.IsRemote)
+		return
+	}
+	t.Fatalf("custom-fetch branch not found: %+v", branches)
+}
+
 func TestListAvailableBranchesUsesFullRefsAcrossNamespaceCollisions(t *testing.T) {
 	repo := NewTestRepository(t)
 	remotePath := filepath.Join(t.TempDir(), "upstream.git")

@@ -1945,6 +1945,12 @@ func TestTUIBackendMaterializeWorktreeUsesSelectedProjectConfig(t *testing.T) {
 			BaseDir:   selectedBase,
 			AutoMkdir: true,
 		},
+		Naming: models.NamingConfig{
+			Template: "{{.Branch}}",
+			SanitizeChars: map[string]string{
+				"/": "-",
+			},
+		},
 	}
 	backend := newTUIBackendWithLaunchDir(globalCfg, "")
 	loadedTargetConfig := false
