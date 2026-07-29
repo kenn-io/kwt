@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/kwt/internal/discovery"
@@ -18,6 +19,7 @@ var (
 	removeForce       bool
 	removeDryRun      bool
 	removeGlobal      bool
+	removeIfCreatedAt string
 	deleteBranch      bool
 	forceDeleteBranch bool
 )
@@ -73,6 +75,7 @@ func init() {
 	removeCmd.Flags().BoolVarP(&removeForce, "force", "f", false, "Force delete even if dirty")
 	removeCmd.Flags().BoolVarP(&removeDryRun, "dry-run", "d", false, "Show deletion targets only")
 	removeCmd.Flags().BoolVarP(&removeGlobal, "global", "g", false, "Remove from any worktree in the configured base directory")
+	removeCmd.Flags().StringVar(&removeIfCreatedAt, "if-created-at", "", "Remove only if the worktree creation identity matches")
 	removeCmd.Flags().BoolVarP(&deleteBranch, "delete-branch", "b", false, "Also delete the branch after removing worktree")
 	removeCmd.Flags().BoolVar(&forceDeleteBranch, "force-delete-branch", false, "Force delete the branch even if not merged")
 }
@@ -112,6 +115,10 @@ func runRemove(cmd *cobra.Command, args []string) error {
 }
 
 func removeLocalWorktree(ctx *CommandContext, args []string) (int, error) {
+	expectedCreatedAt, err := parseRemoveCreationIdentity()
+	if err != nil {
+		return 0, err
+	}
 	worktrees, err := ctx.WorktreeManager.List()
 	if err != nil {
 		return 0, fmt.Errorf("failed to list worktrees: %w", err)
@@ -169,11 +176,26 @@ func removeLocalWorktree(ctx *CommandContext, args []string) (int, error) {
 		}
 		return 0, nil
 	}
+	if expectedCreatedAt != nil && len(toRemove) != 1 {
+		return 0, fmt.Errorf(
+			"--if-created-at requires exactly one worktree",
+		)
+	}
 
 	removed := 0
 	for _, wt := range toRemove {
 		if deleteBranch {
-			if err := ctx.WorktreeManager.RemoveWithBranch(wt.Path, wt.Branch, removeForce, deleteBranch, forceDeleteBranch); err != nil {
+			if err := ctx.WorktreeManager.RemoveWithBranch(
+				wt.Path,
+				wt.Branch,
+				removeForce,
+				deleteBranch,
+				forceDeleteBranch,
+				expectedCreatedAt,
+			); err != nil {
+				if expectedCreatedAt != nil {
+					return 0, err
+				}
 				ctx.Printer.PrintError(fmt.Errorf("failed to remove %s: %v", wt.Branch, err))
 				if worktreePathRemoved(wt.Path) {
 					removed++
@@ -186,7 +208,14 @@ func removeLocalWorktree(ctx *CommandContext, args []string) (int, error) {
 				ctx.Printer.PrintSuccess(fmt.Sprintf("Deleted branch: %s", wt.Branch))
 			}
 		} else {
-			if err := ctx.WorktreeManager.Remove(wt.Path, removeForce); err != nil {
+			if err := ctx.WorktreeManager.Remove(
+				wt.Path,
+				removeForce,
+				expectedCreatedAt,
+			); err != nil {
+				if expectedCreatedAt != nil {
+					return 0, err
+				}
 				ctx.Printer.PrintError(fmt.Errorf("failed to remove %s: %v", wt.Branch, err))
 				if worktreePathRemoved(wt.Path) {
 					removed++
@@ -216,6 +245,10 @@ func filterNonMainWorktrees(worktrees []models.Worktree) []models.Worktree {
 }
 
 func removeGlobalWorktree(ctx *CommandContext, args []string) (int, error) {
+	expectedCreatedAt, err := parseRemoveCreationIdentity()
+	if err != nil {
+		return 0, err
+	}
 	entries, err := discovery.DiscoverGlobalWorktrees(ctx.Config.Worktree.BaseDir, ctx.Config.Projects)
 	if err != nil {
 		return 0, fmt.Errorf("failed to discover worktrees: %w", err)
@@ -330,6 +363,11 @@ func removeGlobalWorktree(ctx *CommandContext, args []string) (int, error) {
 		}
 		return 0, nil
 	}
+	if expectedCreatedAt != nil && len(toRemove) != 1 {
+		return 0, fmt.Errorf(
+			"--if-created-at requires exactly one worktree",
+		)
+	}
 
 	// Remove each worktree by changing to its repository directory
 	removed := 0
@@ -361,7 +399,18 @@ func removeGlobalWorktree(ctx *CommandContext, args []string) (int, error) {
 		wm := worktree.New(g, ctx.Config)
 
 		if deleteBranch {
-			if err := wm.RemoveWithBranch(entry.Path, entry.Branch, removeForce, deleteBranch, forceDeleteBranch); err != nil {
+			if err := wm.RemoveWithBranch(
+				entry.Path,
+				entry.Branch,
+				removeForce,
+				deleteBranch,
+				forceDeleteBranch,
+				expectedCreatedAt,
+			); err != nil {
+				if expectedCreatedAt != nil {
+					_ = os.Chdir(originalDir)
+					return 0, err
+				}
 				repoName := "unknown"
 				if entry.RepositoryInfo != nil {
 					repoName = entry.RepositoryInfo.Repository
@@ -375,7 +424,15 @@ func removeGlobalWorktree(ctx *CommandContext, args []string) (int, error) {
 				continue
 			}
 		} else {
-			if err := wm.Remove(entry.Path, removeForce); err != nil {
+			if err := wm.Remove(
+				entry.Path,
+				removeForce,
+				expectedCreatedAt,
+			); err != nil {
+				if expectedCreatedAt != nil {
+					_ = os.Chdir(originalDir)
+					return 0, err
+				}
 				repoName := "unknown"
 				if entry.RepositoryInfo != nil {
 					repoName = entry.RepositoryInfo.Repository
@@ -408,6 +465,20 @@ func removeGlobalWorktree(ctx *CommandContext, args []string) (int, error) {
 	}
 
 	return removed, nil
+}
+
+func parseRemoveCreationIdentity() (*time.Time, error) {
+	if removeIfCreatedAt == "" {
+		return nil, nil
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, removeIfCreatedAt)
+	if err != nil || createdAt.IsZero() {
+		return nil, fmt.Errorf(
+			"invalid --if-created-at value %q",
+			removeIfCreatedAt,
+		)
+	}
+	return &createdAt, nil
 }
 
 func worktreePathRemoved(path string) bool {

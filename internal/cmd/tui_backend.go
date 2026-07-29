@@ -1128,6 +1128,7 @@ func (b *tuiBackend) failMaterializedHeadVerification(
 	if err := worktree.New(git.New(repoRoot), b.cfg).Remove(
 		worktreePath,
 		true,
+		nil,
 	); err != nil {
 		return fmt.Errorf(
 			"%w (failed to remove rejected worktree: %v)",
@@ -1315,7 +1316,11 @@ func rowRepositoryIdentityCandidates(info *url.RepositoryInfo) []string {
 }
 
 func (b *tuiBackend) removeWorktreeFromRoot(repoRoot string, worktreePath string, force bool) error {
-	err := worktree.New(git.New(repoRoot), b.cfg).Remove(worktreePath, force)
+	err := worktree.New(git.New(repoRoot), b.cfg).Remove(
+		worktreePath,
+		force,
+		nil,
+	)
 	if err == nil || !isWorktreeValidationError(err) {
 		return err
 	}
@@ -1323,7 +1328,11 @@ func (b *tuiBackend) removeWorktreeFromRoot(repoRoot string, worktreePath string
 	if repairErr := repairLinkedWorktreeGitFile(repoRoot, worktreePath); repairErr != nil {
 		return fmt.Errorf("%w (failed to repair worktree metadata: %v)", err, repairErr)
 	}
-	return worktree.New(git.New(repoRoot), b.cfg).Remove(worktreePath, force)
+	return worktree.New(git.New(repoRoot), b.cfg).Remove(
+		worktreePath,
+		force,
+		nil,
+	)
 }
 
 func isWorktreeValidationError(err error) bool {

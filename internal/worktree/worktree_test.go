@@ -114,7 +114,11 @@ func (m *mockGit) AddWorktreeExisting(
 	return nil
 }
 
-func (m *mockGit) RemoveWorktree(path string, force bool) error {
+func (m *mockGit) RemoveWorktree(
+	path string,
+	force bool,
+	ifCreatedAt *time.Time,
+) error {
 	if m.removeError != nil {
 		return m.removeError
 	}
@@ -467,7 +471,7 @@ func TestManagerRemove(t *testing.T) {
 	m := New(mockG, &models.Config{})
 
 	// Remove worktree
-	err := m.Remove("/path/to/worktree1", false)
+	err := m.Remove("/path/to/worktree1", false, nil)
 	if err != nil {
 		t.Fatalf("Remove() error = %v", err)
 	}

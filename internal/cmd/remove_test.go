@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -33,6 +34,41 @@ func TestRemoveLocalPublishesOnceAfterSuccessfulRemoval(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, calls)
+}
+
+func TestRemoveLocalRejectsRecreatedWorktree(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetRemoveCommandFlags(t)
+
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	t.Chdir(repoPath)
+
+	worktreePath := filepath.Join(t.TempDir(), "remove-replacement")
+	runTUITestGit(
+		t,
+		repoPath,
+		"worktree",
+		"add",
+		"-b",
+		"task7/remove-replacement",
+		worktreePath,
+	)
+	info, err := os.Stat(worktreePath)
+	require.NoError(t, err)
+	removeIfCreatedAt = info.ModTime().Format(time.RFC3339Nano)
+	replacementTime := info.ModTime().Add(time.Second)
+	require.NoError(t, os.Chtimes(
+		worktreePath,
+		replacementTime,
+		replacementTime,
+	))
+
+	cmd, _, _ := fleetTestCommand()
+	err = runRemove(cmd, []string{worktreePath})
+
+	require.ErrorContains(t, err, "creation identity changed")
+	assert.DirExists(t, worktreePath)
 }
 
 func TestRemoveLocalDoesNotPublishOnDryRun(t *testing.T) {
@@ -231,6 +267,7 @@ func resetRemoveCommandFlags(t *testing.T) {
 	oldRemoveForce := removeForce
 	oldRemoveDryRun := removeDryRun
 	oldRemoveGlobal := removeGlobal
+	oldRemoveIfCreatedAt := removeIfCreatedAt
 	oldDeleteBranch := deleteBranch
 	oldForceDeleteBranch := forceDeleteBranch
 
@@ -238,6 +275,7 @@ func resetRemoveCommandFlags(t *testing.T) {
 		removeForce = oldRemoveForce
 		removeDryRun = oldRemoveDryRun
 		removeGlobal = oldRemoveGlobal
+		removeIfCreatedAt = oldRemoveIfCreatedAt
 		deleteBranch = oldDeleteBranch
 		forceDeleteBranch = oldForceDeleteBranch
 	})
@@ -245,6 +283,7 @@ func resetRemoveCommandFlags(t *testing.T) {
 	removeForce = false
 	removeDryRun = false
 	removeGlobal = false
+	removeIfCreatedAt = ""
 	deleteBranch = false
 	forceDeleteBranch = false
 }

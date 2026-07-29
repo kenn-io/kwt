@@ -104,6 +104,13 @@ tools](#attaching-from-other-tools) before using `new-session`.
 and direct the user through `kwt pr attach`.
 `created_at` is populated in both local and `-g` mode.
 
+## `kwt remove`
+
+`--if-created-at <timestamp>` makes a single-worktree removal conditional on
+the `created_at` value returned by `kwt list --json`. Kwt compares that identity
+and removes the worktree while holding the repository's worktree-mutation lock,
+so automation cannot delete a replacement checkout created at the same path.
+
 ## `kwt projects`
 
 `--json` emits an array of the registered project repositories (`{repository,

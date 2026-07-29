@@ -729,7 +729,7 @@ func TestRemoveWorktree(t *testing.T) {
 	repo.CreateWorktree(t, worktreePath, "to-remove")
 
 	// Remove the worktree
-	err := g.RemoveWorktree(worktreePath, false)
+	err := g.RemoveWorktree(worktreePath, false, nil)
 	if err != nil {
 		t.Fatalf("RemoveWorktree() error = %v", err)
 	}
@@ -741,6 +741,29 @@ func TestRemoveWorktree(t *testing.T) {
 			t.Error("Worktree still exists in list after removal")
 		}
 	}
+}
+
+func TestRemoveWorktreeRejectsChangedCreationIdentity(t *testing.T) {
+	repo := NewTestRepository(t)
+	g := New(repo.Path)
+	repo.CreateBranch(t, "replacement")
+	worktreePath := filepath.Join(t.TempDir(), "replacement")
+	repo.CreateWorktree(t, worktreePath, "replacement")
+
+	info, err := os.Stat(worktreePath)
+	require.NoError(t, err)
+	expected := info.ModTime()
+	replacementTime := expected.Add(time.Second)
+	require.NoError(t, os.Chtimes(
+		worktreePath,
+		replacementTime,
+		replacementTime,
+	))
+
+	err = g.RemoveWorktree(worktreePath, false, &expected)
+
+	require.ErrorContains(t, err, "creation identity changed")
+	assert.DirExists(t, worktreePath)
 }
 
 func TestRemoveWorktreeCleansDirectoryAfterGitDeregistersWorktree(t *testing.T) {
@@ -775,7 +798,7 @@ exec "$REAL_GIT" "$@"
 	t.Setenv("REAL_GIT", realGit)
 	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	err = New(worktreePath).RemoveWorktree(worktreePath, false)
+	err = New(worktreePath).RemoveWorktree(worktreePath, false, nil)
 
 	if err != nil {
 		t.Fatalf("RemoveWorktree() error = %v", err)

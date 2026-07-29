@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/registry"
@@ -27,7 +28,7 @@ type GitInterface interface {
 		protectedNames []string,
 	) error
 	AddWorktreeFromBase(path, branch, baseBranch string) error
-	RemoveWorktree(path string, force bool) error
+	RemoveWorktree(path string, force bool, ifCreatedAt *time.Time) error
 	DeleteBranch(branch string, force bool) error
 	PruneWorktrees() error
 	GetRepositoryName() (string, error)
@@ -182,14 +183,29 @@ func (m *Manager) AddFromBase(branch string, baseBranch string, customPath strin
 }
 
 // Remove deletes a worktree.
-func (m *Manager) Remove(path string, force bool) error {
-	return m.git.RemoveWorktree(path, force)
+func (m *Manager) Remove(
+	path string,
+	force bool,
+	ifCreatedAt *time.Time,
+) error {
+	return m.git.RemoveWorktree(path, force, ifCreatedAt)
 }
 
 // RemoveWithBranch deletes a worktree and optionally its branch.
-func (m *Manager) RemoveWithBranch(path string, branch string, forceWorktree bool, deleteBranch bool, forceBranch bool) error {
+func (m *Manager) RemoveWithBranch(
+	path string,
+	branch string,
+	forceWorktree bool,
+	deleteBranch bool,
+	forceBranch bool,
+	ifCreatedAt *time.Time,
+) error {
 	// First remove the worktree
-	if err := m.git.RemoveWorktree(path, forceWorktree); err != nil {
+	if err := m.git.RemoveWorktree(
+		path,
+		forceWorktree,
+		ifCreatedAt,
+	); err != nil {
 		return err
 	}
 

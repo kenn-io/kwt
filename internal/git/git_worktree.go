@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/gofrs/flock"
 	gitworktree "go.kenn.io/kit/git/worktree"
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
@@ -56,6 +58,12 @@ func (g *Git) ListWorktrees() ([]models.Worktree, error) {
 
 // AddWorktree creates a new worktree.
 func (g *Git) AddWorktree(path, branch string, createBranch bool) error {
+	return g.withWorktreeMutationLock(nil, func() error {
+		return g.addWorktree(path, branch, createBranch)
+	})
+}
+
+func (g *Git) addWorktree(path, branch string, createBranch bool) error {
 	args := []string{"worktree", "add"}
 	if createBranch {
 		base, err := g.defaultWorktreeBase()
@@ -76,6 +84,15 @@ func (g *Git) AddWorktree(path, branch string, createBranch bool) error {
 // checkout to run repository-configured hooks or filters, and without exposing
 // protected credentials to Git.
 func (g *Git) AddWorktreeExisting(
+	path, branch string,
+	protectedNames []string,
+) error {
+	return g.withWorktreeMutationLock(protectedNames, func() error {
+		return g.addWorktreeExisting(path, branch, protectedNames)
+	})
+}
+
+func (g *Git) addWorktreeExisting(
 	path, branch string,
 	protectedNames []string,
 ) error {
@@ -130,6 +147,20 @@ func (g *Git) AddWorktreeExisting(
 // AddWorktreeTracking creates a local branch and worktree that track a
 // specific remote branch.
 func (g *Git) AddWorktreeTracking(
+	path, branch, remoteBranch string,
+	protectedNames []string,
+) error {
+	return g.withWorktreeMutationLock(protectedNames, func() error {
+		return g.addWorktreeTracking(
+			path,
+			branch,
+			remoteBranch,
+			protectedNames,
+		)
+	})
+}
+
+func (g *Git) addWorktreeTracking(
 	path, branch, remoteBranch string,
 	protectedNames []string,
 ) error {
@@ -411,6 +442,12 @@ func (g *Git) refExists(ref string) bool {
 
 // AddWorktreeFromBase creates a new worktree with a branch from a specific base branch.
 func (g *Git) AddWorktreeFromBase(path, branch, baseBranch string) error {
+	return g.withWorktreeMutationLock(nil, func() error {
+		return g.addWorktreeFromBase(path, branch, baseBranch)
+	})
+}
+
+func (g *Git) addWorktreeFromBase(path, branch, baseBranch string) error {
 	args := []string{"worktree", "add", "-b", branch, path}
 	if baseBranch != "" {
 		args = append(args, baseBranch)
@@ -422,7 +459,25 @@ func (g *Git) AddWorktreeFromBase(path, branch, baseBranch string) error {
 }
 
 // RemoveWorktree removes a worktree.
-func (g *Git) RemoveWorktree(path string, force bool) error {
+func (g *Git) RemoveWorktree(
+	path string,
+	force bool,
+	ifCreatedAt *time.Time,
+) error {
+	return g.withWorktreeMutationLock(nil, func() error {
+		if ifCreatedAt != nil {
+			if err := g.requireWorktreeCreationIdentity(
+				path,
+				*ifCreatedAt,
+			); err != nil {
+				return err
+			}
+		}
+		return g.removeWorktree(path, force)
+	})
+}
+
+func (g *Git) removeWorktree(path string, force bool) error {
 	canonicalPath := utils.CanonicalPath(path)
 	registryGit := g
 	if mainRoot, err := g.getMainRepoRoot(); err == nil {
@@ -450,6 +505,61 @@ func (g *Git) RemoveWorktree(path string, force bool) error {
 		return fmt.Errorf("failed to remove worktree: %w", err)
 	}
 	return nil
+}
+
+func (g *Git) requireWorktreeCreationIdentity(
+	path string,
+	expected time.Time,
+) error {
+	canonicalPath := utils.CanonicalPath(path)
+	worktrees, err := g.ListWorktrees()
+	if err != nil {
+		return err
+	}
+	for _, worktree := range worktrees {
+		if utils.CanonicalPath(worktree.Path) != canonicalPath {
+			continue
+		}
+		if worktree.CreatedAt.IsZero() ||
+			!worktree.CreatedAt.Equal(expected) {
+			return fmt.Errorf(
+				"worktree creation identity changed for %s",
+				path,
+			)
+		}
+		return nil
+	}
+	return fmt.Errorf("worktree creation identity changed for %s", path)
+}
+
+func (g *Git) withWorktreeMutationLock(
+	protectedNames []string,
+	operation func() error,
+) error {
+	commonDirOutput, err := g.runWithoutCredentials(
+		protectedNames,
+		"rev-parse",
+		"--git-common-dir",
+	)
+	if err != nil {
+		return fmt.Errorf("resolve worktree mutation lock: %w", err)
+	}
+	commonDir := strings.TrimSpace(commonDirOutput)
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(g.workDir, commonDir)
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(commonDir); resolveErr == nil {
+		commonDir = resolved
+	}
+	lock := flock.New(
+		filepath.Join(commonDir, "kwt-worktree.lock"),
+		flock.SetPermissions(0600),
+	)
+	if err := lock.Lock(); err != nil {
+		return fmt.Errorf("lock worktree mutations: %w", err)
+	}
+	defer func() { _ = lock.Unlock() }()
+	return operation()
 }
 
 func (g *Git) hasRegisteredWorktree(canonicalPath string) (bool, error) {
