@@ -29,6 +29,7 @@ type Row struct {
 	SessionName string
 	SessionLive bool
 	Creating    bool
+	NeedsReview bool
 }
 
 // WorkspaceInfo is the TUI-facing view of one registered directory workspace.

@@ -411,6 +411,7 @@ func TestTUIBackendListExcludesUnreviewedWorktreeFromStatusCollection(t *testing
 
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
+	assert.True(t, rows[0].NeedsReview)
 	assert.Equal(t, models.WorktreeStatusUnknown, rows[0].Status.Status)
 }
 

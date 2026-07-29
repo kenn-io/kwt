@@ -217,7 +217,9 @@ func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboar
 		if st == nil {
 			st = unknownStatusForEntry(entry)
 		}
-		rows = append(rows, buildTUIRow(entry, st, liveSessions))
+		row := buildTUIRow(entry, st, liveSessions)
+		row.NeedsReview = pathSetContains(unreviewed, entry.Path)
+		rows = append(rows, row)
 	}
 	rows = append(rows, b.workspaceRows(sessions)...)
 	return rows, nil, nil
