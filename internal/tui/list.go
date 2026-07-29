@@ -72,6 +72,8 @@ func shortCommitHash(hash string) string {
 	return hash
 }
 
+const primaryBranchSuffix = " [primary]"
+
 func rowDisplayBranch(row Row) string {
 	branch := rowBranch(row)
 	detached := false
@@ -96,7 +98,7 @@ func rowDisplayBranch(row Row) string {
 		}
 	}
 	if primary {
-		branch += " [primary]"
+		branch += primaryBranchSuffix
 	}
 	return branch
 }
@@ -742,13 +744,28 @@ func renderDashboardCells(columns []tableColumn, values map[string]string, style
 		if i > 0 {
 			b.WriteByte(' ')
 		}
-		cell := padRight(truncateWithEllipsis(values[column.key], column.width), column.width)
+		cell := padRight(truncateDashboardCell(column, values[column.key]), column.width)
 		if style := styles[column.key]; style != nil {
 			cell = style(cell)
 		}
 		b.WriteString(cell)
 	}
 	return b.String()
+}
+
+func truncateDashboardCell(column tableColumn, value string) string {
+	if column.key != dashboardColumnBranch ||
+		!strings.HasSuffix(value, primaryBranchSuffix) ||
+		runewidth.StringWidth(value) <= column.width {
+		return truncateWithEllipsis(value, column.width)
+	}
+
+	suffixWidth := runewidth.StringWidth(primaryBranchSuffix)
+	if column.width < suffixWidth {
+		return truncateWithEllipsis(strings.TrimSpace(primaryBranchSuffix), column.width)
+	}
+	branch := strings.TrimSuffix(value, primaryBranchSuffix)
+	return truncateWithEllipsis(branch, column.width-suffixWidth) + primaryBranchSuffix
 }
 
 func renderDashboardHeader(columns []tableColumn) string {

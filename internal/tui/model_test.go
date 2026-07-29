@@ -386,6 +386,52 @@ func TestModelDashboardFitsHundredColumnTerminal(t *testing.T) {
 	assert.LessOrEqual(t, visibleWidth(body), 100, body)
 }
 
+func TestModelDashboardPreservesPrimaryMarkerWhenBranchTruncated(t *testing.T) {
+	fullHash := "be094b1bdf4471ea60db4656f06d8fb2551ffd3d"
+	tests := []struct {
+		name  string
+		width int
+		row   Row
+	}{
+		{
+			name:  "long branch",
+			width: 100,
+			row: func() Row {
+				row := testRow("kwt", "feature/"+strings.Repeat("long-", 10), "/w/kwt/long")
+				row.Entry.IsMain = true
+				return row
+			}(),
+		},
+		{
+			name:  "detached in narrow dashboard",
+			width: 55,
+			row: func() Row {
+				row := testRow("kwt", "HEAD", "/w/kwt/detached")
+				row.Entry.CommitHash = fullHash
+				row.Entry.IsMain = true
+				return row
+			}(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := NewModel(&fakeBackend{}, "/worktrees")
+			model, _ = updateModel(t, model, tea.WindowSizeMsg{Width: tt.width, Height: 12})
+			model, _ = updateModel(t, model, rowsMsg{rows: []Row{tt.row}})
+
+			lines := strings.Split(stripANSI(viewContent(model)), "\n")
+			headerIndex := lineIndexContaining(lines, "REPO")
+
+			require.GreaterOrEqual(t, headerIndex, 0)
+			require.Greater(t, len(lines), headerIndex+1)
+			body := lines[headerIndex+1]
+			assert.Contains(t, body, "[primary]")
+			assert.LessOrEqual(t, visibleWidth(body), tt.width, body)
+		})
+	}
+}
+
 func TestModelSummarizesRemoteChangesInTableAndDetailsNameHost(t *testing.T) {
 	row := testRow("kwt", "feature/remote-dirty", "/w/kwt/feature")
 	row.Fleet = &FleetInfo{
