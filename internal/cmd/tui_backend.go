@@ -975,10 +975,13 @@ func (b *tuiBackend) MaterializeWorktree(ctx context.Context, row dashboard.Row)
 	}
 	repo := git.New(project.Path)
 	branchExisted := localBranchExists(ctx, repo, row.Fleet.Branch)
-	manager := worktree.New(repo, b.cfg)
+	cfg, err := b.loadTargetConfig(project.Path, false)
+	if err != nil {
+		return "", fmt.Errorf("load selected project config: %w", err)
+	}
+	manager := worktree.New(repo, cfg)
 	var (
 		path          string
-		err           error
 		branchCreated bool
 	)
 	if branchExisted {

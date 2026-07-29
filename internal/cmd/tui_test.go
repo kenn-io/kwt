@@ -1902,6 +1902,7 @@ func TestTUIBackendMaterializeWorktreeUsesRegisteredProjectRoot(t *testing.T) {
 		}},
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	stubTUITargetConfig(backend, cfg)
 	row := dashboard.Row{Fleet: &dashboard.FleetInfo{
 		ProjectIdentity: "github.com/example/kwt",
 		ProjectName:     "kwt",
@@ -1918,6 +1919,56 @@ func TestTUIBackendMaterializeWorktreeUsesRegisteredProjectRoot(t *testing.T) {
 	assert.True(t, strings.HasPrefix(path, baseDir), path)
 	branch := strings.TrimSpace(runTUITestGitOutput(t, path, "branch", "--show-current"))
 	assert.Equal(t, "feature/studio-only", branch)
+}
+
+func TestTUIBackendMaterializeWorktreeUsesSelectedProjectConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	repoPath := newTUITestRepo(t)
+	runTUITestGit(t, repoPath, "branch", "feature/selected-config")
+	globalBase := filepath.Join(t.TempDir(), "global-worktrees")
+	selectedBase := filepath.Join(t.TempDir(), "selected-worktrees")
+	globalCfg := &models.Config{
+		Worktree: models.WorktreeConfig{
+			BaseDir:   globalBase,
+			AutoMkdir: true,
+		},
+		Projects: []models.Project{{
+			Repository: "github.com/example/kwt",
+			Name:       "kwt",
+			Path:       repoPath,
+		}},
+	}
+	selectedCfg := &models.Config{
+		Worktree: models.WorktreeConfig{
+			BaseDir:   selectedBase,
+			AutoMkdir: true,
+		},
+	}
+	backend := newTUIBackendWithLaunchDir(globalCfg, "")
+	loadedTargetConfig := false
+	backend.loadTargetConfig = func(path string, interactive bool) (*models.Config, error) {
+		loadedTargetConfig = true
+		assert.Equal(t, repoPath, path)
+		assert.False(t, interactive)
+		return selectedCfg, nil
+	}
+	row := dashboard.Row{Fleet: &dashboard.FleetInfo{
+		ProjectIdentity: "github.com/example/kwt",
+		ProjectName:     "kwt",
+		Kind:            "branch",
+		Ref:             "feature/selected-config",
+		Branch:          "feature/selected-config",
+		Hosts:           []string{"host-b"},
+	}}
+
+	path, err := backend.MaterializeWorktree(context.Background(), row)
+
+	require.NoError(t, err)
+	assert.True(t, loadedTargetConfig)
+	assert.True(t, strings.HasPrefix(path, selectedBase+string(os.PathSeparator)))
+	assert.False(t, strings.HasPrefix(path, globalBase+string(os.PathSeparator)))
 }
 
 func TestTUIBackendMaterializeWorktreeTracksRemoteOnlyBranch(t *testing.T) {
@@ -1950,6 +2001,7 @@ func TestTUIBackendMaterializeWorktreeTracksRemoteOnlyBranch(t *testing.T) {
 		}},
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	stubTUITargetConfig(backend, cfg)
 	row := dashboard.Row{Fleet: &dashboard.FleetInfo{
 		ProjectIdentity: "github.com/example/kwt",
 		ProjectName:     "kwt",
@@ -2003,6 +2055,7 @@ func TestTUIBackendMaterializeWorktreeRejectsStaleLocalHead(t *testing.T) {
 		}},
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	stubTUITargetConfig(backend, cfg)
 	row := dashboard.Row{Fleet: &dashboard.FleetInfo{
 		ProjectIdentity: "github.com/example/kwt",
 		ProjectName:     "kwt",
@@ -2060,6 +2113,7 @@ func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnStaleHead(t *tes
 		}},
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	stubTUITargetConfig(backend, cfg)
 	row := dashboard.Row{Fleet: &dashboard.FleetInfo{
 		ProjectIdentity: "github.com/example/kwt",
 		ProjectName:     "kwt",
@@ -2159,6 +2213,7 @@ func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnCheckoutFailure(
 		}},
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	stubTUITargetConfig(backend, cfg)
 	row := dashboard.Row{Fleet: &dashboard.FleetInfo{
 		ProjectIdentity: "github.com/example/kwt",
 		ProjectName:     "kwt",
@@ -2240,6 +2295,12 @@ func tuiTestBranchExists(repoPath string, branch string) bool {
 	return cmd.Run() == nil
 }
 
+func stubTUITargetConfig(backend *tuiBackend, cfg *models.Config) {
+	backend.loadTargetConfig = func(string, bool) (*models.Config, error) {
+		return cfg, nil
+	}
+}
+
 func TestTUIBackendMaterializeWorktreeSkipsRepositorySetupCommands(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("setup command execution requires sh")
@@ -2264,6 +2325,7 @@ func TestTUIBackendMaterializeWorktreeSkipsRepositorySetupCommands(t *testing.T)
 		}},
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	stubTUITargetConfig(backend, cfg)
 	row := dashboard.Row{Fleet: &dashboard.FleetInfo{
 		ProjectIdentity: "github.com/example/kwt",
 		ProjectName:     "kwt",
@@ -2330,6 +2392,7 @@ func TestTUIBackendMaterializeWorktreeExplainsUnavailableBranch(t *testing.T) {
 		}},
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	stubTUITargetConfig(backend, cfg)
 	row := dashboard.Row{Fleet: &dashboard.FleetInfo{
 		ProjectIdentity: "github.com/example/kwt",
 		ProjectName:     "kwt",

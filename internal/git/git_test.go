@@ -629,6 +629,32 @@ func TestAddWorktreeExistingDisablesCheckoutHooks(t *testing.T) {
 	}
 }
 
+func TestAddWorktreeExistingPreservesRefsHeadsPrefixInShortName(t *testing.T) {
+	repo := NewTestRepository(t)
+	gitOutput(t, repo.Path, "branch", "topic")
+	gitOutput(
+		t,
+		repo.Path,
+		"update-ref",
+		"refs/heads/refs/heads/topic",
+		"HEAD",
+	)
+	worktreePath := filepath.Join(t.TempDir(), "literal-refs-heads")
+
+	err := New(repo.Path).AddWorktreeExisting(
+		worktreePath,
+		"refs/heads/topic",
+		nil,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(
+		t,
+		"refs/heads/topic",
+		gitOutput(t, worktreePath, "branch", "--show-current"),
+	)
+}
+
 func TestAddWorktreeExistingDoesNotRecurseIntoSubmodules(t *testing.T) {
 	submodule := NewTestRepository(t)
 	if err := os.WriteFile(
