@@ -257,9 +257,13 @@ func (m *Manager) GetMatchingWorktrees(pattern string) ([]models.Worktree, error
 
 	var matches []models.Worktree
 	pattern = strings.ToLower(pattern)
+	pathPattern := strings.ToLower(filepath.ToSlash(pattern))
 	for _, wt := range worktrees {
 		if strings.Contains(strings.ToLower(wt.Branch), pattern) ||
-			strings.Contains(strings.ToLower(wt.Path), pattern) {
+			strings.Contains(
+				strings.ToLower(filepath.ToSlash(wt.Path)),
+				pathPattern,
+			) {
 			matches = append(matches, wt)
 		}
 	}
