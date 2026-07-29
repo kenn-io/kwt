@@ -31,6 +31,13 @@ type Processor struct {
 	sanitizeChars map[string]string
 }
 
+// EnvironmentOptions selects which naming components inherit environment
+// expansion from global configuration.
+type EnvironmentOptions struct {
+	ExpandTemplate      bool
+	ExpandSanitizeChars bool
+}
+
 // New creates a new template processor.
 func New(templateStr string, sanitizeChars map[string]string) (*Processor, error) {
 	tmpl, err := template.New("worktree").Parse(templateStr)
@@ -51,20 +58,41 @@ func NewWithEnvironment(
 	templateStr string,
 	sanitizeChars map[string]string,
 ) (*Processor, error) {
+	return NewWithEnvironmentOptions(
+		templateStr,
+		sanitizeChars,
+		EnvironmentOptions{
+			ExpandTemplate:      true,
+			ExpandSanitizeChars: true,
+		},
+	)
+}
+
+// NewWithEnvironmentOptions creates a processor with per-component
+// environment-expansion provenance.
+func NewWithEnvironmentOptions(
+	templateStr string,
+	sanitizeChars map[string]string,
+	options EnvironmentOptions,
+) (*Processor, error) {
 	processor, err := New(templateStr, sanitizeChars)
 	if err != nil {
 		return nil, err
 	}
-	for _, tmpl := range processor.template.Templates() {
-		if tmpl.Tree != nil {
-			expandLiteralText(tmpl.Root)
+	if options.ExpandTemplate {
+		for _, tmpl := range processor.template.Templates() {
+			if tmpl.Tree != nil {
+				expandLiteralText(tmpl.Root)
+			}
 		}
 	}
-	expandedSanitizeChars := make(map[string]string, len(sanitizeChars))
-	for old, replacement := range sanitizeChars {
-		expandedSanitizeChars[old] = os.ExpandEnv(replacement)
+	if options.ExpandSanitizeChars {
+		expandedSanitizeChars := make(map[string]string, len(sanitizeChars))
+		for old, replacement := range sanitizeChars {
+			expandedSanitizeChars[old] = os.ExpandEnv(replacement)
+		}
+		processor.sanitizeChars = expandedSanitizeChars
 	}
-	processor.sanitizeChars = expandedSanitizeChars
 	return processor, nil
 }
 

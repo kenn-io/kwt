@@ -354,30 +354,25 @@ func (m *Manager) generateWorktreePathForRepository(
 		}
 	}
 	namingTemplate := m.config.Naming.Template
-	if !m.config.Naming.RepositoryLocal {
-		expandedBaseDir, err := utils.ExpandPath(baseDir)
-		if err != nil {
-			return "", fmt.Errorf("failed to expand worktree base: %w", err)
-		}
-		baseDir = expandedBaseDir
+	expandedBaseDir, err := utils.ExpandPath(baseDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to expand worktree base: %w", err)
 	}
+	baseDir = expandedBaseDir
 
 	// Use template if configured, otherwise fall back to default URL hierarchy
 	if namingTemplate != "" {
 		// Create template processor
-		var processor *template.Processor
-		var err error
-		if m.config.Naming.RepositoryLocal {
-			processor, err = template.New(
-				namingTemplate,
-				m.config.Naming.SanitizeChars,
-			)
-		} else {
-			processor, err = template.NewWithEnvironment(
-				namingTemplate,
-				m.config.Naming.SanitizeChars,
-			)
+		naming := m.config.Naming
+		environmentOptions := template.EnvironmentOptions{
+			ExpandTemplate:      !naming.TemplateRepositoryLocal,
+			ExpandSanitizeChars: !naming.SanitizeCharsRepositoryLocal,
 		}
+		processor, err := template.NewWithEnvironmentOptions(
+			namingTemplate,
+			naming.SanitizeChars,
+			environmentOptions,
+		)
 		if err != nil {
 			// Fall back to default hierarchy if template is invalid
 			return url.GenerateWorktreePath(baseDir, repoInfo, branch), nil

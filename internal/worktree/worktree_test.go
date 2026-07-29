@@ -1150,8 +1150,8 @@ func TestPreparePathDoesNotExpandRepositoryLocalTemplateOutput(t *testing.T) {
 		&models.Config{
 			Worktree: models.WorktreeConfig{BaseDir: baseDir},
 			Naming: models.NamingConfig{
-				Template:        `{{printf "%c%s" 36 "KWT_GITHUB_TOKEN"}}/{{.Branch}}`,
-				RepositoryLocal: true,
+				Template:                `{{printf "%c%s" 36 "KWT_GITHUB_TOKEN"}}/{{.Branch}}`,
+				TemplateRepositoryLocal: true,
 			},
 		},
 	)
@@ -1209,6 +1209,39 @@ func TestPreparePathExpandsGlobalSanitizationReplacements(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(baseDir, "feature__widgets"), path)
+}
+
+func TestPreparePathExpandsNamingComponentsByProvenance(t *testing.T) {
+	t.Setenv("KWT_WORKTREE_GROUP", "trusted-group")
+	t.Setenv("KWT_BRANCH_SEPARATOR", "__")
+	baseDir := t.TempDir()
+	manager := New(
+		&mockGit{repoURL: "https://github.com/acme/widget.git"},
+		&models.Config{
+			Worktree: models.WorktreeConfig{BaseDir: baseDir},
+			Naming: models.NamingConfig{
+				Template:                     "$KWT_WORKTREE_GROUP/{{.Branch}}",
+				TemplateRepositoryLocal:      false,
+				SanitizeCharsRepositoryLocal: true,
+				SanitizeChars: map[string]string{
+					"/": "$KWT_BRANCH_SEPARATOR",
+				},
+			},
+		},
+	)
+
+	path, err := manager.PreparePath("", "feature/widgets")
+
+	require.NoError(t, err)
+	assert.Equal(
+		t,
+		filepath.Join(
+			baseDir,
+			"trusted-group",
+			"feature$KWT_BRANCH_SEPARATORwidgets",
+		),
+		path,
+	)
 }
 
 func TestGenerateWorktreePathRejectsSymlinkEscapeFromBaseDir(t *testing.T) {

@@ -1741,8 +1741,8 @@ func TestTUIBackendCreateWorktreeDoesNotExpandRepositoryLocalTemplate(t *testing
 	cfg := &models.Config{
 		Worktree: models.WorktreeConfig{BaseDir: filepath.Join(t.TempDir(), "worktrees"), AutoMkdir: true},
 		Naming: models.NamingConfig{
-			Template:        `{{printf "%c%s" 36 "KWT_GITHUB_TOKEN"}}/{{.Branch}}`,
-			RepositoryLocal: true,
+			Template:                `{{printf "%c%s" 36 "KWT_GITHUB_TOKEN"}}/{{.Branch}}`,
+			TemplateRepositoryLocal: true,
 		},
 	}
 	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{

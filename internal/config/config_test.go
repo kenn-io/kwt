@@ -1487,7 +1487,7 @@ template = "{{$branch := .Branch}}/{{$branch}}"
 	require.NoError(t, mergeLocalConfig(store, trustingPrompter(), true))
 }
 
-func TestMergeLocalConfigMarksNamingAsRepositoryLocal(t *testing.T) {
+func TestMergeLocalConfigTracksTemplateProvenanceSeparately(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 	absPath, data := writeLocalConfig(
@@ -1512,9 +1512,34 @@ template = "{{.Repository}}/{{.Branch}}"
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if !cfg.Naming.RepositoryLocal {
-		t.Fatal("cwd naming was not marked repository-local")
+	assert.True(t, cfg.Naming.TemplateRepositoryLocal)
+	assert.False(t, cfg.Naming.SanitizeCharsRepositoryLocal)
+}
+
+func TestMergeLocalConfigTracksSanitizationProvenanceSeparately(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	viper.Set("naming.template", "$KWT_GROUP/{{.Branch}}")
+	absPath, data := writeLocalConfig(
+		t,
+		t.TempDir(),
+		[]byte(`
+[naming.sanitize_chars]
+"/" = "-"
+`),
+	)
+	store := &TrustStore{
+		entries: []trustEntry{{
+			Path:   absPath,
+			SHA256: computeSHA256(data),
+		}},
 	}
+
+	require.NoError(t, mergeLocalConfig(store, trustingPrompter(), true))
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.False(t, cfg.Naming.TemplateRepositoryLocal)
+	assert.True(t, cfg.Naming.SanitizeCharsRepositoryLocal)
 }
 
 func TestDefaultLayoutsConfig(t *testing.T) {
@@ -1894,7 +1919,8 @@ template = '{{printf "%c%s" 36 "KWT_GITHUB_TOKEN"}}/{{.Branch}}'
 	cfg, err := LoadForTarget(target, false)
 
 	require.NoError(t, err)
-	assert.True(t, cfg.Naming.RepositoryLocal)
+	assert.True(t, cfg.Naming.TemplateRepositoryLocal)
+	assert.False(t, cfg.Naming.SanitizeCharsRepositoryLocal)
 }
 
 func TestLoadForTargetMergesEquivalentGlobalAndLocalRepositoryPaths(t *testing.T) {
