@@ -479,6 +479,73 @@ func TestTUIBackendListIncludesRegisteredProjectWorktrees(t *testing.T) {
 	})
 }
 
+func TestDashboardFleetInfoSummarizesPrimaryObservations(t *testing.T) {
+	tests := []struct {
+		name         string
+		observations []fleet.Observation
+		want         bool
+	}{
+		{name: "empty", observations: nil, want: false},
+		{
+			name: "all primary",
+			observations: []fleet.Observation{
+				{HostID: "host-b", IsMain: true},
+				{HostID: "host-c", IsMain: true},
+			},
+			want: true,
+		},
+		{
+			name: "mixed",
+			observations: []fleet.Observation{
+				{HostID: "host-b", IsMain: true},
+				{HostID: "host-c", IsMain: false},
+			},
+			want: false,
+		},
+		{
+			name: "all linked",
+			observations: []fleet.Observation{
+				{HostID: "host-b"},
+				{HostID: "host-c"},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := dashboardFleetInfo(fleet.FleetRow{
+				ProjectIdentity: "github.com/example/kwt",
+				Kind:            "branch",
+				Ref:             "main",
+				Branch:          "main",
+				Observations:    tt.observations,
+			}, fleet.StatusRow{}, "host-a", false)
+
+			require.NotNil(t, info)
+			assert.Equal(t, tt.want, info.AllPrimary)
+		})
+	}
+}
+
+func TestDashboardFleetInfoKeepsDetachedMaterializeIdentityRaw(t *testing.T) {
+	ref := strings.Repeat("a", 40)
+	info := dashboardFleetInfo(fleet.FleetRow{
+		ProjectIdentity: "github.com/example/kwt",
+		Kind:            "detached",
+		Ref:             ref,
+		Observations: []fleet.Observation{{
+			HostID: "host-b",
+			IsMain: true,
+		}},
+	}, fleet.StatusRow{}, "host-a", false)
+
+	require.NotNil(t, info)
+	assert.True(t, info.AllPrimary)
+	assert.Equal(t, ref, info.MaterializeLabel)
+	assert.False(t, info.CanMaterialize)
+}
+
 func TestTUIBackendMergeFleetIncludesRemoteOnlyFleetRows(t *testing.T) {
 	observedAt := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
 	cfg := &models.Config{

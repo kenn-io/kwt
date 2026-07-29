@@ -49,6 +49,7 @@ type FleetInfo struct {
 	Sync             string
 	Dirty            string
 	Freshness        string
+	AllPrimary       bool
 	MaterializeHost  string
 	RemotePath       string
 	RemoteHead       string

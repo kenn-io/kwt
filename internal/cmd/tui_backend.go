@@ -802,6 +802,7 @@ func dashboardFleetInfo(row fleet.FleetRow, rendered fleet.StatusRow, currentHos
 		Sync:            rendered.Sync,
 		Dirty:           rendered.Dirty,
 		Freshness:       rendered.Freshness,
+		AllPrimary:      allFleetObservationsPrimary(row.Observations),
 	}
 	if info.ProjectName == "" {
 		info.ProjectName = strings.TrimSpace(row.ProjectName)
@@ -827,6 +828,18 @@ func dashboardFleetInfo(row fleet.FleetRow, rendered fleet.StatusRow, currentHos
 		info.CanMaterialize = row.Kind == "branch" && info.Branch != ""
 	}
 	return info
+}
+
+func allFleetObservationsPrimary(observations []fleet.Observation) bool {
+	if len(observations) == 0 {
+		return false
+	}
+	for _, observation := range observations {
+		if !observation.IsMain {
+			return false
+		}
+	}
+	return true
 }
 
 func fleetDisplayHosts(observations []fleet.Observation, currentHost string, local bool) []string {
