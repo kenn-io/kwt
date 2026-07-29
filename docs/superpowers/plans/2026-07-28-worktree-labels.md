@@ -24,11 +24,13 @@
 ### Task 1: Retain Conservative Fleet Primary State
 
 **Files:**
+
 - Modify: `internal/tui/backend.go:41-60`
 - Modify: `internal/cmd/tui_backend.go:789-850`
 - Test: `internal/cmd/tui_test.go`
 
 **Interfaces:**
+
 - Consumes: `fleet.FleetRow.Observations []fleet.Observation` and `fleet.Observation.IsMain bool`
 - Produces: `FleetInfo.AllPrimary bool` and `allRemoteFleetObservationsPrimary([]fleet.Observation, string) bool`
 
@@ -210,6 +212,7 @@ git commit -m "Retain fleet primary checkout state" \
 ### Task 2: Derive Display-Only Worktree Labels
 
 **Files:**
+
 - Modify: `internal/tui/list.go:48-61`
 - Modify: `internal/tui/list.go:131-133`
 - Modify: `internal/tui/list.go:170-185`
@@ -218,6 +221,7 @@ git commit -m "Retain fleet primary checkout state" \
 - Test: `internal/tui/model_test.go`
 
 **Interfaces:**
+
 - Consumes: `rowBranch(Row) string`, `Row.Entry.IsMain`, `Row.Entry.CommitHash`, `Row.Fleet.Kind`, `Row.Fleet.Ref`, and `Row.Fleet.AllPrimary`
 - Produces: `shortCommitHash(string) string` and `rowDisplayBranch(Row) string`
 
@@ -512,10 +516,12 @@ git commit -m "Clarify primary and detached worktree labels" \
 ### Task 3: Explain Protected Primary Checkout Deletion
 
 **Files:**
+
 - Modify: `internal/tui/model.go:1048-1055`
 - Test: `internal/tui/model_test.go:1047-1060`
 
 **Interfaces:**
+
 - Consumes: `abbreviateHome(string) string` and `Row.Entry.Path`
 - Produces: immediate TUI message `cannot delete the primary checkout: <abbreviated-path>`
 
