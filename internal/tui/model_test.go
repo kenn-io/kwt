@@ -1060,16 +1060,21 @@ func TestModelCancelNewBranchInputKeepsExistingFilter(t *testing.T) {
 	assert.Equal(t, "/w/kwt/main", rowPath(model.selectedRow()))
 }
 
-func TestModelDeleteRefusesMainWorktree(t *testing.T) {
-	row := testRow("kwt", "main", "/w/kwt/main")
+func TestModelDeleteRefusesPrimaryCheckout(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, "code", "kwt")
+	row := testRow("kwt", "main", path)
 	row.Entry.IsMain = true
-	model := NewModel(&fakeBackend{}, "/worktrees")
+	backend := &fakeBackend{}
+	model := NewModel(backend, "/worktrees")
 	model, _ = updateModel(t, model, rowsMsg{rows: []Row{row}})
 
 	model, cmd := updateModel(t, model, press("d"))
 
 	require.Nil(t, cmd)
-	assert.Contains(t, viewContent(model), "refusing to remove a main worktree")
+	assert.Contains(t, viewContent(model), "cannot delete the primary checkout: ~/code/kwt")
+	assert.Empty(t, backend.removeCalls)
 }
 
 func TestModelDeleteLiveWorktreeConfirmsAndCallsRemove(t *testing.T) {

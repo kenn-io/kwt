@@ -1050,7 +1050,10 @@ func (m Model) startDelete() (Model, tea.Cmd) {
 		return m, nil
 	}
 	if row.Entry.IsMain {
-		m.message = "refusing to remove a main worktree"
+		m.message = fmt.Sprintf(
+			"cannot delete the primary checkout: %s",
+			abbreviateHome(row.Entry.Path),
+		)
 		return m, nil
 	}
 	dirty := rowHasUncommittedChanges(row)
