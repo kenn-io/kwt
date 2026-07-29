@@ -1063,6 +1063,7 @@ func TestModelCancelNewBranchInputKeepsExistingFilter(t *testing.T) {
 func TestModelDeleteRefusesPrimaryCheckout(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	path := filepath.Join(home, "code", "kwt")
 	row := testRow("kwt", "main", path)
 	row.Entry.IsMain = true
@@ -1073,7 +1074,8 @@ func TestModelDeleteRefusesPrimaryCheckout(t *testing.T) {
 	model, cmd := updateModel(t, model, press("d"))
 
 	require.Nil(t, cmd)
-	assert.Contains(t, viewContent(model), "cannot delete the primary checkout: ~/code/kwt")
+	expectedPath := filepath.Join("~", "code", "kwt")
+	assert.Contains(t, viewContent(model), "cannot delete the primary checkout: "+expectedPath)
 	assert.Empty(t, backend.removeCalls)
 }
 
