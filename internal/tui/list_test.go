@@ -52,6 +52,128 @@ func TestWorkspaceRowRendering(t *testing.T) {
 	assert.Equal(t, "live", formatWorkspace(row))
 }
 
+func TestRowDisplayBranch(t *testing.T) {
+	fullHash := "be094b1bdf4471ea60db4656f06d8fb2551ffd3d"
+	tests := []struct {
+		name string
+		row  Row
+		want string
+	}{
+		{
+			name: "ordinary linked worktree",
+			row:  testRow("kwt", "feature", "/w/kwt/feature"),
+			want: "feature",
+		},
+		{
+			name: "primary checkout",
+			row: func() Row {
+				row := testRow("kwt", "main", "/w/kwt/main")
+				row.Entry.IsMain = true
+				return row
+			}(),
+			want: "main [primary]",
+		},
+		{
+			name: "detached full hash",
+			row: func() Row {
+				row := testRow("kwt", "HEAD", "/w/kwt/detached")
+				row.Entry.CommitHash = fullHash
+				return row
+			}(),
+			want: "detached@be094b1b",
+		},
+		{
+			name: "detached short hash",
+			row: func() Row {
+				row := testRow("kwt", "HEAD", "/w/kwt/detached")
+				row.Entry.CommitHash = "abc123"
+				return row
+			}(),
+			want: "detached@abc123",
+		},
+		{
+			name: "detached missing hash",
+			row:  testRow("kwt", "HEAD", "/w/kwt/detached"),
+			want: "detached",
+		},
+		{
+			name: "detached primary checkout",
+			row: func() Row {
+				row := testRow("kwt", "HEAD", "/w/kwt/detached-primary")
+				row.Entry.CommitHash = fullHash
+				row.Entry.IsMain = true
+				return row
+			}(),
+			want: "detached@be094b1b [primary]",
+		},
+		{
+			name: "remote detached",
+			row: Row{Fleet: &FleetInfo{
+				Kind: "detached",
+				Ref:  fullHash,
+			}},
+			want: "detached@be094b1b",
+		},
+		{
+			name: "remote detached primary",
+			row: Row{Fleet: &FleetInfo{
+				Kind:       "detached",
+				Ref:        fullHash,
+				AllPrimary: true,
+			}},
+			want: "detached@be094b1b [primary]",
+		},
+		{
+			name: "remote uniformly primary",
+			row: Row{Fleet: &FleetInfo{
+				Kind:       "branch",
+				Ref:        "main",
+				Branch:     "main",
+				AllPrimary: true,
+			}},
+			want: "main [primary]",
+		},
+		{
+			name: "remote mixed primary state",
+			row: Row{Fleet: &FleetInfo{
+				Kind:       "branch",
+				Ref:        "main",
+				Branch:     "main",
+				AllPrimary: false,
+			}},
+			want: "main",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, rowDisplayBranch(tt.row))
+		})
+	}
+}
+
+func TestDisplayBranchDoesNotReplaceRawBranchIdentity(t *testing.T) {
+	row := testRow("kwt", "main", "/w/kwt/main")
+	row.Entry.IsMain = true
+
+	assert.Equal(t, "main", rowBranch(row))
+	assert.Equal(t, "main [primary]", rowDisplayBranch(row))
+	assert.Equal(t, "kwt:main [primary]", rowLabel(row))
+}
+
+func TestFilterRowsMatchesDisplayBranch(t *testing.T) {
+	primary := testRow("kwt", "main", "/w/kwt/main")
+	primary.Entry.IsMain = true
+	detached := testRow("kwt", "HEAD", "/w/kwt/detached")
+	detached.Entry.CommitHash = "be094b1bdf4471ea60db4656f06d8fb2551ffd3d"
+	rows := []Row{primary, detached}
+
+	require.Len(t, filterRows(rows, "primary"), 1)
+	assert.Equal(t, primary.Entry.Path, rowPath(filterRows(rows, "primary")[0]))
+	require.Len(t, filterRows(rows, "detached@be094b1b"), 1)
+	assert.Equal(t, detached.Entry.Path, rowPath(filterRows(rows, "detached@be094b1b")[0]))
+}
+
 func TestSortRowsByRepoThenBranch(t *testing.T) {
 	rows := []Row{
 		testRow("kwt", "zeta", "/w/kwt/zeta"),

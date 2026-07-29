@@ -295,6 +295,21 @@ func TestModelPolishesSingleRowDashboard(t *testing.T) {
 	assert.NotContains(t, stripANSI(content), "s sync")
 }
 
+func TestModelRendersPrimaryAndDetachedDisplayLabels(t *testing.T) {
+	primary := testRow("kwt", "main", "/w/kwt/main")
+	primary.Entry.IsMain = true
+	detached := testRow("kwt", "HEAD", "/w/kwt/detached")
+	detached.Entry.CommitHash = "be094b1bdf4471ea60db4656f06d8fb2551ffd3d"
+
+	model := NewModel(&fakeBackend{}, "/worktrees").WithInitialAnchor(primary.Entry.Path)
+	model, _ = updateModel(t, model, rowsMsg{rows: []Row{primary, detached}})
+
+	content := stripANSI(viewContent(model))
+	assert.Contains(t, content, "main [primary]")
+	assert.Contains(t, content, "detached@be094b1b")
+	assert.Contains(t, content, "selected kwt:main [primary]")
+}
+
 func TestModelRendersRemoteOnlyFleetRows(t *testing.T) {
 	row := Row{Fleet: &FleetInfo{
 		ProjectIdentity:  "github.com/example/kwt",

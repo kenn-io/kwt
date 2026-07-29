@@ -64,6 +64,43 @@ func rowBranch(row Row) string {
 	return ""
 }
 
+func shortCommitHash(hash string) string {
+	hash = strings.TrimSpace(hash)
+	if len(hash) > 8 {
+		return hash[:8]
+	}
+	return hash
+}
+
+func rowDisplayBranch(row Row) string {
+	branch := rowBranch(row)
+	detached := false
+	commit := ""
+	primary := false
+
+	switch {
+	case row.Entry != nil:
+		detached = branch == "" || branch == "HEAD"
+		commit = row.Entry.CommitHash
+		primary = row.Entry.IsMain
+	case row.Fleet != nil:
+		detached = strings.EqualFold(strings.TrimSpace(row.Fleet.Kind), "detached")
+		commit = row.Fleet.Ref
+		primary = row.Fleet.AllPrimary
+	}
+
+	if detached {
+		branch = "detached"
+		if short := shortCommitHash(commit); short != "" {
+			branch += "@" + short
+		}
+	}
+	if primary {
+		branch += " [primary]"
+	}
+	return branch
+}
+
 // FleetKey identifies one worktree for matching hub state against what is on
 // disk. The project half is folded per host, because a clone's remote URL and a
 // hub manifest can spell one forge identity differently while a case-sensitive
@@ -129,7 +166,7 @@ func rowPath(row Row) string {
 }
 
 func rowLabel(row Row) string {
-	return rowRepoName(row) + ":" + rowBranch(row)
+	return rowRepoName(row) + ":" + rowDisplayBranch(row)
 }
 
 func sortRows(rows []Row) {
@@ -178,6 +215,7 @@ func filterRows(rows []Row, filter string) []Row {
 		haystack := strings.ToLower(strings.Join([]string{
 			rowRepoName(row),
 			rowBranch(row),
+			rowDisplayBranch(row),
 			rowPath(row),
 			rowLabel(row),
 			rowFleetHaystack(row),
@@ -724,7 +762,7 @@ func renderDashboardHeader(columns []tableColumn) string {
 func dashboardCellValues(row Row, now time.Time) map[string]string {
 	return map[string]string{
 		dashboardColumnRepo:      rowRepoName(row),
-		dashboardColumnBranch:    rowBranch(row),
+		dashboardColumnBranch:    rowDisplayBranch(row),
 		dashboardColumnMachines:  formatMachines(row),
 		dashboardColumnChanges:   formatRowChanges(row),
 		dashboardColumnHeads:     formatRowSync(row),
