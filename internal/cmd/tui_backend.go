@@ -984,11 +984,25 @@ func (b *tuiBackend) MaterializeWorktree(ctx context.Context, row dashboard.Row)
 		worktree.AddOptions{SkipSetup: true},
 	)
 	if err != nil {
-		return "", fmt.Errorf(
+		syncErr := fmt.Errorf(
 			"could not sync %s: branch must exist locally or on a fetched remote; push or fetch it first: %w",
 			row.Fleet.Branch,
 			err,
 		)
+		if !branchExisted {
+			if cleanupErr := repo.DeleteBranch(
+				row.Fleet.Branch,
+				true,
+			); cleanupErr != nil {
+				return "", fmt.Errorf(
+					"%w (failed to remove auto-created branch %s; an incomplete worktree may remain: %v)",
+					syncErr,
+					row.Fleet.Branch,
+					cleanupErr,
+				)
+			}
+		}
+		return "", syncErr
 	}
 	if err := b.verifyMaterializedHead(ctx, project.Path, path, row.Fleet); err != nil {
 		if !branchExisted {

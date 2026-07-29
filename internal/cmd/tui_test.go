@@ -2005,6 +2005,85 @@ func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnStaleHead(t *tes
 	))
 }
 
+func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnCheckoutFailure(
+	t *testing.T,
+) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	repoPath := newTUITestRepo(t)
+	runTUITestGit(
+		t,
+		repoPath,
+		"remote",
+		"add",
+		"origin",
+		"https://github.com/example/kwt.git",
+	)
+	runTUITestGit(t, repoPath, "checkout", "-b", "feature/broken-remote")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repoPath, "missing.txt"),
+		[]byte("unique missing blob\n"),
+		0644,
+	))
+	runTUITestGit(t, repoPath, "add", "missing.txt")
+	runTUITestGit(t, repoPath, "commit", "-m", "Add missing blob")
+	commit := strings.TrimSpace(runTUITestGitOutput(
+		t,
+		repoPath,
+		"rev-parse",
+		"HEAD",
+	))
+	blob := strings.TrimSpace(runTUITestGitOutput(
+		t,
+		repoPath,
+		"rev-parse",
+		"HEAD:missing.txt",
+	))
+	runTUITestGit(t, repoPath, "checkout", "main")
+	runTUITestGit(
+		t,
+		repoPath,
+		"update-ref",
+		"refs/remotes/origin/feature/broken-remote",
+		commit,
+	)
+	runTUITestGit(t, repoPath, "branch", "-D", "feature/broken-remote")
+	require.NoError(t, os.Remove(filepath.Join(
+		repoPath,
+		".git",
+		"objects",
+		blob[:2],
+		blob[2:],
+	)))
+
+	baseDir := filepath.Join(t.TempDir(), "worktrees")
+	cfg := &models.Config{
+		Worktree: models.WorktreeConfig{BaseDir: baseDir, AutoMkdir: true},
+		Projects: []models.Project{{
+			Repository: "github.com/example/kwt",
+			Name:       "kwt",
+			Path:       repoPath,
+		}},
+	}
+	backend := newTUIBackendWithLaunchDir(cfg, "")
+	row := dashboard.Row{Fleet: &dashboard.FleetInfo{
+		ProjectIdentity: "github.com/example/kwt",
+		ProjectName:     "kwt",
+		Kind:            "branch",
+		Ref:             "feature/broken-remote",
+		Branch:          "feature/broken-remote",
+		Hosts:           []string{"host-b"},
+	}}
+
+	path, err := backend.MaterializeWorktree(context.Background(), row)
+
+	require.Error(t, err)
+	assert.Empty(t, path)
+	assert.False(t, tuiTestBranchExists(repoPath, "feature/broken-remote"),
+		"auto-created branch must be removed when checkout fails")
+}
+
 func TestTUIBackendMaterializeWorktreeUnregistersWhenHeadCannotBeRead(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
