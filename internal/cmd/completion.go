@@ -95,8 +95,10 @@ func getRemoteBranchCompletions(
 		if !branch.IsRemote {
 			continue
 		}
-		source := strings.TrimPrefix(branch.Source, "refs/remotes/")
-		if strings.HasPrefix(source, toComplete) {
+		source := branch.Source
+		shortSource := strings.TrimPrefix(source, "refs/remotes/")
+		if strings.HasPrefix(source, toComplete) ||
+			strings.HasPrefix(shortSource, toComplete) {
 			completions = append(
 				completions,
 				fmt.Sprintf("%s\tRemote branch", source),

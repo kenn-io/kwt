@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -47,9 +48,11 @@ When -b creates a branch, kwt fetches origin and starts from its default branch.
 If that remote base is unavailable, it falls back to local main, then master,
 then the branch checked out in the primary worktree.
 
-Use --from with an exact remote ref to create a local tracking branch and its
-worktree. Existing-branch worktrees skip repository setup and workspace launch
-until you inspect the checkout and explicitly open it.`,
+Use --from with a fetched remote ref to create a local tracking branch and its
+worktree. Shorthand such as origin/topic is verified and resolved to its full
+refs/remotes/... identity before creation. Existing-branch worktrees skip
+repository setup and workspace launch until you inspect the checkout and
+explicitly open it.`,
 	Example: `  # Create worktree from existing branch
   kwt add feature/new-ui
 
@@ -102,6 +105,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	return ExecuteWithArgs(true, func(ctx *CommandContext, cmd *cobra.Command, args []string) error {
 		var branch string
 		var path string
+		remoteSource := addFrom
 
 		if addInteractive {
 			if len(args) > 0 {
@@ -120,7 +124,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 			branch = selectedBranch.Name
 			if selectedBranch.IsRemote {
-				addFrom = selectedBranch.Source
+				remoteSource = selectedBranch.Source
 			}
 		} else {
 			if len(args) < 1 {
@@ -187,8 +191,23 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		}
 
 		var worktreePath string
-		if addFrom != "" {
-			worktreePath, err = ctx.WorktreeManager.AddTracking(branch, addFrom, path)
+		if remoteSource != "" {
+			branches, listErr := ctx.Git.ListBranches(true)
+			if listErr != nil {
+				return fmt.Errorf("list fetched remote refs: %w", listErr)
+			}
+			remoteSource, err = resolveRemoteBranchSource(
+				branches,
+				remoteSource,
+			)
+			if err != nil {
+				return err
+			}
+			worktreePath, err = ctx.WorktreeManager.AddTracking(
+				branch,
+				remoteSource,
+				path,
+			)
 		} else {
 			worktreePath, err = ctx.WorktreeManager.Add(branch, path, addBranch)
 		}
@@ -240,6 +259,39 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		}
 		return nil
 	})(cmd, args)
+}
+
+func resolveRemoteBranchSource(
+	branches []models.Branch,
+	requested string,
+) (string, error) {
+	var match string
+	for _, branch := range branches {
+		if !branch.IsRemote {
+			continue
+		}
+		shortSource := strings.TrimPrefix(
+			branch.Source,
+			"refs/remotes/",
+		)
+		if requested != branch.Source && requested != shortSource {
+			continue
+		}
+		if match != "" && match != branch.Source {
+			return "", fmt.Errorf(
+				"remote ref %q is ambiguous; use a full refs/remotes/... ref",
+				requested,
+			)
+		}
+		match = branch.Source
+	}
+	if match == "" {
+		return "", fmt.Errorf(
+			"remote ref %q was not found; fetch it first",
+			requested,
+		)
+	}
+	return match, nil
 }
 
 // printAddResult reports a successful worktree creation.

@@ -130,6 +130,52 @@ func TestAddFromRemoteBranchCreatesTrackingWorktreeWithoutLaunching(t *testing.T
 	assert.NotNil(t, entry.ExpiresAt)
 }
 
+func TestAddFromResolvesRemoteRefAcrossLocalNamespaceCollision(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetAddCommandFlags(t)
+
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	t.Chdir(repoPath)
+	runTUITestGit(t, repoPath, "remote", "add", "origin", repoPath)
+	runTUITestGit(
+		t,
+		repoPath,
+		"update-ref",
+		"refs/remotes/origin/topic",
+		"HEAD",
+	)
+	runTUITestGit(t, repoPath, "branch", "origin/topic")
+
+	addFrom = "origin/topic"
+	worktreePath := filepath.Join(t.TempDir(), "imported-topic")
+	cmd, _, _ := fleetTestCommand()
+
+	err := runAdd(cmd, []string{"imported-topic", worktreePath})
+
+	require.NoError(t, err)
+	assert.Equal(
+		t,
+		"origin",
+		strings.TrimSpace(runTUITestGitOutput(
+			t,
+			repoPath,
+			"config",
+			"branch.imported-topic.remote",
+		)),
+	)
+	assert.Equal(
+		t,
+		"refs/heads/topic",
+		strings.TrimSpace(runTUITestGitOutput(
+			t,
+			repoPath,
+			"config",
+			"branch.imported-topic.merge",
+		)),
+	)
+}
+
 func TestAddExistingLocalBranchDefersWorkspaceLaunchUntilReview(t *testing.T) {
 	resetFleetCommandDeps(t)
 	resetAddCommandFlags(t)

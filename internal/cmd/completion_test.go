@@ -19,6 +19,12 @@ func TestAddBranchCompletionsSeparateLocalAndRemoteSources(t *testing.T) {
 		"refs/remotes/origin/feature/remote-completion",
 		"HEAD",
 	)
+	runTUITestGit(
+		t,
+		repoPath,
+		"branch",
+		"origin/feature/remote-completion",
+	)
 	t.Chdir(repoPath)
 
 	positional, _ := getBranchCompletions(nil, nil, "feature/")
@@ -28,7 +34,7 @@ func TestAddBranchCompletionsSeparateLocalAndRemoteSources(t *testing.T) {
 	assert.NotContains(t, completionValues(positional), "feature/remote-completion")
 	assert.Equal(
 		t,
-		[]string{"origin/feature/remote-completion"},
+		[]string{"refs/remotes/origin/feature/remote-completion"},
 		completionValues(remote),
 	)
 
