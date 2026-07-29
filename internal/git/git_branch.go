@@ -2,6 +2,7 @@ package git
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -182,6 +183,37 @@ func (g *Git) DeleteBranch(branch string, force bool) error {
 		return fmt.Errorf("failed to delete branch %s: %w", branch, err)
 	}
 
+	return nil
+}
+
+// DeleteBranchIsolated force-deletes a branch without exposing protected
+// credentials or allowing repository-configured hooks to run.
+func (g *Git) DeleteBranchIsolated(
+	branch string,
+	protectedNames []string,
+) error {
+	if err := g.validateLocalBranchName(branch, protectedNames); err != nil {
+		return err
+	}
+	hooksDir, err := os.MkdirTemp("", "kwt-empty-hooks-")
+	if err != nil {
+		return fmt.Errorf("create empty hooks directory: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(hooksDir) }()
+
+	isolationArgs, err := g.checkoutIsolationArgs(
+		protectedNames,
+		"",
+		hooksDir,
+	)
+	if err != nil {
+		return err
+	}
+	args := append([]string(nil), isolationArgs...)
+	args = append(args, "branch", "-D", "--", branch)
+	if _, err := g.runWithoutCredentials(protectedNames, args...); err != nil {
+		return fmt.Errorf("failed to delete branch %s: %w", branch, err)
+	}
 	return nil
 }
 

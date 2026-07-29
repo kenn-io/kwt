@@ -990,28 +990,45 @@ func (b *tuiBackend) MaterializeWorktree(ctx context.Context, row dashboard.Row)
 			err,
 		)
 		if !branchExisted {
-			if cleanupErr := repo.DeleteBranch(
+			return "", b.rollbackMaterializedBranch(
+				repo,
 				row.Fleet.Branch,
-				true,
-			); cleanupErr != nil {
-				return "", fmt.Errorf(
-					"%w (failed to remove auto-created branch %s; an incomplete worktree may remain: %v)",
-					syncErr,
-					row.Fleet.Branch,
-					cleanupErr,
-				)
-			}
+				syncErr,
+			)
 		}
 		return "", syncErr
 	}
 	if err := b.verifyMaterializedHead(ctx, project.Path, path, row.Fleet); err != nil {
 		if !branchExisted {
-			_ = repo.DeleteBranch(row.Fleet.Branch, true)
+			err = b.rollbackMaterializedBranch(
+				repo,
+				row.Fleet.Branch,
+				err,
+			)
 		}
 		return "", err
 	}
 	publishTUIFleetBestEffort(ctx, b.cfg)
 	return path, nil
+}
+
+func (b *tuiBackend) rollbackMaterializedBranch(
+	repo *git.Git,
+	branch string,
+	materializeErr error,
+) error {
+	if cleanupErr := repo.DeleteBranchIsolated(
+		branch,
+		b.protectedNames,
+	); cleanupErr != nil {
+		return fmt.Errorf(
+			"%w (failed to remove auto-created branch %s; an incomplete worktree may remain: %v)",
+			materializeErr,
+			branch,
+			cleanupErr,
+		)
+	}
+	return materializeErr
 }
 
 func (b *tuiBackend) verifyMaterializedHead(ctx context.Context, repoRoot string, worktreePath string, info *dashboard.FleetInfo) error {

@@ -376,6 +376,38 @@ func TestManagerAddTrackingRestoresExistingMarkerAfterGitFailure(t *testing.T) {
 	assert.Equal(t, &future, entry.ExpiresAt)
 }
 
+func TestManagerAddTrackingReplacesStaleMetadataAfterSuccess(t *testing.T) {
+	worktreePath := t.TempDir()
+	expired := time.Now().Add(-time.Hour)
+	state := &mockRemoteSourceState{entries: map[string]*registry.WorktreeEntry{
+		worktreePath: {
+			Path:                   worktreePath,
+			Branch:                 "feature/stale",
+			Repository:             "github.com/acme/old",
+			ExpiresAt:              &expired,
+			UnreviewedRemoteSource: true,
+		},
+	}}
+	manager := New(&mockGit{}, &models.Config{})
+	manager.openRemoteSourceState = func() (remoteSourceState, error) {
+		return state, nil
+	}
+
+	_, err := manager.AddTracking(
+		"feature/reused",
+		"refs/remotes/origin/feature/reused",
+		worktreePath,
+	)
+
+	require.NoError(t, err)
+	entry, ok := state.entries[worktreePath]
+	require.True(t, ok)
+	assert.Equal(t, "feature/reused", entry.Branch)
+	assert.Empty(t, entry.Repository)
+	assert.Nil(t, entry.ExpiresAt)
+	assert.True(t, entry.UnreviewedRemoteSource)
+}
+
 func TestManagerAddTrackingRetainsMarkerWhenFailedCheckoutPathExists(t *testing.T) {
 	worktreePath := t.TempDir()
 	state := &mockRemoteSourceState{}

@@ -50,6 +50,66 @@ func TestGlobalEnvironmentReadsFreshNamedServer(t *testing.T) {
 	}
 }
 
+func TestWorkspaceOpenDoesNotExpandWorktreePathAsTmuxFormat(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not found in PATH")
+	}
+
+	socket := fmt.Sprintf(
+		"kwt-format-test-%d-%d",
+		os.Getpid(),
+		time.Now().UnixNano(),
+	)
+	t.Cleanup(func() { killPrivateTmuxServer(socket) })
+	marker := filepath.Join(t.TempDir(), "tmux-format-executed")
+	t.Setenv("FORMAT_MARKER_PATH", marker)
+	worktreeDir := filepath.Join(
+		t.TempDir(),
+		"#(touch$IFS$FORMAT_MARKER_PATH)-#{HOME}",
+	)
+	if err := os.MkdirAll(worktreeDir, 0755); err != nil {
+		t.Fatalf("create format-bearing worktree path: %v", err)
+	}
+
+	command := NewTmuxCommandForSocketWithStripNames("tmux", socket, nil)
+	runner := NewWorkspaceRunner(command, nil)
+	if err := runner.Ensure(
+		context.Background(),
+		"kwt-format-test-session",
+		worktreeDir,
+		BlankLayout(),
+	); err != nil {
+		t.Fatalf("open format-bearing worktree: %v", err)
+	}
+	currentPath, err := command.RunCommandOutputContext(
+		context.Background(),
+		"display-message",
+		"-p",
+		"-t",
+		"kwt-format-test-session",
+		"#{pane_current_path}",
+	)
+	if err != nil {
+		t.Fatalf("read format-bearing pane path: %v", err)
+	}
+	gotPath, gotErr := filepath.EvalSymlinks(strings.TrimSpace(currentPath))
+	wantPath, wantErr := filepath.EvalSymlinks(worktreeDir)
+	if gotErr != nil || wantErr != nil || gotPath != wantPath {
+		t.Fatalf(
+			"pane path = %q (%v), want literal %q (%v)",
+			gotPath,
+			gotErr,
+			wantPath,
+			wantErr,
+		)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("tmux expanded the worktree path as a command: %v", err)
+	}
+}
+
 // TestStripEnvMasksGlobalEnvForSessionOnly exercises the real session
 // bootstrap sequence against a private tmux server and confirms that a
 // variable present in the server-global environment at server-start time is

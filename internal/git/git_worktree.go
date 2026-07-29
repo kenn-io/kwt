@@ -82,6 +82,7 @@ func (g *Git) AddWorktreeExisting(
 	if err := g.validateLocalBranchName(branch, protectedNames); err != nil {
 		return err
 	}
+	localBranch := strings.TrimPrefix(branch, "refs/heads/")
 	hooksDir, err := os.MkdirTemp("", "kwt-empty-hooks-")
 	if err != nil {
 		return fmt.Errorf("create empty hooks directory: %w", err)
@@ -99,13 +100,15 @@ func (g *Git) AddWorktreeExisting(
 	args := append([]string(nil), isolationArgs...)
 	args = append(
 		args,
-		"worktree", "add", "--no-checkout", "--", path, branch,
+		"worktree", "add", "--no-checkout", "--detach",
+		"--", path, "refs/heads/"+localBranch,
 	)
 	if _, err := g.runWithoutCredentials(protectedNames, args...); err != nil {
 		return fmt.Errorf("failed to add existing-branch worktree: %w", err)
 	}
 	if err := g.checkoutIsolatedWorktree(
 		path,
+		localBranch,
 		protectedNames,
 		hooksDir,
 	); err != nil {
@@ -193,6 +196,7 @@ func (g *Git) AddWorktreeTracking(
 	}
 	if err := g.checkoutIsolatedWorktree(
 		path,
+		"",
 		protectedNames,
 		hooksDir,
 	); err != nil {
@@ -337,6 +341,7 @@ func (g *Git) checkoutIsolationArgs(
 
 func (g *Git) checkoutIsolatedWorktree(
 	path string,
+	branch string,
 	protectedNames []string,
 	hooksDir string,
 ) error {
@@ -351,6 +356,9 @@ func (g *Git) checkoutIsolatedWorktree(
 	args := []string{"-C", path}
 	args = append(args, isolationArgs...)
 	args = append(args, "checkout", "--force", "--no-recurse-submodules")
+	if branch != "" {
+		args = append(args, branch, "--")
+	}
 	if _, err := g.runWithoutCredentials(protectedNames, args...); err != nil {
 		return err
 	}

@@ -132,13 +132,11 @@ func (m *Manager) addUnreviewedSource(
 		return "", fmt.Errorf("open remote-source state: %w", err)
 	}
 	previous, existed := state.Get(path)
-	entry := &registry.WorktreeEntry{}
-	if existed {
-		*entry = *previous
+	entry := &registry.WorktreeEntry{
+		Branch:                 branch,
+		Path:                   path,
+		UnreviewedRemoteSource: true,
 	}
-	entry.Branch = branch
-	entry.Path = path
-	entry.UnreviewedRemoteSource = true
 	if err := state.Register(entry); err != nil {
 		return "", fmt.Errorf("mark remote-source worktree unreviewed: %w", err)
 	}

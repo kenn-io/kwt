@@ -1972,6 +1972,18 @@ func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnStaleHead(t *tes
 	// Simulate a fetched remote branch with no local counterpart, so
 	// `git worktree add` auto-creates the local branch.
 	runTUITestGit(t, repoPath, "update-ref", "refs/remotes/origin/feature/studio-only", "HEAD")
+	rollbackHookMarker := filepath.Join(t.TempDir(), "rollback-hook-ran")
+	hooksDir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(hooksDir, "reference-transaction"),
+		fmt.Appendf(
+			nil,
+			"#!/bin/sh\nprintf hook > %q\n",
+			rollbackHookMarker,
+		),
+		0755,
+	))
+	runTUITestGit(t, repoPath, "config", "core.hooksPath", hooksDir)
 	baseDir := filepath.Join(t.TempDir(), "worktrees")
 	cfg := &models.Config{
 		Worktree: models.WorktreeConfig{BaseDir: baseDir, AutoMkdir: true},
@@ -1998,6 +2010,8 @@ func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnStaleHead(t *tes
 	assert.Empty(t, path)
 	assert.False(t, tuiTestBranchExists(repoPath, "feature/studio-only"),
 		"auto-created branch must be removed when verification fails")
+	assert.NoFileExists(t, rollbackHookMarker,
+		"fleet branch rollback must not run repository hooks")
 	reg, registryErr := registry.New()
 	require.NoError(t, registryErr)
 	assert.False(t, reg.IsUnreviewedRemoteSource(
@@ -2056,6 +2070,18 @@ func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnCheckoutFailure(
 		blob[:2],
 		blob[2:],
 	)))
+	rollbackHookMarker := filepath.Join(t.TempDir(), "rollback-hook-ran")
+	hooksDir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(hooksDir, "reference-transaction"),
+		fmt.Appendf(
+			nil,
+			"#!/bin/sh\nprintf hook > %q\n",
+			rollbackHookMarker,
+		),
+		0755,
+	))
+	runTUITestGit(t, repoPath, "config", "core.hooksPath", hooksDir)
 
 	baseDir := filepath.Join(t.TempDir(), "worktrees")
 	cfg := &models.Config{
@@ -2082,6 +2108,24 @@ func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnCheckoutFailure(
 	assert.Empty(t, path)
 	assert.False(t, tuiTestBranchExists(repoPath, "feature/broken-remote"),
 		"auto-created branch must be removed when checkout fails")
+	assert.NoFileExists(t, rollbackHookMarker,
+		"fleet branch rollback must not run repository hooks")
+}
+
+func TestTUIBackendMaterializeWorktreeReportsBranchRollbackFailure(t *testing.T) {
+	repoPath := newTUITestRepo(t)
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+
+	err := backend.rollbackMaterializedBranch(
+		git.New(repoPath),
+		"missing-branch",
+		errors.New("materialization failed"),
+	)
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "materialization failed")
+	assert.ErrorContains(t, err, "failed to remove auto-created branch")
+	assert.ErrorContains(t, err, "an incomplete worktree may remain")
 }
 
 func TestTUIBackendMaterializeWorktreeUnregistersWhenHeadCannotBeRead(t *testing.T) {

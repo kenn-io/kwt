@@ -1331,6 +1331,44 @@ func TestAddWorktreeExistingRemovesWorktreeAfterCheckoutFailure(t *testing.T) {
 	}
 }
 
+func TestAddWorktreeExistingRejectsRemoteOnlyBranch(t *testing.T) {
+	repo := NewTestRepository(t)
+	remotePath := filepath.Join(t.TempDir(), "origin.git")
+	gitOutput(
+		t,
+		filepath.Dir(remotePath),
+		"init",
+		"--bare",
+		"-b",
+		"main",
+		remotePath,
+	)
+	gitOutput(t, repo.Path, "remote", "add", "origin", remotePath)
+	repo.CreateBranch(t, "remote-only-local-import")
+	gitOutput(t, repo.Path, "push", "-u", "origin", "remote-only-local-import")
+	gitOutput(t, repo.Path, "checkout", "main")
+	gitOutput(t, repo.Path, "branch", "-D", "remote-only-local-import")
+	worktreePath := filepath.Join(t.TempDir(), "remote-only-local-import")
+
+	err := New(repo.Path).AddWorktreeExisting(
+		worktreePath,
+		"remote-only-local-import",
+		nil,
+	)
+
+	require.Error(t, err)
+	assert.NoDirExists(t, worktreePath)
+	assert.Error(
+		t,
+		repo.run(
+			"show-ref",
+			"--verify",
+			"--quiet",
+			"refs/heads/remote-only-local-import",
+		),
+	)
+}
+
 func TestAddWorktreeTrackingRemovesWorktreeAndBranchAfterCheckoutFailure(
 	t *testing.T,
 ) {
