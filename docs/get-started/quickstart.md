@@ -45,6 +45,21 @@ Useful keys:
 | `r`     | Refresh.                                                |
 | `?`     | Toggle help.                                            |
 
+### Understand checkout labels
+
+The branch column distinguishes checkout state from branch identity:
+
+- A primary checkout adds `[primary]`, for example `main [primary]`.
+- A detached checkout shows `detached@<commit>`, using the first eight
+  characters of the commit hash.
+- A detached primary checkout combines both labels, for example
+  `detached@be094b1b [primary]`.
+
+For rows observed on multiple machines, `[primary]` appears only when every
+observation agrees that the checkout is primary. Primary checkouts are
+protected from dashboard deletion; pressing `d` reports the protected
+checkout's abbreviated path.
+
 ## Create a worktree
 
 ```sh
