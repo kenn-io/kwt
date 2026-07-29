@@ -85,6 +85,36 @@ func TestSelectBranch_EmptyList(t *testing.T) {
 	}
 }
 
+func TestBranchDisplayAndPreviewIncludeRemoteSource(t *testing.T) {
+	branches := []models.Branch{
+		{
+			Name:     "topic",
+			Label:    "topic (origin/topic)",
+			Source:   "refs/remotes/origin/topic",
+			IsRemote: true,
+		},
+		{
+			Name:     "topic",
+			Label:    "topic (upstream/topic)",
+			Source:   "refs/remotes/upstream/topic",
+			IsRemote: true,
+		},
+	}
+	finder := &Finder{}
+	display := finder.formatBranchForDisplay(branches)
+
+	if got := display(0); got != "→ topic (origin/topic)" {
+		t.Fatalf("origin display = %q, want source-qualified label", got)
+	}
+	if got := display(1); got != "→ topic (upstream/topic)" {
+		t.Fatalf("upstream display = %q, want source-qualified label", got)
+	}
+	preview := finder.generateBranchPreview(branches[1], 20)
+	if !strings.Contains(preview, "Source: refs/remotes/upstream/topic") {
+		t.Fatalf("remote preview omitted source:\n%s", preview)
+	}
+}
+
 func TestSelectMultipleWorktrees_EmptyList(t *testing.T) {
 	finder := &Finder{}
 	worktrees := []models.Worktree{}

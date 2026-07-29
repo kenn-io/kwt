@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -212,6 +213,56 @@ func TestRegistryMutationsTreatSymlinkAliasesAsOneWorktree(t *testing.T) {
 	}
 	if got := r.List(); len(got) != 0 {
 		t.Fatalf("List() after unregister = %+v, want empty registry", got)
+	}
+}
+
+func TestRegistryRewriteKeepsFilePrivate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose POSIX file permission bits")
+	}
+	path := filepath.Join(t.TempDir(), "registry.json")
+	r := &Registry{entries: make(map[string]*WorktreeEntry), path: path}
+
+	if err := r.Register(&WorktreeEntry{
+		Path:       "/worktrees/private",
+		Repository: "https://user:secret@example.com/repo.git",
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat registry: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("new registry mode = %o, want 600", got)
+	}
+
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatalf("make legacy registry readable: %v", err)
+	}
+	if err := r.Register(&WorktreeEntry{Path: "/worktrees/second"}); err != nil {
+		t.Fatalf("rewrite legacy registry: %v", err)
+	}
+	info, err = os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat rewritten registry: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("rewritten legacy registry mode = %o, want 600", got)
+	}
+
+	if err := os.Chmod(path, 0400); err != nil {
+		t.Fatalf("restrict registry: %v", err)
+	}
+	if err := r.Register(&WorktreeEntry{Path: "/worktrees/third"}); err != nil {
+		t.Fatalf("rewrite restricted registry: %v", err)
+	}
+	info, err = os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat restricted registry: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0400 {
+		t.Fatalf("restricted registry mode = %o, want 400", got)
 	}
 }
 

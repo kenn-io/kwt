@@ -1420,6 +1420,82 @@ copy_files = [".env.evil"]
 	})
 }
 
+func TestMergeLocalConfigRejectsEnvironmentReferencesInNaming(t *testing.T) {
+	tests := []struct {
+		name  string
+		local string
+	}{
+		{
+			name: "template",
+			local: `
+[naming]
+template = "$KWT_GITHUB_TOKEN/{{.Branch}}"
+`,
+		},
+		{
+			name: "replacement",
+			local: `
+[naming.sanitize_chars]
+"/" = "$KWT_GITHUB_TOKEN"
+`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			viper.Reset()
+			t.Cleanup(viper.Reset)
+			absPath, data := writeLocalConfig(
+				t,
+				t.TempDir(),
+				[]byte(tt.local),
+			)
+			store := &TrustStore{
+				entries: []trustEntry{{
+					Path:   absPath,
+					SHA256: computeSHA256(data),
+				}},
+			}
+
+			err := mergeLocalConfig(store, trustingPrompter(), true)
+
+			if err == nil ||
+				!strings.Contains(err.Error(), "environment variable references") {
+				t.Fatalf("mergeLocalConfig() error = %v, want environment rejection", err)
+			}
+		})
+	}
+}
+
+func TestMergeLocalConfigMarksNamingAsRepositoryLocal(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	absPath, data := writeLocalConfig(
+		t,
+		t.TempDir(),
+		[]byte(`
+[naming]
+template = "{{.Repository}}/{{.Branch}}"
+`),
+	)
+	store := &TrustStore{
+		entries: []trustEntry{{
+			Path:   absPath,
+			SHA256: computeSHA256(data),
+		}},
+	}
+
+	if err := mergeLocalConfig(store, trustingPrompter(), true); err != nil {
+		t.Fatalf("mergeLocalConfig() error = %v", err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Naming.RepositoryLocal {
+		t.Fatal("cwd naming was not marked repository-local")
+	}
+}
+
 func TestDefaultLayoutsConfig(t *testing.T) {
 	// Isolate HOME so Init() reads and writes a throwaway config dir,
 	// never the real ~/.config/kwt (Init calls viper.SafeWriteConfig).

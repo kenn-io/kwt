@@ -101,16 +101,7 @@ func (f *Finder) SelectBranch(branches []models.Branch) (*models.Branch, error) 
 
 	idx, err := fuzzyfinder.Find(
 		branches,
-		func(i int) string {
-			branch := branches[i]
-			marker := ""
-			if branch.IsCurrent {
-				marker = "* "
-			} else if branch.IsRemote {
-				marker = "→ "
-			}
-			return fmt.Sprintf("%s%s", marker, branch.Name)
-		},
+		f.formatBranchForDisplay(branches),
 		opts...,
 	)
 
@@ -119,6 +110,25 @@ func (f *Finder) SelectBranch(branches []models.Branch) (*models.Branch, error) 
 	}
 
 	return &branches[idx], nil
+}
+
+func (f *Finder) formatBranchForDisplay(
+	branches []models.Branch,
+) func(int) string {
+	return func(i int) string {
+		branch := branches[i]
+		marker := ""
+		if branch.IsCurrent {
+			marker = "* "
+		} else if branch.IsRemote {
+			marker = "→ "
+		}
+		label := strings.TrimSpace(branch.Label)
+		if label == "" {
+			label = branch.Name
+		}
+		return marker + label
+	}
 }
 
 // SelectMultipleWorktrees displays a fuzzy finder for multiple worktree selection.
@@ -339,11 +349,17 @@ func (f *Finder) generateBranchPreview(branch models.Branch, maxLines int) strin
 	preview := []string{
 		fmt.Sprintf("Branch: %s", branch.Name),
 		fmt.Sprintf("Type: %s", branchType),
+	}
+	if branch.Source != "" {
+		preview = append(preview, fmt.Sprintf("Source: %s", branch.Source))
+	}
+	preview = append(
+		preview,
 		fmt.Sprintf("Last commit: %s", truncateMessage(branch.LastCommit.Message, 60)),
 		fmt.Sprintf("Author: %s", branch.LastCommit.Author),
 		fmt.Sprintf("Date: %s", branch.LastCommit.Date.Format("2006-01-02 15:04")),
 		fmt.Sprintf("Hash: %s", truncateHash(branch.LastCommit.Hash)),
-	}
+	)
 
 	return strings.Join(preview[:min(len(preview), maxLines)], "\n")
 }

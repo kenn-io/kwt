@@ -116,13 +116,20 @@ func saveEntries(path string, entriesByPath map[string]*WorktreeEntry) error {
 	}
 	data = append(data, '\n')
 
+	mode := os.FileMode(0600)
+	if info, statErr := os.Stat(path); statErr == nil {
+		existing := info.Mode().Perm()
+		if existing&^os.FileMode(0600) == 0 {
+			mode = existing
+		}
+	}
 	temp, err := os.CreateTemp(filepath.Dir(path), ".registry-*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create registry temp file: %w", err)
 	}
 	tempPath := temp.Name()
 	defer func() { _ = os.Remove(tempPath) }()
-	if err := temp.Chmod(0644); err != nil {
+	if err := temp.Chmod(mode); err != nil {
 		_ = temp.Close()
 		return fmt.Errorf("failed to set registry temp permissions: %w", err)
 	}

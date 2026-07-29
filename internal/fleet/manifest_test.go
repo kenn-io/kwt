@@ -245,7 +245,11 @@ func TestBuildManifestGlobalFallbackPreservesRegisteredIdentity(t *testing.T) {
 		ListProjectWorktrees: func(context.Context, models.Project) ([]models.Worktree, error) {
 			return nil, errors.New("configured listing unavailable")
 		},
-		DiscoverGlobalWorktrees: func(string, []models.Project) ([]*discovery.GlobalWorktreeEntry, error) {
+		DiscoverGlobalWorktrees: func(
+			string,
+			[]models.Project,
+			func(string) bool,
+		) ([]*discovery.GlobalWorktreeEntry, error) {
 			return []*discovery.GlobalWorktreeEntry{{
 				RepositoryURL:  "https://github.com/fork/kwt.git",
 				RepositoryInfo: registered,
@@ -269,6 +273,32 @@ func TestBuildManifestGlobalFallbackPreservesRegisteredIdentity(t *testing.T) {
 	assert.Equal(t, "github.com/kenn-io/kwt", manifest.Projects[0].Identity)
 	require.Len(t, manifest.Worktrees, 1)
 	assert.Equal(t, "github.com/kenn-io/kwt", manifest.Worktrees[0].ProjectIdentity)
+}
+
+func TestBuildManifestExcludesGlobalWorktreeBeforeDiscoveryInspection(t *testing.T) {
+	const unreviewedPath = "/worktrees/unreviewed"
+	checkedBeforeInspection := false
+	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
+		Hostname: func() (string, error) { return "host-a", nil },
+		DiscoverGlobalWorktrees: func(
+			_ string,
+			_ []models.Project,
+			skip func(string) bool,
+		) ([]*discovery.GlobalWorktreeEntry, error) {
+			checkedBeforeInspection = skip(unreviewedPath)
+			return nil, nil
+		},
+		ExcludeWorktree: func(path string) (bool, error) {
+			return path == unreviewedPath, nil
+		},
+	}).Build(context.Background(), &models.Config{
+		Fleet:    models.FleetConfig{HostID: "host-a"},
+		Worktree: models.WorktreeConfig{BaseDir: "/worktrees"},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, manifest)
+	assert.True(t, checkedBeforeInspection)
 }
 
 func TestBuildManifestReturnsCanceledContext(t *testing.T) {

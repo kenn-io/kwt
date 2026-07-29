@@ -25,6 +25,18 @@ func pathSetContains(paths map[string]struct{}, path string) bool {
 	return ok
 }
 
+func pathSetContainsOrDescendant(
+	paths map[string]struct{},
+	path string,
+) bool {
+	for root := range paths {
+		if utils.IsSameOrChildPath(path, root) {
+			return true
+		}
+	}
+	return false
+}
+
 func isUnreviewedRemoteSourcePath(path string) (bool, error) {
 	reg, err := registry.New()
 	if err != nil {
