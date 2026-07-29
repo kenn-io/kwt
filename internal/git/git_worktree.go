@@ -79,6 +79,9 @@ func (g *Git) AddWorktreeExisting(
 	path, branch string,
 	protectedNames []string,
 ) error {
+	if err := g.validateLocalBranchName(branch, protectedNames); err != nil {
+		return err
+	}
 	hooksDir, err := os.MkdirTemp("", "kwt-empty-hooks-")
 	if err != nil {
 		return fmt.Errorf("create empty hooks directory: %w", err)
@@ -94,7 +97,10 @@ func (g *Git) AddWorktreeExisting(
 		return err
 	}
 	args := append([]string(nil), isolationArgs...)
-	args = append(args, "worktree", "add", "--no-checkout", path, branch)
+	args = append(
+		args,
+		"worktree", "add", "--no-checkout", "--", path, branch,
+	)
 	if _, err := g.runWithoutCredentials(protectedNames, args...); err != nil {
 		return fmt.Errorf("failed to add existing-branch worktree: %w", err)
 	}
@@ -103,6 +109,17 @@ func (g *Git) AddWorktreeExisting(
 		protectedNames,
 		hooksDir,
 	); err != nil {
+		if cleanupErr := g.removeIsolatedWorktree(
+			path,
+			protectedNames,
+			isolationArgs,
+		); cleanupErr != nil {
+			return fmt.Errorf(
+				"failed to check out existing-branch worktree: %w (failed to remove incomplete worktree: %v)",
+				err,
+				cleanupErr,
+			)
+		}
 		return fmt.Errorf("failed to check out existing-branch worktree: %w", err)
 	}
 	return nil
@@ -114,6 +131,9 @@ func (g *Git) AddWorktreeTracking(
 	path, branch, remoteBranch string,
 	protectedNames []string,
 ) error {
+	if err := g.validateLocalBranchName(branch, protectedNames); err != nil {
+		return err
+	}
 	hooksDir, err := os.MkdirTemp("", "kwt-empty-hooks-")
 	if err != nil {
 		return fmt.Errorf("create empty hooks directory: %w", err)
@@ -132,7 +152,7 @@ func (g *Git) AddWorktreeTracking(
 		protectedNames,
 		append(
 			append([]string(nil), isolationArgs...),
-			"branch", "--track", branch, remoteBranch,
+			"branch", "--track", "--", branch, remoteBranch,
 		)...,
 	); err != nil {
 		return fmt.Errorf(
@@ -144,7 +164,7 @@ func (g *Git) AddWorktreeTracking(
 	worktreeArgs := append([]string(nil), isolationArgs...)
 	worktreeArgs = append(
 		worktreeArgs,
-		"worktree", "add", "--no-checkout", path, branch,
+		"worktree", "add", "--no-checkout", "--", path, branch,
 	)
 	if _, err := g.runWithoutCredentials(
 		protectedNames,
@@ -154,7 +174,7 @@ func (g *Git) AddWorktreeTracking(
 			protectedNames,
 			append(
 				append([]string(nil), isolationArgs...),
-				"branch", "-D", branch,
+				"branch", "-D", "--", branch,
 			)...,
 		); rollbackErr != nil {
 			return fmt.Errorf(
@@ -176,11 +196,64 @@ func (g *Git) AddWorktreeTracking(
 		protectedNames,
 		hooksDir,
 	); err != nil {
+		if cleanupErr := g.removeIsolatedWorktree(
+			path,
+			protectedNames,
+			isolationArgs,
+		); cleanupErr != nil {
+			return fmt.Errorf(
+				"failed to check out worktree tracking %s: %w (failed to remove incomplete worktree: %v)",
+				remoteBranch,
+				err,
+				cleanupErr,
+			)
+		}
+		if _, cleanupErr := g.runWithoutCredentials(
+			protectedNames,
+			append(
+				append([]string(nil), isolationArgs...),
+				"branch", "-D", "--", branch,
+			)...,
+		); cleanupErr != nil {
+			return fmt.Errorf(
+				"failed to check out worktree tracking %s: %w (failed to remove branch %s: %v)",
+				remoteBranch,
+				err,
+				branch,
+				cleanupErr,
+			)
+		}
 		return fmt.Errorf(
 			"failed to check out worktree tracking %s: %w",
 			remoteBranch,
 			err,
 		)
+	}
+	return nil
+}
+
+func (g *Git) validateLocalBranchName(
+	branch string,
+	protectedNames []string,
+) error {
+	if _, err := g.runWithoutCredentials(
+		protectedNames,
+		"check-ref-format", "--branch", branch,
+	); err != nil {
+		return fmt.Errorf("invalid local branch name %q: %w", branch, err)
+	}
+	return nil
+}
+
+func (g *Git) removeIsolatedWorktree(
+	path string,
+	protectedNames []string,
+	isolationArgs []string,
+) error {
+	args := append([]string(nil), isolationArgs...)
+	args = append(args, "worktree", "remove", "--force", "--", path)
+	if _, err := g.runWithoutCredentials(protectedNames, args...); err != nil {
+		return err
 	}
 	return nil
 }

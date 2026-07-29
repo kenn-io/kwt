@@ -88,6 +88,12 @@ func init() {
 		"Create the worktree without launching a workspace")
 	addCmd.Flags().StringVar(&addFrom, "from", "",
 		"Create a local tracking branch from this remote ref")
+	if err := addCmd.RegisterFlagCompletionFunc(
+		"from",
+		getRemoteBranchCompletions,
+	); err != nil {
+		panic(err)
+	}
 	addCmd.MarkFlagsMutuallyExclusive("layout", "select-layout")
 	addCmd.MarkFlagsMutuallyExclusive("branch", "from", "interactive")
 }

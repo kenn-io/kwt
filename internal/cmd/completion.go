@@ -52,7 +52,7 @@ func getBranchCompletions(_ *cobra.Command, args []string, toComplete string) ([
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 
-	branches, err := g.ListBranches(true)
+	branches, err := g.ListBranches(false)
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
@@ -60,14 +60,49 @@ func getBranchCompletions(_ *cobra.Command, args []string, toComplete string) ([
 	var completions []string
 	for _, branch := range branches {
 		if strings.HasPrefix(branch.Name, toComplete) {
-			desc := "Local branch"
-			if branch.IsRemote {
-				desc = "Remote branch"
-			}
-			completions = append(completions, fmt.Sprintf("%s\t%s", branch.Name, desc))
+			completions = append(
+				completions,
+				fmt.Sprintf("%s\tLocal branch", branch.Name),
+			)
 		}
 	}
 
+	return completions, cobra.ShellCompDirectiveNoFileComp
+}
+
+// getRemoteBranchCompletions returns remote sources accepted by --from.
+func getRemoteBranchCompletions(
+	_ *cobra.Command,
+	args []string,
+	toComplete string,
+) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 1 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+
+	g, err := git.NewFromCwd()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+
+	branches, err := g.ListAvailableBranches()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+
+	var completions []string
+	for _, branch := range branches {
+		if !branch.IsRemote {
+			continue
+		}
+		source := strings.TrimPrefix(branch.Source, "refs/remotes/")
+		if strings.HasPrefix(source, toComplete) {
+			completions = append(
+				completions,
+				fmt.Sprintf("%s\tRemote branch", source),
+			)
+		}
+	}
 	return completions, cobra.ShellCompDirectiveNoFileComp
 }
 

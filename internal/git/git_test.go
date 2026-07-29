@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/pkg/models"
 )
 
@@ -126,6 +128,24 @@ func commitTestFile(t *testing.T, dir, name, contents, message string) {
 	}
 	gitOutput(t, dir, "add", name)
 	gitOutput(t, dir, "commit", "-m", message)
+}
+
+func createBranchWithMissingBlob(
+	t *testing.T,
+	repo *TestRepository,
+	branch string,
+) string {
+	t.Helper()
+	repo.CreateBranch(t, branch)
+	commitTestFile(t, repo.Path, "missing.txt", "missing\n", "Missing blob")
+	commit := gitOutput(t, repo.Path, "rev-parse", "HEAD")
+	blob := gitOutput(t, repo.Path, "rev-parse", branch+":missing.txt")
+	gitOutput(t, repo.Path, "checkout", "main")
+	objectPath := filepath.Join(repo.Path, ".git", "objects", blob[:2], blob[2:])
+	if err := os.Remove(objectPath); err != nil {
+		t.Fatalf("remove blob object: %v", err)
+	}
+	return commit
 }
 
 func TestNew(t *testing.T) {
@@ -1263,6 +1283,93 @@ func TestAddWorktreeTrackingRollsBackBranchWhenWorktreeFails(t *testing.T) {
 		if _, err := os.Stat(configuredHookMarker); !os.IsNotExist(err) {
 			t.Errorf("configured hook ran during rollback: stat error = %v", err)
 		}
+	}
+}
+
+func TestAddWorktreeTrackingRejectsOptionLikeBranchName(t *testing.T) {
+	repo := NewTestRepository(t)
+	gitOutput(
+		t,
+		repo.Path,
+		"update-ref",
+		"refs/remotes/origin/-M",
+		"HEAD",
+	)
+
+	worktreePath := filepath.Join(t.TempDir(), "option-like")
+	err := New(repo.Path).AddWorktreeTracking(
+		worktreePath,
+		"-M",
+		"refs/remotes/origin/-M",
+		nil,
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `invalid local branch name "-M"`)
+	assert.Equal(t, "main", gitOutput(t, repo.Path, "branch", "--show-current"))
+	assert.NoDirExists(t, worktreePath)
+}
+
+func TestAddWorktreeExistingRemovesWorktreeAfterCheckoutFailure(t *testing.T) {
+	repo := NewTestRepository(t)
+	createBranchWithMissingBlob(t, repo, "broken-local")
+	worktreePath := filepath.Join(t.TempDir(), "broken-local")
+
+	err := New(repo.Path).AddWorktreeExisting(
+		worktreePath,
+		"broken-local",
+		nil,
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to check out existing-branch worktree")
+	assert.NoDirExists(t, worktreePath)
+	worktrees, listErr := New(repo.Path).ListWorktrees()
+	require.NoError(t, listErr)
+	for _, worktree := range worktrees {
+		assert.NotEqual(t, worktreePath, worktree.Path)
+	}
+}
+
+func TestAddWorktreeTrackingRemovesWorktreeAndBranchAfterCheckoutFailure(
+	t *testing.T,
+) {
+	repo := NewTestRepository(t)
+	commit := createBranchWithMissingBlob(t, repo, "broken-remote")
+	gitOutput(t, repo.Path, "remote", "add", "origin", repo.Path)
+	gitOutput(
+		t,
+		repo.Path,
+		"update-ref",
+		"refs/remotes/origin/broken-remote",
+		commit,
+	)
+	gitOutput(t, repo.Path, "branch", "-D", "broken-remote")
+	worktreePath := filepath.Join(t.TempDir(), "broken-remote")
+
+	err := New(repo.Path).AddWorktreeTracking(
+		worktreePath,
+		"broken-remote",
+		"refs/remotes/origin/broken-remote",
+		nil,
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to check out worktree tracking")
+	assert.NoDirExists(t, worktreePath)
+	assert.Error(
+		t,
+		repo.run(
+			"show-ref",
+			"--verify",
+			"--quiet",
+			"refs/heads/broken-remote",
+		),
+	)
+	worktrees, listErr := New(repo.Path).ListWorktrees()
+	require.NoError(t, listErr)
+	for _, worktree := range worktrees {
+		assert.NotEqual(t, worktreePath, worktree.Path)
 	}
 }
 
