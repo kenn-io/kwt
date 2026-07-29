@@ -21,7 +21,6 @@ type StatusCollectorOptions struct {
 	FetchRemote    bool
 	StaleThreshold time.Duration
 	BaseDir        string
-	SkipWorktree   func(path string) bool
 }
 
 // StatusCollector collects status information for worktrees.
@@ -29,7 +28,6 @@ type StatusCollector struct {
 	fetchRemote    bool
 	staleThreshold time.Duration
 	basedir        string
-	skipWorktree   func(path string) bool
 }
 
 // NewStatusCollectorWithOptions creates a new status collector with custom options.
@@ -43,7 +41,6 @@ func NewStatusCollectorWithOptions(opts StatusCollectorOptions) *StatusCollector
 		fetchRemote:    opts.FetchRemote,
 		staleThreshold: opts.StaleThreshold,
 		basedir:        opts.BaseDir,
-		skipWorktree:   opts.SkipWorktree,
 	}
 }
 
@@ -103,15 +100,6 @@ func (c *StatusCollector) CollectAll(ctx context.Context, worktrees []*models.Wo
 
 func (c *StatusCollector) collectOne(ctx context.Context, worktree *models.Worktree) (*models.WorktreeStatus, error) {
 	repository := strings.TrimSpace(worktree.Repository)
-	if c.skipWorktree != nil && c.skipWorktree(worktree.Path) {
-		return &models.WorktreeStatus{
-			Path:       worktree.Path,
-			Branch:     worktree.Branch,
-			Repository: repository,
-			Status:     models.WorktreeStatusUnknown,
-		}, nil
-	}
-
 	g := git.New(worktree.Path)
 	if repository == "" {
 		repository = c.repositoryIdentity(g, worktree.Path)

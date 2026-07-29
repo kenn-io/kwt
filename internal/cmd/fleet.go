@@ -30,11 +30,7 @@ type fleetHubClient interface {
 var (
 	loadFleetConfig         = config.Load
 	newFleetManifestBuilder = func() fleet.ManifestBuildProvider {
-		return fleet.NewManifestBuilder(fleet.ManifestBuilderOptions{
-			ExcludeWorktree: func(path string) (bool, error) {
-				return isUnreviewedRemoteSourcePath(path)
-			},
-		})
+		return fleet.NewManifestBuilder(fleet.ManifestBuilderOptions{})
 	}
 	publishFleetBestEffort = func(ctx context.Context, cfg *models.Config, builder fleet.ManifestBuildProvider, warn *bytes.Buffer) error {
 		return fleet.PublishBestEffort(ctx, cfg, builder, warn)

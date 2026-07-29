@@ -219,11 +219,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 		printAddResult(os.Stdout, branch, expiresAt)
 		if unreviewedSource {
-			_, _ = fmt.Fprintf(
-				os.Stdout,
-				"Review the existing-branch checkout, then run 'kwt open %s' to start its workspace.\n",
-				worktreePath,
-			)
+			_, _ = fmt.Fprintln(os.Stdout, existingBranchReviewMessage())
 		}
 		publishFleetBestEffortForCommand(cmd, ctx.Config)
 
@@ -246,6 +242,10 @@ func printAddResult(w io.Writer, branch string, expiresAt *time.Time) {
 	if expiresAt != nil {
 		_, _ = fmt.Fprintf(w, "Worktree expires at %s\n", expiresAt.Format(time.RFC3339))
 	}
+}
+
+func existingBranchReviewMessage() string {
+	return "Review the existing-branch checkout, then run 'kwt open' to select it and start its workspace."
 }
 
 // shouldLaunch implements the add launch-decision rule.

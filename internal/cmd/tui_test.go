@@ -28,7 +28,6 @@ import (
 	"go.kenn.io/kwt/internal/tmux"
 	dashboard "go.kenn.io/kwt/internal/tui"
 	"go.kenn.io/kwt/internal/url"
-	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 )
@@ -376,7 +375,7 @@ func TestTUIBackendListFastSkipsStatusCollection(t *testing.T) {
 	assert.Equal(t, models.WorktreeStatusUnknown, rows[0].Status.Status)
 }
 
-func TestTUIBackendListExcludesUnreviewedWorktreeFromStatusCollection(t *testing.T) {
+func TestTUIBackendListCollectsStatusForImportedWorktree(t *testing.T) {
 	entry := &discovery.GlobalWorktreeEntry{
 		RepositoryInfo: &url.RepositoryInfo{
 			Host: "github.com", Owner: "example", Repository: "kwt",
@@ -394,16 +393,19 @@ func TestTUIBackendListExcludesUnreviewedWorktreeFromStatusCollection(t *testing
 	backend.discoverLaunchWorktrees = func(string) ([]*discovery.GlobalWorktreeEntry, error) {
 		return nil, nil
 	}
-	backend.unreviewedWorktreePaths = func() (map[string]struct{}, error) {
-		return map[string]struct{}{utils.CanonicalPath(entry.Path): {}}, nil
-	}
 	backend.collectStatuses = func(
 		_ context.Context,
 		_ string,
 		entries []*discovery.GlobalWorktreeEntry,
 	) (map[string]*models.WorktreeStatus, error) {
-		assert.Empty(t, entries)
-		return nil, nil
+		require.Equal(t, []*discovery.GlobalWorktreeEntry{entry}, entries)
+		return map[string]*models.WorktreeStatus{
+			entry.Path: {
+				Path:   entry.Path,
+				Branch: entry.Branch,
+				Status: models.WorktreeStatusClean,
+			},
+		}, nil
 	}
 	backend.listSessions = func() ([]string, error) { return nil, nil }
 
@@ -411,8 +413,7 @@ func TestTUIBackendListExcludesUnreviewedWorktreeFromStatusCollection(t *testing
 
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	assert.True(t, rows[0].NeedsReview)
-	assert.Equal(t, models.WorktreeStatusUnknown, rows[0].Status.Status)
+	assert.Equal(t, models.WorktreeStatusClean, rows[0].Status.Status)
 }
 
 func TestTUIBackendListFastRunsIndependentDiscoveryConcurrently(t *testing.T) {
@@ -1515,7 +1516,7 @@ func TestTUIBackendAutoRegisteredRelativeRemoteNeverReachesManifest(t *testing.T
 			return nil, nil
 		},
 		DiscoverGlobalWorktrees: func(
-			string, []models.Project, func(string) bool,
+			string, []models.Project,
 		) ([]*discovery.GlobalWorktreeEntry, error) {
 			return nil, nil
 		},
@@ -1526,43 +1527,6 @@ func TestTUIBackendAutoRegisteredRelativeRemoteNeverReachesManifest(t *testing.T
 		assert.NotEqual(t, "cache/team/repo", project.Identity,
 			"a git-derived relative remote must never launder into a published fleet identity")
 	}
-}
-
-func TestTUIBackendLoadsUnreviewedPathsBeforeDiscovery(t *testing.T) {
-	const unreviewedPath = "/worktrees/unreviewed"
-	cfg := &models.Config{
-		Worktree: models.WorktreeConfig{BaseDir: "/worktrees"},
-	}
-	backend := newTUIBackendWithLaunchDir(cfg, unreviewedPath)
-	backend.unreviewedWorktreePaths = func() (map[string]struct{}, error) {
-		return map[string]struct{}{
-			utils.CanonicalPath(unreviewedPath): {},
-		}, nil
-	}
-	globalChecked := false
-	backend.discoverGlobalWorktrees = nil
-	backend.discoverGlobalWorktreesWithSkip = func(
-		_ string,
-		skip func(string) bool,
-	) ([]*discovery.GlobalWorktreeEntry, error) {
-		globalChecked = skip(unreviewedPath)
-		return nil, nil
-	}
-	launchCalled := false
-	backend.discoverLaunchWorktrees = func(string) ([]*discovery.GlobalWorktreeEntry, error) {
-		launchCalled = true
-		return nil, nil
-	}
-	backend.discoverProjectWorktrees = func(string) ([]*discovery.GlobalWorktreeEntry, error) {
-		return nil, nil
-	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
-
-	_, _, err := backend.ListFast(context.Background())
-
-	require.NoError(t, err)
-	assert.True(t, globalChecked)
-	assert.False(t, launchCalled)
 }
 
 func TestApplyProjectIdentityFallbackKeepsOriginForPathBackedProjects(t *testing.T) {

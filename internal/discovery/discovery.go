@@ -39,16 +39,6 @@ type worktreeCandidate struct {
 // identity wins over a fork origin; see worktree.RepositoryInfoWithProjects);
 // pass nil when no registry is available.
 func DiscoverGlobalWorktrees(baseDir string, projects []models.Project) ([]*GlobalWorktreeEntry, error) {
-	return DiscoverGlobalWorktreesFiltered(baseDir, projects, nil)
-}
-
-// DiscoverGlobalWorktreesFiltered finds global worktrees while excluding
-// matching paths before any Git command runs inside them.
-func DiscoverGlobalWorktreesFiltered(
-	baseDir string,
-	projects []models.Project,
-	skipWorktree func(string) bool,
-) ([]*GlobalWorktreeEntry, error) {
 	if baseDir == "" {
 		return nil, fmt.Errorf("base directory not configured")
 	}
@@ -121,7 +111,6 @@ func DiscoverGlobalWorktreesFiltered(
 	return extractWorktreeCandidates(
 		candidates,
 		projects,
-		skipWorktree,
 		extractWorktreeInfo,
 	), nil
 }
@@ -157,7 +146,6 @@ func DiscoverWorktree(path string, projects []models.Project) (*GlobalWorktreeEn
 func extractWorktreeCandidates(
 	candidates []worktreeCandidate,
 	projects []models.Project,
-	skipWorktree func(string) bool,
 	extract func(string, []models.Project) (*GlobalWorktreeEntry, error),
 ) []*GlobalWorktreeEntry {
 	if len(candidates) == 0 {
@@ -184,9 +172,6 @@ func extractWorktreeCandidates(
 		}()
 	}
 	for index := range candidates {
-		if skipWorktree != nil && skipWorktree(candidates[index].path) {
-			continue
-		}
 		jobs <- index
 	}
 	close(jobs)

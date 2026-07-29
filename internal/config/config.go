@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	worktreetemplate "go.kenn.io/kwt/internal/template"
 	repositoryurl "go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
@@ -563,11 +564,19 @@ func normalizeTargetConfigPath(path string) (string, error) {
 
 func resolveTargetLocalPaths(local *viper.Viper, repoRoot string) error {
 	repoRoot = utils.CanonicalPath(repoRoot)
-	if local.IsSet("naming.template") &&
-		targetPathHasEnvironmentReference(local.GetString("naming.template")) {
-		return fmt.Errorf(
-			"environment variable references are not allowed in repository-local naming templates",
-		)
+	if local.IsSet("naming.template") {
+		hasEnvironmentReference, err :=
+			worktreetemplate.LiteralTextHasEnvironmentReference(
+				local.GetString("naming.template"),
+			)
+		if err != nil {
+			return err
+		}
+		if hasEnvironmentReference {
+			return fmt.Errorf(
+				"environment variable references are not allowed in repository-local naming templates",
+			)
+		}
 	}
 	for _, replacement := range local.GetStringMapString(
 		"naming.sanitize_chars",

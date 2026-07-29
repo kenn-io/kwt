@@ -174,14 +174,6 @@ func TestFormatRowChangesUsesFleetDirtyForRemoteOnlyRows(t *testing.T) {
 	assert.Equal(t, "clean", formatRowChanges(row))
 }
 
-func TestUnreviewedRowExplainsDeferredInspection(t *testing.T) {
-	row := testRow("kwt", "feature", "/w/kwt/feature")
-	row.NeedsReview = true
-
-	assert.Equal(t, "review", formatRowChanges(row))
-	assert.Equal(t, "-", formatRowSync(row))
-}
-
 func TestFormatRowChangesPrefersLocalDirtyCounts(t *testing.T) {
 	row := testRow("kwt", "feature", "/w/kwt/feature")
 	row.Status.Status = models.WorktreeStatusModified

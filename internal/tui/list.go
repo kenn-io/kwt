@@ -322,9 +322,6 @@ func formatRowChanges(row Row) string {
 	if row.Creating {
 		return "creating…"
 	}
-	if row.NeedsReview {
-		return "review"
-	}
 	if row.Workspace != nil {
 		return "-"
 	}
@@ -406,9 +403,6 @@ func compactFleetDirtySummary(summary string) string {
 
 func formatRowSync(row Row) string {
 	if row.Creating {
-		return "-"
-	}
-	if row.NeedsReview {
 		return "-"
 	}
 	if row.Workspace != nil {

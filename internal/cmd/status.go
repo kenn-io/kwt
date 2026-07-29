@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -200,40 +199,11 @@ func runWatchLoop(ctx context.Context, refresh func() error, interval time.Durat
 func collectWorktreeStatuses(ctx context.Context, cfg *models.Config, printer *ui.Printer) ([]*models.WorktreeStatus, error) {
 	var worktrees []*models.Worktree
 
-	unreviewed, err := unreviewedRemoteSourcePaths()
-	if err != nil {
-		return nil, err
-	}
-	collector := status.NewStatusCollectorWithOptions(status.StatusCollectorOptions{
-		FetchRemote:    !statusNoFetch,
-		StaleThreshold: time.Duration(statusStaleDays) * 24 * time.Hour,
-		BaseDir:        cfg.Worktree.BaseDir,
-		SkipWorktree: func(path string) bool {
-			return pathSetContainsOrDescendant(unreviewed, path)
-		},
-	})
-	cwd, cwdErr := os.Getwd()
-	if cwdErr == nil && pathSetContainsOrDescendant(unreviewed, cwd) {
-		for path := range unreviewed {
-			if pathSetContainsOrDescendant(
-				map[string]struct{}{path: {}},
-				cwd,
-			) {
-				return collector.CollectAll(ctx, []*models.Worktree{{
-					Path: path,
-				}})
-			}
-		}
-	}
-
 	g, err := git.NewFromCwd()
 	if err != nil || statusGlobal {
-		globalEntries, err := discovery.DiscoverGlobalWorktreesFiltered(
+		globalEntries, err := discovery.DiscoverGlobalWorktrees(
 			cfg.Worktree.BaseDir,
 			cfg.Projects,
-			func(path string) bool {
-				return pathSetContainsOrDescendant(unreviewed, path)
-			},
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to discover worktrees: %w", err)
@@ -257,6 +227,11 @@ func collectWorktreeStatuses(ctx context.Context, cfg *models.Config, printer *u
 		}
 	}
 
+	collector := status.NewStatusCollectorWithOptions(status.StatusCollectorOptions{
+		FetchRemote:    !statusNoFetch,
+		StaleThreshold: time.Duration(statusStaleDays) * 24 * time.Hour,
+		BaseDir:        cfg.Worktree.BaseDir,
+	})
 	return collector.CollectAll(ctx, worktrees)
 }
 

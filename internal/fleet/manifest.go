@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"go.kenn.io/kwt/internal/discovery"
@@ -28,10 +27,8 @@ type ManifestBuilderOptions struct {
 	DiscoverGlobalWorktrees func(
 		baseDir string,
 		projects []models.Project,
-		skipWorktree func(string) bool,
 	) ([]*discovery.GlobalWorktreeEntry, error)
 	ListProjectWorktrees func(ctx context.Context, project models.Project) ([]models.Worktree, error)
-	ExcludeWorktree      func(path string) (bool, error)
 }
 
 // ManifestBuilder builds local advisory fleet manifests.
@@ -41,10 +38,8 @@ type ManifestBuilder struct {
 	discoverGlobalWorktrees func(
 		baseDir string,
 		projects []models.Project,
-		skipWorktree func(string) bool,
 	) ([]*discovery.GlobalWorktreeEntry, error)
 	listProjectWorktrees func(ctx context.Context, project models.Project) ([]models.Worktree, error)
-	excludeWorktree      func(path string) (bool, error)
 }
 
 // NewManifestBuilder creates a manifest builder with optional dependency hooks.
@@ -54,7 +49,6 @@ func NewManifestBuilder(opts ManifestBuilderOptions) *ManifestBuilder {
 		hostname:                opts.Hostname,
 		discoverGlobalWorktrees: opts.DiscoverGlobalWorktrees,
 		listProjectWorktrees:    opts.ListProjectWorktrees,
-		excludeWorktree:         opts.ExcludeWorktree,
 	}
 	if builder.now == nil {
 		builder.now = time.Now
@@ -63,8 +57,7 @@ func NewManifestBuilder(opts ManifestBuilderOptions) *ManifestBuilder {
 		builder.hostname = os.Hostname
 	}
 	if builder.discoverGlobalWorktrees == nil {
-		builder.discoverGlobalWorktrees =
-			discovery.DiscoverGlobalWorktreesFiltered
+		builder.discoverGlobalWorktrees = discovery.DiscoverGlobalWorktrees
 	}
 	if builder.listProjectWorktrees == nil {
 		builder.listProjectWorktrees = func(ctx context.Context, project models.Project) ([]models.Worktree, error) {
@@ -183,13 +176,6 @@ func (b *ManifestBuilder) addConfiguredProject(
 	if !ok {
 		return nil
 	}
-	excluded, err := b.shouldExcludeWorktree(projectPath)
-	if err != nil {
-		return err
-	}
-	if excluded {
-		return nil
-	}
 	project.Path = projectPath
 
 	worktrees, err := b.listProjectWorktrees(ctx, project)
@@ -239,35 +225,12 @@ func (b *ManifestBuilder) addGlobalWorktrees(
 		return nil
 	}
 
-	var (
-		excludeMu  sync.Mutex
-		excludeErr error
-	)
-	skipWorktree := func(path string) bool {
-		excluded, err := b.shouldExcludeWorktree(path)
-		if err != nil {
-			excludeMu.Lock()
-			if excludeErr == nil {
-				excludeErr = err
-			}
-			excludeMu.Unlock()
-			return true
-		}
-		return excluded
-	}
 	entries, err := b.discoverGlobalWorktrees(
 		baseDir,
 		cfg.Projects,
-		skipWorktree,
 	)
 	if err != nil {
 		return fmt.Errorf("discover global worktrees: %w", err)
-	}
-	excludeMu.Lock()
-	err = excludeErr
-	excludeMu.Unlock()
-	if err != nil {
-		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -324,13 +287,6 @@ func (b *ManifestBuilder) addWorktree(
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	excluded, err := b.shouldExcludeWorktree(worktree.Path)
-	if err != nil {
-		return false, err
-	}
-	if excluded {
-		return false, nil
-	}
 	path, ok := observablePath(worktree.Path)
 	if !ok || hasSeenPath(seenWorktreePaths, path) {
 		return false, nil
@@ -347,19 +303,6 @@ func (b *ManifestBuilder) addWorktree(
 	seenWorktreePaths[canonicalPathKey(path)] = struct{}{}
 	manifest.Worktrees = append(manifest.Worktrees, row)
 	return true, nil
-}
-
-func (b *ManifestBuilder) shouldExcludeWorktree(
-	path string,
-) (bool, error) {
-	if b.excludeWorktree == nil {
-		return false, nil
-	}
-	excluded, err := b.excludeWorktree(path)
-	if err != nil {
-		return false, fmt.Errorf("check worktree inspection state: %w", err)
-	}
-	return excluded, nil
 }
 
 func buildWorktreeManifest(ctx context.Context, cfg *models.Config, projectIdentity string, worktree models.Worktree) (WorktreeManifest, bool, error) {

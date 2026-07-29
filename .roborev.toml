@@ -1,4 +1,10 @@
 review_guidelines = """
+Normative policy:
+
+- `docs/development/threat-model.md` is the project's security boundary. Apply
+  it before assigning security severity. Do not invent a stronger sandbox model
+  for local Git operations than that document defines.
+
 Threat model for multi-machine sync (fleet):
 
 - The hub and all spokes are the same user's machines sharing a bearer
@@ -30,6 +36,33 @@ Threat model for local execution:
 - Repository *contents* remain untrusted for machine-level configuration
   (the `.kwt.toml` rule above), but command resolution through the
   user's PATH is the user's domain, not the repository's.
+
+Threat model for existing-branch worktrees:
+
+- Checking out a selected local or remote branch is an explicit user action and
+  establishes the same accepted boundary as `git checkout`. After successful
+  creation, ordinary Git discovery, status, log, diff, and fleet observation
+  are expected. Do not flag these operations merely because trusted local Git
+  configuration may invoke hooks, filters, credential helpers, or
+  `core.fsmonitor`; that configuration belongs to the user under the local
+  execution model above.
+- The unreviewed registry marker defers KWT-owned repository automation and
+  workspace creation; it is not a sandbox boundary for normal Git inspection.
+  Snapshot staleness or concurrent marker changes are correctness issues unless
+  they cause a concrete consequence that remains in scope under the normative
+  threat model. Do not demand locks or per-operation registry rechecks solely
+  to prevent status/discovery from entering a checked-out worktree.
+- Existing-branch creation must still treat branch names, refs, remote metadata,
+  and checkout contents as data: never interpolate them into shell source,
+  environment expansion, credentials, or paths outside the user-selected or
+  configured destination.
+  Automated materialization disables repository hooks, checkout filters, and
+  recursive submodule updates, strips KWT-managed credentials, and skips
+  `copy_files`, `setup_commands`, layouts, and pane commands.
+- After creation, the worktree appears in normal status and fleet output.
+  Explicit `kwt open` or dashboard Enter acknowledges it and opts into trusted
+  layout/pane commands. Do not require status placeholders, hidden rows, or
+  fleet exclusion as security controls.
 
 Threat model for pull-request discovery and import:
 

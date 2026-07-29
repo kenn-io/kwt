@@ -427,7 +427,6 @@ func TestExtractWorktreeCandidatesRunsConcurrentlyAndPreservesOrder(t *testing.T
 		done <- extractWorktreeCandidates(
 			candidates,
 			nil,
-			nil,
 			func(path string, _ []models.Project) (*GlobalWorktreeEntry, error) {
 				started <- path
 				<-release
@@ -451,34 +450,6 @@ func TestExtractWorktreeCandidatesRunsConcurrentlyAndPreservesOrder(t *testing.T
 	}
 	if entries[0].Path != candidates[0].path || entries[1].Path != candidates[1].path {
 		t.Fatalf("Candidate order changed: %#v", entries)
-	}
-}
-
-func TestExtractWorktreeCandidatesSkipsBeforeInspection(t *testing.T) {
-	inspected := make(chan string, 1)
-	entries := extractWorktreeCandidates(
-		[]worktreeCandidate{
-			{path: "/worktrees/unreviewed"},
-			{path: "/worktrees/trusted"},
-		},
-		nil,
-		func(path string) bool {
-			return path == "/worktrees/unreviewed"
-		},
-		func(path string, _ []models.Project) (*GlobalWorktreeEntry, error) {
-			inspected <- path
-			return &GlobalWorktreeEntry{Path: path}, nil
-		},
-	)
-	close(inspected)
-
-	if len(entries) != 1 || entries[0].Path != "/worktrees/trusted" {
-		t.Fatalf("entries = %+v, want only trusted worktree", entries)
-	}
-	for path := range inspected {
-		if path == "/worktrees/unreviewed" {
-			t.Fatal("unreviewed worktree was inspected")
-		}
 	}
 }
 

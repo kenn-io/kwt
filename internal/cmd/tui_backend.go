@@ -32,31 +32,26 @@ type tuiBackend struct {
 	// mu serializes List and MergeFleet: List mutates cfg (launch project and
 	// workspace registration) while MergeFleet's manifest publish reads it,
 	// and the TUI runs the two as concurrent commands.
-	mu                              sync.Mutex
-	cfg                             *models.Config
-	tmux                            *tmux.TmuxCommand
-	protectedNames                  []string
-	launchDir                       string
-	launchProjectRegistered         bool
-	launchWorkspaceRegistered       bool
-	discoverGlobalWorktrees         func(string) ([]*discovery.GlobalWorktreeEntry, error)
-	discoverGlobalWorktreesWithSkip func(
-		string,
-		func(string) bool,
-	) ([]*discovery.GlobalWorktreeEntry, error)
-	discoverProjectWorktrees func(string) ([]*discovery.GlobalWorktreeEntry, error)
-	discoverLaunchWorktrees  func(string) ([]*discovery.GlobalWorktreeEntry, error)
-	collectStatuses          func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error)
-	listSessions             func() ([]string, error)
-	ensureAndAttach          func(context.Context, string, string, models.Layout, bool) error
-	registerProject          func(models.Project) error
-	registerWorkspace        func(models.Workspace) (models.Workspace, error)
-	unregisterWorkspace      func(name string) error
-	readFleetState           func(context.Context, *models.Config) (fleet.FleetState, error)
-	loadTargetConfig         func(string, bool) (*models.Config, error)
-	unreviewedWorktreePaths  func() (map[string]struct{}, error)
-	acknowledgeRemoteSource  func(string) error
-	now                      func() time.Time
+	mu                        sync.Mutex
+	cfg                       *models.Config
+	tmux                      *tmux.TmuxCommand
+	protectedNames            []string
+	launchDir                 string
+	launchProjectRegistered   bool
+	launchWorkspaceRegistered bool
+	discoverGlobalWorktrees   func(string) ([]*discovery.GlobalWorktreeEntry, error)
+	discoverProjectWorktrees  func(string) ([]*discovery.GlobalWorktreeEntry, error)
+	discoverLaunchWorktrees   func(string) ([]*discovery.GlobalWorktreeEntry, error)
+	collectStatuses           func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error)
+	listSessions              func() ([]string, error)
+	ensureAndAttach           func(context.Context, string, string, models.Layout, bool) error
+	registerProject           func(models.Project) error
+	registerWorkspace         func(models.Workspace) (models.Workspace, error)
+	unregisterWorkspace       func(name string) error
+	readFleetState            func(context.Context, *models.Config) (fleet.FleetState, error)
+	loadTargetConfig          func(string, bool) (*models.Config, error)
+	acknowledgeRemoteSource   func(string) error
+	now                       func() time.Time
 }
 
 func newTUIBackend(cfg *models.Config) *tuiBackend {
@@ -75,15 +70,8 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 		// Registered projects flow into base-dir discovery so a registered
 		// canonical identity wins over a fork origin (the same precedence
 		// applyProjectIdentityFallback applies to per-project discovery).
-		discoverGlobalWorktreesWithSkip: func(
-			baseDir string,
-			skip func(string) bool,
-		) ([]*discovery.GlobalWorktreeEntry, error) {
-			return discovery.DiscoverGlobalWorktreesFiltered(
-				baseDir,
-				cfg.Projects,
-				skip,
-			)
+		discoverGlobalWorktrees: func(baseDir string) ([]*discovery.GlobalWorktreeEntry, error) {
+			return discovery.DiscoverGlobalWorktrees(baseDir, cfg.Projects)
 		},
 		discoverProjectWorktrees: discoverLaunchRepoWorktrees,
 		discoverLaunchWorktrees:  discoverLaunchRepoWorktrees,
@@ -98,7 +86,6 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 		unregisterWorkspace:     config.UnregisterWorkspace,
 		readFleetState:          readTUIFleetState,
 		loadTargetConfig:        config.LoadForTarget,
-		unreviewedWorktreePaths: unreviewedRemoteSourcePaths,
 		acknowledgeRemoteSource: acknowledgeRemoteSourcePath,
 		now:                     time.Now,
 	}
@@ -116,14 +103,6 @@ func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboar
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	unreviewed, stateErr := b.unreviewedWorktreePaths()
-	if stateErr != nil {
-		return nil, nil, stateErr
-	}
-	skipUnreviewed := func(path string) bool {
-		return pathSetContainsOrDescendant(unreviewed, path)
-	}
-
 	var (
 		entries           []*discovery.GlobalWorktreeEntry
 		registeredEntries []*discovery.GlobalWorktreeEntry
@@ -137,29 +116,16 @@ func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboar
 	startup.Add(4)
 	go func() {
 		defer startup.Done()
-		switch {
-		case b.discoverGlobalWorktrees != nil:
-			entries, discoveryErr = b.discoverGlobalWorktrees(
-				b.cfg.Worktree.BaseDir,
-			)
-		case b.discoverGlobalWorktreesWithSkip != nil:
-			entries, discoveryErr = b.discoverGlobalWorktreesWithSkip(
-				b.cfg.Worktree.BaseDir,
-				skipUnreviewed,
-			)
-		}
-	}()
-	go func() {
-		defer startup.Done()
-		registeredEntries = b.discoverRegisteredProjectWorktrees(
-			unreviewed,
+		entries, discoveryErr = b.discoverGlobalWorktrees(
+			b.cfg.Worktree.BaseDir,
 		)
 	}()
 	go func() {
 		defer startup.Done()
-		if skipUnreviewed(b.launchDir) {
-			return
-		}
+		registeredEntries = b.discoverRegisteredProjectWorktrees()
+	}()
+	go func() {
+		defer startup.Done()
 		launchEntries, launchErr = b.discoverLaunchWorktrees(b.launchDir)
 	}()
 	go func() {
@@ -182,24 +148,13 @@ func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboar
 	b.registerLaunchProject(launchEntries)
 	b.registerLaunchWorkspace(launchEntries)
 	entries = mergeTUIEntries(entries, launchEntries)
-	entries = mergeTUIEntries(
-		entries,
-		unreviewedTUIEntries(unreviewed, b.cfg.Worktree.BaseDir),
-	)
 
 	var statusByPath map[string]*models.WorktreeStatus
 	if includeStatuses {
-		inspectable := make([]*discovery.GlobalWorktreeEntry, 0, len(entries))
-		for _, entry := range entries {
-			if entry != nil && pathSetContains(unreviewed, entry.Path) {
-				continue
-			}
-			inspectable = append(inspectable, entry)
-		}
 		statusByPath, discoveryErr = b.collectStatuses(
 			ctx,
 			b.cfg.Worktree.BaseDir,
-			inspectable,
+			entries,
 		)
 		if discoveryErr != nil {
 			return nil, nil, discoveryErr
@@ -217,9 +172,7 @@ func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboar
 		if st == nil {
 			st = unknownStatusForEntry(entry)
 		}
-		row := buildTUIRow(entry, st, liveSessions)
-		row.NeedsReview = pathSetContains(unreviewed, entry.Path)
-		rows = append(rows, row)
+		rows = append(rows, buildTUIRow(entry, st, liveSessions))
 	}
 	rows = append(rows, b.workspaceRows(sessions)...)
 	return rows, nil, nil
@@ -352,16 +305,13 @@ func localFleetObservation(currentHost string, localRow dashboard.Row, now time.
 	return observation, true
 }
 
-func (b *tuiBackend) discoverRegisteredProjectWorktrees(
-	unreviewed map[string]struct{},
-) []*discovery.GlobalWorktreeEntry {
+func (b *tuiBackend) discoverRegisteredProjectWorktrees() []*discovery.GlobalWorktreeEntry {
 	// Each project discovery spawns git subprocesses; run them concurrently
 	// and merge in config order so results stay deterministic.
 	results := make([][]*discovery.GlobalWorktreeEntry, len(b.cfg.Projects))
 	var wg sync.WaitGroup
 	for i, project := range b.cfg.Projects {
-		if project.Path == "" ||
-			pathSetContainsOrDescendant(unreviewed, project.Path) {
+		if project.Path == "" {
 			continue
 		}
 		wg.Add(1)
@@ -379,24 +329,6 @@ func (b *tuiBackend) discoverRegisteredProjectWorktrees(
 	var entries []*discovery.GlobalWorktreeEntry
 	for _, projectEntries := range results {
 		entries = mergeTUIEntries(entries, projectEntries)
-	}
-	return entries
-}
-
-func unreviewedTUIEntries(
-	unreviewed map[string]struct{},
-	baseDir string,
-) []*discovery.GlobalWorktreeEntry {
-	entries := make([]*discovery.GlobalWorktreeEntry, 0, len(unreviewed))
-	basePaths := map[string]struct{}{baseDir: {}}
-	for worktreePath := range unreviewed {
-		if baseDir == "" ||
-			!pathSetContainsOrDescendant(basePaths, worktreePath) {
-			continue
-		}
-		entries = append(entries, &discovery.GlobalWorktreeEntry{
-			Path: worktreePath,
-		})
 	}
 	return entries
 }

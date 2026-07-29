@@ -1466,6 +1466,27 @@ template = "$KWT_GITHUB_TOKEN/{{.Branch}}"
 	}
 }
 
+func TestMergeLocalConfigAllowsTemplateVariablesNamedWithDollar(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	absPath, data := writeLocalConfig(
+		t,
+		t.TempDir(),
+		[]byte(`
+[naming]
+template = "{{$branch := .Branch}}/{{$branch}}"
+`),
+	)
+	store := &TrustStore{
+		entries: []trustEntry{{
+			Path:   absPath,
+			SHA256: computeSHA256(data),
+		}},
+	}
+
+	require.NoError(t, mergeLocalConfig(store, trustingPrompter(), true))
+}
+
 func TestMergeLocalConfigMarksNamingAsRepositoryLocal(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)

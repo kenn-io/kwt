@@ -59,10 +59,9 @@ kwt builds the destination path. Submodules are not recursively updated during
 creation; inspect the superproject first, then update submodules explicitly
 after acknowledgement.
 
-The created worktree remains marked unreviewed, so automatic status collection
-does not run Git inside it and fleet publication omits it. Review the checkout
-and run `kwt open <worktree>` as the explicit acknowledgement that re-enables
-normal inspection and opts in to its layout and pane commands.
+The created worktree participates in ordinary status and fleet observation.
+Review the checkout and run `kwt open <worktree>` as the explicit
+acknowledgement that opts in to its layout and pane commands.
 
 `kwt branches --json` emits only candidates not already checked out, with
 `name`, a source-qualified display `label`, the full source ref, and

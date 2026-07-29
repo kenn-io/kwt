@@ -160,6 +160,14 @@ func TestAddExistingLocalBranchDefersWorkspaceLaunchUntilReview(t *testing.T) {
 	assert.True(t, reg.IsUnreviewedRemoteSource(worktreePath))
 }
 
+func TestExistingBranchReviewMessageUsesStaticPicker(t *testing.T) {
+	assert.Equal(
+		t,
+		"Review the existing-branch checkout, then run 'kwt open' to select it and start its workspace.",
+		existingBranchReviewMessage(),
+	)
+}
+
 func TestAddFromRemoteBranchRejectsImmediateLayoutLaunch(t *testing.T) {
 	resetFleetCommandDeps(t)
 	resetAddCommandFlags(t)

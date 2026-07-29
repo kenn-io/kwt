@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -65,10 +64,7 @@ func TestCollectWorktreeStatusesLocalUsesCanonicalLocalRepository(t *testing.T) 
 	require.Equal(t, want.FullPath, statuses[0].Repository)
 }
 
-func TestUnreviewedRemoteSourceSkipsAutomaticStatusAndFleetInspection(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("executable fsmonitor hook fixture requires a POSIX shell")
-	}
+func TestImportedWorktreeReceivesAutomaticStatusAndFleetInspection(t *testing.T) {
 	resetStatusTestFlags(t)
 	resetFleetCommandDeps(t)
 	t.Setenv("HOME", t.TempDir())
@@ -84,14 +80,11 @@ func TestUnreviewedRemoteSourceSkipsAutomaticStatusAndFleetInspection(t *testing
 	))
 	require.NoError(t, cmdStatusTestGit(repoDir, "add", "."))
 	require.NoError(t, cmdStatusTestGit(repoDir, "commit", "-m", "Initial commit"))
-	marker := filepath.Join(t.TempDir(), "fsmonitor-ran")
-	hook := filepath.Join(t.TempDir(), "fsmonitor")
 	require.NoError(t, os.WriteFile(
-		hook,
-		[]byte("#!/bin/sh\nprintf ran > \""+marker+"\"\nprintf '0\\n'\n"),
-		0755,
+		filepath.Join(repoDir, "README.md"),
+		[]byte("# changed\n"),
+		0644,
 	))
-	require.NoError(t, cmdStatusTestGit(repoDir, "config", "core.fsmonitor", hook))
 	builder := newFleetManifestBuilder()
 	reg, err := registry.New()
 	require.NoError(t, err)
@@ -117,13 +110,13 @@ func TestUnreviewedRemoteSourceSkipsAutomaticStatusAndFleetInspection(t *testing
 	)
 	require.NoError(t, err)
 	require.Len(t, statuses, 1)
-	require.Equal(t, models.WorktreeStatusUnknown, statuses[0].Status)
-	require.NoFileExists(t, marker)
+	require.Equal(t, models.WorktreeStatusModified, statuses[0].Status)
+	require.Equal(t, 1, statuses[0].GitStatus.Modified)
 
 	manifest, err := builder.Build(context.Background(), cfg)
 	require.NoError(t, err)
-	require.Empty(t, manifest.Worktrees)
-	require.NoFileExists(t, marker)
+	require.Len(t, manifest.Worktrees, 1)
+	require.Equal(t, 1, manifest.Worktrees[0].Status.Modified)
 }
 
 func resetStatusTestFlags(t *testing.T) {

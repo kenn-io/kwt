@@ -316,21 +316,6 @@ func comparableRegistryPath(path string) string {
 	return filepath.Clean(path)
 }
 
-// UnreviewedRemoteSourcePaths returns the paths that automatic status and
-// fleet collection must not inspect.
-func (r *Registry) UnreviewedRemoteSourcePaths() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	paths := make([]string, 0)
-	for _, entry := range r.entries {
-		if entry.UnreviewedRemoteSource {
-			paths = append(paths, entry.Path)
-		}
-	}
-	return paths
-}
-
 // ListExpired returns all worktrees that have expired.
 func (r *Registry) ListExpired() []*WorktreeEntry {
 	r.mu.RLock()

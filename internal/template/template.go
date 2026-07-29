@@ -68,6 +68,53 @@ func NewWithEnvironment(
 	return processor, nil
 }
 
+// LiteralTextHasEnvironmentReference reports whether environment expansion
+// would affect literal template output. Dollar-prefixed Go template variables
+// inside actions are syntax, not environment references.
+func LiteralTextHasEnvironmentReference(templateStr string) (bool, error) {
+	processor, err := New(templateStr, nil)
+	if err != nil {
+		return false, err
+	}
+	for _, tmpl := range processor.template.Templates() {
+		if tmpl.Tree != nil && literalTextHasEnvironmentReference(tmpl.Root) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func literalTextHasEnvironmentReference(node parse.Node) bool {
+	switch current := node.(type) {
+	case *parse.ListNode:
+		if current == nil {
+			return false
+		}
+		for _, child := range current.Nodes {
+			if literalTextHasEnvironmentReference(child) {
+				return true
+			}
+		}
+	case *parse.TextNode:
+		found := false
+		_ = os.Expand(string(current.Text), func(string) string {
+			found = true
+			return ""
+		})
+		return found
+	case *parse.IfNode:
+		return literalTextHasEnvironmentReference(current.List) ||
+			literalTextHasEnvironmentReference(current.ElseList)
+	case *parse.RangeNode:
+		return literalTextHasEnvironmentReference(current.List) ||
+			literalTextHasEnvironmentReference(current.ElseList)
+	case *parse.WithNode:
+		return literalTextHasEnvironmentReference(current.List) ||
+			literalTextHasEnvironmentReference(current.ElseList)
+	}
+	return false
+}
+
 func expandLiteralText(node parse.Node) {
 	switch current := node.(type) {
 	case *parse.ListNode:
