@@ -368,35 +368,9 @@ func (t *TmuxCommand) globalOption(option string) (string, error) {
 // reads them at server start for its default key mode. Call sites that
 // predate context plumbing pass context.Background().
 func (t *TmuxCommand) newCmd(ctx context.Context, args []string) *exec.Cmd {
-	args = escapeTmuxStartDirectories(args)
 	cmd := exec.CommandContext(ctx, t.command, t.socketArgs(args)...)
 	cmd.Env = t.stripExtraNames(SanitizedEnviron(os.Environ()))
 	return cmd
-}
-
-func escapeTmuxStartDirectories(args []string) []string {
-	if len(args) == 0 {
-		return args
-	}
-	switch args[0] {
-	case "new-session",
-		"new-window",
-		"split-window",
-		"respawn-pane",
-		"respawn-window",
-		"run-shell":
-	default:
-		return args
-	}
-
-	escaped := append([]string(nil), args...)
-	for i := 1; i+1 < len(escaped); i++ {
-		if escaped[i] == "-c" {
-			escaped[i+1] = strings.ReplaceAll(escaped[i+1], "#", "##")
-			i++
-		}
-	}
-	return escaped
 }
 
 // newAttachCmd is the exec seam for attach-class commands (attach-session,

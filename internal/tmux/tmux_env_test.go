@@ -69,31 +69,6 @@ func TestNewCmdStripsConfiguredSensitiveEnvironmentName(t *testing.T) {
 	}
 }
 
-func TestNewCmdEscapesTmuxFormatsInWorkingDirectory(t *testing.T) {
-	tc := NewTmuxCommand("tmux")
-
-	cmd := tc.newCmd(
-		context.Background(),
-		[]string{
-			"new-session",
-			"-d",
-			"-c",
-			"/work/#(touch$IFS.pwn)",
-		},
-	)
-
-	want := []string{
-		"tmux",
-		"new-session",
-		"-d",
-		"-c",
-		"/work/##(touch$IFS.pwn)",
-	}
-	if !slices.Equal(cmd.Args, want) {
-		t.Fatalf("newCmd args = %v, want %v", cmd.Args, want)
-	}
-}
-
 func TestSocketCommandPrefixesEveryInvocationWithSocketName(t *testing.T) {
 	tc := NewTmuxCommandForSocketWithStripNames(
 		"tmux",

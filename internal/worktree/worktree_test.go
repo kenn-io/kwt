@@ -850,6 +850,31 @@ func TestGenerateWorktreePathDefaultTemplatePreservesNestedRemoteNamespace(t *te
 	}
 }
 
+func TestGenerateWorktreePathEncodesTmuxFormatCharacters(t *testing.T) {
+	baseDir := t.TempDir()
+	manager := New(&mockGit{
+		repoURL: "https://github.com/acme/widget.git",
+	}, &models.Config{
+		Worktree: models.WorktreeConfig{BaseDir: baseDir},
+		Naming: models.NamingConfig{
+			Template:      "{{.Branch}}",
+			SanitizeChars: map[string]string{"/": "-"},
+		},
+	})
+
+	path, err := manager.generateWorktreePath(
+		"feature/%23/#(touch$IFS.pwn)",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(
+		t,
+		filepath.Join(baseDir, "feature-%2523-%23(touch$IFS.pwn)"),
+		path,
+	)
+	assert.NotContains(t, path, "#")
+}
+
 // TestRepositoryInfoFromGitCanonicalResolver pins the single canonical
 // resolver every identity-reporting surface routes through: an origin URL wins,
 // a no-remote repository falls back to the "local/..." identity, and a

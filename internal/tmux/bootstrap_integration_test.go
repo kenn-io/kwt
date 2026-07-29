@@ -50,7 +50,7 @@ func TestGlobalEnvironmentReadsFreshNamedServer(t *testing.T) {
 	}
 }
 
-func TestWorkspaceOpenDoesNotExpandWorktreePathAsTmuxFormat(t *testing.T) {
+func TestWorkspaceOpenRejectsTmuxFormatPath(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not found in PATH")
 	}
@@ -73,38 +73,21 @@ func TestWorkspaceOpenDoesNotExpandWorktreePathAsTmuxFormat(t *testing.T) {
 
 	command := NewTmuxCommandForSocketWithStripNames("tmux", socket, nil)
 	runner := NewWorkspaceRunner(command, nil)
-	if err := runner.Ensure(
+	err := runner.Ensure(
 		context.Background(),
 		"kwt-format-test-session",
 		worktreeDir,
 		BlankLayout(),
-	); err != nil {
-		t.Fatalf("open format-bearing worktree: %v", err)
-	}
-	currentPath, err := command.RunCommandOutputContext(
-		context.Background(),
-		"display-message",
-		"-p",
-		"-t",
-		"kwt-format-test-session",
-		"#{pane_current_path}",
 	)
-	if err != nil {
-		t.Fatalf("read format-bearing pane path: %v", err)
+	if err == nil {
+		t.Fatal("opening a format-bearing worktree unexpectedly succeeded")
 	}
-	gotPath, gotErr := filepath.EvalSymlinks(strings.TrimSpace(currentPath))
-	wantPath, wantErr := filepath.EvalSymlinks(worktreeDir)
-	if gotErr != nil || wantErr != nil || gotPath != wantPath {
-		t.Fatalf(
-			"pane path = %q (%v), want literal %q (%v)",
-			gotPath,
-			gotErr,
-			wantPath,
-			wantErr,
-		)
+	if !strings.Contains(err.Error(), "tmux format syntax") {
+		t.Fatalf("open error = %v, want tmux format guidance", err)
 	}
-
-	time.Sleep(500 * time.Millisecond)
+	if command.HasSession("kwt-format-test-session") {
+		t.Fatal("format-bearing worktree created a tmux session")
+	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("tmux expanded the worktree path as a command: %v", err)
 	}

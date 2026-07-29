@@ -339,6 +339,7 @@ func (m *Manager) generateWorktreePathForRepository(
 			return "", err
 		}
 	}
+	branch = encodeBranchForWorktreePath(branch)
 
 	// Determine effective base directory: per-repo setting overrides global
 	baseDir := m.config.Worktree.BaseDir
@@ -390,6 +391,10 @@ func (m *Manager) generateWorktreePathForRepository(
 	// Fall back to default URL hierarchy
 	path := url.GenerateWorktreePath(baseDir, repoInfo, branch)
 	return path, ensurePathWithinBase(baseDir, path)
+}
+
+func encodeBranchForWorktreePath(branch string) string {
+	return strings.NewReplacer("%", "%25", "#", "%23").Replace(branch)
 }
 
 func (m *Manager) repositoryInfo() (*url.RepositoryInfo, error) {
