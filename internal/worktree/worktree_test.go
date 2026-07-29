@@ -1220,6 +1220,23 @@ func TestPreparePathDoesNotExpandRepositoryLocalTemplateOutput(t *testing.T) {
 	assert.Contains(t, path, "$KWT_GITHUB_TOKEN")
 }
 
+func TestAddRejectsTmuxFormatPathBeforeMutation(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "uncreated")
+	worktreePath := filepath.Join(parent, "feature#widgets")
+	repositoryGit := &mockGit{}
+	manager := New(repositoryGit, &models.Config{
+		Worktree: models.WorktreeConfig{AutoMkdir: true},
+	})
+
+	path, err := manager.Add("feature/widgets", worktreePath, true)
+
+	require.Error(t, err)
+	assert.Empty(t, path)
+	assert.Contains(t, err.Error(), "tmux format syntax")
+	assert.Empty(t, repositoryGit.worktrees)
+	assert.NoDirExists(t, parent)
+}
+
 func TestPreparePathExpandsOnlyLiteralTextInGlobalTemplate(t *testing.T) {
 	t.Setenv("KWT_WORKTREE_GROUP", "trusted-group")
 	baseDir := t.TempDir()

@@ -16,7 +16,8 @@ kwt workspace remove protos
 Names default to the directory base name and must be unique. Re-adding the same
 directory updates its name. `remove` only unregisters: it never deletes the
 directory, and a live tmux session is left running with a hint on how to kill
-it.
+it. Workspace paths cannot contain `#`, which tmux reserves for format
+expansion.
 
 ## Open from the dashboard
 

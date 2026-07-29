@@ -67,6 +67,17 @@ func TestRegisterWorkspaceRejectsFile(t *testing.T) {
 	assert.Contains(t, err.Error(), "not a directory")
 }
 
+func TestRegisterWorkspaceRejectsTmuxFormatPath(t *testing.T) {
+	workspaceTestEnv(t)
+	dir := filepath.Join(t.TempDir(), "notes#archive")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+
+	_, err := RegisterWorkspace(models.Workspace{Path: dir})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tmux format syntax")
+}
+
 func TestRegisterWorkspaceWrapsStatErrorWhenParentIsFile(t *testing.T) {
 	workspaceTestEnv(t)
 	file := filepath.Join(t.TempDir(), "notes.txt")

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/viper"
+	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/pkg/models"
 )
 
@@ -26,6 +27,9 @@ func RegisterWorkspace(workspace models.Workspace) (models.Workspace, error) {
 	}
 	if !info.IsDir() {
 		return models.Workspace{}, fmt.Errorf("workspace path %s is not a directory", workspace.Path)
+	}
+	if err := tmux.ValidateStartDirectory(path); err != nil {
+		return models.Workspace{}, err
 	}
 	workspace.Path = path
 	if strings.TrimSpace(workspace.Name) == "" {

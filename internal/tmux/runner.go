@@ -123,7 +123,7 @@ func (r *WorkspaceRunner) EnsureAndAttach(
 func (r *WorkspaceRunner) Ensure(
 	ctx context.Context, session, worktreeDir string, layout models.Layout,
 ) error {
-	if err := validateTmuxStartDirectory(worktreeDir); err != nil {
+	if err := ValidateStartDirectory(worktreeDir); err != nil {
 		return err
 	}
 	sessionExists := r.tmux.HasSession(session)
@@ -157,7 +157,7 @@ func (r *WorkspaceRunner) AttachProtected(
 	if !r.protected {
 		return fmt.Errorf("protected attachment requires a protected workspace runner")
 	}
-	if err := validateTmuxStartDirectory(worktreeDir); err != nil {
+	if err := ValidateStartDirectory(worktreeDir); err != nil {
 		return err
 	}
 	if !r.tmux.HasSession(session) {
@@ -175,7 +175,9 @@ func (r *WorkspaceRunner) AttachProtected(
 	return r.tmux.AttachSessionWithoutEnvironment(ctx, session)
 }
 
-func validateTmuxStartDirectory(worktreeDir string) error {
+// ValidateStartDirectory rejects paths tmux would interpret as format syntax
+// when they are passed as pane and window start directories.
+func ValidateStartDirectory(worktreeDir string) error {
 	if strings.Contains(worktreeDir, "#") {
 		return fmt.Errorf(
 			"workspace path %q contains tmux format syntax ('#'); choose a path without '#'",

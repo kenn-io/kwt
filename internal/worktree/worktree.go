@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/template"
+	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
@@ -312,6 +313,10 @@ func (m *Manager) preparePath(
 			return "", fmt.Errorf("failed to expand path: %w", err)
 		}
 		path = expandedPath
+	}
+
+	if err := tmux.ValidateStartDirectory(path); err != nil {
+		return "", err
 	}
 
 	if m.config.Worktree.AutoMkdir {

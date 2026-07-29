@@ -52,6 +52,10 @@ literal template text, preserving Go template variables inside actions.
 Global `naming.sanitize_chars` replacement values expand before branch
 sanitization.
 
+Resolved worktree and directory-workspace paths cannot contain `#`, which tmux
+reserves for format expansion. kwt rejects such paths before creating or
+registering a workspace.
+
 Pane entries are shell commands. `agent:<name>` expands through the `[agents]`
 table before tmux starts, so command flags live in one local config file.
 
