@@ -483,6 +483,7 @@ func TestDashboardFleetInfoSummarizesPrimaryObservations(t *testing.T) {
 	tests := []struct {
 		name         string
 		observations []fleet.Observation
+		local        bool
 		want         bool
 	}{
 		{name: "empty", observations: nil, want: false},
@@ -510,6 +511,24 @@ func TestDashboardFleetInfoSummarizesPrimaryObservations(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name: "ignores synthesized local observation",
+			observations: []fleet.Observation{
+				{HostID: "host-a", IsMain: false},
+				{HostID: "host-b", IsMain: true},
+				{HostID: "host-c", IsMain: true},
+			},
+			local: true,
+			want:  true,
+		},
+		{
+			name: "local observation alone is not remote primary state",
+			observations: []fleet.Observation{
+				{HostID: "host-a", IsMain: true},
+			},
+			local: true,
+			want:  false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -520,7 +539,7 @@ func TestDashboardFleetInfoSummarizesPrimaryObservations(t *testing.T) {
 				Ref:             "main",
 				Branch:          "main",
 				Observations:    tt.observations,
-			}, fleet.StatusRow{}, "host-a", false)
+			}, fleet.StatusRow{}, "host-a", tt.local)
 
 			require.NotNil(t, info)
 			assert.Equal(t, tt.want, info.AllPrimary)

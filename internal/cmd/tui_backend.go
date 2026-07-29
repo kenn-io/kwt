@@ -802,7 +802,7 @@ func dashboardFleetInfo(row fleet.FleetRow, rendered fleet.StatusRow, currentHos
 		Sync:            rendered.Sync,
 		Dirty:           rendered.Dirty,
 		Freshness:       rendered.Freshness,
-		AllPrimary:      allFleetObservationsPrimary(row.Observations),
+		AllPrimary:      allRemoteFleetObservationsPrimary(row.Observations, currentHost),
 	}
 	if info.ProjectName == "" {
 		info.ProjectName = strings.TrimSpace(row.ProjectName)
@@ -830,16 +830,19 @@ func dashboardFleetInfo(row fleet.FleetRow, rendered fleet.StatusRow, currentHos
 	return info
 }
 
-func allFleetObservationsPrimary(observations []fleet.Observation) bool {
-	if len(observations) == 0 {
-		return false
-	}
+func allRemoteFleetObservationsPrimary(observations []fleet.Observation, currentHost string) bool {
+	found := false
 	for _, observation := range observations {
+		hostID := strings.TrimSpace(observation.HostID)
+		if hostID == "" || hostID == currentHost {
+			continue
+		}
+		found = true
 		if !observation.IsMain {
 			return false
 		}
 	}
-	return true
+	return found
 }
 
 func fleetDisplayHosts(observations []fleet.Observation, currentHost string, local bool) []string {

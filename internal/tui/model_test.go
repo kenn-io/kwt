@@ -1307,6 +1307,32 @@ func TestFastRefreshKeepsRemoteRowsWithNoLocalWorktrees(t *testing.T) {
 	assert.Equal(t, "feature/remote", model.rows[0].Fleet.Branch)
 }
 
+func TestFastRefreshKeepsRemotePrimaryLabelAfterLocalWorktreeDisappears(t *testing.T) {
+	local := testRow("kwt", "main", "/w/kwt/main-linked")
+	local.Entry.RepositoryInfo.FullPath = "github.com/example/kwt"
+	local.Fleet = &FleetInfo{
+		ProjectIdentity: "github.com/example/kwt",
+		ProjectName:     "kwt",
+		Kind:            "branch",
+		Ref:             "main",
+		Branch:          "main",
+		Local:           true,
+		Hosts:           []string{"host-b", "local"},
+		AllPrimary:      true,
+	}
+
+	model := NewModel(&fakeBackend{}, "/worktrees")
+	model, _ = updateModel(t, model, rowsMsg{rows: []Row{local}})
+
+	model, _ = updateModel(t, model, fastRowsMsg{rows: nil})
+
+	require.Len(t, model.rows, 1)
+	assert.True(t, isRemoteOnly(model.rows[0]))
+	assert.Equal(t, []string{"host-b"}, model.rows[0].Fleet.Hosts)
+	assert.True(t, model.rows[0].Fleet.AllPrimary)
+	assert.Equal(t, "main [primary]", rowDisplayBranch(model.rows[0]))
+}
+
 func TestFastRefreshDropsRemoteRowThatBecameLocal(t *testing.T) {
 	remoteOnly := Row{Fleet: &FleetInfo{
 		ProjectIdentity: "github.com/example/kwt",

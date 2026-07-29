@@ -30,7 +30,7 @@
 
 **Interfaces:**
 - Consumes: `fleet.FleetRow.Observations []fleet.Observation` and `fleet.Observation.IsMain bool`
-- Produces: `FleetInfo.AllPrimary bool` and `allFleetObservationsPrimary([]fleet.Observation) bool`
+- Produces: `FleetInfo.AllPrimary bool` and `allRemoteFleetObservationsPrimary([]fleet.Observation, string) bool`
 
 - [ ] **Step 1: Write failing adapter tests**
 
@@ -41,6 +41,7 @@ func TestDashboardFleetInfoSummarizesPrimaryObservations(t *testing.T) {
 	tests := []struct {
 		name         string
 		observations []fleet.Observation
+		local        bool
 		want         bool
 	}{
 		{name: "empty", observations: nil, want: false},
@@ -68,6 +69,24 @@ func TestDashboardFleetInfoSummarizesPrimaryObservations(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name: "ignores synthesized local observation",
+			observations: []fleet.Observation{
+				{HostID: "host-a", IsMain: false},
+				{HostID: "host-b", IsMain: true},
+				{HostID: "host-c", IsMain: true},
+			},
+			local: true,
+			want:  true,
+		},
+		{
+			name: "local observation alone is not remote primary state",
+			observations: []fleet.Observation{
+				{HostID: "host-a", IsMain: true},
+			},
+			local: true,
+			want:  false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -78,7 +97,7 @@ func TestDashboardFleetInfoSummarizesPrimaryObservations(t *testing.T) {
 				Ref:             "main",
 				Branch:          "main",
 				Observations:    tt.observations,
-			}, fleet.StatusRow{}, "host-a", false)
+			}, fleet.StatusRow{}, "host-a", tt.local)
 
 			require.NotNil(t, info)
 			assert.Equal(t, tt.want, info.AllPrimary)
@@ -126,16 +145,19 @@ AllPrimary bool
 Add the reducer next to the other fleet adapter helpers:
 
 ```go
-func allFleetObservationsPrimary(observations []fleet.Observation) bool {
-	if len(observations) == 0 {
-		return false
-	}
+func allRemoteFleetObservationsPrimary(observations []fleet.Observation, currentHost string) bool {
+	found := false
 	for _, observation := range observations {
+		hostID := strings.TrimSpace(observation.HostID)
+		if hostID == "" || hostID == currentHost {
+			continue
+		}
+		found = true
 		if !observation.IsMain {
 			return false
 		}
 	}
-	return true
+	return found
 }
 ```
 
@@ -153,11 +175,14 @@ info := &dashboard.FleetInfo{
 	Sync:            rendered.Sync,
 	Dirty:           rendered.Dirty,
 	Freshness:       rendered.Freshness,
-	AllPrimary:      allFleetObservationsPrimary(row.Observations),
+	AllPrimary:      allRemoteFleetObservationsPrimary(row.Observations, currentHost),
 }
 ```
 
-Do not change the existing `MaterializeLabel`, `CanMaterialize`, or materialization-observation logic.
+The summary deliberately excludes the synthesized current-host observation
+because `remoteProjection` later drops that host while preserving this value.
+Do not change the existing `MaterializeLabel`, `CanMaterialize`, or
+materialization-observation logic.
 
 - [ ] **Step 4: Run focused and package tests**
 
@@ -428,6 +453,36 @@ func TestModelRendersPrimaryAndDetachedDisplayLabels(t *testing.T) {
 	assert.Contains(t, content, "main [primary]")
 	assert.Contains(t, content, "detached@be094b1b")
 	assert.Contains(t, content, "selected kwt:main [primary]")
+}
+```
+
+Add a fast-refresh regression proving the adapter's remote-only summary
+survives when the local worktree disappears:
+
+```go
+func TestFastRefreshKeepsRemotePrimaryLabelAfterLocalWorktreeDisappears(t *testing.T) {
+	local := testRow("kwt", "main", "/w/kwt/main-linked")
+	local.Entry.RepositoryInfo.FullPath = "github.com/example/kwt"
+	local.Fleet = &FleetInfo{
+		ProjectIdentity: "github.com/example/kwt",
+		ProjectName:     "kwt",
+		Kind:            "branch",
+		Ref:             "main",
+		Branch:          "main",
+		Local:           true,
+		Hosts:           []string{"host-b", "local"},
+		AllPrimary:      true,
+	}
+
+	model := NewModel(&fakeBackend{}, "/worktrees")
+	model, _ = updateModel(t, model, rowsMsg{rows: []Row{local}})
+	model, _ = updateModel(t, model, fastRowsMsg{rows: nil})
+
+	require.Len(t, model.rows, 1)
+	assert.True(t, isRemoteOnly(model.rows[0]))
+	assert.Equal(t, []string{"host-b"}, model.rows[0].Fleet.Hosts)
+	assert.True(t, model.rows[0].Fleet.AllPrimary)
+	assert.Equal(t, "main [primary]", rowDisplayBranch(model.rows[0]))
 }
 ```
 
