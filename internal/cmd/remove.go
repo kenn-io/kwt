@@ -92,23 +92,17 @@ func runRemove(cmd *cobra.Command, args []string) error {
 			removeGlobal,
 			func(ctx *CommandContext) error {
 				removed, err := removeLocalWorktree(ctx, args)
-				if err != nil {
-					return err
-				}
 				if removed > 0 {
 					publishFleetBestEffortForCommand(cmd, ctx.Config)
 				}
-				return nil
+				return err
 			},
 			func(ctx *CommandContext) error {
 				removed, err := removeGlobalWorktree(ctx, args)
-				if err != nil {
-					return err
-				}
 				if removed > 0 {
 					publishFleetBestEffortForCommand(cmd, ctx.Config)
 				}
-				return nil
+				return err
 			},
 		)
 	})(cmd, args)
@@ -184,6 +178,7 @@ func removeLocalWorktree(ctx *CommandContext, args []string) (int, error) {
 
 	removed := 0
 	for _, wt := range toRemove {
+		registryPath := registeredWorktreePath(wt.Path)
 		if deleteBranch {
 			if err := ctx.WorktreeManager.RemoveWithBranch(
 				wt.Path,
@@ -193,14 +188,14 @@ func removeLocalWorktree(ctx *CommandContext, args []string) (int, error) {
 				forceDeleteBranch,
 				expectedCreatedAt,
 			); err != nil {
-				if expectedCreatedAt != nil {
-					return 0, err
-				}
-				ctx.Printer.PrintError(fmt.Errorf("failed to remove %s: %v", wt.Branch, err))
 				if worktreePathRemoved(wt.Path) {
 					removed++
-					unregisterWorktreePath(wt.Path)
+					unregisterWorktreePath(registryPath)
 				}
+				if expectedCreatedAt != nil {
+					return removed, err
+				}
+				ctx.Printer.PrintError(fmt.Errorf("failed to remove %s: %v", wt.Branch, err))
 				continue
 			}
 			ctx.Printer.PrintSuccess(fmt.Sprintf("Removed worktree: %s", wt.Branch))
@@ -213,14 +208,14 @@ func removeLocalWorktree(ctx *CommandContext, args []string) (int, error) {
 				removeForce,
 				expectedCreatedAt,
 			); err != nil {
-				if expectedCreatedAt != nil {
-					return 0, err
-				}
-				ctx.Printer.PrintError(fmt.Errorf("failed to remove %s: %v", wt.Branch, err))
 				if worktreePathRemoved(wt.Path) {
 					removed++
-					unregisterWorktreePath(wt.Path)
+					unregisterWorktreePath(registryPath)
 				}
+				if expectedCreatedAt != nil {
+					return removed, err
+				}
+				ctx.Printer.PrintError(fmt.Errorf("failed to remove %s: %v", wt.Branch, err))
 				continue
 			}
 			ctx.Printer.PrintSuccess(fmt.Sprintf("Removed worktree: %s", wt.Branch))
@@ -228,7 +223,7 @@ func removeLocalWorktree(ctx *CommandContext, args []string) (int, error) {
 		removed++
 
 		// Clean up registry entry after successful removal
-		unregisterWorktreePath(wt.Path)
+		unregisterWorktreePath(registryPath)
 	}
 
 	return removed, nil
@@ -372,6 +367,7 @@ func removeGlobalWorktree(ctx *CommandContext, args []string) (int, error) {
 	// Remove each worktree by changing to its repository directory
 	removed := 0
 	for _, entry := range toRemove {
+		registryPath := registeredWorktreePath(entry.Path)
 		// Change to the repository directory to run git commands
 		originalDir, err := os.Getwd()
 		if err != nil {
@@ -407,19 +403,19 @@ func removeGlobalWorktree(ctx *CommandContext, args []string) (int, error) {
 				forceDeleteBranch,
 				expectedCreatedAt,
 			); err != nil {
+				if worktreePathRemoved(entry.Path) {
+					removed++
+					unregisterWorktreePath(registryPath)
+				}
 				if expectedCreatedAt != nil {
 					_ = os.Chdir(originalDir)
-					return 0, err
+					return removed, err
 				}
 				repoName := "unknown"
 				if entry.RepositoryInfo != nil {
 					repoName = entry.RepositoryInfo.Repository
 				}
 				ctx.Printer.PrintError(fmt.Errorf("failed to remove %s:%s: %v", repoName, entry.Branch, err))
-				if worktreePathRemoved(entry.Path) {
-					removed++
-					unregisterWorktreePath(entry.Path)
-				}
 				_ = os.Chdir(originalDir)
 				continue
 			}
@@ -429,19 +425,19 @@ func removeGlobalWorktree(ctx *CommandContext, args []string) (int, error) {
 				removeForce,
 				expectedCreatedAt,
 			); err != nil {
+				if worktreePathRemoved(entry.Path) {
+					removed++
+					unregisterWorktreePath(registryPath)
+				}
 				if expectedCreatedAt != nil {
 					_ = os.Chdir(originalDir)
-					return 0, err
+					return removed, err
 				}
 				repoName := "unknown"
 				if entry.RepositoryInfo != nil {
 					repoName = entry.RepositoryInfo.Repository
 				}
 				ctx.Printer.PrintError(fmt.Errorf("failed to remove %s:%s: %v", repoName, entry.Branch, err))
-				if worktreePathRemoved(entry.Path) {
-					removed++
-					unregisterWorktreePath(entry.Path)
-				}
 				_ = os.Chdir(originalDir)
 				continue
 			}
@@ -457,7 +453,7 @@ func removeGlobalWorktree(ctx *CommandContext, args []string) (int, error) {
 		}
 
 		// Clean up registry entry after successful removal
-		unregisterWorktreePath(entry.Path)
+		unregisterWorktreePath(registryPath)
 		removed++
 
 		// Change back to original directory
@@ -484,6 +480,18 @@ func parseRemoveCreationIdentity() (*time.Time, error) {
 func worktreePathRemoved(path string) bool {
 	_, err := os.Stat(path)
 	return os.IsNotExist(err)
+}
+
+func registeredWorktreePath(path string) string {
+	reg, err := registry.New()
+	if err != nil {
+		return path
+	}
+	entry, ok := reg.Get(path)
+	if !ok {
+		return path
+	}
+	return entry.Path
 }
 
 func unregisterWorktreePath(path string) {

@@ -256,10 +256,12 @@ func (m *Manager) GetMatchingWorktrees(pattern string) ([]models.Worktree, error
 	}
 
 	var matches []models.Worktree
+	canonicalPattern := utils.CanonicalPath(pattern)
 	pattern = strings.ToLower(pattern)
 	pathPattern := strings.ToLower(filepath.ToSlash(pattern))
 	for _, wt := range worktrees {
 		if strings.Contains(strings.ToLower(wt.Branch), pattern) ||
+			utils.CanonicalPath(wt.Path) == canonicalPattern ||
 			strings.Contains(
 				strings.ToLower(filepath.ToSlash(wt.Path)),
 				pathPattern,

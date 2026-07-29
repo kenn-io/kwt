@@ -645,6 +645,26 @@ func TestManagerGetMatchingWorktrees(t *testing.T) {
 	}
 }
 
+func TestManagerGetMatchingWorktreesResolvesEquivalentPaths(t *testing.T) {
+	target := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "worktree-alias")
+	if err := os.Symlink(target, alias); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	m := New(&mockGit{
+		worktrees: []models.Worktree{{
+			Path:   target,
+			Branch: "feature/equivalent-path",
+		}},
+	}, &models.Config{})
+
+	matches, err := m.GetMatchingWorktrees(alias)
+
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	assert.Equal(t, "feature/equivalent-path", matches[0].Branch)
+}
+
 func TestManagerValidateWorktreePath(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/pkg/models"
 )
 
@@ -135,6 +136,15 @@ func TestRemoveLocalPublishesWhenWorktreeRemovedButBranchDeleteFails(t *testing.
 	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, "change.txt"), []byte("change"), 0644))
 	runTUITestGit(t, worktreePath, "add", ".")
 	runTUITestGit(t, worktreePath, "commit", "-m", "unmerged worktree commit")
+	info, err := os.Stat(worktreePath)
+	require.NoError(t, err)
+	removeIfCreatedAt = info.ModTime().Format(time.RFC3339Nano)
+	reg, err := registry.New()
+	require.NoError(t, err)
+	require.NoError(t, reg.Register(&registry.WorktreeEntry{
+		Path:   worktreePath,
+		Branch: "task7/remove-local-branch-delete-fails",
+	}))
 
 	var calls int
 	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) {
@@ -143,11 +153,15 @@ func TestRemoveLocalPublishesWhenWorktreeRemovedButBranchDeleteFails(t *testing.
 	}
 
 	cmd, _, _ := fleetTestCommand()
-	err := runRemove(cmd, []string{"task7/remove-local-branch-delete-fails"})
+	err = runRemove(cmd, []string{"task7/remove-local-branch-delete-fails"})
 
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "worktree removed but failed to delete branch")
 	assert.Equal(t, 1, calls)
 	assert.NoDirExists(t, worktreePath)
+	refreshedRegistry, registryErr := registry.New()
+	require.NoError(t, registryErr)
+	_, registered := refreshedRegistry.Get(worktreePath)
+	assert.False(t, registered)
 }
 
 func TestRemoveGlobalPublishesOnceAfterSuccessfulRemoval(t *testing.T) {
@@ -246,6 +260,15 @@ func TestRemoveGlobalPublishesWhenWorktreeRemovedButBranchDeleteFails(t *testing
 	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, "change.txt"), []byte("change"), 0644))
 	runTUITestGit(t, worktreePath, "add", ".")
 	runTUITestGit(t, worktreePath, "commit", "-m", "unmerged worktree commit")
+	info, err := os.Stat(worktreePath)
+	require.NoError(t, err)
+	removeIfCreatedAt = info.ModTime().Format(time.RFC3339Nano)
+	reg, err := registry.New()
+	require.NoError(t, err)
+	require.NoError(t, reg.Register(&registry.WorktreeEntry{
+		Path:   worktreePath,
+		Branch: "task7/remove-global-branch-delete-fails",
+	}))
 
 	var calls int
 	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) {
@@ -254,11 +277,15 @@ func TestRemoveGlobalPublishesWhenWorktreeRemovedButBranchDeleteFails(t *testing
 	}
 
 	cmd, _, _ := fleetTestCommand()
-	err := runRemove(cmd, []string{"task7/remove-global-branch-delete-fails"})
+	err = runRemove(cmd, []string{"task7/remove-global-branch-delete-fails"})
 
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "worktree removed but failed to delete branch")
 	assert.Equal(t, 1, calls)
 	assert.NoDirExists(t, worktreePath)
+	refreshedRegistry, registryErr := registry.New()
+	require.NoError(t, registryErr)
+	_, registered := refreshedRegistry.Get(worktreePath)
+	assert.False(t, registered)
 }
 
 func resetRemoveCommandFlags(t *testing.T) {
