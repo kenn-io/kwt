@@ -79,6 +79,14 @@ An exact worktree-root path is resolved directly from Git before pattern
 matching, including registered primary checkouts and linked worktrees outside
 the configured global worktree base.
 
+On Unix-like systems, an external ordinary or protected attachment replaces
+the `kwt` process with the tmux client. tmux therefore owns signal handling and
+the final exit status, and no waiting `kwt` parent remains. Windows retains a
+waiting parent because it has no Unix process-replacement primitive.
+An ordinary open from inside tmux switches the current client instead.
+Protected attachment always remains external because it targets a separate
+workspace-specific socket.
+
 `kwt open <exact-worktree-path> --start-session` performs the same layout and
 session bootstrap without attaching a client. Use it before an external
 ordinary tmux client attaches to a session that may not exist yet. The exact
@@ -135,7 +143,7 @@ With `--json`, success returns:
   "project": {
     "repository": "github.com/kenn-io/kwt",
     "name": "kwt",
-    "path": "/home/wesm/code/kwt",
+    "path": "/code/kwt",
     "last_touched": "2026-07-27T11:16:16Z"
   }
 }

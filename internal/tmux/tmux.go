@@ -39,7 +39,10 @@ type TmuxCommand struct {
 	command         string
 	socketName      string
 	extraStripNames map[string]bool
+	attachProcess   attachProcessFunc
 }
+
+type attachProcessFunc func(*exec.Cmd) error
 
 func NewTmuxCommand(command string) *TmuxCommand {
 	return NewTmuxCommandWithStripNames(command, nil)
@@ -75,6 +78,7 @@ func NewTmuxCommandForSocketWithStripNames(
 		command:         command,
 		socketName:      strings.TrimSpace(socketName),
 		extraStripNames: extra,
+		attachProcess:   replaceAttachProcess,
 	}
 }
 
@@ -187,22 +191,33 @@ func (t *TmuxCommand) KillSession(sessionName string) error {
 }
 
 func (t *TmuxCommand) AttachSession(sessionName string) error {
-	cmd := t.attachSessionCmd(sessionName)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return t.runAttachProcess(
+		context.Background(),
+		t.attachSessionCmd(sessionName),
+	)
 }
 
 func (t *TmuxCommand) AttachSessionWithoutEnvironment(
 	ctx context.Context,
 	sessionName string,
 ) error {
-	cmd := t.attachSessionWithoutEnvironmentCmd(ctx, sessionName)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return t.runAttachProcess(
+		ctx,
+		t.attachSessionWithoutEnvironmentCmd(ctx, sessionName),
+	)
+}
+
+func (t *TmuxCommand) runAttachProcess(
+	ctx context.Context,
+	cmd *exec.Cmd,
+) error {
+	if cmd.Err != nil {
+		return cmd.Err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return t.attachProcess(cmd)
 }
 
 func (t *TmuxCommand) attachSessionWithoutEnvironmentCmd(

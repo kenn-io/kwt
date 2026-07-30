@@ -2,6 +2,9 @@ package tmux
 
 import (
 	"context"
+	"errors"
+	"os"
+	"os/exec"
 	"slices"
 	"testing"
 )
@@ -265,6 +268,140 @@ func TestProtectedAttachStripsParentTmuxIdentity(t *testing.T) {
 	}
 	if !foundUnrelated {
 		t.Error("protected attach dropped UNRELATED_VAR")
+	}
+}
+
+func TestExternalAttachReplacesCurrentProcess(t *testing.T) {
+	t.Setenv("EDITOR", "vim")
+	t.Setenv("TMUX", "/tmp/tmux-501/default,123,0")
+	t.Setenv("TMUX_PANE", "%7")
+	t.Setenv("KWT_GITHUB_TOKEN", "secret")
+
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementErr := errors.New("replacement attempted")
+
+	tests := []struct {
+		name     string
+		attach   func(*TmuxCommand) error
+		wantArgs []string
+		wantGone []string
+	}{
+		{
+			name: "ordinary",
+			attach: func(tc *TmuxCommand) error {
+				return tc.AttachSession("workspace")
+			},
+			wantArgs: []string{
+				executable, "-L", "kwt-test-socket",
+				"attach-session", "-t", "workspace",
+			},
+			wantGone: []string{"EDITOR", "KWT_GITHUB_TOKEN"},
+		},
+		{
+			name: "protected",
+			attach: func(tc *TmuxCommand) error {
+				return tc.AttachSessionWithoutEnvironment(
+					context.Background(),
+					"workspace",
+				)
+			},
+			wantArgs: []string{
+				executable, "-L", "kwt-test-socket",
+				"attach-session", "-E", "-t", "workspace",
+			},
+			wantGone: []string{
+				"EDITOR", "TMUX", "TMUX_PANE", "KWT_GITHUB_TOKEN",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := NewTmuxCommandForSocketWithStripNames(
+				executable,
+				"kwt-test-socket",
+				[]string{"KWT_GITHUB_TOKEN"},
+			)
+			var got *exec.Cmd
+			tc.attachProcess = func(cmd *exec.Cmd) error {
+				got = cmd
+				return replacementErr
+			}
+
+			err := tt.attach(tc)
+			if !errors.Is(err, replacementErr) {
+				t.Fatalf(
+					"attach error = %v, want replacement error",
+					err,
+				)
+			}
+			if got == nil {
+				t.Fatal("attachment did not attempt process replacement")
+			}
+			if !slices.Equal(got.Args, tt.wantArgs) {
+				t.Errorf(
+					"replacement args = %v, want %v",
+					got.Args,
+					tt.wantArgs,
+				)
+			}
+			for _, name := range tt.wantGone {
+				for _, entry := range got.Env {
+					if hasEnvName(entry, name) {
+						t.Errorf(
+							"replacement environment leaked %s",
+							name,
+						)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestExternalAttachReturnsLookupErrorBeforeReplacement(t *testing.T) {
+	tc := NewTmuxCommand("kwt-test-missing-tmux-executable")
+	called := false
+	tc.attachProcess = func(*exec.Cmd) error {
+		called = true
+		return nil
+	}
+
+	err := tc.AttachSession("workspace")
+	if !errors.Is(err, exec.ErrNotFound) {
+		t.Fatalf("attach error = %v, want executable-not-found", err)
+	}
+	if called {
+		t.Fatal("process replacement called after command lookup failed")
+	}
+}
+
+func TestProtectedExternalAttachReturnsCanceledContextBeforeReplacement(
+	t *testing.T,
+) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	tc := NewTmuxCommand(executable)
+	called := false
+	tc.attachProcess = func(*exec.Cmd) error {
+		called = true
+		return nil
+	}
+
+	err = tc.AttachSessionWithoutEnvironment(ctx, "workspace")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("attach error = %v, want context canceled", err)
+	}
+	if called {
+		t.Fatal("process replacement called after context cancellation")
 	}
 }
 
