@@ -1258,6 +1258,7 @@ func (b *tuiBackend) RemoveWorktree(ctx context.Context, row dashboard.Row, forc
 	if strings.TrimSpace(generation) == "" {
 		return fmt.Errorf("worktree generation unavailable; refresh before removing")
 	}
+	registryRecord := registeredWorktreeForRemoval(row.Entry.Path)
 
 	repoRoot, err := b.repositoryRootForRow(row)
 	if err != nil {
@@ -1276,12 +1277,7 @@ func (b *tuiBackend) RemoveWorktree(ctx context.Context, row dashboard.Row, forc
 		return err
 	}
 
-	if reg, err := registry.New(); err == nil {
-		_, _ = reg.UnregisterIfGeneration(
-			row.Entry.Path,
-			generation,
-		)
-	}
+	unregisterWorktreeRecord(registryRecord)
 
 	publishTUIFleetBestEffort(ctx, b.cfg)
 

@@ -38,6 +38,41 @@ func TestRemoveLocalPublishesOnceAfterSuccessfulRemoval(t *testing.T) {
 	assert.Equal(t, 1, calls)
 }
 
+func TestRemoveLocalUnregistersLegacyEntry(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetRemoveCommandFlags(t)
+
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	t.Chdir(repoPath)
+	worktreePath := filepath.Join(t.TempDir(), "remove-local-legacy")
+	runTUITestGit(
+		t,
+		repoPath,
+		"worktree",
+		"add",
+		"-b",
+		"task7/remove-local-legacy",
+		worktreePath,
+	)
+	reg, err := registry.New()
+	require.NoError(t, err)
+	require.NoError(t, reg.Register(&registry.WorktreeEntry{
+		Path:                   worktreePath,
+		Branch:                 "task7/remove-local-legacy",
+		UnreviewedRemoteSource: true,
+	}))
+
+	cmd, _, _ := fleetTestCommand()
+	err = runRemove(cmd, []string{"task7/remove-local-legacy"})
+
+	require.NoError(t, err)
+	refreshedRegistry, err := registry.New()
+	require.NoError(t, err)
+	_, registered := refreshedRegistry.Get(worktreePath)
+	assert.False(t, registered)
+}
+
 func TestRemoveLocalRejectsRecreatedWorktree(t *testing.T) {
 	resetFleetCommandDeps(t)
 	resetRemoveCommandFlags(t)

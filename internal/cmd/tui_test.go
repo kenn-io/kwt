@@ -1907,6 +1907,50 @@ func TestTUIBackendRemoveWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 	assert.Equal(t, 1, published)
 }
 
+func TestTUIBackendRemoveWorktreeUnregistersLegacyEntry(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "legacy-registry-worktree")
+	runTUITestGit(
+		t,
+		repoPath,
+		"worktree",
+		"add",
+		"-b",
+		"codex/legacy-registry",
+		worktreePath,
+	)
+	reg, err := registry.New()
+	require.NoError(t, err)
+	require.NoError(t, reg.Register(&registry.WorktreeEntry{
+		Path:                   worktreePath,
+		Branch:                 "codex/legacy-registry",
+		UnreviewedRemoteSource: true,
+	}))
+	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
+		Branch: "codex/legacy-registry",
+		Path:   worktreePath,
+		Generation: tuiTestWorktreeGeneration(
+			t,
+			repoPath,
+			worktreePath,
+		),
+	}}
+	backend := newTUIBackendWithLaunchDir(&models.Config{
+		Worktree: models.WorktreeConfig{BaseDir: t.TempDir()},
+	}, "")
+
+	err = backend.RemoveWorktree(context.Background(), row, false)
+
+	require.NoError(t, err)
+	refreshedRegistry, err := registry.New()
+	require.NoError(t, err)
+	_, registered := refreshedRegistry.Get(worktreePath)
+	assert.False(t, registered)
+}
+
 func TestTUIBackendRemoveWorktreeRejectsReplacementGeneration(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

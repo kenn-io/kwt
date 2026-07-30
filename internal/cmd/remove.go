@@ -215,7 +215,7 @@ func removeLocalWorktree(
 
 	removed := 0
 	for _, wt := range toRemove {
-		registryPath := registeredWorktreePath(wt.Path)
+		registryRecord := registeredWorktreeForRemoval(wt.Path)
 		if deleteBranch {
 			if err := ctx.WorktreeManager.RemoveWithBranch(
 				wt.Path,
@@ -227,7 +227,7 @@ func removeLocalWorktree(
 			); err != nil {
 				if worktreePathRemoved(wt.Path) {
 					removed++
-					unregisterWorktreePath(registryPath, wt.Generation)
+					unregisterWorktreeRecord(registryRecord)
 				}
 				if generationCondition.specified {
 					return removed, err
@@ -247,7 +247,7 @@ func removeLocalWorktree(
 			); err != nil {
 				if worktreePathRemoved(wt.Path) {
 					removed++
-					unregisterWorktreePath(registryPath, wt.Generation)
+					unregisterWorktreeRecord(registryRecord)
 				}
 				if generationCondition.specified {
 					return removed, err
@@ -260,7 +260,7 @@ func removeLocalWorktree(
 		removed++
 
 		// Clean up registry entry after successful removal
-		unregisterWorktreePath(registryPath, wt.Generation)
+		unregisterWorktreeRecord(registryRecord)
 	}
 
 	return removed, nil
@@ -386,7 +386,7 @@ func removeGlobalWorktree(
 	// Remove each worktree by changing to its repository directory
 	removed := 0
 	for _, entry := range toRemove {
-		registryPath := registeredWorktreePath(entry.Path)
+		registryRecord := registeredWorktreeForRemoval(entry.Path)
 		// Change to the repository directory to run git commands
 		originalDir, err := os.Getwd()
 		if err != nil {
@@ -424,7 +424,7 @@ func removeGlobalWorktree(
 			); err != nil {
 				if worktreePathRemoved(entry.Path) {
 					removed++
-					unregisterWorktreePath(registryPath, entry.Generation)
+					unregisterWorktreeRecord(registryRecord)
 				}
 				if generationCondition.specified {
 					_ = os.Chdir(originalDir)
@@ -446,7 +446,7 @@ func removeGlobalWorktree(
 			); err != nil {
 				if worktreePathRemoved(entry.Path) {
 					removed++
-					unregisterWorktreePath(registryPath, entry.Generation)
+					unregisterWorktreeRecord(registryRecord)
 				}
 				if generationCondition.specified {
 					_ = os.Chdir(originalDir)
@@ -472,7 +472,7 @@ func removeGlobalWorktree(
 		}
 
 		// Clean up registry entry after successful removal
-		unregisterWorktreePath(registryPath, entry.Generation)
+		unregisterWorktreeRecord(registryRecord)
 		removed++
 
 		// Change back to original directory
@@ -552,20 +552,36 @@ func worktreePathRemoved(path string) bool {
 	return os.IsNotExist(err)
 }
 
-func registeredWorktreePath(path string) string {
+type removalRegistryRecord struct {
+	path       string
+	generation string
+	present    bool
+}
+
+func registeredWorktreeForRemoval(path string) removalRegistryRecord {
 	reg, err := registry.New()
 	if err != nil {
-		return path
+		return removalRegistryRecord{}
 	}
 	entry, ok := reg.Get(path)
 	if !ok {
-		return path
+		return removalRegistryRecord{}
 	}
-	return entry.Path
+	return removalRegistryRecord{
+		path:       entry.Path,
+		generation: entry.Generation,
+		present:    true,
+	}
 }
 
-func unregisterWorktreePath(path string, generation string) {
+func unregisterWorktreeRecord(record removalRegistryRecord) {
+	if !record.present {
+		return
+	}
 	if reg, err := registry.New(); err == nil {
-		_, _ = reg.UnregisterIfGeneration(path, generation)
+		_, _ = reg.UnregisterIfGeneration(
+			record.path,
+			record.generation,
+		)
 	}
 }
