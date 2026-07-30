@@ -2,6 +2,7 @@
 package discovery
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -109,7 +110,10 @@ func DiscoverGlobalWorktrees(baseDir string, projects []models.Project) ([]*Glob
 		return nil, fmt.Errorf("failed to walk directory: %w", err)
 	}
 
-	snapshots := snapshotCandidateWorktrees(candidates)
+	snapshots, err := snapshotCandidateWorktrees(candidates)
+	if err != nil {
+		return nil, err
+	}
 	return extractWorktreeCandidates(
 		candidates,
 		projects,
@@ -196,7 +200,7 @@ func extractWorktreeCandidates(
 
 func snapshotCandidateWorktrees(
 	candidates []worktreeCandidate,
-) map[string]models.Worktree {
+) (map[string]models.Worktree, error) {
 	repositories := make(map[string]string)
 	for _, candidate := range candidates {
 		mainRoot, err := git.New(candidate.path).GetMainRepositoryPath()
@@ -208,13 +212,14 @@ func snapshotCandidateWorktrees(
 
 	snapshots := make(map[string]models.Worktree)
 	if len(repositories) == 0 {
-		return snapshots
+		return snapshots, nil
 	}
 
 	const maxWorkers = 16
 	workerCount := min(len(repositories), maxWorkers)
 	jobs := make(chan string)
 	var snapshotsMu sync.Mutex
+	var snapshotErrors []error
 	var workers sync.WaitGroup
 	workers.Add(workerCount)
 	for range workerCount {
@@ -223,6 +228,16 @@ func snapshotCandidateWorktrees(
 			for repositoryRoot := range jobs {
 				worktrees, err := git.New(repositoryRoot).ListWorktrees()
 				if err != nil {
+					snapshotsMu.Lock()
+					snapshotErrors = append(
+						snapshotErrors,
+						fmt.Errorf(
+							"snapshot repository %s: %w",
+							repositoryRoot,
+							err,
+						),
+					)
+					snapshotsMu.Unlock()
 					continue
 				}
 				snapshotsMu.Lock()
@@ -239,7 +254,7 @@ func snapshotCandidateWorktrees(
 	close(jobs)
 	workers.Wait()
 
-	return snapshots
+	return snapshots, errors.Join(snapshotErrors...)
 }
 
 // extractWorktreeInfo extracts worktree information from a worktree directory.

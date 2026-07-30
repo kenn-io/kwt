@@ -367,6 +367,39 @@ func TestDiscoverGlobalWorktrees_MainAndLinkedWorktrees(t *testing.T) {
 	}
 }
 
+func TestDiscoverGlobalWorktreesReportsRepositorySnapshotFailure(t *testing.T) {
+	baseDir := t.TempDir()
+	repoDir := filepath.Join(baseDir, "repo", "main")
+	repo := initRepoAt(t, repoDir, "https://github.com/user/repo.git")
+	repo.CreateBranch(t, "feature")
+	worktreeDir := filepath.Join(baseDir, "repo", "feature")
+	repo.CreateWorktree(t, worktreeDir, "feature")
+
+	dotGit, err := os.ReadFile(filepath.Join(worktreeDir, ".git"))
+	if err != nil {
+		t.Fatalf("read linked worktree .git file: %v", err)
+	}
+	gitDir := strings.TrimSpace(
+		strings.TrimPrefix(strings.TrimSpace(string(dotGit)), "gitdir: "),
+	)
+	if err := os.WriteFile(
+		filepath.Join(gitDir, "kwt-generation"),
+		[]byte("invalid\n"),
+		0o600,
+	); err != nil {
+		t.Fatalf("corrupt worktree generation: %v", err)
+	}
+
+	entries, err := DiscoverGlobalWorktrees(baseDir, nil)
+
+	if err == nil {
+		t.Fatalf(
+			"DiscoverGlobalWorktrees() entries = %v, want snapshot error",
+			entries,
+		)
+	}
+}
+
 func TestDiscoverGlobalWorktreesListsEachRepositoryOnce(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses a POSIX shell wrapper")
