@@ -175,7 +175,9 @@ session without attaching, for clients that provide their own ordinary tmux
 presentation. It does not execute configured layouts or agent commands.
 Attach with `kwt pr attach <workspace.path>`, which verifies the persisted
 identity, creates or repairs that protected blank session when needed, and
-uses `attach-session -E`.
+uses `attach-session -E`. This is an interactive exception to the PR JSON
+contract: failures before attachment remain structured, but after a successful
+Unix process replacement tmux owns terminal output and the final exit status.
 
 ### Repository identity fallback
 

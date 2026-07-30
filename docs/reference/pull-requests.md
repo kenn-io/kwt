@@ -5,8 +5,9 @@ desktop application should render the records returned by kwt and pass the
 selected pull-request identifier back to kwt. It should not call GitHub,
 construct Git refs or worktree names, or reproduce workspace setup.
 
-The commands are noninteractive and always emit JSON. Pass `--json` explicitly
-to document that a caller depends on the automation contract:
+`kwt pr list` and `kwt pr import` are noninteractive and always emit JSON.
+Pass `--json` explicitly to document that a caller depends on the automation
+contract:
 
 ```sh
 kwt pr list --project github.com/acme/widget --state open --json
@@ -32,6 +33,15 @@ kwt's protected path:
 ```sh
 kwt pr attach <workspace.path>
 ```
+
+`kwt pr attach` is an interactive exception to the JSON automation contract.
+Validation and session-establishment failures that occur before attachment
+still use the structured error envelope and stable PR exit status. On
+Unix-like systems, a successful handoff replaces `kwt` with tmux; from that
+point onward, tmux owns terminal output, signal handling, and the final exit
+status. An immediate tmux client failure after replacement therefore uses
+tmux's native diagnostic and status rather than a JSON envelope. Windows
+retains a waiting `kwt` parent and can still wrap a returned tmux failure.
 
 The attach command resolves the persisted workspace identity, verifies the
 recorded project clone and exact live worktree identity, and creates or repairs
@@ -407,8 +417,12 @@ another import returns `import_conflict`.
 
 ## Failure contract
 
-Failures write a JSON error to stdout, a credential-free diagnostic to stderr,
-and return a stable nonzero status. For example:
+Failures from `kwt pr list`, `kwt pr import`, and the validation or session
+establishment phase of `kwt pr attach` write a JSON error to stdout, a
+credential-free diagnostic to stderr, and return a stable nonzero status. The
+Unix attachment handoff is the exception described above: after process
+replacement succeeds, tmux owns any later diagnostic and exit status. For
+example:
 
 ```json
 {
