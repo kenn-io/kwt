@@ -48,9 +48,21 @@ func (m *mockRemoteSourceState) Register(entry *registry.WorktreeEntry) error {
 	return nil
 }
 
-func (m *mockRemoteSourceState) Unregister(path string) error {
+func (m *mockRemoteSourceState) ReplaceIfCreationToken(
+	path string,
+	creationToken string,
+	replacement *registry.WorktreeEntry,
+) (bool, error) {
+	entry, ok := m.entries[path]
+	if !ok || entry.CreationToken != creationToken {
+		return false, nil
+	}
 	delete(m.entries, path)
-	return nil
+	if replacement != nil {
+		copied := *replacement
+		m.entries[replacement.Path] = &copied
+	}
+	return true, nil
 }
 
 func (m *mockRemoteSourceState) Get(

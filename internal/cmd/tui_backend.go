@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -1414,130 +1413,11 @@ func (b *tuiBackend) removeWorktreeFromRoot(
 	force bool,
 	generation string,
 ) error {
-	err := worktree.New(git.New(repoRoot), b.cfg).Remove(
-		worktreePath,
-		force,
-		generation,
-	)
-	if err == nil || !isWorktreeValidationError(err) {
-		return err
-	}
-
-	if repairErr := repairLinkedWorktreeGitFile(repoRoot, worktreePath); repairErr != nil {
-		return fmt.Errorf("%w (failed to repair worktree metadata: %v)", err, repairErr)
-	}
 	return worktree.New(git.New(repoRoot), b.cfg).Remove(
 		worktreePath,
 		force,
 		generation,
 	)
-}
-
-func isWorktreeValidationError(err error) bool {
-	if err == nil {
-		return false
-	}
-	text := err.Error()
-	return strings.Contains(text, "validation failed, cannot remove working tree") &&
-		strings.Contains(text, ".git")
-}
-
-func repairLinkedWorktreeGitFile(repoRoot string, worktreePath string) error {
-	gitFilePath := filepath.Join(worktreePath, ".git")
-	info, err := os.Lstat(gitFilePath)
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%s is a symbolic link", gitFilePath)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%s is not a regular file", gitFilePath)
-	}
-
-	adminDir, err := findLinkedWorktreeAdminDir(repoRoot, worktreePath)
-	if err != nil {
-		return err
-	}
-
-	mode := info.Mode().Perm()
-	if mode == 0 {
-		mode = 0644
-	}
-	return writeReplacementFile(gitFilePath, []byte("gitdir: "+adminDir+"\n"), mode)
-}
-
-func writeReplacementFile(path string, data []byte, mode os.FileMode) (err error) {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".git.repair-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	removeTmp := true
-	defer func() {
-		if removeTmp {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-
-	if err := tmp.Chmod(mode); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	n, err := tmp.Write(data)
-	if err == nil && n != len(data) {
-		err = io.ErrShortWrite
-	}
-	if closeErr := tmp.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return err
-	}
-	removeTmp = false
-	return nil
-}
-
-func findLinkedWorktreeAdminDir(repoRoot string, worktreePath string) (string, error) {
-	commonDir, err := git.New(repoRoot).RunCommand("rev-parse", "--git-common-dir")
-	if err != nil {
-		return "", err
-	}
-	commonDir = strings.TrimSpace(commonDir)
-	if !filepath.IsAbs(commonDir) {
-		commonDir = filepath.Join(repoRoot, commonDir)
-	}
-
-	worktreesDir := filepath.Join(commonDir, "worktrees")
-	entries, err := os.ReadDir(worktreesDir)
-	if err != nil {
-		return "", err
-	}
-
-	wantGitFile := filepath.Join(worktreePath, ".git")
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		adminDir := filepath.Join(worktreesDir, entry.Name())
-		gitdirPath := filepath.Join(adminDir, "gitdir")
-		data, err := os.ReadFile(gitdirPath)
-		if err != nil {
-			continue
-		}
-		gotGitFile := strings.TrimSpace(string(data))
-		if !filepath.IsAbs(gotGitFile) {
-			gotGitFile = filepath.Join(adminDir, gotGitFile)
-		}
-		if samePath(gotGitFile, wantGitFile) {
-			return adminDir, nil
-		}
-	}
-
-	return "", fmt.Errorf("no worktree admin dir found for %s", worktreePath)
 }
 
 func samePath(a string, b string) bool {

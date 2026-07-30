@@ -2,6 +2,8 @@
 package worktree
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -57,7 +59,11 @@ type Manager struct {
 
 type remoteSourceState interface {
 	Register(*registry.WorktreeEntry) error
-	Unregister(string) error
+	ReplaceIfCreationToken(
+		string,
+		string,
+		*registry.WorktreeEntry,
+	) (bool, error)
 	Get(string) (*registry.WorktreeEntry, bool)
 }
 
@@ -206,9 +212,14 @@ func (m *Manager) addUnreviewedSource(
 		return "", "", fmt.Errorf("open remote-source state: %w", err)
 	}
 	previous, existed := state.Get(path)
+	creationToken, err := newRegistryCreationToken()
+	if err != nil {
+		return "", "", err
+	}
 	entry := &registry.WorktreeEntry{
 		Branch:                 branch,
 		Path:                   path,
+		CreationToken:          creationToken,
 		UnreviewedRemoteSource: true,
 	}
 	if err := state.Register(entry); err != nil {
@@ -220,10 +231,18 @@ func (m *Manager) addUnreviewedSource(
 		var restoreErr error
 		switch {
 		case existed:
-			restoreErr = state.Register(previous)
+			_, restoreErr = state.ReplaceIfCreationToken(
+				path,
+				creationToken,
+				previous,
+			)
 		default:
 			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-				restoreErr = state.Unregister(path)
+				_, restoreErr = state.ReplaceIfCreationToken(
+					path,
+					creationToken,
+					nil,
+				)
 			}
 		}
 		if restoreErr != nil {
@@ -236,13 +255,33 @@ func (m *Manager) addUnreviewedSource(
 		return "", "", err
 	}
 	entry.Generation = generation
-	if err := state.Register(entry); err != nil {
+	entry.CreationToken = ""
+	replaced, err := state.ReplaceIfCreationToken(
+		path,
+		creationToken,
+		entry,
+	)
+	if err != nil {
 		return "", "", fmt.Errorf(
 			"record remote-source worktree generation: %w",
 			err,
 		)
 	}
+	if !replaced {
+		return "", "", fmt.Errorf(
+			"worktree created at %s but registry ownership changed; preserved",
+			path,
+		)
+	}
 	return path, generation, nil
+}
+
+func newRegistryCreationToken() (string, error) {
+	tokenBytes := make([]byte, 16)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return "", fmt.Errorf("generate registry creation token: %w", err)
+	}
+	return hex.EncodeToString(tokenBytes), nil
 }
 
 // AddFromBase creates a new worktree with a branch from a specific base branch

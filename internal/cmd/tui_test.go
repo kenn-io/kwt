@@ -2743,7 +2743,7 @@ func TestTUIBackendMaterializeWorktreeExplainsUnavailableBranch(t *testing.T) {
 	assert.Contains(t, err.Error(), "push or fetch it first")
 }
 
-func TestTUIBackendRemoveWorktreeRepairsBrokenGitFile(t *testing.T) {
+func TestTUIBackendRemoveWorktreeRejectsBrokenGitFile(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -2781,61 +2781,42 @@ func TestTUIBackendRemoveWorktreeRepairsBrokenGitFile(t *testing.T) {
 
 	err := backend.RemoveWorktree(context.Background(), row, false)
 
-	require.NoError(t, err)
+	require.Error(t, err)
 	output := runTUITestGitOutput(t, repoPath, "worktree", "list", "--porcelain")
-	assert.NotContains(t, output, worktreePath)
-	assert.NoDirExists(t, worktreePath)
+	assert.Contains(t, output, worktreePath)
+	assert.DirExists(t, worktreePath)
 }
 
-func TestRepairLinkedWorktreeGitFileRejectsSymlink(t *testing.T) {
-	repoPath := newTUITestRepo(t)
-	worktreePath := filepath.Join(t.TempDir(), "symlink-worktree")
-	runTUITestGit(t, repoPath, "worktree", "add", "-b", "codex/symlink", worktreePath)
+func TestTUIBackendRemoveWorktreePreservesCrossRepositoryReplacementWithBrokenGitFile(
+	t *testing.T,
+) {
+	repoA := newTUITestRepo(t)
+	repoB := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "replaced-worktree")
+	runTUITestGit(t, repoA, "worktree", "add", "-b", "codex/original", worktreePath)
+	generation := tuiTestWorktreeGeneration(t, repoA, worktreePath)
 
-	victimPath := filepath.Join(t.TempDir(), "victim")
-	const victimContents = "do not replace me\n"
-	require.NoError(t, os.WriteFile(victimPath, []byte(victimContents), 0644))
+	require.NoError(t, os.RemoveAll(worktreePath))
+	runTUITestGit(t, repoB, "worktree", "add", "-b", "codex/replacement", worktreePath)
+	const sentinel = "repository B must survive\n"
+	require.NoError(t, os.WriteFile(
+		filepath.Join(worktreePath, "replacement.txt"),
+		[]byte(sentinel),
+		0644,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(worktreePath, ".git"),
+		[]byte("gitdir: /missing/repository-b/worktree\n"),
+		0644,
+	))
 
-	gitFilePath := filepath.Join(worktreePath, ".git")
-	require.NoError(t, os.Remove(gitFilePath))
-	if err := os.Symlink(victimPath, gitFilePath); err != nil {
-		t.Skipf("symbolic links are not supported or allowed on this filesystem: %v", err)
-	}
-
-	err := repairLinkedWorktreeGitFile(repoPath, worktreePath)
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	err := backend.removeWorktreeFromRoot(repoA, worktreePath, true, generation)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "symbolic link")
-	data, readErr := os.ReadFile(victimPath)
+	data, readErr := os.ReadFile(filepath.Join(worktreePath, "replacement.txt"))
 	require.NoError(t, readErr)
-	assert.Equal(t, victimContents, string(data))
-}
-
-func TestRepairLinkedWorktreeGitFileReplacesHardLinkWithoutClobberingTarget(t *testing.T) {
-	repoPath := newTUITestRepo(t)
-	worktreePath := filepath.Join(t.TempDir(), "hardlink-worktree")
-	runTUITestGit(t, repoPath, "worktree", "add", "-b", "codex/hardlink", worktreePath)
-
-	victimPath := filepath.Join(t.TempDir(), "victim")
-	const victimContents = "do not replace me\n"
-	require.NoError(t, os.WriteFile(victimPath, []byte(victimContents), 0644))
-
-	gitFilePath := filepath.Join(worktreePath, ".git")
-	require.NoError(t, os.Remove(gitFilePath))
-	if err := os.Link(victimPath, gitFilePath); err != nil {
-		t.Skipf("hard links are not supported on this filesystem: %v", err)
-	}
-
-	err := repairLinkedWorktreeGitFile(repoPath, worktreePath)
-
-	require.NoError(t, err)
-	victimData, readErr := os.ReadFile(victimPath)
-	require.NoError(t, readErr)
-	assert.Equal(t, victimContents, string(victimData))
-	gitData, readErr := os.ReadFile(gitFilePath)
-	require.NoError(t, readErr)
-	assert.Contains(t, string(gitData), "gitdir: ")
-	assert.NotEqual(t, string(gitData), string(victimData))
+	assert.Equal(t, sentinel, string(data))
 }
 
 func TestTUIBackendResolveLayoutFallsBackToRegisteredProjectRoot(t *testing.T) {

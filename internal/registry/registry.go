@@ -23,6 +23,7 @@ type WorktreeEntry struct {
 	RegisteredAt           time.Time  `json:"registered_at"`
 	ExpiresAt              *time.Time `json:"expires_at,omitempty"`
 	Generation             string     `json:"generation,omitempty"`
+	CreationToken          string     `json:"creation_token,omitempty"`
 	UnreviewedRemoteSource bool       `json:"unreviewed_remote_source,omitempty"`
 }
 
@@ -194,6 +195,49 @@ func (r *Registry) Register(entry *WorktreeEntry) error {
 		entries[copied.Path] = &copied
 		return true
 	})
+}
+
+// ReplaceIfCreationToken replaces a provisional creation entry only while
+// that operation still owns the registry path.
+func (r *Registry) ReplaceIfCreationToken(
+	path string,
+	creationToken string,
+	replacement *WorktreeEntry,
+) (bool, error) {
+	if creationToken == "" {
+		return false, fmt.Errorf("creation token is required")
+	}
+
+	var copied *WorktreeEntry
+	if replacement != nil {
+		value := *replacement
+		if value.RegisteredAt.IsZero() {
+			value.RegisteredAt = time.Now()
+		}
+		copied = &value
+	}
+
+	replaced := false
+	err := r.mutate(func(entries map[string]*WorktreeEntry) bool {
+		keys := matchingRegistryKeys(entries, path)
+		if len(keys) == 0 {
+			return false
+		}
+		for _, key := range keys {
+			if entries[key].CreationToken != creationToken {
+				return false
+			}
+		}
+		for _, key := range keys {
+			delete(entries, key)
+		}
+		if copied != nil {
+			entries[copied.Path] = copied
+		}
+		replaced = true
+		return true
+	})
+	return replaced, err
 }
 
 // Unregister removes a worktree entry by path.
