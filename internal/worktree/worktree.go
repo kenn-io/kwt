@@ -59,12 +59,24 @@ type Manager struct {
 }
 
 type remoteSourceState interface {
+	AbortCreation(
+		string,
+		string,
+		*registry.WorktreeEntry,
+	) (bool, error)
+	AcquireCreation(string) (func() error, bool, error)
 	CompareAndSwap(
 		string,
 		*registry.WorktreeEntry,
 		*registry.WorktreeEntry,
 	) (bool, error)
+	CompleteCreation(string, string, string) (bool, error)
 	Get(string) (*registry.WorktreeEntry, bool)
+	ReclaimCreation(
+		string,
+		string,
+		*registry.WorktreeEntry,
+	) (bool, error)
 }
 
 // AddOptions controls optional behavior for creating a worktree.
@@ -206,18 +218,31 @@ func (m *Manager) addUnreviewedSource(
 	path,
 	branch string,
 	add func() (string, error),
-) (string, string, error) {
+) (resultPath string, resultGeneration string, resultErr error) {
 	state, err := m.openRemoteSourceState()
 	if err != nil {
 		return "", "", fmt.Errorf("open remote-source state: %w", err)
 	}
-	previous, existed := state.Get(path)
-	if existed && previous.CreationToken != "" {
+	release, acquired, err := state.AcquireCreation(path)
+	if err != nil {
+		return "", "", fmt.Errorf("lock remote-source creation: %w", err)
+	}
+	if !acquired {
 		return "", "", fmt.Errorf(
 			"worktree creation in progress for %s",
 			path,
 		)
 	}
+	defer func() {
+		if err := release(); err != nil && resultErr == nil {
+			resultErr = fmt.Errorf(
+				"release remote-source creation lock: %w",
+				err,
+			)
+		}
+	}()
+
+	previous, existed := state.Get(path)
 	creationToken, err := newRegistryCreationToken()
 	if err != nil {
 		return "", "", err
@@ -229,11 +254,46 @@ func (m *Manager) addUnreviewedSource(
 		CreationToken:          creationToken,
 		UnreviewedRemoteSource: true,
 	}
-	var expected *registry.WorktreeEntry
-	if existed {
-		expected = previous
+	var claimed bool
+	reclaimedAbandoned := false
+	if existed && previous.CreationToken != "" {
+		generation, found, recoveryErr := m.registeredGeneration(path)
+		if recoveryErr == nil && found {
+			completed, completeErr := state.CompleteCreation(
+				path,
+				previous.CreationToken,
+				generation,
+			)
+			if completeErr != nil {
+				return "", "", fmt.Errorf(
+					"recover completed remote-source worktree: %w",
+					completeErr,
+				)
+			}
+			if !completed {
+				return "", "", fmt.Errorf(
+					"registry ownership changed for %s; retry creation",
+					path,
+				)
+			}
+			return "", "", fmt.Errorf(
+				"recovered completed remote-source worktree at %s; retry after reviewing it",
+				path,
+			)
+		}
+		claimed, err = state.ReclaimCreation(
+			path,
+			previous.CreationToken,
+			entry,
+		)
+		reclaimedAbandoned = claimed
+	} else {
+		var expected *registry.WorktreeEntry
+		if existed {
+			expected = previous
+		}
+		claimed, err = state.CompareAndSwap(path, expected, entry)
 	}
-	claimed, err := state.CompareAndSwap(path, expected, entry)
 	if err != nil {
 		return "", "", fmt.Errorf("mark remote-source worktree unreviewed: %w", err)
 	}
@@ -246,39 +306,56 @@ func (m *Manager) addUnreviewedSource(
 
 	generation, err := add()
 	if err != nil {
-		var restoreErr error
+		recoveredGeneration, found, recoveryErr :=
+			m.registeredGeneration(path)
+		var cleaned bool
+		var cleanupErr error
 		switch {
-		case existed:
-			_, restoreErr = state.CompareAndSwap(
+		case recoveryErr == nil && found:
+			cleaned, cleanupErr = state.CompleteCreation(
 				path,
-				entry,
+				creationToken,
+				recoveredGeneration,
+			)
+		case existed && !reclaimedAbandoned:
+			cleaned, cleanupErr = state.AbortCreation(
+				path,
+				creationToken,
 				previous,
 			)
+		case pathExists(path):
+			cleaned, cleanupErr = state.CompleteCreation(
+				path,
+				creationToken,
+				"",
+			)
 		default:
-			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-				_, restoreErr = state.CompareAndSwap(
-					path,
-					entry,
-					nil,
-				)
-			}
+			cleaned, cleanupErr = state.AbortCreation(
+				path,
+				creationToken,
+				previous,
+			)
 		}
-		if restoreErr != nil {
+		if cleanupErr != nil {
 			return "", "", fmt.Errorf(
-				"%w (failed to restore remote-source state: %v)",
+				"%w (failed to finalize remote-source state: %v)",
 				err,
-				restoreErr,
+				cleanupErr,
+			)
+		}
+		if !cleaned {
+			return "", "", fmt.Errorf(
+				"%w (registry ownership changed for %s; preserved)",
+				err,
+				path,
 			)
 		}
 		return "", "", err
 	}
-	completed := *entry
-	completed.Generation = generation
-	completed.CreationToken = ""
-	replaced, err := state.CompareAndSwap(
+	replaced, err := state.CompleteCreation(
 		path,
-		entry,
-		&completed,
+		creationToken,
+		generation,
 	)
 	if err != nil {
 		return "", "", fmt.Errorf(
@@ -293,6 +370,34 @@ func (m *Manager) addUnreviewedSource(
 		)
 	}
 	return path, generation, nil
+}
+
+func (m *Manager) registeredGeneration(
+	path string,
+) (string, bool, error) {
+	worktrees, err := m.git.ListWorktrees()
+	if err != nil {
+		return "", false, err
+	}
+	pathKey := utils.PathKey(path)
+	for _, worktree := range worktrees {
+		if utils.PathKey(worktree.Path) != pathKey {
+			continue
+		}
+		if worktree.Generation == "" {
+			return "", false, fmt.Errorf(
+				"worktree generation unavailable for %s",
+				path,
+			)
+		}
+		return worktree.Generation, true, nil
+	}
+	return "", false, nil
+}
+
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func newRegistryCreationToken() (string, error) {

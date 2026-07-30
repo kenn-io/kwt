@@ -37,7 +37,8 @@ type mockGit struct {
 }
 
 type mockRemoteSourceState struct {
-	entries map[string]*registry.WorktreeEntry
+	entries        map[string]*registry.WorktreeEntry
+	creationActive bool
 }
 
 func (m *mockRemoteSourceState) CompareAndSwap(
@@ -73,6 +74,65 @@ func (m *mockRemoteSourceState) Get(
 	}
 	copied := *entry
 	return &copied, true
+}
+
+func (m *mockRemoteSourceState) AcquireCreation(
+	_ string,
+) (func() error, bool, error) {
+	if m.creationActive {
+		return nil, false, nil
+	}
+	m.creationActive = true
+	return func() error {
+		m.creationActive = false
+		return nil
+	}, true, nil
+}
+
+func (m *mockRemoteSourceState) CompleteCreation(
+	path string,
+	token string,
+	generation string,
+) (bool, error) {
+	entry, ok := m.entries[path]
+	if !ok || entry.CreationToken != token {
+		return false, nil
+	}
+	entry.CreationToken = ""
+	entry.Generation = generation
+	return true, nil
+}
+
+func (m *mockRemoteSourceState) ReclaimCreation(
+	path string,
+	token string,
+	replacement *registry.WorktreeEntry,
+) (bool, error) {
+	entry, ok := m.entries[path]
+	if !ok || entry.CreationToken != token {
+		return false, nil
+	}
+	copied := *replacement
+	m.entries[path] = &copied
+	return true, nil
+}
+
+func (m *mockRemoteSourceState) AbortCreation(
+	path string,
+	token string,
+	previous *registry.WorktreeEntry,
+) (bool, error) {
+	entry, ok := m.entries[path]
+	if !ok || entry.CreationToken != token {
+		return false, nil
+	}
+	delete(m.entries, path)
+	if previous != nil {
+		copied := *previous
+		copied.UnreviewedRemoteSource = entry.UnreviewedRemoteSource
+		m.entries[path] = &copied
+	}
+	return true, nil
 }
 
 func (m *mockGit) ListWorktrees() ([]models.Worktree, error) {
@@ -490,6 +550,7 @@ func TestManagerAddTrackingRetainsMarkerWhenFailedCheckoutPathExists(t *testing.
 	entry, ok := state.entries[worktreePath]
 	require.True(t, ok, "a possibly materialized checkout must remain isolated")
 	assert.True(t, entry.UnreviewedRemoteSource)
+	assert.Empty(t, entry.CreationToken)
 }
 
 func TestManagerAddTrackingRejectsActiveCreationMarker(t *testing.T) {
@@ -500,7 +561,7 @@ func TestManagerAddTrackingRejectsActiveCreationMarker(t *testing.T) {
 			Branch:        "feature/creating",
 			CreationToken: "active-creation",
 		},
-	}}
+	}, creationActive: true}
 	mockG := &mockGit{}
 	manager := New(mockG, &models.Config{})
 	manager.openRemoteSourceState = func() (remoteSourceState, error) {
@@ -518,6 +579,75 @@ func TestManagerAddTrackingRejectsActiveCreationMarker(t *testing.T) {
 	entry, ok := state.entries[worktreePath]
 	require.True(t, ok)
 	assert.Equal(t, "active-creation", entry.CreationToken)
+}
+
+func TestManagerAddTrackingRecoversAbandonedCreationMarker(t *testing.T) {
+	worktreePath := filepath.Join(t.TempDir(), "abandoned-worktree")
+	state := &mockRemoteSourceState{entries: map[string]*registry.WorktreeEntry{
+		worktreePath: {
+			Path:          worktreePath,
+			Branch:        "feature/abandoned",
+			CreationToken: "abandoned-creation",
+		},
+	}}
+	mockG := &mockGit{}
+	manager := New(mockG, &models.Config{})
+	manager.openRemoteSourceState = func() (remoteSourceState, error) {
+		return state, nil
+	}
+
+	path, err := manager.AddTracking(
+		"feature/recovered",
+		"refs/remotes/origin/feature/recovered",
+		worktreePath,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, worktreePath, path)
+	assert.Len(t, mockG.worktrees, 1)
+	entry, ok := state.entries[worktreePath]
+	require.True(t, ok)
+	assert.Equal(t, "feature/recovered", entry.Branch)
+	assert.Empty(t, entry.CreationToken)
+	assert.Equal(t, "0123456789abcdef0123456789abcdef", entry.Generation)
+	assert.True(t, entry.UnreviewedRemoteSource)
+}
+
+func TestManagerAddTrackingFinalizesAbandonedCompletedCheckout(t *testing.T) {
+	worktreePath := filepath.Join(t.TempDir(), "completed-worktree")
+	generation := "fedcba9876543210fedcba9876543210"
+	state := &mockRemoteSourceState{entries: map[string]*registry.WorktreeEntry{
+		worktreePath: {
+			Path:                   worktreePath,
+			Branch:                 "feature/completed",
+			CreationToken:          "abandoned-creation",
+			UnreviewedRemoteSource: true,
+		},
+	}}
+	mockG := &mockGit{worktrees: []models.Worktree{{
+		Path:       worktreePath,
+		Branch:     "feature/completed",
+		Generation: generation,
+	}}}
+	manager := New(mockG, &models.Config{})
+	manager.openRemoteSourceState = func() (remoteSourceState, error) {
+		return state, nil
+	}
+
+	_, err := manager.AddTracking(
+		"feature/replacement",
+		"refs/remotes/origin/feature/replacement",
+		worktreePath,
+	)
+
+	require.ErrorContains(t, err, "recovered completed remote-source worktree")
+	assert.Len(t, mockG.worktrees, 1, "recovery must not replace the checkout")
+	entry, ok := state.entries[worktreePath]
+	require.True(t, ok)
+	assert.Equal(t, "feature/completed", entry.Branch)
+	assert.Empty(t, entry.CreationToken)
+	assert.Equal(t, generation, entry.Generation)
+	assert.True(t, entry.UnreviewedRemoteSource)
 }
 
 func TestManagerAddTrackingDoesNotExpandRemoteBranchEnvironmentReferences(

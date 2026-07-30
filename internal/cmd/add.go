@@ -295,37 +295,28 @@ func registerWorktreeExpiration(
 	branch string,
 	expiresAt *time.Time,
 ) error {
-	observed, _ := reg.Get(worktreePath)
-	if observed != nil && observed.CreationToken != "" {
-		return fmt.Errorf(
-			"worktree creation in progress for %s",
-			worktreePath,
-		)
-	}
-	entry := &registry.WorktreeEntry{}
-	if observed != nil {
-		*entry = *observed
-	}
-	entry.Repository = repository
-	entry.Branch = branch
-	entry.Path = worktreePath
-	entry.IsMain = false
-	entry.ExpiresAt = expiresAt
-	entry.Generation = generation
-
 	return g.WithWorktreeGeneration(
 		worktreePath,
 		generation,
 		func() error {
-			replaced, err := reg.CompareAndSwap(
+			updated, err := reg.SetExpirationIfGeneration(
 				worktreePath,
-				observed,
-				entry,
+				generation,
+				repository,
+				branch,
+				expiresAt,
 			)
 			if err != nil {
 				return err
 			}
-			if !replaced {
+			if !updated {
+				if observed, ok := reg.Get(worktreePath); ok &&
+					observed.CreationToken != "" {
+					return fmt.Errorf(
+						"worktree creation in progress for %s",
+						worktreePath,
+					)
+				}
 				return fmt.Errorf(
 					"registry ownership changed for %s",
 					worktreePath,

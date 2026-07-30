@@ -198,6 +198,45 @@ func TestRegisterWorktreeExpirationRejectsRecreatedWorktree(t *testing.T) {
 	assert.True(t, entry.ExpiresAt.Equal(replacementExpiry))
 }
 
+func TestRegisterWorktreeExpirationCreatesOrdinaryWorktreeEntry(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "ordinary-worktree")
+	runTUITestGit(
+		t,
+		repoPath,
+		"worktree",
+		"add",
+		"-b",
+		"feature/ordinary",
+		worktreePath,
+	)
+	generation := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
+	reg, err := registry.New()
+	require.NoError(t, err)
+	expiresAt := time.Now().Add(time.Hour)
+
+	err = registerWorktreeExpiration(
+		git.New(repoPath),
+		reg,
+		worktreePath,
+		generation,
+		"https://github.com/example/repository.git",
+		"feature/ordinary",
+		&expiresAt,
+	)
+
+	require.NoError(t, err)
+	entry, ok := reg.Get(worktreePath)
+	require.True(t, ok)
+	assert.Equal(t, generation, entry.Generation)
+	assert.Equal(t, "feature/ordinary", entry.Branch)
+	require.NotNil(t, entry.ExpiresAt)
+	assert.True(t, entry.ExpiresAt.Equal(expiresAt))
+}
+
 func TestRegisterWorktreeExpirationRejectsProvisionalCreation(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

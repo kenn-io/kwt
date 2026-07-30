@@ -2,6 +2,7 @@
 package registry
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -237,6 +238,173 @@ func (r *Registry) CompareAndSwap(
 		return true
 	})
 	return replaced, err
+}
+
+// AcquireCreation holds path's creation ownership until the returned release
+// function is called. The operating system releases the lock if the creating
+// process exits, allowing a later operation to recover its provisional entry.
+func (r *Registry) AcquireCreation(
+	path string,
+) (func() error, bool, error) {
+	if err := os.MkdirAll(filepath.Dir(r.path), 0755); err != nil {
+		return nil, false, fmt.Errorf(
+			"failed to create registry directory: %w",
+			err,
+		)
+	}
+	pathHash := sha256.Sum256([]byte(creationPathKey(path)))
+	lockPath := filepath.Join(
+		filepath.Dir(r.path),
+		fmt.Sprintf(".creation-%x.lock", pathHash),
+	)
+	lock := flock.New(lockPath, flock.SetPermissions(0600))
+	acquired, err := lock.TryLock()
+	if err != nil {
+		return nil, false, fmt.Errorf("lock worktree creation: %w", err)
+	}
+	if !acquired {
+		return nil, false, nil
+	}
+	return lock.Unlock, true, nil
+}
+
+func creationPathKey(path string) string {
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	current := filepath.Clean(path)
+	var missing []string
+	for {
+		if resolved, err := filepath.EvalSymlinks(current); err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return utils.PathKey(resolved)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return utils.PathKey(path)
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+}
+
+// CompleteCreation finalizes only the provisional owner named by token. Other
+// fields are retained so acknowledgement or metadata updates are not lost.
+func (r *Registry) CompleteCreation(
+	path string,
+	token string,
+	generation string,
+) (bool, error) {
+	completed := false
+	err := r.mutate(func(entries map[string]*WorktreeEntry) bool {
+		keys := matchingRegistryKeys(entries, path)
+		if len(keys) != 1 || entries[keys[0]].CreationToken != token {
+			return false
+		}
+		entry := entries[keys[0]]
+		entry.CreationToken = ""
+		entry.Generation = generation
+		completed = true
+		return true
+	})
+	return completed, err
+}
+
+// ReclaimCreation transfers an abandoned provisional entry to a new owner.
+func (r *Registry) ReclaimCreation(
+	path string,
+	token string,
+	replacement *WorktreeEntry,
+) (bool, error) {
+	copied := *replacement
+	if copied.RegisteredAt.IsZero() {
+		copied.RegisteredAt = time.Now()
+	}
+	reclaimed := false
+	err := r.mutate(func(entries map[string]*WorktreeEntry) bool {
+		keys := matchingRegistryKeys(entries, path)
+		if len(keys) != 1 || entries[keys[0]].CreationToken != token {
+			return false
+		}
+		delete(entries, keys[0])
+		entries[copied.Path] = &copied
+		reclaimed = true
+		return true
+	})
+	return reclaimed, err
+}
+
+// AbortCreation restores the state replaced by token, preserving any
+// acknowledgement made while creation was active.
+func (r *Registry) AbortCreation(
+	path string,
+	token string,
+	previous *WorktreeEntry,
+) (bool, error) {
+	aborted := false
+	err := r.mutate(func(entries map[string]*WorktreeEntry) bool {
+		keys := matchingRegistryKeys(entries, path)
+		if len(keys) != 1 || entries[keys[0]].CreationToken != token {
+			return false
+		}
+		current := entries[keys[0]]
+		delete(entries, keys[0])
+		if previous != nil {
+			restored := *previous
+			restored.UnreviewedRemoteSource =
+				previous.UnreviewedRemoteSource &&
+					current.UnreviewedRemoteSource
+			entries[restored.Path] = &restored
+		}
+		aborted = true
+		return true
+	})
+	return aborted, err
+}
+
+// SetExpirationIfGeneration updates expiration metadata only while path still
+// names generation. Unrelated fields are retained.
+func (r *Registry) SetExpirationIfGeneration(
+	path string,
+	generation string,
+	repository string,
+	branch string,
+	expiresAt *time.Time,
+) (bool, error) {
+	updated := false
+	err := r.mutate(func(entries map[string]*WorktreeEntry) bool {
+		keys := matchingRegistryKeys(entries, path)
+		if len(keys) == 0 {
+			entries[path] = &WorktreeEntry{
+				Repository:   repository,
+				Branch:       branch,
+				Path:         path,
+				RegisteredAt: time.Now(),
+				ExpiresAt:    expiresAt,
+				Generation:   generation,
+			}
+			updated = true
+			return true
+		}
+		if len(keys) != 1 {
+			return false
+		}
+		entry := entries[keys[0]]
+		if entry.CreationToken != "" ||
+			entry.Generation != generation {
+			return false
+		}
+		entry.Repository = repository
+		entry.Branch = branch
+		entry.Path = path
+		entry.IsMain = false
+		entry.ExpiresAt = expiresAt
+		updated = true
+		return true
+	})
+	return updated, err
 }
 
 func sameWorktreeEntry(left *WorktreeEntry, right *WorktreeEntry) bool {
