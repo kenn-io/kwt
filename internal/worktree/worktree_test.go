@@ -117,7 +117,7 @@ func (m *mockGit) AddWorktreeExisting(
 func (m *mockGit) RemoveWorktree(
 	path string,
 	force bool,
-	ifCreatedAt *time.Time,
+	ifGeneration string,
 ) error {
 	if m.removeError != nil {
 		return m.removeError
@@ -471,7 +471,7 @@ func TestManagerRemove(t *testing.T) {
 	m := New(mockG, &models.Config{})
 
 	// Remove worktree
-	err := m.Remove("/path/to/worktree1", false, nil)
+	err := m.Remove("/path/to/worktree1", false, "")
 	if err != nil {
 		t.Fatalf("Remove() error = %v", err)
 	}
@@ -663,6 +663,22 @@ func TestManagerGetMatchingWorktreesResolvesEquivalentPaths(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, matches, 1)
 	assert.Equal(t, "feature/equivalent-path", matches[0].Branch)
+}
+
+func TestManagerGetMatchingWorktreesPrefersExactPath(t *testing.T) {
+	exactPath := filepath.Join(t.TempDir(), "task")
+	m := New(&mockGit{
+		worktrees: []models.Worktree{
+			{Path: exactPath, Branch: "feature/task"},
+			{Path: exactPath + "-old", Branch: "feature/task-old"},
+		},
+	}, &models.Config{})
+
+	matches, err := m.GetMatchingWorktrees(exactPath)
+
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	assert.Equal(t, "feature/task", matches[0].Branch)
 }
 
 func TestManagerValidateWorktreePath(t *testing.T) {

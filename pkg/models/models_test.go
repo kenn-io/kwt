@@ -14,6 +14,7 @@ func TestWorktreeJSON(t *testing.T) {
 		CommitHash: "abc123def456",
 		IsMain:     false,
 		CreatedAt:  now,
+		Generation: "0123456789abcdef0123456789abcdef",
 	}
 
 	// Test marshaling
@@ -43,6 +44,9 @@ func TestWorktreeJSON(t *testing.T) {
 	}
 	if !decoded.CreatedAt.Equal(wt.CreatedAt) {
 		t.Errorf("CreatedAt mismatch: got %v, want %v", decoded.CreatedAt, wt.CreatedAt)
+	}
+	if decoded.Generation != wt.Generation {
+		t.Errorf("Generation mismatch: got %s, want %s", decoded.Generation, wt.Generation)
 	}
 }
 

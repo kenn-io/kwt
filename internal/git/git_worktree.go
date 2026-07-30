@@ -1,12 +1,13 @@
 package git
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/gofrs/flock"
 	gitworktree "go.kenn.io/kit/git/worktree"
@@ -33,6 +34,9 @@ func (g *Git) ListWorktrees() ([]models.Worktree, error) {
 		}
 		if info, statErr := os.Stat(worktree.Path); statErr == nil {
 			worktree.CreatedAt = info.ModTime()
+		}
+		if generation, generationErr := g.WorktreeGeneration(worktree.Path); generationErr == nil {
+			worktree.Generation = generation
 		}
 		worktrees = append(worktrees, worktree)
 	}
@@ -462,14 +466,11 @@ func (g *Git) addWorktreeFromBase(path, branch, baseBranch string) error {
 func (g *Git) RemoveWorktree(
 	path string,
 	force bool,
-	ifCreatedAt *time.Time,
+	ifGeneration string,
 ) error {
 	return g.withWorktreeMutationLock(nil, func() error {
-		if ifCreatedAt != nil {
-			if err := g.requireWorktreeCreationIdentity(
-				path,
-				*ifCreatedAt,
-			); err != nil {
+		if ifGeneration != "" {
+			if err := g.requireWorktreeGeneration(path, ifGeneration); err != nil {
 				return err
 			}
 		}
@@ -507,29 +508,144 @@ func (g *Git) removeWorktree(path string, force bool) error {
 	return nil
 }
 
-func (g *Git) requireWorktreeCreationIdentity(
-	path string,
-	expected time.Time,
-) error {
-	canonicalPath := utils.CanonicalPath(path)
-	worktrees, err := g.ListWorktrees()
+func (g *Git) requireWorktreeGeneration(path string, expected string) error {
+	generation, err := g.readWorktreeGeneration(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("worktree generation changed for %s", path)
 	}
-	for _, worktree := range worktrees {
-		if utils.CanonicalPath(worktree.Path) != canonicalPath {
+	if generation != expected {
+		return fmt.Errorf("worktree generation changed for %s", path)
+	}
+	return nil
+}
+
+// WorktreeGeneration returns a durable identity stored in the worktree's Git
+// administrative directory. Git removes that directory with the worktree, so
+// recreating the same path receives a different identity.
+func (g *Git) WorktreeGeneration(path string) (string, error) {
+	if generation, err := g.readWorktreeGeneration(path); err == nil {
+		return generation, nil
+	}
+
+	generationBytes := make([]byte, 16)
+	if _, err := rand.Read(generationBytes); err != nil {
+		return "", fmt.Errorf("generate worktree identity: %w", err)
+	}
+	generation := hex.EncodeToString(generationBytes)
+	gitDir, err := g.worktreeGitDir(path)
+	if err != nil {
+		return "", err
+	}
+	generationPath := filepath.Join(gitDir, "kwt-generation")
+	file, err := os.OpenFile(
+		generationPath,
+		os.O_WRONLY|os.O_CREATE|os.O_EXCL,
+		0600,
+	)
+	if err != nil {
+		if os.IsExist(err) {
+			return g.readWorktreeGeneration(path)
+		}
+		return "", fmt.Errorf("persist worktree identity: %w", err)
+	}
+	if _, err := fmt.Fprintln(file, generation); err != nil {
+		_ = file.Close()
+		_ = os.Remove(generationPath)
+		return "", fmt.Errorf("persist worktree identity: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(generationPath)
+		return "", fmt.Errorf("persist worktree identity: %w", err)
+	}
+	return generation, nil
+}
+
+func (g *Git) readWorktreeGeneration(path string) (string, error) {
+	gitDir, err := g.worktreeGitDir(path)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(filepath.Join(gitDir, "kwt-generation"))
+	if err != nil {
+		return "", fmt.Errorf("read worktree identity: %w", err)
+	}
+	generation := strings.TrimSpace(string(data))
+	decoded, err := hex.DecodeString(generation)
+	if err != nil || len(decoded) != 16 {
+		return "", fmt.Errorf("read worktree identity: invalid generation")
+	}
+	return generation, nil
+}
+
+func (g *Git) worktreeGitDir(path string) (string, error) {
+	dotGitPath := filepath.Join(path, ".git")
+	info, err := os.Stat(dotGitPath)
+	if err == nil {
+		if info.IsDir() {
+			return dotGitPath, nil
+		}
+		data, readErr := os.ReadFile(dotGitPath)
+		if readErr == nil {
+			gitDir := strings.TrimSpace(string(data))
+			if strings.HasPrefix(gitDir, "gitdir: ") {
+				gitDir = strings.TrimSpace(
+					strings.TrimPrefix(gitDir, "gitdir: "),
+				)
+				if !filepath.IsAbs(gitDir) {
+					gitDir = filepath.Join(path, gitDir)
+				}
+				gitDir = filepath.Clean(gitDir)
+				if gitDirInfo, statErr := os.Stat(gitDir); statErr == nil &&
+					gitDirInfo.IsDir() {
+					return gitDir, nil
+				}
+			}
+		}
+	}
+
+	commonDirOutput, commonDirErr := g.run("rev-parse", "--git-common-dir")
+	if commonDirErr != nil {
+		return "", fmt.Errorf(
+			"resolve worktree Git directory: %w",
+			commonDirErr,
+		)
+	}
+	commonDir := strings.TrimSpace(commonDirOutput)
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(g.workDir, commonDir)
+	}
+	commonDir = filepath.Clean(commonDir)
+	entries, readDirErr := os.ReadDir(filepath.Join(commonDir, "worktrees"))
+	if readDirErr != nil {
+		return "", fmt.Errorf("resolve worktree Git directory: %w", readDirErr)
+	}
+	canonicalPath := comparableWorktreePath(path)
+	for _, entry := range entries {
+		if !entry.IsDir() {
 			continue
 		}
-		if worktree.CreatedAt.IsZero() ||
-			!worktree.CreatedAt.Equal(expected) {
-			return fmt.Errorf(
-				"worktree creation identity changed for %s",
-				path,
-			)
+		adminDir := filepath.Join(commonDir, "worktrees", entry.Name())
+		gitDirFile, readErr := os.ReadFile(filepath.Join(adminDir, "gitdir"))
+		if readErr != nil {
+			continue
 		}
-		return nil
+		registeredDotGit := strings.TrimSpace(string(gitDirFile))
+		registeredPath := filepath.Dir(registeredDotGit)
+		if comparableWorktreePath(registeredPath) == canonicalPath {
+			return adminDir, nil
+		}
 	}
-	return fmt.Errorf("worktree creation identity changed for %s", path)
+	return "", fmt.Errorf("resolve worktree Git directory: worktree not found")
+}
+
+func comparableWorktreePath(path string) string {
+	if _, err := os.Stat(path); err == nil {
+		return utils.CanonicalPath(path)
+	}
+	return filepath.Join(
+		utils.CanonicalPath(filepath.Dir(path)),
+		filepath.Base(path),
+	)
 }
 
 func (g *Git) withWorktreeMutationLock(

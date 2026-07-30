@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/registry"
@@ -28,7 +27,7 @@ type GitInterface interface {
 		protectedNames []string,
 	) error
 	AddWorktreeFromBase(path, branch, baseBranch string) error
-	RemoveWorktree(path string, force bool, ifCreatedAt *time.Time) error
+	RemoveWorktree(path string, force bool, ifGeneration string) error
 	DeleteBranch(branch string, force bool) error
 	PruneWorktrees() error
 	GetRepositoryName() (string, error)
@@ -186,9 +185,9 @@ func (m *Manager) AddFromBase(branch string, baseBranch string, customPath strin
 func (m *Manager) Remove(
 	path string,
 	force bool,
-	ifCreatedAt *time.Time,
+	ifGeneration string,
 ) error {
-	return m.git.RemoveWorktree(path, force, ifCreatedAt)
+	return m.git.RemoveWorktree(path, force, ifGeneration)
 }
 
 // RemoveWithBranch deletes a worktree and optionally its branch.
@@ -198,13 +197,13 @@ func (m *Manager) RemoveWithBranch(
 	forceWorktree bool,
 	deleteBranch bool,
 	forceBranch bool,
-	ifCreatedAt *time.Time,
+	ifGeneration string,
 ) error {
 	// First remove the worktree
 	if err := m.git.RemoveWorktree(
 		path,
 		forceWorktree,
-		ifCreatedAt,
+		ifGeneration,
 	); err != nil {
 		return err
 	}
@@ -255,13 +254,22 @@ func (m *Manager) GetMatchingWorktrees(pattern string) ([]models.Worktree, error
 		return nil, err
 	}
 
-	var matches []models.Worktree
 	canonicalPattern := utils.CanonicalPath(pattern)
+	var exactMatches []models.Worktree
+	for _, wt := range worktrees {
+		if utils.CanonicalPath(wt.Path) == canonicalPattern {
+			exactMatches = append(exactMatches, wt)
+		}
+	}
+	if len(exactMatches) > 0 {
+		return exactMatches, nil
+	}
+
+	var matches []models.Worktree
 	pattern = strings.ToLower(pattern)
 	pathPattern := strings.ToLower(filepath.ToSlash(pattern))
 	for _, wt := range worktrees {
 		if strings.Contains(strings.ToLower(wt.Branch), pattern) ||
-			utils.CanonicalPath(wt.Path) == canonicalPattern ||
 			strings.Contains(
 				strings.ToLower(filepath.ToSlash(wt.Path)),
 				pathPattern,

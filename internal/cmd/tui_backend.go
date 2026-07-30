@@ -956,6 +956,7 @@ func (b *tuiBackend) PreviewWorktree(row dashboard.Row, branch string) (dashboar
 	entry.CommitHash = ""
 	entry.IsMain = false
 	entry.CreatedAt = time.Time{}
+	entry.Generation = ""
 	return dashboard.Row{
 		Entry:  &entry,
 		Status: unknownStatusForEntry(&entry),
@@ -1128,7 +1129,7 @@ func (b *tuiBackend) failMaterializedHeadVerification(
 	if err := worktree.New(git.New(repoRoot), b.cfg).Remove(
 		worktreePath,
 		true,
-		nil,
+		"",
 	); err != nil {
 		return fmt.Errorf(
 			"%w (failed to remove rejected worktree: %v)",
@@ -1226,12 +1227,21 @@ func (b *tuiBackend) RemoveWorktree(ctx context.Context, row dashboard.Row, forc
 	if row.Entry.IsMain {
 		return fmt.Errorf("refusing to remove a main worktree")
 	}
+	generation := row.Entry.Generation
+	if strings.TrimSpace(generation) == "" {
+		return fmt.Errorf("worktree generation unavailable; refresh before removing")
+	}
 
 	repoRoot, err := b.repositoryRootForRow(row)
 	if err != nil {
 		return err
 	}
-	if err := b.removeWorktreeFromRoot(repoRoot, row.Entry.Path, force); err != nil {
+	if err := b.removeWorktreeFromRoot(
+		repoRoot,
+		row.Entry.Path,
+		force,
+		generation,
+	); err != nil {
 		if strings.Contains(err.Error(), "contains modified or untracked files") ||
 			strings.Contains(err.Error(), "has local changes") {
 			return fmt.Errorf("worktree has uncommitted changes")
@@ -1315,11 +1325,16 @@ func rowRepositoryIdentityCandidates(info *url.RepositoryInfo) []string {
 	return candidates
 }
 
-func (b *tuiBackend) removeWorktreeFromRoot(repoRoot string, worktreePath string, force bool) error {
+func (b *tuiBackend) removeWorktreeFromRoot(
+	repoRoot string,
+	worktreePath string,
+	force bool,
+	generation string,
+) error {
 	err := worktree.New(git.New(repoRoot), b.cfg).Remove(
 		worktreePath,
 		force,
-		nil,
+		generation,
 	)
 	if err == nil || !isWorktreeValidationError(err) {
 		return err
@@ -1331,7 +1346,7 @@ func (b *tuiBackend) removeWorktreeFromRoot(repoRoot string, worktreePath string
 	return worktree.New(git.New(repoRoot), b.cfg).Remove(
 		worktreePath,
 		force,
-		nil,
+		generation,
 	)
 }
 

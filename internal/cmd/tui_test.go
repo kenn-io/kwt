@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/kwt/internal/tmux"
 	dashboard "go.kenn.io/kwt/internal/tui"
 	"go.kenn.io/kwt/internal/url"
+	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 )
@@ -1670,6 +1671,7 @@ func TestTUIBackendRemoveWorktreeFallsBackToRegisteredProjectRoot(t *testing.T) 
 	repoPath := newTUITestRepo(t)
 	worktreePath := filepath.Join(t.TempDir(), "stale-worktree")
 	runTUITestGit(t, repoPath, "worktree", "add", "-b", "codex/stale", worktreePath)
+	generation := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
 	require.NoError(t, os.RemoveAll(worktreePath))
 
 	cfg := &models.Config{
@@ -1688,8 +1690,9 @@ func TestTUIBackendRemoveWorktreeFallsBackToRegisteredProjectRoot(t *testing.T) 
 			Repository: "service-api",
 			FullPath:   "github.com/example/service-api",
 		},
-		Branch: "codex/stale",
-		Path:   worktreePath,
+		Branch:     "codex/stale",
+		Path:       worktreePath,
+		Generation: generation,
 	}}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
 
@@ -1890,6 +1893,11 @@ func TestTUIBackendRemoveWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 		},
 		Branch: "codex/removable",
 		Path:   worktreePath,
+		Generation: tuiTestWorktreeGeneration(
+			t,
+			repoPath,
+			worktreePath,
+		),
 	}}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
 
@@ -1897,6 +1905,47 @@ func TestTUIBackendRemoveWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, published)
+}
+
+func TestTUIBackendRemoveWorktreeRejectsReplacementGeneration(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "replacement-worktree")
+	runTUITestGit(t, repoPath, "worktree", "add", "-b", "codex/original", worktreePath)
+	worktrees, err := git.New(repoPath).ListWorktrees()
+	require.NoError(t, err)
+	var originalGeneration string
+	for _, worktree := range worktrees {
+		if utils.CanonicalPath(worktree.Path) == utils.CanonicalPath(worktreePath) {
+			originalGeneration = worktree.Generation
+		}
+	}
+	require.NotEmpty(t, originalGeneration)
+
+	runTUITestGit(t, repoPath, "worktree", "remove", worktreePath)
+	runTUITestGit(t, repoPath, "branch", "-D", "codex/original")
+	runTUITestGit(t, repoPath, "worktree", "add", "-b", "codex/replacement", worktreePath)
+	replacementGeneration := tuiTestWorktreeGeneration(
+		t,
+		repoPath,
+		worktreePath,
+	)
+	require.NotEqual(t, originalGeneration, replacementGeneration)
+	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
+		Branch:     "codex/original",
+		Path:       worktreePath,
+		Generation: originalGeneration,
+	}}
+	backend := newTUIBackendWithLaunchDir(&models.Config{
+		Worktree: models.WorktreeConfig{BaseDir: t.TempDir()},
+	}, "")
+
+	err = backend.RemoveWorktree(context.Background(), row, true)
+
+	require.ErrorContains(t, err, "generation changed")
+	assert.DirExists(t, worktreePath)
 }
 
 func TestTUIBackendRemoveWorktreeDirtyErrorDoesNotSuggestCLIForce(t *testing.T) {
@@ -1925,6 +1974,11 @@ func TestTUIBackendRemoveWorktreeDirtyErrorDoesNotSuggestCLIForce(t *testing.T) 
 		},
 		Branch: "codex/dirty",
 		Path:   worktreePath,
+		Generation: tuiTestWorktreeGeneration(
+			t,
+			repoPath,
+			worktreePath,
+		),
 	}}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
 
@@ -1962,6 +2016,11 @@ func TestTUIBackendForceRemoveDeletesDirtyWorktree(t *testing.T) {
 		},
 		Branch: "codex/dirty",
 		Path:   worktreePath,
+		Generation: tuiTestWorktreeGeneration(
+			t,
+			repoPath,
+			worktreePath,
+		),
 	}}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
 
@@ -2509,6 +2568,7 @@ func TestTUIBackendRemoveWorktreeRepairsBrokenGitFile(t *testing.T) {
 	repoPath := newTUITestRepo(t)
 	worktreePath := filepath.Join(t.TempDir(), "broken-worktree")
 	runTUITestGit(t, repoPath, "worktree", "add", "-b", "codex/broken", worktreePath)
+	generation := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
 	require.NoError(t, os.WriteFile(
 		filepath.Join(worktreePath, ".git"),
 		[]byte("gitdir: /missing/repo/.git/worktrees/broken-worktree\n"),
@@ -2531,8 +2591,9 @@ func TestTUIBackendRemoveWorktreeRepairsBrokenGitFile(t *testing.T) {
 			Repository: "service-api",
 			FullPath:   "github.com/example/service-api",
 		},
-		Branch: "codex/broken",
-		Path:   worktreePath,
+		Branch:     "codex/broken",
+		Path:       worktreePath,
+		Generation: generation,
 	}}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
 
@@ -2738,6 +2799,25 @@ func runTUITestGitOutput(t *testing.T, dir string, args ...string) string {
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, fmt.Sprintf("git %s failed:\n%s", strings.Join(args, " "), output))
 	return string(output)
+}
+
+func tuiTestWorktreeGeneration(
+	t *testing.T,
+	repoPath string,
+	worktreePath string,
+) string {
+	t.Helper()
+	worktrees, err := git.New(repoPath).ListWorktrees()
+	require.NoError(t, err)
+	for _, worktree := range worktrees {
+		if utils.CanonicalPath(worktree.Path) ==
+			utils.CanonicalPath(worktreePath) {
+			require.NotEmpty(t, worktree.Generation)
+			return worktree.Generation
+		}
+	}
+	t.Fatalf("worktree %s not found", worktreePath)
+	return ""
 }
 
 func stubTUIProjectRegistration(backend *tuiBackend) {

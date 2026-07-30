@@ -90,9 +90,10 @@ Protected pull-request imports remain restricted to `kwt pr attach`.
 ## `kwt list`
 
 `--json` emits an array of objects with `path`, `branch`, `commit_hash`, `is_main`,
-`created_at` (worktree directory mtime), `repository` (the `host/owner/name`
-slug, or a `local/<path>` fallback for a repository without a usable remote —
-see below), and `session_name` (the tmux workspace session name kwt attaches to).
+`created_at` (worktree directory mtime), `generation` (the durable identity for
+conditional removal), `repository` (the `host/owner/name` slug, or a
+`local/<path>` fallback for a repository without a usable remote — see below),
+and `session_name` (the tmux workspace session name kwt attaches to).
 An imported pull-request worktree additionally includes `tmux_socket_name` for
 its protected workspace-specific server. To converge on the same session, run
 `kwt open <path> --start-session` before an ordinary attach-only client, or
@@ -102,14 +103,16 @@ protected attach policy. See [Attaching from other
 tools](#attaching-from-other-tools) before using `new-session`.
 `kwt open` and dashboard open actions refuse protected pull-request imports
 and direct the user through `kwt pr attach`.
-`created_at` is populated in both local and `-g` mode.
+`created_at` and `generation` are populated in both local and `-g` mode.
 
 ## `kwt remove`
 
-`--if-created-at <timestamp>` makes a single-worktree removal conditional on
-the `created_at` value returned by `kwt list --json`. Kwt compares that identity
-and removes the worktree while holding the repository's worktree-mutation lock,
-so automation cannot delete a replacement checkout created at the same path.
+`--if-generation <id>` makes a single-worktree removal conditional on the
+`generation` value returned by `kwt list --json`. Kwt stores this random
+identity in the worktree's Git administrative directory and compares it while
+holding the repository's worktree-mutation lock, so automation cannot delete a
+replacement checkout created at the same path. Ordinary directory changes do
+not alter the generation.
 
 ## `kwt projects`
 

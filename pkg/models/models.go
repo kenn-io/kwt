@@ -10,6 +10,7 @@ type Worktree struct {
 	CommitHash     string    `json:"commit_hash"`                // Current HEAD commit hash
 	IsMain         bool      `json:"is_main"`                    // Whether this is the main worktree
 	CreatedAt      time.Time `json:"created_at"`                 // Worktree directory modification time
+	Generation     string    `json:"generation"`                 // Durable identity for this worktree registration
 	Repository     string    `json:"repository"`                 // Repository slug, e.g. github.com/owner/name
 	SessionName    string    `json:"session_name"`               // Computed tmux workspace session name
 	TmuxSocketName string    `json:"tmux_socket_name,omitempty"` // Protected alternate tmux socket

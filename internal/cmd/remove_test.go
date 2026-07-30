@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -55,20 +54,23 @@ func TestRemoveLocalRejectsRecreatedWorktree(t *testing.T) {
 		"task7/remove-replacement",
 		worktreePath,
 	)
-	info, err := os.Stat(worktreePath)
-	require.NoError(t, err)
-	removeIfCreatedAt = info.ModTime().Format(time.RFC3339Nano)
-	replacementTime := info.ModTime().Add(time.Second)
-	require.NoError(t, os.Chtimes(
+	removeIfGeneration = tuiTestWorktreeGeneration(t, repoPath, worktreePath)
+	runTUITestGit(t, repoPath, "worktree", "remove", worktreePath)
+	runTUITestGit(t, repoPath, "branch", "-D", "task7/remove-replacement")
+	runTUITestGit(
+		t,
+		repoPath,
+		"worktree",
+		"add",
+		"-b",
+		"task7/remove-replacement",
 		worktreePath,
-		replacementTime,
-		replacementTime,
-	))
+	)
 
 	cmd, _, _ := fleetTestCommand()
-	err = runRemove(cmd, []string{worktreePath})
+	err := runRemove(cmd, []string{worktreePath})
 
-	require.ErrorContains(t, err, "creation identity changed")
+	require.ErrorContains(t, err, "generation changed")
 	assert.DirExists(t, worktreePath)
 }
 
@@ -136,9 +138,7 @@ func TestRemoveLocalPublishesWhenWorktreeRemovedButBranchDeleteFails(t *testing.
 	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, "change.txt"), []byte("change"), 0644))
 	runTUITestGit(t, worktreePath, "add", ".")
 	runTUITestGit(t, worktreePath, "commit", "-m", "unmerged worktree commit")
-	info, err := os.Stat(worktreePath)
-	require.NoError(t, err)
-	removeIfCreatedAt = info.ModTime().Format(time.RFC3339Nano)
+	removeIfGeneration = tuiTestWorktreeGeneration(t, repoPath, worktreePath)
 	reg, err := registry.New()
 	require.NoError(t, err)
 	require.NoError(t, reg.Register(&registry.WorktreeEntry{
@@ -260,9 +260,7 @@ func TestRemoveGlobalPublishesWhenWorktreeRemovedButBranchDeleteFails(t *testing
 	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, "change.txt"), []byte("change"), 0644))
 	runTUITestGit(t, worktreePath, "add", ".")
 	runTUITestGit(t, worktreePath, "commit", "-m", "unmerged worktree commit")
-	info, err := os.Stat(worktreePath)
-	require.NoError(t, err)
-	removeIfCreatedAt = info.ModTime().Format(time.RFC3339Nano)
+	removeIfGeneration = tuiTestWorktreeGeneration(t, repoPath, worktreePath)
 	reg, err := registry.New()
 	require.NoError(t, err)
 	require.NoError(t, reg.Register(&registry.WorktreeEntry{
@@ -294,7 +292,7 @@ func resetRemoveCommandFlags(t *testing.T) {
 	oldRemoveForce := removeForce
 	oldRemoveDryRun := removeDryRun
 	oldRemoveGlobal := removeGlobal
-	oldRemoveIfCreatedAt := removeIfCreatedAt
+	oldRemoveIfGeneration := removeIfGeneration
 	oldDeleteBranch := deleteBranch
 	oldForceDeleteBranch := forceDeleteBranch
 
@@ -302,7 +300,7 @@ func resetRemoveCommandFlags(t *testing.T) {
 		removeForce = oldRemoveForce
 		removeDryRun = oldRemoveDryRun
 		removeGlobal = oldRemoveGlobal
-		removeIfCreatedAt = oldRemoveIfCreatedAt
+		removeIfGeneration = oldRemoveIfGeneration
 		deleteBranch = oldDeleteBranch
 		forceDeleteBranch = oldForceDeleteBranch
 	})
@@ -310,7 +308,7 @@ func resetRemoveCommandFlags(t *testing.T) {
 	removeForce = false
 	removeDryRun = false
 	removeGlobal = false
-	removeIfCreatedAt = ""
+	removeIfGeneration = ""
 	deleteBranch = false
 	forceDeleteBranch = false
 }

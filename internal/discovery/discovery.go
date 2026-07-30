@@ -26,6 +26,7 @@ type GlobalWorktreeEntry struct {
 	CommitHash     string
 	IsMain         bool
 	CreatedAt      time.Time // Worktree directory modification time
+	Generation     string    // Durable worktree registration identity
 }
 
 type worktreeCandidate struct {
@@ -190,7 +191,8 @@ func extractWorktreeCandidates(
 func extractWorktreeInfo(worktreePath string, projects []models.Project) (*GlobalWorktreeEntry, error) {
 	// The cached wrapper keeps the entry's recorded remote URL and the
 	// resolver's own reads to one subprocess per call kind.
-	g := worktree.NewCachedIdentityGit(git.New(worktreePath))
+	repositoryGit := git.New(worktreePath)
+	g := worktree.NewCachedIdentityGit(repositoryGit)
 
 	// Get current branch
 	branch, err := getCurrentBranch(worktreePath)
@@ -220,6 +222,7 @@ func extractWorktreeInfo(worktreePath string, projects []models.Project) (*Globa
 	if info, statErr := os.Stat(worktreePath); statErr == nil {
 		createdAt = info.ModTime()
 	}
+	generation, _ := repositoryGit.WorktreeGeneration(worktreePath)
 
 	return &GlobalWorktreeEntry{
 		RepositoryURL:  repoURL,
@@ -228,6 +231,7 @@ func extractWorktreeInfo(worktreePath string, projects []models.Project) (*Globa
 		Path:           worktreePath,
 		CommitHash:     commitHash,
 		CreatedAt:      createdAt,
+		Generation:     generation,
 	}, nil
 }
 
@@ -284,6 +288,7 @@ func (e *GlobalWorktreeEntry) Model() models.Worktree {
 		CommitHash: e.CommitHash,
 		IsMain:     e.IsMain,
 		CreatedAt:  e.CreatedAt,
+		Generation: e.Generation,
 	}
 	if e.RepositoryInfo != nil {
 		m.Repository = e.RepositoryInfo.FullPath

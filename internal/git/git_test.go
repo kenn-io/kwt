@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
 )
 
@@ -729,7 +730,7 @@ func TestRemoveWorktree(t *testing.T) {
 	repo.CreateWorktree(t, worktreePath, "to-remove")
 
 	// Remove the worktree
-	err := g.RemoveWorktree(worktreePath, false, nil)
+	err := g.RemoveWorktree(worktreePath, false, "")
 	if err != nil {
 		t.Fatalf("RemoveWorktree() error = %v", err)
 	}
@@ -743,26 +744,60 @@ func TestRemoveWorktree(t *testing.T) {
 	}
 }
 
-func TestRemoveWorktreeRejectsChangedCreationIdentity(t *testing.T) {
+func TestListWorktreesKeepsGenerationStableWhenDirectoryChanges(t *testing.T) {
+	repo := NewTestRepository(t)
+	g := New(repo.Path)
+	repo.CreateBranch(t, "stable-generation")
+	worktreePath := filepath.Join(t.TempDir(), "stable-generation")
+	repo.CreateWorktree(t, worktreePath, "stable-generation")
+
+	before, err := g.ListWorktrees()
+	require.NoError(t, err)
+	var generation string
+	for _, worktree := range before {
+		if utils.CanonicalPath(worktree.Path) == utils.CanonicalPath(worktreePath) {
+			generation = worktree.Generation
+		}
+	}
+	require.NotEmpty(t, generation)
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(worktreePath, "ordinary-change"),
+		[]byte("content"),
+		0644,
+	))
+
+	after, err := g.ListWorktrees()
+	require.NoError(t, err)
+	for _, worktree := range after {
+		if utils.CanonicalPath(worktree.Path) == utils.CanonicalPath(worktreePath) {
+			assert.Equal(t, generation, worktree.Generation)
+			return
+		}
+	}
+	t.Fatal("worktree missing after ordinary directory change")
+}
+
+func TestRemoveWorktreeRejectsChangedGeneration(t *testing.T) {
 	repo := NewTestRepository(t)
 	g := New(repo.Path)
 	repo.CreateBranch(t, "replacement")
 	worktreePath := filepath.Join(t.TempDir(), "replacement")
 	repo.CreateWorktree(t, worktreePath, "replacement")
 
-	info, err := os.Stat(worktreePath)
+	worktrees, err := g.ListWorktrees()
 	require.NoError(t, err)
-	expected := info.ModTime()
-	replacementTime := expected.Add(time.Second)
-	require.NoError(t, os.Chtimes(
-		worktreePath,
-		replacementTime,
-		replacementTime,
-	))
+	var generation string
+	for _, worktree := range worktrees {
+		if utils.CanonicalPath(worktree.Path) == utils.CanonicalPath(worktreePath) {
+			generation = worktree.Generation
+		}
+	}
+	require.NotEmpty(t, generation)
 
-	err = g.RemoveWorktree(worktreePath, false, &expected)
+	err = g.RemoveWorktree(worktreePath, false, "replacement-generation")
 
-	require.ErrorContains(t, err, "creation identity changed")
+	require.ErrorContains(t, err, "generation changed")
 	assert.DirExists(t, worktreePath)
 }
 
@@ -798,7 +833,7 @@ exec "$REAL_GIT" "$@"
 	t.Setenv("REAL_GIT", realGit)
 	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	err = New(worktreePath).RemoveWorktree(worktreePath, false, nil)
+	err = New(worktreePath).RemoveWorktree(worktreePath, false, "")
 
 	if err != nil {
 		t.Fatalf("RemoveWorktree() error = %v", err)
