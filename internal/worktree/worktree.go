@@ -46,6 +46,7 @@ type GitInterface interface {
 	RemoveWorktree(path string, force bool, ifGeneration string) error
 	DeleteBranch(branch string, force bool) error
 	PruneWorktrees() error
+	ReadWorktreeGeneration(path string) (string, error)
 	GetRepositoryName() (string, error)
 	GetRecentCommits(path string, limit int) ([]models.CommitInfo, error)
 	GetRepositoryURL() (string, error)
@@ -388,24 +389,11 @@ func errorCreatedWorktree(err error) bool {
 func (m *Manager) registeredGeneration(
 	path string,
 ) (string, bool, error) {
-	worktrees, err := m.git.ListWorktrees()
+	generation, err := m.git.ReadWorktreeGeneration(path)
 	if err != nil {
 		return "", false, err
 	}
-	pathKey := utils.PathKey(path)
-	for _, worktree := range worktrees {
-		if utils.PathKey(worktree.Path) != pathKey {
-			continue
-		}
-		if worktree.Generation == "" {
-			return "", false, fmt.Errorf(
-				"worktree generation unavailable for %s",
-				path,
-			)
-		}
-		return worktree.Generation, true, nil
-	}
-	return "", false, nil
+	return generation, true, nil
 }
 
 func pathExists(path string) bool {

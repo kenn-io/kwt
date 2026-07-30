@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -108,6 +109,7 @@ func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboar
 		launchEntries     []*discovery.GlobalWorktreeEntry
 		sessions          []string
 		discoveryErr      error
+		registeredErr     error
 		launchErr         error
 		sessionsErr       error
 		startup           sync.WaitGroup
@@ -121,7 +123,8 @@ func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboar
 	}()
 	go func() {
 		defer startup.Done()
-		registeredEntries = b.discoverRegisteredProjectWorktrees()
+		registeredEntries, registeredErr =
+			b.discoverRegisteredProjectWorktrees()
 	}()
 	go func() {
 		defer startup.Done()
@@ -135,6 +138,12 @@ func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboar
 
 	if discoveryErr != nil {
 		return nil, nil, fmt.Errorf("failed to discover worktrees: %w", discoveryErr)
+	}
+	if registeredErr != nil {
+		return nil, nil, fmt.Errorf(
+			"failed to discover registered project worktrees: %w",
+			registeredErr,
+		)
 	}
 	if launchErr != nil {
 		return nil, nil, fmt.Errorf("failed to discover launch repository worktrees: %w", launchErr)
@@ -304,10 +313,14 @@ func localFleetObservation(currentHost string, localRow dashboard.Row, now time.
 	return observation, true
 }
 
-func (b *tuiBackend) discoverRegisteredProjectWorktrees() []*discovery.GlobalWorktreeEntry {
+func (b *tuiBackend) discoverRegisteredProjectWorktrees() (
+	[]*discovery.GlobalWorktreeEntry,
+	error,
+) {
 	// Each project discovery spawns git subprocesses; run them concurrently
 	// and merge in config order so results stay deterministic.
 	results := make([][]*discovery.GlobalWorktreeEntry, len(b.cfg.Projects))
+	projectErrors := make([]error, len(b.cfg.Projects))
 	var wg sync.WaitGroup
 	for i, project := range b.cfg.Projects {
 		if project.Path == "" {
@@ -318,6 +331,9 @@ func (b *tuiBackend) discoverRegisteredProjectWorktrees() []*discovery.GlobalWor
 			defer wg.Done()
 			projectEntries, err := b.discoverProjectWorktrees(project.Path)
 			if err != nil {
+				if git.IsIncompleteInventory(err) {
+					projectErrors[i] = err
+				}
 				return
 			}
 			results[i] = applyProjectIdentityFallback(projectEntries, project)
@@ -329,7 +345,7 @@ func (b *tuiBackend) discoverRegisteredProjectWorktrees() []*discovery.GlobalWor
 	for _, projectEntries := range results {
 		entries = mergeTUIEntries(entries, projectEntries)
 	}
-	return entries
+	return entries, errors.Join(projectErrors...)
 }
 
 // registerLaunchProject persists the launch repository at most once per TUI
@@ -554,6 +570,9 @@ func discoverLaunchRepoWorktrees(launchDir string) ([]*discovery.GlobalWorktreeE
 	g := git.New(launchDir)
 	worktrees, err := g.ListWorktrees()
 	if err != nil {
+		if git.IsIncompleteInventory(err) {
+			return nil, err
+		}
 		return nil, nil
 	}
 

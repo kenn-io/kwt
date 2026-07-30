@@ -3,6 +3,7 @@ package git
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,6 +29,28 @@ type worktreeCreationReservation struct {
 
 type worktreeCreatedError struct {
 	err error
+}
+
+// IncompleteInventoryError reports a repository whose worktree inventory
+// cannot be observed completely enough to publish or replace cached state.
+type IncompleteInventoryError struct {
+	Path string
+	Err  error
+}
+
+func (e *IncompleteInventoryError) Error() string {
+	return fmt.Sprintf("incomplete worktree inventory at %s: %v", e.Path, e.Err)
+}
+
+func (e *IncompleteInventoryError) Unwrap() error {
+	return e.Err
+}
+
+// IsIncompleteInventory reports whether err represents an incomplete
+// repository worktree snapshot.
+func IsIncompleteInventory(err error) bool {
+	var incomplete *IncompleteInventoryError
+	return errors.As(err, &incomplete)
 }
 
 func (e *worktreeCreatedError) Error() string {
@@ -91,11 +114,13 @@ func (g *Git) listWorktrees(excludedPath string) ([]models.Worktree, error) {
 		}
 		generation, generationErr := g.WorktreeGeneration(worktree.Path)
 		if generationErr != nil {
-			return nil, fmt.Errorf(
-				"initialize worktree generation for %s: %w",
-				worktree.Path,
-				generationErr,
-			)
+			return nil, &IncompleteInventoryError{
+				Path: worktree.Path,
+				Err: fmt.Errorf(
+					"initialize worktree generation: %w",
+					generationErr,
+				),
+			}
 		}
 		worktree.Generation = generation
 		worktrees = append(worktrees, worktree)
@@ -260,14 +285,23 @@ func (g *Git) addWorktreeExisting(
 	if err != nil {
 		return err
 	}
-	args := append([]string(nil), isolationArgs...)
-	args = append(
-		args,
-		"worktree", "add", "--no-checkout", "--detach",
-		"--", path, "refs/heads/"+branch,
+	resume, err := g.registeredWorktreeNeedsCheckout(
+		path,
+		protectedNames,
 	)
-	if _, err := g.runWithoutCredentials(protectedNames, args...); err != nil {
-		return fmt.Errorf("failed to add existing-branch worktree: %w", err)
+	if err != nil {
+		return err
+	}
+	if !resume {
+		args := append([]string(nil), isolationArgs...)
+		args = append(
+			args,
+			"worktree", "add", "--no-checkout", "--detach",
+			"--", path, "refs/heads/"+branch,
+		)
+		if _, err := g.runWithoutCredentials(protectedNames, args...); err != nil {
+			return fmt.Errorf("failed to add existing-branch worktree: %w", err)
+		}
 	}
 	if err := g.checkoutIsolatedWorktree(
 		path,
@@ -378,48 +412,77 @@ func (g *Git) addWorktreeTracking(
 		return err
 	}
 
-	if _, err := g.runWithoutCredentials(
+	resume, err := g.registeredWorktreeNeedsCheckout(
+		path,
 		protectedNames,
-		append(
-			append([]string(nil), isolationArgs...),
-			"branch", "--track", "--", branch, remoteBranch,
-		)...,
-	); err != nil {
-		return fmt.Errorf(
-			"failed to create branch tracking %s: %w",
-			remoteBranch,
-			err,
-		)
-	}
-	worktreeArgs := append([]string(nil), isolationArgs...)
-	worktreeArgs = append(
-		worktreeArgs,
-		"worktree", "add", "--no-checkout", "--", path, branch,
 	)
-	if _, err := g.runWithoutCredentials(
+	if err != nil {
+		return err
+	}
+	reusedBranch, err := g.reusableTrackingBranch(
+		branch,
+		remoteBranch,
 		protectedNames,
-		worktreeArgs...,
-	); err != nil {
-		if _, rollbackErr := g.runWithoutCredentials(
+		isolationArgs,
+	)
+	if err != nil {
+		return err
+	}
+	createdBranch := false
+	if !reusedBranch {
+		if _, err := g.runWithoutCredentials(
 			protectedNames,
 			append(
 				append([]string(nil), isolationArgs...),
-				"branch", "-D", "--", branch,
+				"branch", "--track", "--", branch, remoteBranch,
 			)...,
-		); rollbackErr != nil {
+		); err != nil {
 			return fmt.Errorf(
-				"failed to add worktree tracking %s: %w (failed to remove branch %s: %v)",
+				"failed to create branch tracking %s: %w",
 				remoteBranch,
 				err,
-				branch,
-				rollbackErr,
 			)
 		}
-		return fmt.Errorf(
-			"failed to add worktree tracking %s: %w",
-			remoteBranch,
-			err,
+		createdBranch = true
+	}
+	if !resume {
+		worktreeArgs := append([]string(nil), isolationArgs...)
+		worktreeArgs = append(
+			worktreeArgs,
+			"worktree", "add", "--no-checkout", "--", path, branch,
 		)
+		if _, err := g.runWithoutCredentials(
+			protectedNames,
+			worktreeArgs...,
+		); err != nil {
+			if !createdBranch {
+				return fmt.Errorf(
+					"failed to add worktree tracking %s: %w",
+					remoteBranch,
+					err,
+				)
+			}
+			if _, rollbackErr := g.runWithoutCredentials(
+				protectedNames,
+				append(
+					append([]string(nil), isolationArgs...),
+					"branch", "-D", "--", branch,
+				)...,
+			); rollbackErr != nil {
+				return fmt.Errorf(
+					"failed to add worktree tracking %s: %w (failed to remove branch %s: %v)",
+					remoteBranch,
+					err,
+					branch,
+					rollbackErr,
+				)
+			}
+			return fmt.Errorf(
+				"failed to add worktree tracking %s: %w",
+				remoteBranch,
+				err,
+			)
+		}
 	}
 	if err := g.checkoutIsolatedWorktree(
 		path,
@@ -439,20 +502,22 @@ func (g *Git) addWorktreeTracking(
 				cleanupErr,
 			))
 		}
-		if _, cleanupErr := g.runWithoutCredentials(
-			protectedNames,
-			append(
-				append([]string(nil), isolationArgs...),
-				"branch", "-D", "--", branch,
-			)...,
-		); cleanupErr != nil {
-			return fmt.Errorf(
-				"failed to check out worktree tracking %s: %w (failed to remove branch %s: %v)",
-				remoteBranch,
-				err,
-				branch,
-				cleanupErr,
-			)
+		if createdBranch {
+			if _, cleanupErr := g.runWithoutCredentials(
+				protectedNames,
+				append(
+					append([]string(nil), isolationArgs...),
+					"branch", "-D", "--", branch,
+				)...,
+			); cleanupErr != nil {
+				return fmt.Errorf(
+					"failed to check out worktree tracking %s: %w (failed to remove branch %s: %v)",
+					remoteBranch,
+					err,
+					branch,
+					cleanupErr,
+				)
+			}
 		}
 		return fmt.Errorf(
 			"failed to check out worktree tracking %s: %w",
@@ -461,6 +526,82 @@ func (g *Git) addWorktreeTracking(
 		)
 	}
 	return nil
+}
+
+func (g *Git) registeredWorktreeNeedsCheckout(
+	path string,
+	protectedNames []string,
+) (bool, error) {
+	output, err := g.runWithoutCredentials(
+		protectedNames,
+		"worktree",
+		"list",
+		"--porcelain",
+	)
+	if err != nil {
+		return false, err
+	}
+	want := comparableWorktreePath(path)
+	registered := false
+	for _, entry := range gitworktree.ParsePorcelain(output) {
+		if comparableWorktreePath(entry.Path) == want {
+			registered = true
+			break
+		}
+	}
+	if !registered {
+		return false, nil
+	}
+	if _, err := g.readWorktreeGeneration(path); err == nil {
+		return false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, &IncompleteInventoryError{
+			Path: path,
+			Err:  err,
+		}
+	}
+	return true, nil
+}
+
+func (g *Git) reusableTrackingBranch(
+	branch string,
+	remoteBranch string,
+	protectedNames []string,
+	isolationArgs []string,
+) (bool, error) {
+	fullBranch := "refs/heads/" + branch
+	args := append([]string(nil), isolationArgs...)
+	args = append(
+		args,
+		"for-each-ref",
+		"--format=%(refname)%00%(upstream)",
+		"--count=1",
+		"--",
+		fullBranch,
+	)
+	output, err := g.runWithoutCredentials(protectedNames, args...)
+	if err != nil {
+		return false, fmt.Errorf("inspect local tracking branch: %w", err)
+	}
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return false, nil
+	}
+	parts := strings.SplitN(output, "\x00", 2)
+	if len(parts) != 2 || parts[0] != fullBranch {
+		return false, fmt.Errorf("inspect local tracking branch: invalid response")
+	}
+	expectedSource := remoteBranch
+	if !strings.HasPrefix(expectedSource, "refs/") {
+		expectedSource = "refs/remotes/" + expectedSource
+	}
+	if parts[1] != expectedSource {
+		return false, fmt.Errorf(
+			"local branch %s already exists with a different upstream",
+			branch,
+		)
+	}
+	return true, nil
 }
 
 func (g *Git) validateLocalBranchName(
@@ -810,6 +951,13 @@ func (g *Git) WorktreeGeneration(path string) (string, error) {
 		return "", fmt.Errorf("persist worktree identity: %w", err)
 	}
 	return generation, nil
+}
+
+// ReadWorktreeGeneration returns an existing durable identity without
+// initializing one. Recovery uses absence as evidence that checkout did not
+// complete its kwt creation boundary.
+func (g *Git) ReadWorktreeGeneration(path string) (string, error) {
+	return g.readWorktreeGeneration(path)
 }
 
 func (g *Git) readWorktreeGeneration(path string) (string, error) {

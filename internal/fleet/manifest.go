@@ -180,7 +180,7 @@ func (b *ManifestBuilder) addConfiguredProject(
 
 	worktrees, err := b.listProjectWorktrees(ctx, project)
 	if err != nil {
-		if isContextError(err) {
+		if isContextError(err) || git.IsIncompleteInventory(err) {
 			return err
 		}
 		return nil

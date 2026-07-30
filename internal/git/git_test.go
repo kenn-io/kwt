@@ -1863,6 +1863,48 @@ func TestAddWorktreeTrackingRejectsOptionLikeBranchName(t *testing.T) {
 	assert.NoDirExists(t, worktreePath)
 }
 
+func TestAddWorktreeTrackingReusesMatchingOrphanBranch(t *testing.T) {
+	repo := NewTestRepository(t)
+	gitOutput(t, repo.Path, "remote", "add", "origin", repo.Path)
+	gitOutput(
+		t,
+		repo.Path,
+		"update-ref",
+		"refs/remotes/origin/orphaned",
+		"HEAD",
+	)
+	gitOutput(
+		t,
+		repo.Path,
+		"branch",
+		"--track",
+		"orphaned",
+		"refs/remotes/origin/orphaned",
+	)
+	worktreePath := filepath.Join(t.TempDir(), "orphaned")
+
+	err := New(repo.Path).AddWorktreeTracking(
+		worktreePath,
+		"orphaned",
+		"refs/remotes/origin/orphaned",
+		nil,
+	)
+
+	require.NoError(t, err)
+	assert.DirExists(t, worktreePath)
+	assert.Equal(
+		t,
+		"origin/orphaned",
+		gitOutput(
+			t,
+			worktreePath,
+			"rev-parse",
+			"--abbrev-ref",
+			"@{upstream}",
+		),
+	)
+}
+
 func TestAddWorktreeExistingRemovesWorktreeAfterCheckoutFailure(t *testing.T) {
 	repo := NewTestRepository(t)
 	createBranchWithMissingBlob(t, repo, "broken-local")

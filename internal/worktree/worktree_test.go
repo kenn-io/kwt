@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	configpkg "go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/registry"
+	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
 )
 
@@ -34,6 +35,7 @@ type mockGit struct {
 	trackingSource    string
 	existingSource    string
 	protectedNames    []string
+	initializeOnList  bool
 }
 
 type mockRemoteSourceState struct {
@@ -149,7 +151,28 @@ func (m *mockGit) ListWorktrees() ([]models.Worktree, error) {
 	if m.listError != nil {
 		return nil, m.listError
 	}
+	if m.initializeOnList {
+		for i := range m.worktrees {
+			if m.worktrees[i].Generation == "" {
+				m.worktrees[i].Generation =
+					"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			}
+		}
+	}
 	return m.worktrees, nil
+}
+
+func (m *mockGit) ReadWorktreeGeneration(path string) (string, error) {
+	for _, worktree := range m.worktrees {
+		if utils.PathKey(worktree.Path) != utils.PathKey(path) {
+			continue
+		}
+		if worktree.Generation == "" {
+			return "", errors.New("worktree generation is not initialized")
+		}
+		return worktree.Generation, nil
+	}
+	return "", errors.New("worktree not found")
 }
 
 func (m *mockGit) AddWorktree(path, branch string, createBranch bool) error {
@@ -183,6 +206,13 @@ func (m *mockGit) AddWorktreeTracking(
 	}
 	m.trackingSource = remoteBranch
 	m.protectedNames = append([]string(nil), protectedNames...)
+	for i := range m.worktrees {
+		if utils.PathKey(m.worktrees[i].Path) == utils.PathKey(path) &&
+			m.worktrees[i].Generation == "" {
+			m.worktrees[i].Branch = branch
+			return nil
+		}
+	}
 	m.worktrees = append(m.worktrees, models.Worktree{
 		Path:   path,
 		Branch: branch,
@@ -204,7 +234,13 @@ func (m *mockGit) AddWorktreeTrackingWithGeneration(
 	); err != nil {
 		return "", err
 	}
-	return "0123456789abcdef0123456789abcdef", nil
+	generation := "0123456789abcdef0123456789abcdef"
+	for i := range m.worktrees {
+		if utils.PathKey(m.worktrees[i].Path) == utils.PathKey(path) {
+			m.worktrees[i].Generation = generation
+		}
+	}
+	return generation, nil
 }
 
 func (m *mockGit) AddWorktreeExisting(
@@ -670,6 +706,49 @@ func TestManagerAddTrackingFinalizesAbandonedCompletedCheckout(t *testing.T) {
 	assert.Empty(t, entry.CreationToken)
 	assert.Equal(t, generation, entry.Generation)
 	assert.True(t, entry.UnreviewedRemoteSource)
+}
+
+func TestManagerAddTrackingDoesNotInitializeAbandonedCheckoutDuringRecovery(
+	t *testing.T,
+) {
+	worktreePath := filepath.Join(t.TempDir(), "incomplete-worktree")
+	state := &mockRemoteSourceState{entries: map[string]*registry.WorktreeEntry{
+		worktreePath: {
+			Path:                   worktreePath,
+			Branch:                 "feature/incomplete",
+			CreationToken:          "abandoned-creation",
+			UnreviewedRemoteSource: true,
+		},
+	}}
+	mockG := &mockGit{
+		initializeOnList: true,
+		worktrees: []models.Worktree{{
+			Path:   worktreePath,
+			Branch: "feature/incomplete",
+		}},
+	}
+	manager := New(mockG, &models.Config{})
+	manager.openRemoteSourceState = func() (remoteSourceState, error) {
+		return state, nil
+	}
+
+	path, err := manager.AddTracking(
+		"feature/incomplete",
+		"refs/remotes/origin/feature/incomplete",
+		worktreePath,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, worktreePath, path)
+	assert.Equal(
+		t,
+		"refs/remotes/origin/feature/incomplete",
+		mockG.trackingSource,
+	)
+	entry, ok := state.entries[worktreePath]
+	require.True(t, ok)
+	assert.Empty(t, entry.CreationToken)
+	assert.Equal(t, "0123456789abcdef0123456789abcdef", entry.Generation)
 }
 
 func TestManagerAddTrackingDoesNotExpandRemoteBranchEnvironmentReferences(

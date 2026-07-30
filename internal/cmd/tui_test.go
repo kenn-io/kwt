@@ -523,6 +523,46 @@ func TestTUIBackendListIncludesRegisteredProjectWorktrees(t *testing.T) {
 	})
 }
 
+func TestTUIBackendListPropagatesIncompleteRegisteredProjectInventory(
+	t *testing.T,
+) {
+	cfg := &models.Config{
+		Worktree: models.WorktreeConfig{BaseDir: "/global"},
+		Projects: []models.Project{{
+			Repository: "github.com/example/tools",
+			Path:       "/repos/tools",
+		}},
+	}
+	backend := newTUIBackendWithLaunchDir(cfg, "")
+	stubTUIProjectRegistration(backend)
+	backend.discoverGlobalWorktrees = func(
+		string,
+	) ([]*discovery.GlobalWorktreeEntry, error) {
+		return nil, nil
+	}
+	incomplete := &git.IncompleteInventoryError{
+		Path: "/repos/tools",
+		Err:  errors.New("generation is unreadable"),
+	}
+	backend.discoverProjectWorktrees = func(
+		string,
+	) ([]*discovery.GlobalWorktreeEntry, error) {
+		return nil, incomplete
+	}
+	backend.discoverLaunchWorktrees = func(
+		string,
+	) ([]*discovery.GlobalWorktreeEntry, error) {
+		return nil, nil
+	}
+	backend.listSessions = func() ([]string, error) { return nil, nil }
+
+	rows, _, err := backend.ListFast(context.Background())
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, incomplete)
+	assert.Nil(t, rows)
+}
+
 func TestDashboardFleetInfoSummarizesPrimaryObservations(t *testing.T) {
 	tests := []struct {
 		name         string

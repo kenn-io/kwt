@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/discovery"
+	"go.kenn.io/kwt/internal/git"
 	repositoryurl "go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/pkg/models"
 )
@@ -272,6 +273,36 @@ func TestBuildManifestPropagatesCanceledProjectWorktreeListing(t *testing.T) {
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, context.Canceled))
+	assert.Nil(t, manifest)
+}
+
+func TestBuildManifestPropagatesIncompleteProjectInventory(t *testing.T) {
+	repo := initFleetTestRepo(t, "https://github.com/kenn-io/kwt.git")
+	incomplete := &git.IncompleteInventoryError{
+		Path: repo,
+		Err:  errors.New("generation is unreadable"),
+	}
+
+	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
+		Now:      func() time.Time { return fixedTime },
+		Hostname: func() (string, error) { return "Host-A", nil },
+		ListProjectWorktrees: func(
+			context.Context,
+			models.Project,
+		) ([]models.Worktree, error) {
+			return nil, incomplete
+		},
+	}).Build(context.Background(), &models.Config{
+		Fleet: models.FleetConfig{HostID: "host-a"},
+		Projects: []models.Project{{
+			Repository: "github.com/kenn-io/kwt",
+			Name:       "kwt",
+			Path:       repo,
+		}},
+	})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, incomplete)
 	assert.Nil(t, manifest)
 }
 
