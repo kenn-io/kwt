@@ -69,9 +69,15 @@ func (g *Git) listWorktrees(excludedPath string) ([]models.Worktree, error) {
 		if info, statErr := os.Stat(worktree.Path); statErr == nil {
 			worktree.CreatedAt = info.ModTime()
 		}
-		if generation, generationErr := g.WorktreeGeneration(worktree.Path); generationErr == nil {
-			worktree.Generation = generation
+		generation, generationErr := g.WorktreeGeneration(worktree.Path)
+		if generationErr != nil {
+			return nil, fmt.Errorf(
+				"initialize worktree generation for %s: %w",
+				worktree.Path,
+				generationErr,
+			)
 		}
+		worktree.Generation = generation
 		worktrees = append(worktrees, worktree)
 	}
 
@@ -643,11 +649,22 @@ func (g *Git) readWorktreeGeneration(path string) (string, error) {
 		return "", fmt.Errorf("read worktree identity: %w", err)
 	}
 	generation := strings.TrimSpace(string(data))
-	decoded, err := hex.DecodeString(generation)
-	if err != nil || len(decoded) != 16 {
+	if err := ValidateWorktreeGeneration(generation); err != nil {
 		return "", fmt.Errorf("read worktree identity: invalid generation")
 	}
 	return generation, nil
+}
+
+// ValidateWorktreeGeneration rejects values that cannot identify one persisted
+// kwt worktree registration.
+func ValidateWorktreeGeneration(generation string) error {
+	decoded, err := hex.DecodeString(generation)
+	if err != nil || len(decoded) != 16 {
+		return fmt.Errorf(
+			"worktree generation must be a 32-character hexadecimal value",
+		)
+	}
+	return nil
 }
 
 func (g *Git) worktreeGitDir(path string) (string, error) {

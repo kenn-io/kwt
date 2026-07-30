@@ -26,6 +26,11 @@ var (
 	forceDeleteBranch  bool
 )
 
+type removalGenerationCondition struct {
+	generation string
+	specified  bool
+}
+
 // removeCmd represents the remove command.
 var removeCmd = &cobra.Command{
 	Use:     "remove [pattern]",
@@ -83,6 +88,10 @@ func init() {
 }
 
 func runRemove(cmd *cobra.Command, args []string) error {
+	generationCondition, err := requestedRemovalGeneration(cmd)
+	if err != nil {
+		return err
+	}
 	return ExecuteWithArgs(false, func(ctx *CommandContext, cmd *cobra.Command, args []string) error {
 		// Try to get git context, but don't fail if we're not in a git repo
 		gitCtx, gitErr := NewGitCommandContext()
@@ -93,14 +102,22 @@ func runRemove(cmd *cobra.Command, args []string) error {
 		return ctx.WithGlobalLocalSupport(
 			removeGlobal,
 			func(ctx *CommandContext) error {
-				removed, err := removeLocalWorktree(ctx, args)
+				removed, err := removeLocalWorktree(
+					ctx,
+					args,
+					generationCondition,
+				)
 				if removed > 0 {
 					publishFleetBestEffortForCommand(cmd, ctx.Config)
 				}
 				return err
 			},
 			func(ctx *CommandContext) error {
-				removed, err := removeGlobalWorktree(ctx, args)
+				removed, err := removeGlobalWorktree(
+					ctx,
+					args,
+					generationCondition,
+				)
 				if removed > 0 {
 					publishFleetBestEffortForCommand(cmd, ctx.Config)
 				}
@@ -110,8 +127,28 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	})(cmd, args)
 }
 
-func removeLocalWorktree(ctx *CommandContext, args []string) (int, error) {
-	expectedGeneration := removeIfGeneration
+func requestedRemovalGeneration(
+	cmd *cobra.Command,
+) (removalGenerationCondition, error) {
+	if !cmd.Flags().Changed("if-generation") {
+		return removalGenerationCondition{}, nil
+	}
+	if err := git.ValidateWorktreeGeneration(removeIfGeneration); err != nil {
+		return removalGenerationCondition{}, fmt.Errorf(
+			"--if-generation must be a 32-character hexadecimal value",
+		)
+	}
+	return removalGenerationCondition{
+		generation: removeIfGeneration,
+		specified:  true,
+	}, nil
+}
+
+func removeLocalWorktree(
+	ctx *CommandContext,
+	args []string,
+	generationCondition removalGenerationCondition,
+) (int, error) {
 	worktrees, err := ctx.WorktreeManager.List()
 	if err != nil {
 		return 0, fmt.Errorf("failed to list worktrees: %w", err)
@@ -169,7 +206,7 @@ func removeLocalWorktree(ctx *CommandContext, args []string) (int, error) {
 		}
 		return 0, nil
 	}
-	if expectedGeneration != "" && len(toRemove) != 1 {
+	if generationCondition.specified && len(toRemove) != 1 {
 		return 0, fmt.Errorf(
 			"--if-generation requires exactly one worktree",
 		)
@@ -185,13 +222,13 @@ func removeLocalWorktree(ctx *CommandContext, args []string) (int, error) {
 				removeForce,
 				deleteBranch,
 				forceDeleteBranch,
-				expectedGeneration,
+				generationCondition.generation,
 			); err != nil {
 				if worktreePathRemoved(wt.Path) {
 					removed++
 					unregisterWorktreePath(registryPath)
 				}
-				if expectedGeneration != "" {
+				if generationCondition.specified {
 					return removed, err
 				}
 				ctx.Printer.PrintError(fmt.Errorf("failed to remove %s: %v", wt.Branch, err))
@@ -205,13 +242,13 @@ func removeLocalWorktree(ctx *CommandContext, args []string) (int, error) {
 			if err := ctx.WorktreeManager.Remove(
 				wt.Path,
 				removeForce,
-				expectedGeneration,
+				generationCondition.generation,
 			); err != nil {
 				if worktreePathRemoved(wt.Path) {
 					removed++
 					unregisterWorktreePath(registryPath)
 				}
-				if expectedGeneration != "" {
+				if generationCondition.specified {
 					return removed, err
 				}
 				ctx.Printer.PrintError(fmt.Errorf("failed to remove %s: %v", wt.Branch, err))
@@ -238,8 +275,11 @@ func filterNonMainWorktrees(worktrees []models.Worktree) []models.Worktree {
 	return filtered
 }
 
-func removeGlobalWorktree(ctx *CommandContext, args []string) (int, error) {
-	expectedGeneration := removeIfGeneration
+func removeGlobalWorktree(
+	ctx *CommandContext,
+	args []string,
+	generationCondition removalGenerationCondition,
+) (int, error) {
 	entries, err := discovery.DiscoverGlobalWorktrees(ctx.Config.Worktree.BaseDir, ctx.Config.Projects)
 	if err != nil {
 		return 0, fmt.Errorf("failed to discover worktrees: %w", err)
@@ -336,7 +376,7 @@ func removeGlobalWorktree(ctx *CommandContext, args []string) (int, error) {
 		}
 		return 0, nil
 	}
-	if expectedGeneration != "" && len(toRemove) != 1 {
+	if generationCondition.specified && len(toRemove) != 1 {
 		return 0, fmt.Errorf(
 			"--if-generation requires exactly one worktree",
 		)
@@ -379,13 +419,13 @@ func removeGlobalWorktree(ctx *CommandContext, args []string) (int, error) {
 				removeForce,
 				deleteBranch,
 				forceDeleteBranch,
-				expectedGeneration,
+				generationCondition.generation,
 			); err != nil {
 				if worktreePathRemoved(entry.Path) {
 					removed++
 					unregisterWorktreePath(registryPath)
 				}
-				if expectedGeneration != "" {
+				if generationCondition.specified {
 					_ = os.Chdir(originalDir)
 					return removed, err
 				}
@@ -401,13 +441,13 @@ func removeGlobalWorktree(ctx *CommandContext, args []string) (int, error) {
 			if err := wm.Remove(
 				entry.Path,
 				removeForce,
-				expectedGeneration,
+				generationCondition.generation,
 			); err != nil {
 				if worktreePathRemoved(entry.Path) {
 					removed++
 					unregisterWorktreePath(registryPath)
 				}
-				if expectedGeneration != "" {
+				if generationCondition.specified {
 					_ = os.Chdir(originalDir)
 					return removed, err
 				}

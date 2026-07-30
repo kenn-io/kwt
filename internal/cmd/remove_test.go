@@ -69,10 +69,54 @@ func TestRemoveLocalRejectsRecreatedWorktree(t *testing.T) {
 	)
 
 	cmd, _, _ := fleetTestCommand()
+	setRemoveGenerationFlag(t, cmd, removeIfGeneration)
 	err := runRemove(cmd, []string{worktreePath})
 
 	require.ErrorContains(t, err, "generation changed")
 	assert.DirExists(t, worktreePath)
+}
+
+func TestRemoveRejectsExplicitInvalidGeneration(t *testing.T) {
+	tests := []struct {
+		name       string
+		generation string
+	}{
+		{name: "empty", generation: ""},
+		{name: "malformed", generation: "not-a-generation"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetFleetCommandDeps(t)
+			resetRemoveCommandFlags(t)
+
+			repoPath := newTUITestRepo(t)
+			initCommandTestConfig(t, t.TempDir())
+			t.Chdir(repoPath)
+			worktreePath := filepath.Join(t.TempDir(), "remove-invalid")
+			runTUITestGit(
+				t,
+				repoPath,
+				"worktree",
+				"add",
+				"-b",
+				"task7/remove-invalid",
+				worktreePath,
+			)
+
+			cmd, _, _ := fleetTestCommand()
+			setRemoveGenerationFlag(t, cmd, tt.generation)
+
+			err := runRemove(cmd, []string{worktreePath})
+
+			require.ErrorContains(
+				t,
+				err,
+				"--if-generation must be a 32-character hexadecimal value",
+			)
+			assert.DirExists(t, worktreePath)
+		})
+	}
 }
 
 func TestRemoveLocalDoesNotPublishOnDryRun(t *testing.T) {
@@ -154,6 +198,7 @@ func TestRemoveLocalPublishesWhenWorktreeRemovedButBranchDeleteFails(t *testing.
 	}
 
 	cmd, _, _ := fleetTestCommand()
+	setRemoveGenerationFlag(t, cmd, removeIfGeneration)
 	err = runRemove(cmd, []string{"task7/remove-local-branch-delete-fails"})
 
 	require.ErrorContains(t, err, "worktree removed but failed to delete branch")
@@ -192,18 +237,19 @@ func TestRemoveGlobalPublishesOnceAfterSuccessfulRemoval(t *testing.T) {
 }
 
 func TestMatchGlobalRemovalEntriesPrefersExactPath(t *testing.T) {
+	exactPath := filepath.Join(t.TempDir(), "foo")
 	exact := &discovery.GlobalWorktreeEntry{
-		Path:   "/work/foo",
+		Path:   exactPath,
 		Branch: "task/foo",
 	}
 	prefix := &discovery.GlobalWorktreeEntry{
-		Path:   "/work/foo-old",
+		Path:   exactPath + "-old",
 		Branch: "task/foo-old",
 	}
 
 	matches := matchGlobalRemovalEntries(
 		[]*discovery.GlobalWorktreeEntry{exact, prefix},
-		"/work/foo",
+		exactPath,
 	)
 
 	require.Len(t, matches, 1)
@@ -314,6 +360,7 @@ func TestRemoveGlobalPublishesWhenWorktreeRemovedButBranchDeleteFails(t *testing
 	}
 
 	cmd, _, _ := fleetTestCommand()
+	setRemoveGenerationFlag(t, cmd, removeIfGeneration)
 	err = runRemove(cmd, []string{"task7/remove-global-branch-delete-fails"})
 
 	require.ErrorContains(t, err, "worktree removed but failed to delete branch")
@@ -350,4 +397,14 @@ func resetRemoveCommandFlags(t *testing.T) {
 	removeIfGeneration = ""
 	deleteBranch = false
 	forceDeleteBranch = false
+}
+
+func setRemoveGenerationFlag(
+	t *testing.T,
+	cmd *cobra.Command,
+	generation string,
+) {
+	t.Helper()
+	cmd.Flags().StringVar(&removeIfGeneration, "if-generation", "", "")
+	require.NoError(t, cmd.Flags().Set("if-generation", generation))
 }

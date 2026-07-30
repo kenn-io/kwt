@@ -987,6 +987,24 @@ func TestListWorktreesKeepsGenerationStableWhenDirectoryChanges(t *testing.T) {
 	t.Fatal("worktree missing after ordinary directory change")
 }
 
+func TestListWorktreesReportsGenerationInitializationFailure(t *testing.T) {
+	repo := NewTestRepository(t)
+	g := New(repo.Path)
+	repo.CreateBranch(t, "broken-generation")
+	worktreePath := filepath.Join(t.TempDir(), "broken-generation")
+	repo.CreateWorktree(t, worktreePath, "broken-generation")
+	adminDir, err := g.worktreeGitDir(worktreePath)
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(
+		filepath.Join(adminDir, "kwt-generation"),
+		0700,
+	))
+
+	_, err = g.ListWorktrees()
+
+	require.ErrorContains(t, err, "worktree generation")
+}
+
 func TestListWorktreesWaitsForConcurrentWorktreeReplacement(t *testing.T) {
 	repo := NewTestRepository(t)
 	g := New(repo.Path)
