@@ -345,10 +345,10 @@ func (m *Manager) GetMatchingWorktrees(pattern string) ([]models.Worktree, error
 	}
 
 	if filepath.IsAbs(pattern) {
-		canonicalPattern := utils.CanonicalPath(pattern)
+		canonicalPattern := utils.PathKey(pattern)
 		var exactPathMatches []models.Worktree
 		for _, wt := range worktrees {
-			if utils.CanonicalPath(wt.Path) == canonicalPattern {
+			if utils.PathKey(wt.Path) == canonicalPattern {
 				exactPathMatches = append(exactPathMatches, wt)
 			}
 		}

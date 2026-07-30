@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -274,6 +275,29 @@ func TestMatchGlobalRemovalEntriesNormalizesWindowsSeparators(t *testing.T) {
 
 	require.Len(t, matches, 1)
 	assert.Same(t, exact, matches[0])
+}
+
+func TestMatchGlobalRemovalEntriesPreservesUnixLiteralBackslash(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("backslash is a path separator on Windows")
+	}
+	baseDir := t.TempDir()
+	literal := &discovery.GlobalWorktreeEntry{
+		Path:   filepath.Join(baseDir, `foo\bar`),
+		Branch: "literal-backslash",
+	}
+	slashed := &discovery.GlobalWorktreeEntry{
+		Path:   filepath.Join(baseDir, "foo", "bar"),
+		Branch: "slash-separated",
+	}
+
+	matches := matchGlobalRemovalEntries(
+		[]*discovery.GlobalWorktreeEntry{literal, slashed},
+		literal.Path,
+	)
+
+	require.Len(t, matches, 1)
+	assert.Same(t, literal, matches[0])
 }
 
 func TestRemoveGlobalDoesNotPublishOnDryRun(t *testing.T) {

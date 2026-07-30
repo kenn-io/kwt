@@ -5,6 +5,7 @@ import (
 	"os"
 	pathpkg "path"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -498,15 +499,11 @@ func matchGlobalRemovalEntries(
 		}
 	}
 
-	lowerPattern := strings.ToLower(
-		strings.ReplaceAll(filepath.ToSlash(pattern), `\`, "/"),
-	)
+	lowerPattern := globalRemovalSearchKey(pattern)
 	var matches []*discovery.GlobalWorktreeEntry
 	for _, entry := range entries {
 		branchLower := strings.ToLower(entry.Branch)
-		pathLower := strings.ToLower(
-			strings.ReplaceAll(filepath.ToSlash(entry.Path), `\`, "/"),
-		)
+		pathLower := globalRemovalSearchKey(entry.Path)
 		var repoName string
 		if entry.RepositoryInfo != nil {
 			repoName = strings.ToLower(entry.RepositoryInfo.Repository)
@@ -523,22 +520,31 @@ func matchGlobalRemovalEntries(
 }
 
 func globalRemovalPathKey(rawPath string) (string, bool) {
-	windowsPath := (len(rawPath) >= 2 && rawPath[1] == ':') ||
-		strings.HasPrefix(rawPath, `\\`) ||
-		strings.HasPrefix(rawPath, "//")
+	windowsPath := windowsStyleRemovalPath(rawPath)
 	if !filepath.IsAbs(rawPath) && !windowsPath {
 		return "", false
 	}
-	if filepath.IsAbs(rawPath) {
-		rawPath = utils.CanonicalPath(rawPath)
+	if !windowsPath {
+		return utils.PathKey(rawPath), true
 	}
 	key := pathpkg.Clean(
 		strings.ReplaceAll(filepath.ToSlash(rawPath), `\`, "/"),
 	)
-	if windowsPath {
-		key = strings.ToLower(key)
+	return strings.ToLower(key), true
+}
+
+func globalRemovalSearchKey(rawPath string) string {
+	key := filepath.ToSlash(rawPath)
+	if runtime.GOOS == "windows" || windowsStyleRemovalPath(rawPath) {
+		key = strings.ReplaceAll(key, `\`, "/")
 	}
-	return key, true
+	return strings.ToLower(key)
+}
+
+func windowsStyleRemovalPath(rawPath string) bool {
+	return (len(rawPath) >= 2 && rawPath[1] == ':') ||
+		strings.HasPrefix(rawPath, `\\`) ||
+		strings.HasPrefix(rawPath, "//")
 }
 
 func worktreePathRemoved(path string) bool {

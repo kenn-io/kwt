@@ -1017,6 +1017,42 @@ func TestListWorktreesDoesNotAdoptGenerationFromAnotherRepository(t *testing.T) 
 	require.ErrorContains(t, err, "belongs to a different repository")
 }
 
+func TestWorktreeGenerationRecoversFromRelativeAdministrativeGitDir(
+	t *testing.T,
+) {
+	repo := NewTestRepository(t)
+	g := New(repo.Path)
+	repo.CreateBranch(t, "relative-admin-gitdir")
+	worktreePath := filepath.Join(t.TempDir(), "relative-admin-gitdir")
+	repo.CreateWorktree(t, worktreePath, "relative-admin-gitdir")
+	generation, err := g.WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	adminDir, err := g.worktreeGitDir(worktreePath)
+	require.NoError(t, err)
+	relativeDotGit, err := filepath.Rel(
+		adminDir,
+		filepath.Join(worktreePath, ".git"),
+	)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(adminDir, "gitdir"),
+		[]byte(relativeDotGit+"\n"),
+		0o600,
+	))
+	require.NoError(t, os.Remove(filepath.Join(worktreePath, ".git")))
+	unrelatedCWD := filepath.Join(
+		t.TempDir(),
+		strings.Repeat("unrelated/", 20),
+	)
+	require.NoError(t, os.MkdirAll(unrelatedCWD, 0o755))
+	t.Chdir(unrelatedCWD)
+
+	recovered, err := g.WorktreeGeneration(worktreePath)
+
+	require.NoError(t, err)
+	assert.Equal(t, generation, recovered)
+}
+
 func TestListWorktreesReportsGenerationInitializationFailure(t *testing.T) {
 	repo := NewTestRepository(t)
 	g := New(repo.Path)

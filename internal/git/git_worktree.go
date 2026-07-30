@@ -863,6 +863,9 @@ func (g *Git) worktreeGitDir(path string) (string, error) {
 			continue
 		}
 		registeredDotGit := strings.TrimSpace(string(gitDirFile))
+		if !filepath.IsAbs(registeredDotGit) {
+			registeredDotGit = filepath.Join(adminDir, registeredDotGit)
+		}
 		registeredPath := filepath.Dir(registeredDotGit)
 		if comparableWorktreePath(registeredPath) == canonicalPath {
 			return adminDir, nil

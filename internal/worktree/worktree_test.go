@@ -730,6 +730,26 @@ func TestManagerGetMatchingWorktreesPrefersExactPath(t *testing.T) {
 	assert.Equal(t, "feature/task", matches[0].Branch)
 }
 
+func TestManagerGetMatchingWorktreesPrefersCaseFoldedWindowsExactPath(
+	t *testing.T,
+) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path comparison")
+	}
+	m := New(&mockGit{
+		worktrees: []models.Worktree{
+			{Path: `C:\work\foo`, Branch: "feature/foo"},
+			{Path: `C:\work\foo-old`, Branch: "feature/foo-old"},
+		},
+	}, &models.Config{})
+
+	matches, err := m.GetMatchingWorktrees(`c:\WORK\foo`)
+
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	assert.Equal(t, `C:\work\foo`, matches[0].Path)
+}
+
 func TestManagerGetMatchingWorktreesPrefersAbsolutePathOverBranchSubstring(
 	t *testing.T,
 ) {
