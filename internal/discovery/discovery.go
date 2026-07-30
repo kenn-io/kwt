@@ -109,10 +109,17 @@ func DiscoverGlobalWorktrees(baseDir string, projects []models.Project) ([]*Glob
 		return nil, fmt.Errorf("failed to walk directory: %w", err)
 	}
 
+	snapshots := snapshotCandidateWorktrees(candidates)
 	return extractWorktreeCandidates(
 		candidates,
 		projects,
-		extractWorktreeInfo,
+		func(path string, projects []models.Project) (*GlobalWorktreeEntry, error) {
+			snapshot, ok := snapshots[utils.CanonicalPath(path)]
+			if !ok {
+				return nil, fmt.Errorf("worktree disappeared during discovery")
+			}
+			return extractWorktreeInfoFromSnapshot(path, projects, snapshot)
+		},
 	), nil
 }
 
@@ -187,13 +194,57 @@ func extractWorktreeCandidates(
 	return entries
 }
 
+func snapshotCandidateWorktrees(
+	candidates []worktreeCandidate,
+) map[string]models.Worktree {
+	repositories := make(map[string]string)
+	for _, candidate := range candidates {
+		mainRoot, err := git.New(candidate.path).GetMainRepositoryPath()
+		if err != nil {
+			continue
+		}
+		repositories[utils.CanonicalPath(mainRoot)] = mainRoot
+	}
+
+	snapshots := make(map[string]models.Worktree)
+	if len(repositories) == 0 {
+		return snapshots
+	}
+
+	const maxWorkers = 16
+	workerCount := min(len(repositories), maxWorkers)
+	jobs := make(chan string)
+	var snapshotsMu sync.Mutex
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for repositoryRoot := range jobs {
+				worktrees, err := git.New(repositoryRoot).ListWorktrees()
+				if err != nil {
+					continue
+				}
+				snapshotsMu.Lock()
+				for _, snapshot := range worktrees {
+					snapshots[utils.CanonicalPath(snapshot.Path)] = snapshot
+				}
+				snapshotsMu.Unlock()
+			}
+		}()
+	}
+	for _, repositoryRoot := range repositories {
+		jobs <- repositoryRoot
+	}
+	close(jobs)
+	workers.Wait()
+
+	return snapshots
+}
+
 // extractWorktreeInfo extracts worktree information from a worktree directory.
 func extractWorktreeInfo(worktreePath string, projects []models.Project) (*GlobalWorktreeEntry, error) {
-	// The cached wrapper keeps the entry's recorded remote URL and the
-	// resolver's own reads to one subprocess per call kind.
 	repositoryGit := git.New(worktreePath)
-	g := worktree.NewCachedIdentityGit(repositoryGit)
-
 	worktrees, err := repositoryGit.ListWorktrees()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list repository worktrees: %w", err)
@@ -209,7 +260,17 @@ func extractWorktreeInfo(worktreePath string, projects []models.Project) (*Globa
 	if snapshot == nil {
 		return nil, fmt.Errorf("worktree disappeared during discovery")
 	}
+	return extractWorktreeInfoFromSnapshot(worktreePath, projects, *snapshot)
+}
 
+func extractWorktreeInfoFromSnapshot(
+	worktreePath string,
+	projects []models.Project,
+	snapshot models.Worktree,
+) (*GlobalWorktreeEntry, error) {
+	// The cached wrapper keeps the entry's recorded remote URL and the
+	// resolver's own reads to one subprocess per call kind.
+	g := worktree.NewCachedIdentityGit(git.New(worktreePath))
 	repoURL := ""
 	if gotURL, err := g.GetRepositoryURL(); err == nil {
 		repoURL = gotURL

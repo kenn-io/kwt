@@ -541,11 +541,11 @@ func (g *Git) RemoveWorktree(
 				return err
 			}
 		}
-		return g.removeWorktree(path, force)
+		return g.removeWorktree(path, force, ifGeneration != "")
 	})
 }
 
-func (g *Git) removeWorktree(path string, force bool) error {
+func (g *Git) removeWorktree(path string, force bool, conditional bool) error {
 	canonicalPath := utils.CanonicalPath(path)
 	registryGit := g
 	if mainRoot, err := g.getMainRepoRoot(); err == nil {
@@ -561,6 +561,12 @@ func (g *Git) removeWorktree(path string, force bool) error {
 	if _, err := g.run(args...); err != nil {
 		stillRegistered, listErr := registryGit.hasRegisteredWorktree(canonicalPath)
 		if wasRegistered && listErr == nil && !stillRegistered {
+			if conditional {
+				return fmt.Errorf(
+					"failed to remove worktree: %w (Git deregistered the worktree; residual directory preserved because removal was generation-conditional)",
+					err,
+				)
+			}
 			if removeErr := os.RemoveAll(path); removeErr != nil {
 				return fmt.Errorf(
 					"failed to remove worktree: %w (Git deregistered the worktree but directory cleanup failed: %v)",

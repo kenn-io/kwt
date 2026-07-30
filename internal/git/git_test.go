@@ -1148,6 +1148,52 @@ exec "$REAL_GIT" "$@"
 	}
 }
 
+func TestConditionalRemoveWorktreePreservesDirectoryAfterGitDeregistersWorktree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a POSIX shell wrapper")
+	}
+
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "partially-removed-conditionally")
+	worktreePath := filepath.Join(t.TempDir(), "remove-wt")
+	repo.CreateWorktree(t, worktreePath, "partially-removed-conditionally")
+
+	g := New(worktreePath)
+	worktrees, err := g.ListWorktrees()
+	require.NoError(t, err)
+	var generation string
+	for _, worktree := range worktrees {
+		if utils.CanonicalPath(worktree.Path) == utils.CanonicalPath(worktreePath) {
+			generation = worktree.Generation
+			break
+		}
+	}
+	require.NotEmpty(t, generation)
+
+	realGit, err := exec.LookPath("git")
+	require.NoError(t, err)
+	wrapperDir := t.TempDir()
+	wrapperPath := filepath.Join(wrapperDir, "git")
+	wrapper := `#!/bin/sh
+if [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
+	"$REAL_GIT" "$@" || exit $?
+	mkdir -p "$3"
+	printf 'replacement created during removal\n' > "$3/replacement"
+	printf "error: failed to delete '%s': Directory not empty\n" "$3" >&2
+	exit 1
+fi
+exec "$REAL_GIT" "$@"
+`
+	require.NoError(t, os.WriteFile(wrapperPath, []byte(wrapper), 0755))
+	t.Setenv("REAL_GIT", realGit)
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	err = g.RemoveWorktree(worktreePath, false, generation)
+
+	require.ErrorContains(t, err, "failed to remove worktree")
+	assert.FileExists(t, filepath.Join(worktreePath, "replacement"))
+}
+
 func TestPruneWorktrees(t *testing.T) {
 	repo := NewTestRepository(t)
 	g := New(repo.Path)
