@@ -8,6 +8,7 @@
 - Test First: Write a failing test before implementation, then make it pass, then refactor. Do not add production code without a failing test that requires it.
 - No Unrequested GitHub Comments: Do not comment on GitHub issues or pull requests unless the user explicitly instructs you to post a comment.
 - No CI Polling: Do not poll GitHub or the `gh` API to watch jobs or workflow status unless the user explicitly instructs you to do so.
+- No Navel-Gazing Validation Sections: Do not add a `Validation` section to a PR description for routine tests, builds, lint, formatting, or CI. Include one only when the validation was unusual, potentially surprising, manual, or otherwise important for reviewers to understand.
 - No Bash Content-Assertion Tests: Do not add shell tests that only grep scripts, workflows, or config files for implementation text. Prefer exercising behavior directly or documenting a manual check.
 - Documentation should move with behavior changes when practical: CLI flags, config keys, workflows, and user-facing contracts should be updated with the code.
 - Keep changes focused. Do not refactor unrelated code or rewrite user changes while completing a task.

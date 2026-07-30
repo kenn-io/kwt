@@ -492,6 +492,34 @@ func TestManagerAddTrackingRetainsMarkerWhenFailedCheckoutPathExists(t *testing.
 	assert.True(t, entry.UnreviewedRemoteSource)
 }
 
+func TestManagerAddTrackingRejectsActiveCreationMarker(t *testing.T) {
+	worktreePath := filepath.Join(t.TempDir(), "creating-worktree")
+	state := &mockRemoteSourceState{entries: map[string]*registry.WorktreeEntry{
+		worktreePath: {
+			Path:          worktreePath,
+			Branch:        "feature/creating",
+			CreationToken: "active-creation",
+		},
+	}}
+	mockG := &mockGit{}
+	manager := New(mockG, &models.Config{})
+	manager.openRemoteSourceState = func() (remoteSourceState, error) {
+		return state, nil
+	}
+
+	_, err := manager.AddTracking(
+		"feature/competing",
+		"refs/remotes/origin/feature/competing",
+		worktreePath,
+	)
+
+	require.ErrorContains(t, err, "worktree creation in progress")
+	assert.Empty(t, mockG.worktrees)
+	entry, ok := state.entries[worktreePath]
+	require.True(t, ok)
+	assert.Equal(t, "active-creation", entry.CreationToken)
+}
+
 func TestManagerAddTrackingDoesNotExpandRemoteBranchEnvironmentReferences(
 	t *testing.T,
 ) {

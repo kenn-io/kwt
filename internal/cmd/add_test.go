@@ -198,6 +198,49 @@ func TestRegisterWorktreeExpirationRejectsRecreatedWorktree(t *testing.T) {
 	assert.True(t, entry.ExpiresAt.Equal(replacementExpiry))
 }
 
+func TestRegisterWorktreeExpirationRejectsProvisionalCreation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "creating-worktree")
+	runTUITestGit(
+		t,
+		repoPath,
+		"worktree",
+		"add",
+		"-b",
+		"feature/creating",
+		worktreePath,
+	)
+	generation := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
+	reg, err := registry.New()
+	require.NoError(t, err)
+	require.NoError(t, reg.Register(&registry.WorktreeEntry{
+		Path:          worktreePath,
+		Branch:        "feature/creating",
+		CreationToken: "active-creation",
+	}))
+	expiresAt := time.Now().Add(time.Hour)
+
+	err = registerWorktreeExpiration(
+		git.New(repoPath),
+		reg,
+		worktreePath,
+		generation,
+		"https://github.com/example/repository.git",
+		"feature/creating",
+		&expiresAt,
+	)
+
+	require.ErrorContains(t, err, "worktree creation in progress")
+	entry, ok := reg.Get(worktreePath)
+	require.True(t, ok)
+	assert.Equal(t, "active-creation", entry.CreationToken)
+	assert.Empty(t, entry.Generation)
+	assert.Nil(t, entry.ExpiresAt)
+}
+
 func TestAddFromResolvesRemoteRefAcrossLocalNamespaceCollision(t *testing.T) {
 	resetFleetCommandDeps(t)
 	resetAddCommandFlags(t)

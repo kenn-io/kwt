@@ -212,6 +212,12 @@ func (m *Manager) addUnreviewedSource(
 		return "", "", fmt.Errorf("open remote-source state: %w", err)
 	}
 	previous, existed := state.Get(path)
+	if existed && previous.CreationToken != "" {
+		return "", "", fmt.Errorf(
+			"worktree creation in progress for %s",
+			path,
+		)
+	}
 	creationToken, err := newRegistryCreationToken()
 	if err != nil {
 		return "", "", err

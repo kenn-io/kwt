@@ -296,6 +296,12 @@ func registerWorktreeExpiration(
 	expiresAt *time.Time,
 ) error {
 	observed, _ := reg.Get(worktreePath)
+	if observed != nil && observed.CreationToken != "" {
+		return fmt.Errorf(
+			"worktree creation in progress for %s",
+			worktreePath,
+		)
+	}
 	entry := &registry.WorktreeEntry{}
 	if observed != nil {
 		*entry = *observed
