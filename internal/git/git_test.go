@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/utils"
@@ -776,6 +777,84 @@ func TestListWorktreesKeepsGenerationStableWhenDirectoryChanges(t *testing.T) {
 		}
 	}
 	t.Fatal("worktree missing after ordinary directory change")
+}
+
+func TestListWorktreesWaitsForConcurrentWorktreeReplacement(t *testing.T) {
+	repo := NewTestRepository(t)
+	g := New(repo.Path)
+	repo.CreateBranch(t, "original")
+	worktreePath := filepath.Join(t.TempDir(), "replacement")
+	repo.CreateWorktree(t, worktreePath, "original")
+	before, err := g.ListWorktrees()
+	require.NoError(t, err)
+	var originalGeneration string
+	for _, worktree := range before {
+		if utils.CanonicalPath(worktree.Path) ==
+			utils.CanonicalPath(worktreePath) {
+			originalGeneration = worktree.Generation
+		}
+	}
+	require.NotEmpty(t, originalGeneration)
+
+	lock := flock.New(
+		filepath.Join(repo.Path, ".git", "kwt-worktree.lock"),
+		flock.SetPermissions(0600),
+	)
+	require.NoError(t, lock.Lock())
+	t.Cleanup(func() { _ = lock.Unlock() })
+
+	result := make(chan []models.Worktree, 1)
+	listErr := make(chan error, 1)
+	go func() {
+		worktrees, err := g.ListWorktrees()
+		if err != nil {
+			listErr <- err
+			return
+		}
+		result <- worktrees
+	}()
+
+	select {
+	case err := <-listErr:
+		require.NoError(t, err)
+	case <-result:
+		t.Fatal("worktree listing completed while replacement lock was held")
+	case <-time.After(250 * time.Millisecond):
+	}
+
+	gitOutput(t, repo.Path, "worktree", "remove", worktreePath)
+	gitOutput(t, repo.Path, "branch", "-D", "original")
+	gitOutput(
+		t,
+		repo.Path,
+		"worktree",
+		"add",
+		"-b",
+		"replacement",
+		worktreePath,
+	)
+	require.NoError(t, lock.Unlock())
+
+	select {
+	case err := <-listErr:
+		require.NoError(t, err)
+	case worktrees := <-result:
+		for _, worktree := range worktrees {
+			if utils.CanonicalPath(worktree.Path) ==
+				utils.CanonicalPath(worktreePath) {
+				assert.Equal(t, "replacement", worktree.Branch)
+				assert.NotEqual(
+					t,
+					originalGeneration,
+					worktree.Generation,
+				)
+				return
+			}
+		}
+		t.Fatal("replacement worktree missing from locked snapshot")
+	case <-time.After(5 * time.Second):
+		t.Fatal("worktree listing did not resume after replacement")
+	}
 }
 
 func TestRemoveWorktreeRejectsChangedGeneration(t *testing.T) {

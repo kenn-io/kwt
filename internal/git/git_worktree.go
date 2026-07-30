@@ -17,6 +17,16 @@ import (
 
 // ListWorktrees returns a list of all worktrees in the repository.
 func (g *Git) ListWorktrees() ([]models.Worktree, error) {
+	var worktrees []models.Worktree
+	err := g.withWorktreeMutationLock(nil, func() error {
+		var err error
+		worktrees, err = g.listWorktrees()
+		return err
+	})
+	return worktrees, err
+}
+
+func (g *Git) listWorktrees() ([]models.Worktree, error) {
 	output, err := g.run("worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list worktrees: %w", err)

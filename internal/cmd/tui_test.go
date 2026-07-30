@@ -2749,6 +2749,54 @@ func TestDiscoverLaunchRepoWorktreesListsLocalOnlyRepository(t *testing.T) {
 	assert.Equal(t, filepath.Base(repoPath), entries[0].RepositoryInfo.Repository)
 }
 
+func TestTUIBackendRemovesLaunchWorktreeOutsideGlobalBase(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "outside-global-base")
+	runTUITestGit(
+		t,
+		repoPath,
+		"worktree",
+		"add",
+		"-b",
+		"feature/outside",
+		worktreePath,
+	)
+	cfg := &models.Config{
+		Worktree: models.WorktreeConfig{
+			BaseDir: filepath.Join(t.TempDir(), "global"),
+		},
+	}
+	backend := newTUIBackendWithLaunchDir(cfg, repoPath)
+	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.registerProject = func(models.Project) error { return nil }
+	backend.registerWorkspace = func(
+		workspace models.Workspace,
+	) (models.Workspace, error) {
+		return workspace, nil
+	}
+
+	rows, _, err := backend.ListFast(context.Background())
+	require.NoError(t, err)
+	var row dashboard.Row
+	for _, candidate := range rows {
+		if candidate.Entry != nil &&
+			samePath(candidate.Entry.Path, worktreePath) {
+			row = candidate
+			break
+		}
+	}
+	require.NotNil(t, row.Entry)
+	require.NotEmpty(t, row.Entry.Generation)
+
+	err = backend.RemoveWorktree(context.Background(), row, false)
+
+	require.NoError(t, err)
+	assert.NoDirExists(t, worktreePath)
+}
+
 // TestDiscoverLaunchRepoWorktreesRejectsRelativeDotlessRemote pins the
 // remote-provenance gate on launch discovery: a relative dotless filesystem
 // remote must not surface as a shareable identity. The entry retains the raw

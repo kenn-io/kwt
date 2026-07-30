@@ -583,6 +583,8 @@ func discoverLaunchRepoWorktrees(launchDir string) ([]*discovery.GlobalWorktreeE
 			Path:           wt.Path,
 			CommitHash:     wt.CommitHash,
 			IsMain:         wt.IsMain,
+			CreatedAt:      wt.CreatedAt,
+			Generation:     wt.Generation,
 		})
 	}
 	return entries, nil

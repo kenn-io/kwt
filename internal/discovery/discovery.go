@@ -194,16 +194,20 @@ func extractWorktreeInfo(worktreePath string, projects []models.Project) (*Globa
 	repositoryGit := git.New(worktreePath)
 	g := worktree.NewCachedIdentityGit(repositoryGit)
 
-	// Get current branch
-	branch, err := getCurrentBranch(worktreePath)
+	worktrees, err := repositoryGit.ListWorktrees()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get current branch: %w", err)
+		return nil, fmt.Errorf("failed to list repository worktrees: %w", err)
 	}
-
-	// Get commit hash
-	commitHash, err := getCurrentCommitHash(worktreePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get commit hash: %w", err)
+	var snapshot *models.Worktree
+	canonicalPath := utils.CanonicalPath(worktreePath)
+	for i := range worktrees {
+		if utils.CanonicalPath(worktrees[i].Path) == canonicalPath {
+			snapshot = &worktrees[i]
+			break
+		}
+	}
+	if snapshot == nil {
+		return nil, fmt.Errorf("worktree disappeared during discovery")
 	}
 
 	repoURL := ""
@@ -218,20 +222,15 @@ func extractWorktreeInfo(worktreePath string, projects []models.Project) (*Globa
 	// error; a worktree without resolvable identity still lists.
 	repoInfo, _ := worktree.RepositoryInfoWithProjects(g, projects)
 
-	var createdAt time.Time
-	if info, statErr := os.Stat(worktreePath); statErr == nil {
-		createdAt = info.ModTime()
-	}
-	generation, _ := repositoryGit.WorktreeGeneration(worktreePath)
-
 	return &GlobalWorktreeEntry{
 		RepositoryURL:  repoURL,
 		RepositoryInfo: repoInfo,
-		Branch:         branch,
-		Path:           worktreePath,
-		CommitHash:     commitHash,
-		CreatedAt:      createdAt,
-		Generation:     generation,
+		Branch:         snapshot.Branch,
+		Path:           snapshot.Path,
+		CommitHash:     snapshot.CommitHash,
+		IsMain:         snapshot.IsMain,
+		CreatedAt:      snapshot.CreatedAt,
+		Generation:     snapshot.Generation,
 	}, nil
 }
 

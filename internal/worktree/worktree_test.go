@@ -681,6 +681,27 @@ func TestManagerGetMatchingWorktreesPrefersExactPath(t *testing.T) {
 	assert.Equal(t, "feature/task", matches[0].Branch)
 }
 
+func TestManagerGetMatchingWorktreesPrefersBranchOverRelativeSymlink(t *testing.T) {
+	currentPath := t.TempDir()
+	mainPath := t.TempDir()
+	t.Chdir(currentPath)
+	if err := os.Symlink(".", "main"); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	m := New(&mockGit{
+		worktrees: []models.Worktree{
+			{Path: currentPath, Branch: "feature/current"},
+			{Path: mainPath, Branch: "main"},
+		},
+	}, &models.Config{})
+
+	matches, err := m.GetMatchingWorktrees("main")
+
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	assert.Equal(t, mainPath, matches[0].Path)
+}
+
 func TestManagerValidateWorktreePath(t *testing.T) {
 	tests := []struct {
 		name      string
