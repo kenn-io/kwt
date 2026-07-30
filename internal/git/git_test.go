@@ -1053,6 +1053,26 @@ func TestWorktreeGenerationRecoversFromRelativeAdministrativeGitDir(
 	assert.Equal(t, generation, recovered)
 }
 
+func TestWorktreeGenerationRecoversInterruptedInitialization(t *testing.T) {
+	repo := NewTestRepository(t)
+	g := New(repo.Path)
+	repo.CreateBranch(t, "interrupted-generation")
+	worktreePath := filepath.Join(t.TempDir(), "interrupted-generation")
+	repo.CreateWorktree(t, worktreePath, "interrupted-generation")
+	adminDir, err := g.worktreeGitDir(worktreePath)
+	require.NoError(t, err)
+	generationPath := filepath.Join(adminDir, "kwt-generation")
+	require.NoError(t, os.WriteFile(generationPath, []byte("partial"), 0o600))
+
+	generation, err := g.WorktreeGeneration(worktreePath)
+
+	require.NoError(t, err)
+	require.NoError(t, ValidateWorktreeGeneration(generation))
+	data, err := os.ReadFile(generationPath)
+	require.NoError(t, err)
+	assert.Equal(t, generation, strings.TrimSpace(string(data)))
+}
+
 func TestListWorktreesReportsGenerationInitializationFailure(t *testing.T) {
 	repo := NewTestRepository(t)
 	g := New(repo.Path)
@@ -1903,6 +1923,28 @@ func TestAddWorktreeTrackingReusesMatchingOrphanBranch(t *testing.T) {
 			"@{upstream}",
 		),
 	)
+}
+
+func TestAddWorktreeExistingRefusesGenerationlessRegisteredWorktree(
+	t *testing.T,
+) {
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "legacy-existing")
+	worktreePath := filepath.Join(t.TempDir(), "legacy-existing")
+	repo.CreateWorktree(t, worktreePath, "legacy-existing")
+	keepPath := filepath.Join(worktreePath, "keep")
+	require.NoError(t, os.WriteFile(keepPath, []byte("preserve me"), 0o600))
+
+	err := New(repo.Path).AddWorktreeExisting(
+		worktreePath,
+		"legacy-existing",
+		nil,
+	)
+
+	require.ErrorContains(t, err, "already registered without a generation")
+	data, readErr := os.ReadFile(keepPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, "preserve me", string(data))
 }
 
 func TestAddWorktreeExistingRemovesWorktreeAfterCheckoutFailure(t *testing.T) {

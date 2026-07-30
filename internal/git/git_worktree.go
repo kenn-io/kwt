@@ -285,23 +285,20 @@ func (g *Git) addWorktreeExisting(
 	if err != nil {
 		return err
 	}
-	resume, err := g.registeredWorktreeNeedsCheckout(
+	if err := g.rejectRegisteredWorktreeDestination(
 		path,
 		protectedNames,
-	)
-	if err != nil {
+	); err != nil {
 		return err
 	}
-	if !resume {
-		args := append([]string(nil), isolationArgs...)
-		args = append(
-			args,
-			"worktree", "add", "--no-checkout", "--detach",
-			"--", path, "refs/heads/"+branch,
-		)
-		if _, err := g.runWithoutCredentials(protectedNames, args...); err != nil {
-			return fmt.Errorf("failed to add existing-branch worktree: %w", err)
-		}
+	args := append([]string(nil), isolationArgs...)
+	args = append(
+		args,
+		"worktree", "add", "--no-checkout", "--detach",
+		"--", path, "refs/heads/"+branch,
+	)
+	if _, err := g.runWithoutCredentials(protectedNames, args...); err != nil {
+		return fmt.Errorf("failed to add existing-branch worktree: %w", err)
 	}
 	if err := g.checkoutIsolatedWorktree(
 		path,
@@ -412,11 +409,10 @@ func (g *Git) addWorktreeTracking(
 		return err
 	}
 
-	resume, err := g.registeredWorktreeNeedsCheckout(
+	if err := g.rejectRegisteredWorktreeDestination(
 		path,
 		protectedNames,
-	)
-	if err != nil {
+	); err != nil {
 		return err
 	}
 	reusedBranch, err := g.reusableTrackingBranch(
@@ -445,44 +441,42 @@ func (g *Git) addWorktreeTracking(
 		}
 		createdBranch = true
 	}
-	if !resume {
-		worktreeArgs := append([]string(nil), isolationArgs...)
-		worktreeArgs = append(
-			worktreeArgs,
-			"worktree", "add", "--no-checkout", "--", path, branch,
-		)
-		if _, err := g.runWithoutCredentials(
-			protectedNames,
-			worktreeArgs...,
-		); err != nil {
-			if !createdBranch {
-				return fmt.Errorf(
-					"failed to add worktree tracking %s: %w",
-					remoteBranch,
-					err,
-				)
-			}
-			if _, rollbackErr := g.runWithoutCredentials(
-				protectedNames,
-				append(
-					append([]string(nil), isolationArgs...),
-					"branch", "-D", "--", branch,
-				)...,
-			); rollbackErr != nil {
-				return fmt.Errorf(
-					"failed to add worktree tracking %s: %w (failed to remove branch %s: %v)",
-					remoteBranch,
-					err,
-					branch,
-					rollbackErr,
-				)
-			}
+	worktreeArgs := append([]string(nil), isolationArgs...)
+	worktreeArgs = append(
+		worktreeArgs,
+		"worktree", "add", "--no-checkout", "--", path, branch,
+	)
+	if _, err := g.runWithoutCredentials(
+		protectedNames,
+		worktreeArgs...,
+	); err != nil {
+		if !createdBranch {
 			return fmt.Errorf(
 				"failed to add worktree tracking %s: %w",
 				remoteBranch,
 				err,
 			)
 		}
+		if _, rollbackErr := g.runWithoutCredentials(
+			protectedNames,
+			append(
+				append([]string(nil), isolationArgs...),
+				"branch", "-D", "--", branch,
+			)...,
+		); rollbackErr != nil {
+			return fmt.Errorf(
+				"failed to add worktree tracking %s: %w (failed to remove branch %s: %v)",
+				remoteBranch,
+				err,
+				branch,
+				rollbackErr,
+			)
+		}
+		return fmt.Errorf(
+			"failed to add worktree tracking %s: %w",
+			remoteBranch,
+			err,
+		)
 	}
 	if err := g.checkoutIsolatedWorktree(
 		path,
@@ -528,10 +522,10 @@ func (g *Git) addWorktreeTracking(
 	return nil
 }
 
-func (g *Git) registeredWorktreeNeedsCheckout(
+func (g *Git) rejectRegisteredWorktreeDestination(
 	path string,
 	protectedNames []string,
-) (bool, error) {
+) error {
 	output, err := g.runWithoutCredentials(
 		protectedNames,
 		"worktree",
@@ -539,28 +533,22 @@ func (g *Git) registeredWorktreeNeedsCheckout(
 		"--porcelain",
 	)
 	if err != nil {
-		return false, err
+		return err
 	}
 	want := comparableWorktreePath(path)
-	registered := false
 	for _, entry := range gitworktree.ParsePorcelain(output) {
-		if comparableWorktreePath(entry.Path) == want {
-			registered = true
-			break
+		if comparableWorktreePath(entry.Path) != want {
+			continue
 		}
-	}
-	if !registered {
-		return false, nil
-	}
-	if _, err := g.readWorktreeGeneration(path); err == nil {
-		return false, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return false, &IncompleteInventoryError{
-			Path: path,
-			Err:  err,
+		if _, generationErr := g.readWorktreeGeneration(path); generationErr != nil {
+			return fmt.Errorf(
+				"worktree %s is already registered without a generation; refusing to replace it",
+				path,
+			)
 		}
+		return fmt.Errorf("worktree %s is already registered", path)
 	}
-	return true, nil
+	return nil
 }
 
 func (g *Git) reusableTrackingBranch(
@@ -930,32 +918,36 @@ func (g *Git) WorktreeGeneration(path string) (string, error) {
 		return "", err
 	}
 	generationPath := filepath.Join(gitDir, "kwt-generation")
-	file, err := os.OpenFile(
-		generationPath,
-		os.O_WRONLY|os.O_CREATE|os.O_EXCL,
-		0600,
-	)
+	file, err := os.CreateTemp(gitDir, ".kwt-generation-")
 	if err != nil {
-		if os.IsExist(err) {
-			return g.readWorktreeGeneration(path)
-		}
-		return "", fmt.Errorf("persist worktree identity: %w", err)
+		return "", fmt.Errorf("create worktree identity temporary file: %w", err)
+	}
+	tempPath := file.Name()
+	defer func() { _ = os.Remove(tempPath) }()
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return "", fmt.Errorf("secure worktree identity: %w", err)
 	}
 	if _, err := fmt.Fprintln(file, generation); err != nil {
 		_ = file.Close()
-		_ = os.Remove(generationPath)
 		return "", fmt.Errorf("persist worktree identity: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return "", fmt.Errorf("sync worktree identity: %w", err)
 	}
 	if err := file.Close(); err != nil {
-		_ = os.Remove(generationPath)
 		return "", fmt.Errorf("persist worktree identity: %w", err)
 	}
-	return generation, nil
+	if err := os.Rename(tempPath, generationPath); err != nil {
+		return "", fmt.Errorf("install worktree identity: %w", err)
+	}
+	return g.readWorktreeGeneration(path)
 }
 
 // ReadWorktreeGeneration returns an existing durable identity without
-// initializing one. Recovery uses absence as evidence that checkout did not
-// complete its kwt creation boundary.
+// initializing one. Recovery can finalize a present identity without making
+// a generation-less registered worktree eligible for checkout or cleanup.
 func (g *Git) ReadWorktreeGeneration(path string) (string, error) {
 	return g.readWorktreeGeneration(path)
 }

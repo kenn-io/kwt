@@ -35,7 +35,6 @@ type mockGit struct {
 	trackingSource    string
 	existingSource    string
 	protectedNames    []string
-	initializeOnList  bool
 }
 
 type mockRemoteSourceState struct {
@@ -150,14 +149,6 @@ func (m *mockRemoteSourceState) AbortCreation(
 func (m *mockGit) ListWorktrees() ([]models.Worktree, error) {
 	if m.listError != nil {
 		return nil, m.listError
-	}
-	if m.initializeOnList {
-		for i := range m.worktrees {
-			if m.worktrees[i].Generation == "" {
-				m.worktrees[i].Generation =
-					"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-			}
-		}
 	}
 	return m.worktrees, nil
 }
@@ -708,10 +699,11 @@ func TestManagerAddTrackingFinalizesAbandonedCompletedCheckout(t *testing.T) {
 	assert.True(t, entry.UnreviewedRemoteSource)
 }
 
-func TestManagerAddTrackingDoesNotInitializeAbandonedCheckoutDuringRecovery(
+func TestManagerAddTrackingPreservesAbandonedGenerationlessCheckout(
 	t *testing.T,
 ) {
 	worktreePath := filepath.Join(t.TempDir(), "incomplete-worktree")
+	require.NoError(t, os.MkdirAll(worktreePath, 0o755))
 	state := &mockRemoteSourceState{entries: map[string]*registry.WorktreeEntry{
 		worktreePath: {
 			Path:                   worktreePath,
@@ -721,7 +713,7 @@ func TestManagerAddTrackingDoesNotInitializeAbandonedCheckoutDuringRecovery(
 		},
 	}}
 	mockG := &mockGit{
-		initializeOnList: true,
+		addError: errors.New("already registered without a generation"),
 		worktrees: []models.Worktree{{
 			Path:   worktreePath,
 			Branch: "feature/incomplete",
@@ -732,23 +724,20 @@ func TestManagerAddTrackingDoesNotInitializeAbandonedCheckoutDuringRecovery(
 		return state, nil
 	}
 
-	path, err := manager.AddTracking(
+	_, err := manager.AddTracking(
 		"feature/incomplete",
 		"refs/remotes/origin/feature/incomplete",
 		worktreePath,
 	)
 
-	require.NoError(t, err)
-	assert.Equal(t, worktreePath, path)
-	assert.Equal(
-		t,
-		"refs/remotes/origin/feature/incomplete",
-		mockG.trackingSource,
-	)
+	require.ErrorContains(t, err, "already registered without a generation")
+	assert.Empty(t, mockG.trackingSource)
 	entry, ok := state.entries[worktreePath]
 	require.True(t, ok)
 	assert.Empty(t, entry.CreationToken)
-	assert.Equal(t, "0123456789abcdef0123456789abcdef", entry.Generation)
+	assert.Empty(t, entry.Generation)
+	assert.Equal(t, "feature/incomplete", entry.Branch)
+	assert.True(t, entry.UnreviewedRemoteSource)
 }
 
 func TestManagerAddTrackingDoesNotExpandRemoteBranchEnvironmentReferences(

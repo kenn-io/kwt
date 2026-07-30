@@ -382,12 +382,11 @@ func TestDiscoverGlobalWorktreesReportsRepositorySnapshotFailure(t *testing.T) {
 	gitDir := strings.TrimSpace(
 		strings.TrimPrefix(strings.TrimSpace(string(dotGit)), "gitdir: "),
 	)
-	if err := os.WriteFile(
+	if err := os.Mkdir(
 		filepath.Join(gitDir, "kwt-generation"),
-		[]byte("invalid\n"),
-		0o600,
+		0o700,
 	); err != nil {
-		t.Fatalf("corrupt worktree generation: %v", err)
+		t.Fatalf("block worktree generation initialization: %v", err)
 	}
 
 	entries, err := DiscoverGlobalWorktrees(baseDir, nil)
