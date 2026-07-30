@@ -547,7 +547,25 @@ func TestHookReentrantWorktreeList(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := New(os.Getenv("KWT_TEST_HOOK_REPO")).ListWorktrees()
+		worktrees, err := New(
+			os.Getenv("KWT_TEST_HOOK_REPO"),
+		).ListWorktrees()
+		reservedPath := os.Getenv("KWT_TEST_HOOK_WORKTREE")
+		for _, worktree := range worktrees {
+			if utils.CanonicalPath(worktree.Path) ==
+				utils.CanonicalPath(reservedPath) {
+				err = fmt.Errorf(
+					"in-progress worktree was visible during checkout",
+				)
+			}
+		}
+		if _, generationErr := New(
+			os.Getenv("KWT_TEST_HOOK_REPO"),
+		).readWorktreeGeneration(reservedPath); generationErr == nil {
+			err = fmt.Errorf(
+				"in-progress worktree generation was initialized during listing",
+			)
+		}
 		done <- err
 	}()
 
@@ -599,8 +617,133 @@ func TestHookCapableWorktreeAddsAllowHookToListWorktrees(t *testing.T) {
 			t.Setenv("KWT_TEST_HOOK_REPO", repo.Path)
 
 			worktreePath := filepath.Join(t.TempDir(), "hook-worktree")
+			t.Setenv("KWT_TEST_HOOK_WORKTREE", worktreePath)
 			require.NoError(t, tt.add(New(repo.Path), worktreePath))
 			assert.DirExists(t, worktreePath)
+		})
+	}
+}
+
+func TestWorktreeCreationReservationHidesAndProtectsCheckout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test hook uses a POSIX shell")
+	}
+
+	repo := NewTestRepository(t)
+	startedPath := filepath.Join(t.TempDir(), "hook-started")
+	releasePath := filepath.Join(t.TempDir(), "hook-release")
+	hookPath := filepath.Join(repo.Path, ".git", "hooks", "post-checkout")
+	hook := `#!/bin/sh
+touch "$KWT_TEST_HOOK_STARTED"
+while [ ! -f "$KWT_TEST_HOOK_RELEASE" ]; do
+	sleep 0.01
+done
+`
+	require.NoError(t, os.WriteFile(hookPath, []byte(hook), 0755))
+	t.Setenv("KWT_TEST_HOOK_STARTED", startedPath)
+	t.Setenv("KWT_TEST_HOOK_RELEASE", releasePath)
+	t.Cleanup(func() {
+		_ = os.WriteFile(releasePath, nil, 0644)
+	})
+
+	g := New(repo.Path)
+	worktreePath := filepath.Join(t.TempDir(), "reserved-worktree")
+	addErr := make(chan error, 1)
+	go func() {
+		addErr <- g.AddWorktree(worktreePath, "reserved-worktree", true)
+	}()
+
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(startedPath)
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
+
+	worktrees, err := g.ListWorktrees()
+	require.NoError(t, err)
+	for _, worktree := range worktrees {
+		assert.NotEqual(
+			t,
+			utils.CanonicalPath(worktreePath),
+			utils.CanonicalPath(worktree.Path),
+		)
+	}
+	require.ErrorContains(
+		t,
+		g.RemoveWorktree(worktreePath, false, ""),
+		"creation in progress",
+	)
+	assert.DirExists(t, worktreePath)
+
+	require.NoError(t, os.WriteFile(releasePath, nil, 0644))
+	require.NoError(t, <-addErr)
+}
+
+func TestHookCapableWorktreeAddRecoversGenerationInitializationFailure(
+	t *testing.T,
+) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test hook uses POSIX permissions")
+	}
+
+	tests := []struct {
+		name string
+		add  func(*Git, string) error
+	}{
+		{
+			name: "default base",
+			add: func(g *Git, path string) error {
+				return g.AddWorktree(path, "recover-default-base", true)
+			},
+		},
+		{
+			name: "explicit base",
+			add: func(g *Git, path string) error {
+				return g.AddWorktreeFromBase(
+					path,
+					"recover-explicit-base",
+					"main",
+				)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := NewTestRepository(t)
+			lockPath := filepath.Join(
+				repo.Path,
+				".git",
+				"kwt-worktree.lock",
+			)
+			require.NoError(t, os.WriteFile(lockPath, nil, 0600))
+			t.Cleanup(func() { _ = os.Chmod(lockPath, 0600) })
+			hookPath := filepath.Join(
+				repo.Path,
+				".git",
+				"hooks",
+				"post-checkout",
+			)
+			hook := `#!/bin/sh
+chmod 000 "$KWT_TEST_MUTATION_LOCK"
+`
+			require.NoError(t, os.WriteFile(hookPath, []byte(hook), 0755))
+			t.Setenv("KWT_TEST_MUTATION_LOCK", lockPath)
+
+			worktreePath := filepath.Join(t.TempDir(), "worktree")
+			require.NoError(t, tt.add(New(repo.Path), worktreePath))
+			assert.DirExists(t, worktreePath)
+
+			require.NoError(t, os.Chmod(lockPath, 0600))
+			worktrees, err := New(repo.Path).ListWorktrees()
+			require.NoError(t, err)
+			for _, worktree := range worktrees {
+				if utils.CanonicalPath(worktree.Path) ==
+					utils.CanonicalPath(worktreePath) {
+					assert.NotEmpty(t, worktree.Generation)
+					return
+				}
+			}
+			t.Fatal("created worktree missing after generation retry")
 		})
 	}
 }

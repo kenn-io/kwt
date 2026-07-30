@@ -264,17 +264,6 @@ func (m *Manager) GetMatchingWorktrees(pattern string) ([]models.Worktree, error
 		return exactBranchMatches, nil
 	}
 
-	lowerPattern := strings.ToLower(pattern)
-	var branchMatches []models.Worktree
-	for _, wt := range worktrees {
-		if strings.Contains(strings.ToLower(wt.Branch), lowerPattern) {
-			branchMatches = append(branchMatches, wt)
-		}
-	}
-	if len(branchMatches) > 0 {
-		return branchMatches, nil
-	}
-
 	if filepath.IsAbs(pattern) {
 		canonicalPattern := utils.CanonicalPath(pattern)
 		var exactPathMatches []models.Worktree
@@ -286,6 +275,17 @@ func (m *Manager) GetMatchingWorktrees(pattern string) ([]models.Worktree, error
 		if len(exactPathMatches) > 0 {
 			return exactPathMatches, nil
 		}
+	}
+
+	lowerPattern := strings.ToLower(pattern)
+	var branchMatches []models.Worktree
+	for _, wt := range worktrees {
+		if strings.Contains(strings.ToLower(wt.Branch), lowerPattern) {
+			branchMatches = append(branchMatches, wt)
+		}
+	}
+	if len(branchMatches) > 0 {
+		return branchMatches, nil
 	}
 
 	pathPattern := strings.ToLower(filepath.ToSlash(pattern))

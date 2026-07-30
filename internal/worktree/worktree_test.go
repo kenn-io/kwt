@@ -681,6 +681,28 @@ func TestManagerGetMatchingWorktreesPrefersExactPath(t *testing.T) {
 	assert.Equal(t, "feature/task", matches[0].Branch)
 }
 
+func TestManagerGetMatchingWorktreesPrefersAbsolutePathOverBranchSubstring(
+	t *testing.T,
+) {
+	exactPath := filepath.Join(t.TempDir(), "task")
+	unrelatedPath := filepath.Join(t.TempDir(), "unrelated")
+	m := New(&mockGit{
+		worktrees: []models.Worktree{
+			{Path: exactPath, Branch: "feature/task"},
+			{
+				Path:   unrelatedPath,
+				Branch: "topic" + filepath.ToSlash(exactPath),
+			},
+		},
+	}, &models.Config{})
+
+	matches, err := m.GetMatchingWorktrees(exactPath)
+
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	assert.Equal(t, exactPath, matches[0].Path)
+}
+
 func TestManagerGetMatchingWorktreesPrefersBranchOverRelativeSymlink(t *testing.T) {
 	currentPath := t.TempDir()
 	mainPath := t.TempDir()
