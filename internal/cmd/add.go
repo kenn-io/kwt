@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/duration"
+	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/url"
@@ -253,18 +254,15 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			t := time.Now().Add(expiresDuration)
 			expiresAt = &t
 
-			entry := &registry.WorktreeEntry{}
-			if existing, ok := reg.Get(worktreePath); ok {
-				*entry = *existing
-			}
-			entry.Repository = repoURL
-			entry.Branch = branch
-			entry.Path = worktreePath
-			entry.IsMain = false
-			entry.ExpiresAt = expiresAt
-			entry.Generation = worktreeGeneration
-
-			if err := reg.Register(entry); err != nil {
+			if err := registerWorktreeExpiration(
+				ctx.Git,
+				reg,
+				worktreePath,
+				worktreeGeneration,
+				repoURL,
+				branch,
+				expiresAt,
+			); err != nil {
 				return fmt.Errorf("failed to register worktree: %w", err)
 			}
 		}
@@ -286,6 +284,50 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		}
 		return nil
 	})(cmd, args)
+}
+
+func registerWorktreeExpiration(
+	g *git.Git,
+	reg *registry.Registry,
+	worktreePath string,
+	generation string,
+	repository string,
+	branch string,
+	expiresAt *time.Time,
+) error {
+	observed, _ := reg.Get(worktreePath)
+	entry := &registry.WorktreeEntry{}
+	if observed != nil {
+		*entry = *observed
+	}
+	entry.Repository = repository
+	entry.Branch = branch
+	entry.Path = worktreePath
+	entry.IsMain = false
+	entry.ExpiresAt = expiresAt
+	entry.Generation = generation
+
+	return g.WithWorktreeGeneration(
+		worktreePath,
+		generation,
+		func() error {
+			replaced, err := reg.CompareAndSwap(
+				worktreePath,
+				observed,
+				entry,
+			)
+			if err != nil {
+				return err
+			}
+			if !replaced {
+				return fmt.Errorf(
+					"registry ownership changed for %s",
+					worktreePath,
+				)
+			}
+			return nil
+		},
+	)
 }
 
 func resolveRemoteBranchSource(

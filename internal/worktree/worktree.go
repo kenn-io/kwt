@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/registry"
@@ -58,10 +59,9 @@ type Manager struct {
 }
 
 type remoteSourceState interface {
-	Register(*registry.WorktreeEntry) error
-	ReplaceIfCreationToken(
+	CompareAndSwap(
 		string,
-		string,
+		*registry.WorktreeEntry,
 		*registry.WorktreeEntry,
 	) (bool, error)
 	Get(string) (*registry.WorktreeEntry, bool)
@@ -219,11 +219,23 @@ func (m *Manager) addUnreviewedSource(
 	entry := &registry.WorktreeEntry{
 		Branch:                 branch,
 		Path:                   path,
+		RegisteredAt:           time.Now(),
 		CreationToken:          creationToken,
 		UnreviewedRemoteSource: true,
 	}
-	if err := state.Register(entry); err != nil {
+	var expected *registry.WorktreeEntry
+	if existed {
+		expected = previous
+	}
+	claimed, err := state.CompareAndSwap(path, expected, entry)
+	if err != nil {
 		return "", "", fmt.Errorf("mark remote-source worktree unreviewed: %w", err)
+	}
+	if !claimed {
+		return "", "", fmt.Errorf(
+			"registry ownership changed for %s; retry creation",
+			path,
+		)
 	}
 
 	generation, err := add()
@@ -231,16 +243,16 @@ func (m *Manager) addUnreviewedSource(
 		var restoreErr error
 		switch {
 		case existed:
-			_, restoreErr = state.ReplaceIfCreationToken(
+			_, restoreErr = state.CompareAndSwap(
 				path,
-				creationToken,
+				entry,
 				previous,
 			)
 		default:
 			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-				_, restoreErr = state.ReplaceIfCreationToken(
+				_, restoreErr = state.CompareAndSwap(
 					path,
-					creationToken,
+					entry,
 					nil,
 				)
 			}
@@ -254,12 +266,13 @@ func (m *Manager) addUnreviewedSource(
 		}
 		return "", "", err
 	}
-	entry.Generation = generation
-	entry.CreationToken = ""
-	replaced, err := state.ReplaceIfCreationToken(
+	completed := *entry
+	completed.Generation = generation
+	completed.CreationToken = ""
+	replaced, err := state.CompareAndSwap(
 		path,
-		creationToken,
 		entry,
+		&completed,
 	)
 	if err != nil {
 		return "", "", fmt.Errorf(

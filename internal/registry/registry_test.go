@@ -412,6 +412,8 @@ func TestRegistryCreationFinalizationPreservesReplacementOwner(t *testing.T) {
 		Branch:        "feature/original",
 		CreationToken: "original-creation",
 	}))
+	observed, ok := r.Get(path)
+	require.True(t, ok)
 	replacementExpiry := time.Now().Add(time.Hour)
 	require.NoError(t, r.Register(&WorktreeEntry{
 		Path:       path,
@@ -420,9 +422,9 @@ func TestRegistryCreationFinalizationPreservesReplacementOwner(t *testing.T) {
 		ExpiresAt:  &replacementExpiry,
 	}))
 
-	finalized, err := r.ReplaceIfCreationToken(
+	finalized, err := r.CompareAndSwap(
 		path,
-		"original-creation",
+		observed,
 		&WorktreeEntry{
 			Path:       path,
 			Branch:     "feature/original",
@@ -438,6 +440,64 @@ func TestRegistryCreationFinalizationPreservesReplacementOwner(t *testing.T) {
 	assert.Equal(t, "fedcba9876543210fedcba9876543210", entry.Generation)
 	require.NotNil(t, entry.ExpiresAt)
 	assert.True(t, entry.ExpiresAt.Equal(replacementExpiry))
+}
+
+func TestRegistryCreationClaimRejectsChangedObservedEntry(t *testing.T) {
+	r := &Registry{
+		entries: make(map[string]*WorktreeEntry),
+		path:    filepath.Join(t.TempDir(), "registry.json"),
+	}
+	path := filepath.Join(t.TempDir(), "reused-worktree")
+	require.NoError(t, r.Register(&WorktreeEntry{
+		Path:       path,
+		Branch:     "feature/observed",
+		Generation: "0123456789abcdef0123456789abcdef",
+	}))
+	observed, ok := r.Get(path)
+	require.True(t, ok)
+	require.NoError(t, r.Register(&WorktreeEntry{
+		Path:       path,
+		Branch:     "feature/replacement",
+		Generation: "fedcba9876543210fedcba9876543210",
+	}))
+
+	claimed, err := r.CompareAndSwap(
+		path,
+		observed,
+		&WorktreeEntry{
+			Path:          path,
+			Branch:        "feature/claimant",
+			CreationToken: "claimant-creation",
+		},
+	)
+
+	require.NoError(t, err)
+	assert.False(t, claimed)
+	entry, ok := r.Get(path)
+	require.True(t, ok)
+	assert.Equal(t, "feature/replacement", entry.Branch)
+	assert.Equal(t, "fedcba9876543210fedcba9876543210", entry.Generation)
+}
+
+func TestRegistryLegacyCleanupPreservesProvisionalCreation(t *testing.T) {
+	r := &Registry{
+		entries: make(map[string]*WorktreeEntry),
+		path:    filepath.Join(t.TempDir(), "registry.json"),
+	}
+	path := filepath.Join(t.TempDir(), "provisional-worktree")
+	require.NoError(t, r.Register(&WorktreeEntry{
+		Path:          path,
+		Branch:        "feature/creating",
+		CreationToken: "active-creation",
+	}))
+
+	removed, err := r.UnregisterIfGeneration(path, "")
+
+	require.NoError(t, err)
+	assert.False(t, removed)
+	entry, ok := r.Get(path)
+	require.True(t, ok)
+	assert.Equal(t, "active-creation", entry.CreationToken)
 }
 
 func TestWorktreeEntry_ExpiresAt_JSONMarshal(t *testing.T) {

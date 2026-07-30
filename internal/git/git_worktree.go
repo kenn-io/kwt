@@ -662,6 +662,24 @@ func (g *Git) RemoveWorktree(
 	})
 }
 
+// WithWorktreeGeneration runs operation while the selected worktree still
+// names expected and repository worktree mutations are excluded.
+func (g *Git) WithWorktreeGeneration(
+	path string,
+	expected string,
+	operation func() error,
+) error {
+	return g.withWorktreeMutationLock(nil, func() error {
+		if err := g.rejectActiveWorktreeCreation(nil); err != nil {
+			return err
+		}
+		if err := g.requireWorktreeGeneration(path, expected); err != nil {
+			return err
+		}
+		return operation()
+	})
+}
+
 func (g *Git) removeWorktree(path string, force bool, conditional bool) error {
 	canonicalPath := utils.CanonicalPath(path)
 	registryGit := g

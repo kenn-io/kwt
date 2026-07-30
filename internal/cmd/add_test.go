@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -129,6 +130,72 @@ func TestAddFromRemoteBranchCreatesTrackingWorktreeWithoutLaunching(t *testing.T
 	assert.True(t, entry.UnreviewedRemoteSource)
 	assert.NotNil(t, entry.ExpiresAt)
 	assert.NotEmpty(t, entry.Generation)
+}
+
+func TestRegisterWorktreeExpirationRejectsRecreatedWorktree(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "reused-worktree")
+	runTUITestGit(
+		t,
+		repoPath,
+		"worktree",
+		"add",
+		"-b",
+		"feature/original",
+		worktreePath,
+	)
+	originalGeneration := tuiTestWorktreeGeneration(
+		t,
+		repoPath,
+		worktreePath,
+	)
+	runTUITestGit(t, repoPath, "worktree", "remove", "--force", worktreePath)
+	runTUITestGit(
+		t,
+		repoPath,
+		"worktree",
+		"add",
+		"-b",
+		"feature/replacement",
+		worktreePath,
+	)
+	replacementGeneration := tuiTestWorktreeGeneration(
+		t,
+		repoPath,
+		worktreePath,
+	)
+
+	reg, err := registry.New()
+	require.NoError(t, err)
+	replacementExpiry := time.Now().Add(2 * time.Hour)
+	require.NoError(t, reg.Register(&registry.WorktreeEntry{
+		Path:       worktreePath,
+		Branch:     "feature/replacement",
+		Generation: replacementGeneration,
+		ExpiresAt:  &replacementExpiry,
+	}))
+	staleExpiry := time.Now().Add(time.Hour)
+
+	err = registerWorktreeExpiration(
+		git.New(repoPath),
+		reg,
+		worktreePath,
+		originalGeneration,
+		"https://github.com/example/original.git",
+		"feature/original",
+		&staleExpiry,
+	)
+
+	require.Error(t, err)
+	entry, ok := reg.Get(worktreePath)
+	require.True(t, ok)
+	assert.Equal(t, "feature/replacement", entry.Branch)
+	assert.Equal(t, replacementGeneration, entry.Generation)
+	require.NotNil(t, entry.ExpiresAt)
+	assert.True(t, entry.ExpiresAt.Equal(replacementExpiry))
 }
 
 func TestAddFromResolvesRemoteRefAcrossLocalNamespaceCollision(t *testing.T) {

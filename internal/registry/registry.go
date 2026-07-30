@@ -197,17 +197,14 @@ func (r *Registry) Register(entry *WorktreeEntry) error {
 	})
 }
 
-// ReplaceIfCreationToken replaces a provisional creation entry only while
-// that operation still owns the registry path.
-func (r *Registry) ReplaceIfCreationToken(
+// CompareAndSwap replaces a path only while its complete registry entry still
+// matches the caller's observed state. A nil expected entry claims an
+// unregistered path; a nil replacement removes the matched entry.
+func (r *Registry) CompareAndSwap(
 	path string,
-	creationToken string,
+	expected *WorktreeEntry,
 	replacement *WorktreeEntry,
 ) (bool, error) {
-	if creationToken == "" {
-		return false, fmt.Errorf("creation token is required")
-	}
-
 	var copied *WorktreeEntry
 	if replacement != nil {
 		value := *replacement
@@ -220,11 +217,14 @@ func (r *Registry) ReplaceIfCreationToken(
 	replaced := false
 	err := r.mutate(func(entries map[string]*WorktreeEntry) bool {
 		keys := matchingRegistryKeys(entries, path)
-		if len(keys) == 0 {
-			return false
-		}
-		for _, key := range keys {
-			if entries[key].CreationToken != creationToken {
+		switch {
+		case expected == nil:
+			if len(keys) != 0 {
+				return false
+			}
+		default:
+			if len(keys) != 1 ||
+				!sameWorktreeEntry(entries[keys[0]], expected) {
 				return false
 			}
 		}
@@ -238,6 +238,29 @@ func (r *Registry) ReplaceIfCreationToken(
 		return true
 	})
 	return replaced, err
+}
+
+func sameWorktreeEntry(left *WorktreeEntry, right *WorktreeEntry) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return left.Repository == right.Repository &&
+		left.Branch == right.Branch &&
+		left.Path == right.Path &&
+		left.Hash == right.Hash &&
+		left.IsMain == right.IsMain &&
+		left.RegisteredAt.Equal(right.RegisteredAt) &&
+		sameOptionalTime(left.ExpiresAt, right.ExpiresAt) &&
+		left.Generation == right.Generation &&
+		left.CreationToken == right.CreationToken &&
+		left.UnreviewedRemoteSource == right.UnreviewedRemoteSource
+}
+
+func sameOptionalTime(left *time.Time, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return left.Equal(*right)
 }
 
 // Unregister removes a worktree entry by path.
@@ -260,7 +283,8 @@ func (r *Registry) UnregisterIfGeneration(
 	removed := false
 	err := r.mutate(func(entries map[string]*WorktreeEntry) bool {
 		for _, key := range matchingRegistryKeys(entries, path) {
-			if entries[key].Generation != generation {
+			if entries[key].CreationToken != "" ||
+				entries[key].Generation != generation {
 				continue
 			}
 			delete(entries, key)

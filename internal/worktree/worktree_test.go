@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -39,23 +40,21 @@ type mockRemoteSourceState struct {
 	entries map[string]*registry.WorktreeEntry
 }
 
-func (m *mockRemoteSourceState) Register(entry *registry.WorktreeEntry) error {
-	if m.entries == nil {
-		m.entries = make(map[string]*registry.WorktreeEntry)
-	}
-	copied := *entry
-	m.entries[entry.Path] = &copied
-	return nil
-}
-
-func (m *mockRemoteSourceState) ReplaceIfCreationToken(
+func (m *mockRemoteSourceState) CompareAndSwap(
 	path string,
-	creationToken string,
+	expected *registry.WorktreeEntry,
 	replacement *registry.WorktreeEntry,
 ) (bool, error) {
 	entry, ok := m.entries[path]
-	if !ok || entry.CreationToken != creationToken {
+	if expected == nil {
+		if ok {
+			return false, nil
+		}
+	} else if !ok || !reflect.DeepEqual(entry, expected) {
 		return false, nil
+	}
+	if m.entries == nil {
+		m.entries = make(map[string]*registry.WorktreeEntry)
 	}
 	delete(m.entries, path)
 	if replacement != nil {
