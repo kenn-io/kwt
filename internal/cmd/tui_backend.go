@@ -1351,16 +1351,20 @@ func (b *tuiBackend) validateRepositoryRootForRow(
 		}
 	}
 
-	repositoryURL, err := git.New(repoRoot).GetRepositoryURL()
+	var projects []models.Project
+	if b.cfg != nil {
+		projects = b.cfg.Projects
+	}
+	liveInfo, err := worktree.RepositoryInfoWithProjects(
+		git.New(repoRoot),
+		projects,
+	)
 	if err == nil {
-		liveInfo, parseErr := url.ParseRepositoryURL(repositoryURL)
-		if parseErr == nil {
-			for _, candidate := range rowRepositoryIdentityCandidates(
-				row.Entry.RepositoryInfo,
-			) {
-				if sameRepositoryIdentity(liveInfo.FullPath, candidate) {
-					return nil
-				}
+		for _, candidate := range rowRepositoryIdentityCandidates(
+			row.Entry.RepositoryInfo,
+		) {
+			if sameRepositoryIdentity(liveInfo.FullPath, candidate) {
+				return nil
 			}
 		}
 	}

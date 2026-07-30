@@ -1988,6 +1988,49 @@ func TestTUIBackendRejectsRepositoryRootFromDifferentIdentity(t *testing.T) {
 	assert.ErrorContains(t, err, "repository identity changed")
 }
 
+func TestTUIBackendAcceptsDiscoveryLocalRepositoryIdentity(t *testing.T) {
+	tests := []struct {
+		name   string
+		origin func(*testing.T, string)
+	}{
+		{name: "without origin"},
+		{
+			name: "filesystem origin",
+			origin: func(t *testing.T, repoPath string) {
+				runTUITestGit(
+					t,
+					repoPath,
+					"remote",
+					"add",
+					"origin",
+					filepath.Join(t.TempDir(), "upstream.git"),
+				)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoPath := newTUITestRepo(t)
+			if tt.origin != nil {
+				tt.origin(t, repoPath)
+			}
+			repoInfo, err := worktree.RepositoryInfoFromLocalPath(repoPath)
+			require.NoError(t, err)
+			backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+			row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
+				Path:           repoPath,
+				RepositoryInfo: repoInfo,
+			}}
+
+			root, err := backend.repositoryRootForRow(row)
+
+			require.NoError(t, err)
+			assert.True(t, samePath(repoPath, root))
+		})
+	}
+}
+
 func TestTUIBackendRemoveWorktreeDirtyErrorDoesNotSuggestCLIForce(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

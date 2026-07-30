@@ -118,7 +118,7 @@ func platformPathKey(path string, goos string) string {
 	if goos == "windows" {
 		return strings.ToLower(strings.ReplaceAll(path, `\`, "/"))
 	}
-	return filepath.ToSlash(path)
+	return path
 }
 
 // IsSameOrChildPath reports whether path names parent or a directory nested
