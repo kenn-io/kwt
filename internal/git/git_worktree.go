@@ -1071,8 +1071,13 @@ func (g *Git) hasRegisteredWorktree(canonicalPath string) (bool, error) {
 
 // PruneWorktrees removes worktree information for deleted directories.
 func (g *Git) PruneWorktrees() error {
-	if _, err := g.run("worktree", "prune"); err != nil {
-		return fmt.Errorf("failed to prune worktrees: %w", err)
-	}
-	return nil
+	return g.withWorktreeMutationLock(nil, func() error {
+		if err := g.rejectActiveWorktreeCreation(nil); err != nil {
+			return err
+		}
+		if _, err := g.run("worktree", "prune"); err != nil {
+			return fmt.Errorf("failed to prune worktrees: %w", err)
+		}
+		return nil
+	})
 }

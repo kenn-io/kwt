@@ -1289,6 +1289,23 @@ func TestPruneWorktrees(t *testing.T) {
 	}
 }
 
+func TestPruneWorktreesRejectsActiveCreationReservation(t *testing.T) {
+	repo := NewTestRepository(t)
+	g := New(repo.Path)
+	reservation, err := g.reserveWorktreeCreation(
+		filepath.Join(t.TempDir(), "creating-worktree"),
+		nil,
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, reservation.release())
+	})
+
+	err = g.PruneWorktrees()
+
+	require.ErrorContains(t, err, "worktree creation in progress")
+}
+
 func TestListBranches(t *testing.T) {
 	repo := NewTestRepository(t)
 	g := New(repo.Path)
