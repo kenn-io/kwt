@@ -41,6 +41,14 @@ type mockRemoteSourceState struct {
 	creationActive bool
 }
 
+type materializedAddError struct {
+	error
+}
+
+func (materializedAddError) WorktreeCreated() bool {
+	return true
+}
+
 func (m *mockRemoteSourceState) CompareAndSwap(
 	path string,
 	expected *registry.WorktreeEntry,
@@ -129,7 +137,9 @@ func (m *mockRemoteSourceState) AbortCreation(
 	delete(m.entries, path)
 	if previous != nil {
 		copied := *previous
-		copied.UnreviewedRemoteSource = entry.UnreviewedRemoteSource
+		copied.UnreviewedRemoteSource =
+			previous.UnreviewedRemoteSource &&
+				entry.UnreviewedRemoteSource
 		m.entries[path] = &copied
 	}
 	return true, nil
@@ -472,16 +482,25 @@ func TestManagerAddExistingMarksSourceUnreviewedAndSkipsSetup(t *testing.T) {
 func TestManagerAddTrackingRestoresExistingMarkerAfterGitFailure(t *testing.T) {
 	worktreePath := t.TempDir()
 	future := time.Now().Add(time.Hour)
+	generation := "fedcba9876543210fedcba9876543210"
 	state := &mockRemoteSourceState{entries: map[string]*registry.WorktreeEntry{
 		worktreePath: {
 			Path:                   worktreePath,
 			Branch:                 "feature/existing",
 			Repository:             "github.com/acme/widget",
 			ExpiresAt:              &future,
-			UnreviewedRemoteSource: true,
+			Generation:             generation,
+			UnreviewedRemoteSource: false,
 		},
 	}}
-	manager := New(&mockGit{addError: errors.New("already checked out")}, &models.Config{})
+	manager := New(&mockGit{
+		addError: errors.New("already checked out"),
+		worktrees: []models.Worktree{{
+			Path:       worktreePath,
+			Branch:     "feature/existing",
+			Generation: generation,
+		}},
+	}, &models.Config{})
 	manager.openRemoteSourceState = func() (remoteSourceState, error) {
 		return state, nil
 	}
@@ -495,9 +514,10 @@ func TestManagerAddTrackingRestoresExistingMarkerAfterGitFailure(t *testing.T) {
 	require.Error(t, err)
 	entry, ok := state.entries[worktreePath]
 	require.True(t, ok, "failed repeated add must retain the safety marker")
-	assert.True(t, entry.UnreviewedRemoteSource)
+	assert.False(t, entry.UnreviewedRemoteSource)
 	assert.Equal(t, "github.com/acme/widget", entry.Repository)
 	assert.Equal(t, &future, entry.ExpiresAt)
+	assert.Equal(t, generation, entry.Generation)
 }
 
 func TestManagerAddTrackingReplacesStaleMetadataAfterSuccess(t *testing.T) {
@@ -535,7 +555,9 @@ func TestManagerAddTrackingReplacesStaleMetadataAfterSuccess(t *testing.T) {
 func TestManagerAddTrackingRetainsMarkerWhenFailedCheckoutPathExists(t *testing.T) {
 	worktreePath := t.TempDir()
 	state := &mockRemoteSourceState{}
-	manager := New(&mockGit{addError: errors.New("checkout failed")}, &models.Config{})
+	manager := New(&mockGit{addError: materializedAddError{
+		error: errors.New("checkout failed"),
+	}}, &models.Config{})
 	manager.openRemoteSourceState = func() (remoteSourceState, error) {
 		return state, nil
 	}

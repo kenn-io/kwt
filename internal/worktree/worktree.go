@@ -4,6 +4,7 @@ package worktree
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -306,34 +307,39 @@ func (m *Manager) addUnreviewedSource(
 
 	generation, err := add()
 	if err != nil {
-		recoveredGeneration, found, recoveryErr :=
-			m.registeredGeneration(path)
 		var cleaned bool
 		var cleanupErr error
-		switch {
-		case recoveryErr == nil && found:
-			cleaned, cleanupErr = state.CompleteCreation(
-				path,
-				creationToken,
-				recoveredGeneration,
-			)
-		case existed && !reclaimedAbandoned:
+		if errorCreatedWorktree(err) {
+			recoveredGeneration, found, recoveryErr :=
+				m.registeredGeneration(path)
+			if recoveryErr == nil && found {
+				cleaned, cleanupErr = state.CompleteCreation(
+					path,
+					creationToken,
+					recoveredGeneration,
+				)
+			} else {
+				cleaned, cleanupErr = state.CompleteCreation(
+					path,
+					creationToken,
+					"",
+				)
+			}
+		} else {
+			restore := previous
+			if reclaimedAbandoned {
+				if pathExists(path) {
+					finalized := *previous
+					finalized.CreationToken = ""
+					restore = &finalized
+				} else {
+					restore = nil
+				}
+			}
 			cleaned, cleanupErr = state.AbortCreation(
 				path,
 				creationToken,
-				previous,
-			)
-		case pathExists(path):
-			cleaned, cleanupErr = state.CompleteCreation(
-				path,
-				creationToken,
-				"",
-			)
-		default:
-			cleaned, cleanupErr = state.AbortCreation(
-				path,
-				creationToken,
-				previous,
+				restore,
 			)
 		}
 		if cleanupErr != nil {
@@ -370,6 +376,13 @@ func (m *Manager) addUnreviewedSource(
 		)
 	}
 	return path, generation, nil
+}
+
+func errorCreatedWorktree(err error) bool {
+	var created interface {
+		WorktreeCreated() bool
+	}
+	return errors.As(err, &created) && created.WorktreeCreated()
 }
 
 func (m *Manager) registeredGeneration(

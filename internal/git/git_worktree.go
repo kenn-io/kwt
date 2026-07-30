@@ -26,6 +26,26 @@ type worktreeCreationReservation struct {
 	recordPath string
 }
 
+type worktreeCreatedError struct {
+	err error
+}
+
+func (e *worktreeCreatedError) Error() string {
+	return e.err.Error()
+}
+
+func (e *worktreeCreatedError) Unwrap() error {
+	return e.err
+}
+
+func (e *worktreeCreatedError) WorktreeCreated() bool {
+	return true
+}
+
+func markWorktreeCreated(err error) error {
+	return &worktreeCreatedError{err: err}
+}
+
 // ListWorktrees returns a list of all worktrees in the repository.
 func (g *Git) ListWorktrees() ([]models.Worktree, error) {
 	var worktrees []models.Worktree
@@ -133,11 +153,11 @@ func (g *Git) addWorktreeReserved(
 	generation, generationErr := g.initializeWorktreeGenerationValue(path, nil)
 	_ = reservation.release()
 	if generationErr != nil && requireGeneration {
-		return "", fmt.Errorf(
+		return "", markWorktreeCreated(fmt.Errorf(
 			"worktree created at %s but its generation is unavailable; preserved: %w",
 			path,
 			generationErr,
-		)
+		))
 	}
 	return generation, nil
 }
@@ -208,11 +228,11 @@ func (g *Git) addWorktreeExistingLocked(
 		var err error
 		generation, err = g.WorktreeGeneration(path)
 		if err != nil {
-			return fmt.Errorf(
+			return markWorktreeCreated(fmt.Errorf(
 				"worktree created at %s but its generation is unavailable; preserved: %w",
 				path,
 				err,
-			)
+			))
 		}
 		return nil
 	})
@@ -260,11 +280,11 @@ func (g *Git) addWorktreeExisting(
 			protectedNames,
 			isolationArgs,
 		); cleanupErr != nil {
-			return fmt.Errorf(
+			return markWorktreeCreated(fmt.Errorf(
 				"failed to check out existing-branch worktree: %w (failed to remove incomplete worktree: %v)",
 				err,
 				cleanupErr,
-			)
+			))
 		}
 		return fmt.Errorf("failed to check out existing-branch worktree: %w", err)
 	}
@@ -326,11 +346,11 @@ func (g *Git) addWorktreeTrackingLocked(
 		var err error
 		generation, err = g.WorktreeGeneration(path)
 		if err != nil {
-			return fmt.Errorf(
+			return markWorktreeCreated(fmt.Errorf(
 				"worktree created at %s but its generation is unavailable; preserved: %w",
 				path,
 				err,
-			)
+			))
 		}
 		return nil
 	})
@@ -412,12 +432,12 @@ func (g *Git) addWorktreeTracking(
 			protectedNames,
 			isolationArgs,
 		); cleanupErr != nil {
-			return fmt.Errorf(
+			return markWorktreeCreated(fmt.Errorf(
 				"failed to check out worktree tracking %s: %w (failed to remove incomplete worktree: %v)",
 				remoteBranch,
 				err,
 				cleanupErr,
-			)
+			))
 		}
 		if _, cleanupErr := g.runWithoutCredentials(
 			protectedNames,
