@@ -675,7 +675,7 @@ func (g *Git) removeWorktree(path string, force bool, conditional bool) error {
 		args = append(args, "--force")
 	}
 	args = append(args, path)
-	if _, err := g.run(args...); err != nil {
+	if _, err := registryGit.run(args...); err != nil {
 		stillRegistered, listErr := registryGit.hasRegisteredWorktree(canonicalPath)
 		if wasRegistered && listErr == nil && !stillRegistered {
 			if conditional {
