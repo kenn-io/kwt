@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"go.kenn.io/kwt/internal/utils"
 )
 
 // WorktreeEntry represents a registered worktree.
@@ -206,6 +207,26 @@ func (r *Registry) Unregister(path string) error {
 	})
 }
 
+// UnregisterIfGeneration removes path only while its registry entry still
+// names the generation the caller acted on.
+func (r *Registry) UnregisterIfGeneration(
+	path string,
+	generation string,
+) (bool, error) {
+	removed := false
+	err := r.mutate(func(entries map[string]*WorktreeEntry) bool {
+		for _, key := range matchingRegistryKeys(entries, path) {
+			if entries[key].Generation != generation {
+				continue
+			}
+			delete(entries, key)
+			removed = true
+		}
+		return removed
+	})
+	return removed, err
+}
+
 // List returns all registered worktrees.
 func (r *Registry) List() []*WorktreeEntry {
 	r.mu.RLock()
@@ -308,13 +329,7 @@ func matchingRegistryKeys(
 }
 
 func comparableRegistryPath(path string) string {
-	if absolute, err := filepath.Abs(path); err == nil {
-		path = absolute
-	}
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		path = resolved
-	}
-	return filepath.Clean(path)
+	return utils.PathKey(path)
 }
 
 // ListExpired returns all worktrees that have expired.

@@ -100,8 +100,20 @@ func runPruneExpired(cmd *cobra.Command, args []string) error {
 				removed++
 				continue
 			}
-			if err := reg.Unregister(entry.Path); err != nil {
+			unregistered, err := reg.UnregisterIfGeneration(
+				entry.Path,
+				entry.Generation,
+			)
+			if err != nil {
 				fmt.Printf("Warning: failed to unregister %s: %v\n", entry.Path, err)
+				skipped++
+				continue
+			}
+			if !unregistered {
+				fmt.Printf(
+					"Skipping (registry generation changed): %s\n",
+					entry.Path,
+				)
 				skipped++
 				continue
 			}
@@ -166,7 +178,10 @@ func runPruneExpired(cmd *cobra.Command, args []string) error {
 		changed++
 
 		// Unregister from registry
-		if err := reg.Unregister(entry.Path); err != nil {
+		if _, err := reg.UnregisterIfGeneration(
+			entry.Path,
+			entry.Generation,
+		); err != nil {
 			fmt.Printf("Warning: failed to unregister %s: %v\n", entry.Path, err)
 		}
 

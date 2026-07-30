@@ -1948,6 +1948,46 @@ func TestTUIBackendRemoveWorktreeRejectsReplacementGeneration(t *testing.T) {
 	assert.DirExists(t, worktreePath)
 }
 
+func TestTUIBackendRejectsRepositoryRootFromDifferentIdentity(t *testing.T) {
+	repoA := newTUITestRepo(t)
+	repoB := newTUITestRepo(t)
+	runTUITestGit(
+		t,
+		repoA,
+		"remote",
+		"add",
+		"origin",
+		"https://github.com/example/repo-a.git",
+	)
+	runTUITestGit(
+		t,
+		repoB,
+		"remote",
+		"add",
+		"origin",
+		"https://github.com/example/repo-b.git",
+	)
+	repoAInfo, err := url.ParseRepositoryURL(
+		"https://github.com/example/repo-a.git",
+	)
+	require.NoError(t, err)
+	backend := newTUIBackendWithLaunchDir(&models.Config{
+		Projects: []models.Project{{
+			Repository: "github.com/example/repo-a",
+			Path:       repoA,
+		}},
+	}, "")
+	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
+		Path:           repoB,
+		RepositoryInfo: repoAInfo,
+	}}
+
+	_, err = backend.repositoryRootForRow(row)
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "repository identity changed")
+}
+
 func TestTUIBackendRemoveWorktreeDirtyErrorDoesNotSuggestCLIForce(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

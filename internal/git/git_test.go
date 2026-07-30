@@ -987,6 +987,36 @@ func TestListWorktreesKeepsGenerationStableWhenDirectoryChanges(t *testing.T) {
 	t.Fatal("worktree missing after ordinary directory change")
 }
 
+func TestListWorktreesDoesNotAdoptGenerationFromAnotherRepository(t *testing.T) {
+	repoA := NewTestRepository(t)
+	repoB := NewTestRepository(t)
+	repoA.CreateBranch(t, "repo-a-worktree")
+	repoB.CreateBranch(t, "repo-b-worktree")
+	worktreePath := filepath.Join(t.TempDir(), "reused-worktree")
+	repoA.CreateWorktree(t, worktreePath, "repo-a-worktree")
+
+	before, err := New(repoA.Path).ListWorktrees()
+	require.NoError(t, err)
+	var repoAGeneration string
+	for _, worktree := range before {
+		if utils.PathKey(worktree.Path) == utils.PathKey(worktreePath) {
+			repoAGeneration = worktree.Generation
+			break
+		}
+	}
+	require.NotEmpty(t, repoAGeneration)
+
+	require.NoError(t, os.RemoveAll(worktreePath))
+	repoB.CreateWorktree(t, worktreePath, "repo-b-worktree")
+	repoBGeneration, err := New(repoB.Path).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	require.NotEqual(t, repoAGeneration, repoBGeneration)
+
+	_, err = New(repoA.Path).ListWorktrees()
+
+	require.ErrorContains(t, err, "belongs to a different repository")
+}
+
 func TestListWorktreesReportsGenerationInitializationFailure(t *testing.T) {
 	repo := NewTestRepository(t)
 	g := New(repo.Path)

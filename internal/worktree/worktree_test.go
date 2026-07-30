@@ -342,6 +342,11 @@ func TestManagerAddTrackingUsesRemoteSource(t *testing.T) {
 	)
 	require.Contains(t, state.entries, worktreePath)
 	assert.True(t, state.entries[worktreePath].UnreviewedRemoteSource)
+	assert.Equal(
+		t,
+		"0123456789abcdef0123456789abcdef",
+		state.entries[worktreePath].Generation,
+	)
 	assert.NoFileExists(t, filepath.Join(worktreePath, "copy-me"))
 	assert.NoFileExists(t, filepath.Join(worktreePath, "setup-ran"))
 }
@@ -385,6 +390,11 @@ func TestManagerAddExistingMarksSourceUnreviewedAndSkipsSetup(t *testing.T) {
 	)
 	require.Contains(t, state.entries, worktreePath)
 	assert.True(t, state.entries[worktreePath].UnreviewedRemoteSource)
+	assert.Equal(
+		t,
+		"0123456789abcdef0123456789abcdef",
+		state.entries[worktreePath].Generation,
+	)
 	assert.NoFileExists(t, filepath.Join(worktreePath, "copy-me"))
 }
 

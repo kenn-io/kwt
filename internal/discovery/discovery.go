@@ -114,7 +114,7 @@ func DiscoverGlobalWorktrees(baseDir string, projects []models.Project) ([]*Glob
 		candidates,
 		projects,
 		func(path string, projects []models.Project) (*GlobalWorktreeEntry, error) {
-			snapshot, ok := snapshots[utils.CanonicalPath(path)]
+			snapshot, ok := snapshots[utils.PathKey(path)]
 			if !ok {
 				return nil, fmt.Errorf("worktree disappeared during discovery")
 			}
@@ -137,7 +137,7 @@ func DiscoverWorktree(path string, projects []models.Project) (*GlobalWorktreeEn
 	if err != nil {
 		return nil, fmt.Errorf("failed to find worktree root: %w", err)
 	}
-	if utils.CanonicalPath(root) != utils.CanonicalPath(expanded) {
+	if utils.PathKey(root) != utils.PathKey(expanded) {
 		return nil, fmt.Errorf("path is not a worktree root")
 	}
 	entry, err := extractWorktreeInfo(root, projects)
@@ -146,7 +146,7 @@ func DiscoverWorktree(path string, projects []models.Project) (*GlobalWorktreeEn
 	}
 	if mainRoot, mainErr := repositoryGit.GetMainRepositoryPath(); mainErr == nil {
 		entry.IsMain =
-			utils.CanonicalPath(mainRoot) == utils.CanonicalPath(root)
+			utils.PathKey(mainRoot) == utils.PathKey(root)
 	}
 	return entry, nil
 }
@@ -203,7 +203,7 @@ func snapshotCandidateWorktrees(
 		if err != nil {
 			continue
 		}
-		repositories[utils.CanonicalPath(mainRoot)] = mainRoot
+		repositories[utils.PathKey(mainRoot)] = mainRoot
 	}
 
 	snapshots := make(map[string]models.Worktree)
@@ -227,7 +227,7 @@ func snapshotCandidateWorktrees(
 				}
 				snapshotsMu.Lock()
 				for _, snapshot := range worktrees {
-					snapshots[utils.CanonicalPath(snapshot.Path)] = snapshot
+					snapshots[utils.PathKey(snapshot.Path)] = snapshot
 				}
 				snapshotsMu.Unlock()
 			}
@@ -250,9 +250,9 @@ func extractWorktreeInfo(worktreePath string, projects []models.Project) (*Globa
 		return nil, fmt.Errorf("failed to list repository worktrees: %w", err)
 	}
 	var snapshot *models.Worktree
-	canonicalPath := utils.CanonicalPath(worktreePath)
+	canonicalPath := utils.PathKey(worktreePath)
 	for i := range worktrees {
-		if utils.CanonicalPath(worktrees[i].Path) == canonicalPath {
+		if utils.PathKey(worktrees[i].Path) == canonicalPath {
 			snapshot = &worktrees[i]
 			break
 		}

@@ -803,11 +803,25 @@ func ValidateWorktreeGeneration(generation string) error {
 }
 
 func (g *Git) worktreeGitDir(path string) (string, error) {
+	commonDir, commonDirErr := g.worktreeCommonDir(nil)
+	if commonDirErr != nil {
+		return "", fmt.Errorf(
+			"resolve worktree Git directory: %w",
+			commonDirErr,
+		)
+	}
+
 	dotGitPath := filepath.Join(path, ".git")
 	info, err := os.Stat(dotGitPath)
 	if err == nil {
 		if info.IsDir() {
-			return dotGitPath, nil
+			if utils.PathKey(dotGitPath) == utils.PathKey(commonDir) {
+				return commonDir, nil
+			}
+			return "", fmt.Errorf(
+				"resolve worktree Git directory: %s belongs to a different repository",
+				path,
+			)
 		}
 		data, readErr := os.ReadFile(dotGitPath)
 		if readErr == nil {
@@ -822,24 +836,18 @@ func (g *Git) worktreeGitDir(path string) (string, error) {
 				gitDir = filepath.Clean(gitDir)
 				if gitDirInfo, statErr := os.Stat(gitDir); statErr == nil &&
 					gitDirInfo.IsDir() {
-					return gitDir, nil
+					if worktreeGitDirBelongsToCommon(gitDir, commonDir) {
+						return gitDir, nil
+					}
+					return "", fmt.Errorf(
+						"resolve worktree Git directory: %s belongs to a different repository",
+						path,
+					)
 				}
 			}
 		}
 	}
 
-	commonDirOutput, commonDirErr := g.run("rev-parse", "--git-common-dir")
-	if commonDirErr != nil {
-		return "", fmt.Errorf(
-			"resolve worktree Git directory: %w",
-			commonDirErr,
-		)
-	}
-	commonDir := strings.TrimSpace(commonDirOutput)
-	if !filepath.IsAbs(commonDir) {
-		commonDir = filepath.Join(g.workDir, commonDir)
-	}
-	commonDir = filepath.Clean(commonDir)
 	entries, readDirErr := os.ReadDir(filepath.Join(commonDir, "worktrees"))
 	if readDirErr != nil {
 		return "", fmt.Errorf("resolve worktree Git directory: %w", readDirErr)
@@ -863,14 +871,22 @@ func (g *Git) worktreeGitDir(path string) (string, error) {
 	return "", fmt.Errorf("resolve worktree Git directory: worktree not found")
 }
 
+func worktreeGitDirBelongsToCommon(gitDir string, commonDir string) bool {
+	if utils.PathKey(gitDir) == utils.PathKey(commonDir) {
+		return true
+	}
+	return utils.PathKey(filepath.Dir(gitDir)) ==
+		utils.PathKey(filepath.Join(commonDir, "worktrees"))
+}
+
 func comparableWorktreePath(path string) string {
 	if _, err := os.Stat(path); err == nil {
-		return utils.CanonicalPath(path)
+		return utils.PathKey(path)
 	}
-	return filepath.Join(
+	return utils.PathKey(filepath.Join(
 		utils.CanonicalPath(filepath.Dir(path)),
 		filepath.Base(path),
-	)
+	))
 }
 
 func (g *Git) reserveWorktreeCreation(

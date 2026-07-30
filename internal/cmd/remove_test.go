@@ -187,8 +187,9 @@ func TestRemoveLocalPublishesWhenWorktreeRemovedButBranchDeleteFails(t *testing.
 	reg, err := registry.New()
 	require.NoError(t, err)
 	require.NoError(t, reg.Register(&registry.WorktreeEntry{
-		Path:   worktreePath,
-		Branch: "task7/remove-local-branch-delete-fails",
+		Path:       worktreePath,
+		Branch:     "task7/remove-local-branch-delete-fails",
+		Generation: removeIfGeneration,
 	}))
 
 	var calls int
@@ -349,8 +350,9 @@ func TestRemoveGlobalPublishesWhenWorktreeRemovedButBranchDeleteFails(t *testing
 	reg, err := registry.New()
 	require.NoError(t, err)
 	require.NoError(t, reg.Register(&registry.WorktreeEntry{
-		Path:   worktreePath,
-		Branch: "task7/remove-global-branch-delete-fails",
+		Path:       worktreePath,
+		Branch:     "task7/remove-global-branch-delete-fails",
+		Generation: removeIfGeneration,
 	}))
 
 	var calls int

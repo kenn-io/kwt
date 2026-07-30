@@ -8,6 +8,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWorktreeEntry_IsExpired(t *testing.T) {
@@ -369,6 +372,33 @@ func TestRegistryConcurrentAcknowledgementPreservesOtherMutation(t *testing.T) {
 	if !reloaded.IsUnreviewedRemoteSource("/worktrees/new") {
 		t.Error("concurrent registration was lost")
 	}
+}
+
+func TestRegistryConditionalUnregisterPreservesReplacementGeneration(t *testing.T) {
+	r := &Registry{
+		entries: make(map[string]*WorktreeEntry),
+		path:    filepath.Join(t.TempDir(), "registry.json"),
+	}
+	path := filepath.Join(t.TempDir(), "reused-worktree")
+	require.NoError(t, r.Register(&WorktreeEntry{
+		Path:       path,
+		Generation: "0123456789abcdef0123456789abcdef",
+	}))
+	require.NoError(t, r.Register(&WorktreeEntry{
+		Path:       path,
+		Generation: "fedcba9876543210fedcba9876543210",
+	}))
+
+	removed, err := r.UnregisterIfGeneration(
+		path,
+		"0123456789abcdef0123456789abcdef",
+	)
+
+	require.NoError(t, err)
+	assert.False(t, removed)
+	entry, ok := r.Get(path)
+	require.True(t, ok)
+	assert.Equal(t, "fedcba9876543210fedcba9876543210", entry.Generation)
 }
 
 func TestWorktreeEntry_ExpiresAt_JSONMarshal(t *testing.T) {

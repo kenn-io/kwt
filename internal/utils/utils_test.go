@@ -366,3 +366,22 @@ func TestIsSameOrChildPathResolvesSymlinkedAncestor(t *testing.T) {
 		t.Errorf("a parent reached through a symlink must still contain %q", child)
 	}
 }
+
+func TestPlatformPathKeyFoldsWindowsCaseAndSeparators(t *testing.T) {
+	got := platformPathKey(`C:\Worktrees\Feature`, "windows")
+
+	if got != "c:/worktrees/feature" {
+		t.Fatalf("platformPathKey() = %q, want c:/worktrees/feature", got)
+	}
+}
+
+func TestPlatformPathKeyPreservesUnixBackslashes(t *testing.T) {
+	got := platformPathKey(`/worktrees/feature\name`, "darwin")
+
+	if got != `/worktrees/feature\name` {
+		t.Fatalf(
+			"platformPathKey() = %q, want /worktrees/feature\\name",
+			got,
+		)
+	}
+}

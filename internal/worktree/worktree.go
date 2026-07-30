@@ -134,21 +134,7 @@ func (m *Manager) AddWithGeneration(
 }
 
 func (m *Manager) addExisting(branch, customPath string) (string, error) {
-	path, err := m.preparePath(customPath, branch, nil)
-	if err != nil {
-		return "", err
-	}
-	path, _, err = m.addUnreviewedSource(
-		path,
-		branch,
-		func() (string, error) {
-			return "", m.git.AddWorktreeExisting(
-				path,
-				branch,
-				credentials.ProtectedNames(m.config),
-			)
-		},
-	)
+	path, _, err := m.addExistingWithGeneration(branch, customPath)
 	return path, err
 }
 
@@ -177,22 +163,10 @@ func (m *Manager) addExistingWithGeneration(
 // Repository setup is intentionally deferred: the remote checkout is
 // untrusted until the user has reviewed it.
 func (m *Manager) AddTracking(branch, remoteBranch, customPath string) (string, error) {
-	path, err := m.preparePath(customPath, branch, nil)
-	if err != nil {
-		return "", err
-	}
-
-	path, _, err = m.addUnreviewedSource(
-		path,
+	path, _, err := m.AddTrackingWithGeneration(
 		branch,
-		func() (string, error) {
-			return "", m.git.AddWorktreeTracking(
-				path,
-				branch,
-				remoteBranch,
-				credentials.ProtectedNames(m.config),
-			)
-		},
+		remoteBranch,
+		customPath,
 	)
 	return path, err
 }
@@ -260,6 +234,13 @@ func (m *Manager) addUnreviewedSource(
 			)
 		}
 		return "", "", err
+	}
+	entry.Generation = generation
+	if err := state.Register(entry); err != nil {
+		return "", "", fmt.Errorf(
+			"record remote-source worktree generation: %w",
+			err,
+		)
 	}
 	return path, generation, nil
 }

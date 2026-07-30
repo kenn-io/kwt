@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -105,6 +106,19 @@ func CanonicalPath(path string) string {
 		path = resolved
 	}
 	return filepath.Clean(path)
+}
+
+// PathKey returns a canonical path key suitable for identity maps. Windows
+// filesystem paths compare case-insensitively and Git may vary separators.
+func PathKey(path string) string {
+	return platformPathKey(CanonicalPath(path), runtime.GOOS)
+}
+
+func platformPathKey(path string, goos string) string {
+	if goos == "windows" {
+		return strings.ToLower(strings.ReplaceAll(path, `\`, "/"))
+	}
+	return filepath.ToSlash(path)
 }
 
 // IsSameOrChildPath reports whether path names parent or a directory nested

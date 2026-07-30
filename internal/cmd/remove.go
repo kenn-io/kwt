@@ -226,7 +226,7 @@ func removeLocalWorktree(
 			); err != nil {
 				if worktreePathRemoved(wt.Path) {
 					removed++
-					unregisterWorktreePath(registryPath)
+					unregisterWorktreePath(registryPath, wt.Generation)
 				}
 				if generationCondition.specified {
 					return removed, err
@@ -246,7 +246,7 @@ func removeLocalWorktree(
 			); err != nil {
 				if worktreePathRemoved(wt.Path) {
 					removed++
-					unregisterWorktreePath(registryPath)
+					unregisterWorktreePath(registryPath, wt.Generation)
 				}
 				if generationCondition.specified {
 					return removed, err
@@ -259,7 +259,7 @@ func removeLocalWorktree(
 		removed++
 
 		// Clean up registry entry after successful removal
-		unregisterWorktreePath(registryPath)
+		unregisterWorktreePath(registryPath, wt.Generation)
 	}
 
 	return removed, nil
@@ -423,7 +423,7 @@ func removeGlobalWorktree(
 			); err != nil {
 				if worktreePathRemoved(entry.Path) {
 					removed++
-					unregisterWorktreePath(registryPath)
+					unregisterWorktreePath(registryPath, entry.Generation)
 				}
 				if generationCondition.specified {
 					_ = os.Chdir(originalDir)
@@ -445,7 +445,7 @@ func removeGlobalWorktree(
 			); err != nil {
 				if worktreePathRemoved(entry.Path) {
 					removed++
-					unregisterWorktreePath(registryPath)
+					unregisterWorktreePath(registryPath, entry.Generation)
 				}
 				if generationCondition.specified {
 					_ = os.Chdir(originalDir)
@@ -471,7 +471,7 @@ func removeGlobalWorktree(
 		}
 
 		// Clean up registry entry after successful removal
-		unregisterWorktreePath(registryPath)
+		unregisterWorktreePath(registryPath, entry.Generation)
 		removed++
 
 		// Change back to original directory
@@ -558,8 +558,8 @@ func registeredWorktreePath(path string) string {
 	return entry.Path
 }
 
-func unregisterWorktreePath(path string) {
+func unregisterWorktreePath(path string, generation string) {
 	if reg, err := registry.New(); err == nil {
-		_ = reg.Unregister(path)
+		_, _ = reg.UnregisterIfGeneration(path, generation)
 	}
 }

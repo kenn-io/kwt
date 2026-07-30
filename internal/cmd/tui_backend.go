@@ -1169,7 +1169,10 @@ func (b *tuiBackend) failMaterializedHeadVerification(
 			err,
 		)
 	}
-	if err := reg.Unregister(worktreePath); err != nil {
+	if _, err := reg.UnregisterIfGeneration(
+		worktreePath,
+		worktreeGeneration,
+	); err != nil {
 		return fmt.Errorf(
 			"%w (worktree removed, but failed to unregister it: %v)",
 			verificationErr,
@@ -1274,7 +1277,10 @@ func (b *tuiBackend) RemoveWorktree(ctx context.Context, row dashboard.Row, forc
 	}
 
 	if reg, err := registry.New(); err == nil {
-		_ = reg.Unregister(row.Entry.Path)
+		_, _ = reg.UnregisterIfGeneration(
+			row.Entry.Path,
+			generation,
+		)
 	}
 
 	publishTUIFleetBestEffort(ctx, b.cfg)
@@ -1292,6 +1298,12 @@ func (b *tuiBackend) repositoryRootForRow(row dashboard.Row) (string, error) {
 
 	repoRoot, err := git.New(row.Entry.Path).GetMainRepositoryPath()
 	if err == nil {
+		if identityErr := b.validateRepositoryRootForRow(
+			repoRoot,
+			row,
+		); identityErr != nil {
+			return "", identityErr
+		}
 		return repoRoot, nil
 	}
 	directErr := err
@@ -1303,12 +1315,59 @@ func (b *tuiBackend) repositoryRootForRow(row dashboard.Row) (string, error) {
 			}
 			repoRoot, err := git.New(project.Path).GetMainRepositoryPath()
 			if err == nil {
+				if identityErr := b.validateRepositoryRootForRow(
+					repoRoot,
+					row,
+				); identityErr != nil {
+					return "", identityErr
+				}
 				return repoRoot, nil
 			}
 		}
 	}
 
 	return "", fmt.Errorf("failed to find repository root: %w", directErr)
+}
+
+func (b *tuiBackend) validateRepositoryRootForRow(
+	repoRoot string,
+	row dashboard.Row,
+) error {
+	if row.Entry == nil || len(rowRepositoryIdentityCandidates(
+		row.Entry.RepositoryInfo,
+	)) == 0 {
+		return nil
+	}
+	if b.cfg != nil {
+		for _, project := range b.cfg.Projects {
+			if !projectMatchesRow(project, row) {
+				continue
+			}
+			projectRoot, err := git.New(project.Path).GetMainRepositoryPath()
+			if err == nil &&
+				utils.PathKey(projectRoot) == utils.PathKey(repoRoot) {
+				return nil
+			}
+		}
+	}
+
+	repositoryURL, err := git.New(repoRoot).GetRepositoryURL()
+	if err == nil {
+		liveInfo, parseErr := url.ParseRepositoryURL(repositoryURL)
+		if parseErr == nil {
+			for _, candidate := range rowRepositoryIdentityCandidates(
+				row.Entry.RepositoryInfo,
+			) {
+				if sameRepositoryIdentity(liveInfo.FullPath, candidate) {
+					return nil
+				}
+			}
+		}
+	}
+	return fmt.Errorf(
+		"repository identity changed for %s; refresh before removing",
+		row.Entry.Path,
+	)
 }
 
 func projectMatchesRow(project models.Project, row dashboard.Row) bool {
@@ -1488,7 +1547,7 @@ func samePath(a string, b string) bool {
 }
 
 func cleanComparablePath(path string) string {
-	return utils.CanonicalPath(path)
+	return utils.PathKey(path)
 }
 
 func (b *tuiBackend) KillSession(row dashboard.Row) error {
