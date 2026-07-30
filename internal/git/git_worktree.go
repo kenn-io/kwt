@@ -102,19 +102,44 @@ func (g *Git) listWorktrees(excludedPath string) ([]models.Worktree, error) {
 
 // AddWorktree creates a new worktree.
 func (g *Git) AddWorktree(path, branch string, createBranch bool) error {
+	_, err := g.addWorktreeReserved(path, branch, createBranch, false)
+	return err
+}
+
+// AddWorktreeWithGeneration creates a worktree and returns the durable
+// generation captured before the creation reservation is released.
+func (g *Git) AddWorktreeWithGeneration(
+	path, branch string,
+	createBranch bool,
+) (string, error) {
+	return g.addWorktreeReserved(path, branch, createBranch, true)
+}
+
+func (g *Git) addWorktreeReserved(
+	path, branch string,
+	createBranch bool,
+	requireGeneration bool,
+) (string, error) {
 	reservation, err := g.reserveWorktreeCreation(path, nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := g.addWorktree(path, branch, createBranch); err != nil {
 		_ = reservation.release()
-		return err
+		return "", err
 	}
-	// Generation persistence is recoverable: a later locked listing will retry
-	// it, while the completed checkout remains a successful creation.
-	_ = g.initializeWorktreeGeneration(path, nil)
+	// Existing callers can recover generation through a later locked listing.
+	// Identity-requiring callers fail while preserving the completed checkout.
+	generation, generationErr := g.initializeWorktreeGenerationValue(path, nil)
 	_ = reservation.release()
-	return nil
+	if generationErr != nil && requireGeneration {
+		return "", fmt.Errorf(
+			"worktree created at %s but its generation is unavailable; preserved: %w",
+			path,
+			generationErr,
+		)
+	}
+	return generation, nil
 }
 
 func (g *Git) addWorktree(path, branch string, createBranch bool) error {
@@ -141,12 +166,57 @@ func (g *Git) AddWorktreeExisting(
 	path, branch string,
 	protectedNames []string,
 ) error {
-	return g.withWorktreeMutationLock(protectedNames, func() error {
+	_, err := g.addWorktreeExistingLocked(
+		path,
+		branch,
+		protectedNames,
+		false,
+	)
+	return err
+}
+
+// AddWorktreeExistingWithGeneration checks out an existing local branch and
+// returns its durable generation from the same mutation-locked operation.
+func (g *Git) AddWorktreeExistingWithGeneration(
+	path, branch string,
+	protectedNames []string,
+) (string, error) {
+	return g.addWorktreeExistingLocked(
+		path,
+		branch,
+		protectedNames,
+		true,
+	)
+}
+
+func (g *Git) addWorktreeExistingLocked(
+	path, branch string,
+	protectedNames []string,
+	requireGeneration bool,
+) (string, error) {
+	var generation string
+	err := g.withWorktreeMutationLock(protectedNames, func() error {
 		if err := g.rejectActiveWorktreeCreation(protectedNames); err != nil {
 			return err
 		}
-		return g.addWorktreeExisting(path, branch, protectedNames)
+		if err := g.addWorktreeExisting(path, branch, protectedNames); err != nil {
+			return err
+		}
+		if !requireGeneration {
+			return nil
+		}
+		var err error
+		generation, err = g.WorktreeGeneration(path)
+		if err != nil {
+			return fmt.Errorf(
+				"worktree created at %s but its generation is unavailable; preserved: %w",
+				path,
+				err,
+			)
+		}
+		return nil
 	})
+	return generation, err
 }
 
 func (g *Git) addWorktreeExisting(
@@ -207,17 +277,64 @@ func (g *Git) AddWorktreeTracking(
 	path, branch, remoteBranch string,
 	protectedNames []string,
 ) error {
-	return g.withWorktreeMutationLock(protectedNames, func() error {
+	_, err := g.addWorktreeTrackingLocked(
+		path,
+		branch,
+		remoteBranch,
+		protectedNames,
+		false,
+	)
+	return err
+}
+
+// AddWorktreeTrackingWithGeneration creates a tracking worktree and returns
+// its durable generation from the same mutation-locked operation.
+func (g *Git) AddWorktreeTrackingWithGeneration(
+	path, branch, remoteBranch string,
+	protectedNames []string,
+) (string, error) {
+	return g.addWorktreeTrackingLocked(
+		path,
+		branch,
+		remoteBranch,
+		protectedNames,
+		true,
+	)
+}
+
+func (g *Git) addWorktreeTrackingLocked(
+	path, branch, remoteBranch string,
+	protectedNames []string,
+	requireGeneration bool,
+) (string, error) {
+	var generation string
+	err := g.withWorktreeMutationLock(protectedNames, func() error {
 		if err := g.rejectActiveWorktreeCreation(protectedNames); err != nil {
 			return err
 		}
-		return g.addWorktreeTracking(
+		if err := g.addWorktreeTracking(
 			path,
 			branch,
 			remoteBranch,
 			protectedNames,
-		)
+		); err != nil {
+			return err
+		}
+		if !requireGeneration {
+			return nil
+		}
+		var err error
+		generation, err = g.WorktreeGeneration(path)
+		if err != nil {
+			return fmt.Errorf(
+				"worktree created at %s but its generation is unavailable; preserved: %w",
+				path,
+				err,
+			)
+		}
+		return nil
 	})
+	return generation, err
 }
 
 func (g *Git) addWorktreeTracking(
@@ -596,12 +713,24 @@ func (g *Git) initializeWorktreeGeneration(
 	path string,
 	protectedNames []string,
 ) error {
-	return g.withWorktreeMutationLock(protectedNames, func() error {
-		if _, err := g.WorktreeGeneration(path); err != nil {
+	_, err := g.initializeWorktreeGenerationValue(path, protectedNames)
+	return err
+}
+
+func (g *Git) initializeWorktreeGenerationValue(
+	path string,
+	protectedNames []string,
+) (string, error) {
+	var generation string
+	err := g.withWorktreeMutationLock(protectedNames, func() error {
+		var err error
+		generation, err = g.WorktreeGeneration(path)
+		if err != nil {
 			return fmt.Errorf("initialize worktree generation: %w", err)
 		}
 		return nil
 	})
+	return generation, err
 }
 
 // WorktreeGeneration returns a durable identity stored in the worktree's Git

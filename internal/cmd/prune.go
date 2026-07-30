@@ -26,7 +26,8 @@ var pruneCmd = &cobra.Command{
 This command removes administrative files from .git/worktrees for worktrees
 whose working directories have been deleted from the filesystem.
 
-With --expired flag, removes worktrees that have passed their expiration date.`,
+With --expired, a live worktree is removed only when its recorded generation
+still matches. Legacy expiration records without a generation are skipped.`,
 	Example: `  # Clean up stale worktree information
   kwt prune
 
@@ -110,6 +111,22 @@ func runPruneExpired(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
+		if err := git.ValidateWorktreeGeneration(entry.Generation); err != nil {
+			if pruneDryRun {
+				fmt.Printf(
+					"Would skip (missing worktree generation): %s\n",
+					entry.Path,
+				)
+			} else {
+				fmt.Printf(
+					"Skipping (missing worktree generation): %s\n",
+					entry.Path,
+				)
+			}
+			skipped++
+			continue
+		}
+
 		// Check for uncommitted changes unless --force
 		if !pruneForce {
 			dirty, err := isWorktreeDirty(entry.Path)
@@ -137,7 +154,11 @@ func runPruneExpired(cmd *cobra.Command, args []string) error {
 
 		// Remove the worktree using git
 		g := git.New(entry.Path)
-		if err := g.RemoveWorktree(entry.Path, pruneForce, ""); err != nil {
+		if err := g.RemoveWorktree(
+			entry.Path,
+			pruneForce,
+			entry.Generation,
+		); err != nil {
 			fmt.Printf("Failed to remove worktree %s: %v\n", entry.Path, err)
 			skipped++
 			continue

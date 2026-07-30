@@ -190,7 +190,10 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		var worktreePath string
+		var (
+			worktreePath       string
+			worktreeGeneration string
+		)
 		if remoteSource != "" {
 			branches, listErr := ctx.Git.ListBranches(true)
 			if listErr != nil {
@@ -203,13 +206,36 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return err
 			}
-			worktreePath, err = ctx.WorktreeManager.AddTracking(
-				branch,
-				remoteSource,
-				path,
-			)
+			if addExpires != "" {
+				worktreePath, worktreeGeneration, err =
+					ctx.WorktreeManager.AddTrackingWithGeneration(
+						branch,
+						remoteSource,
+						path,
+					)
+			} else {
+				worktreePath, err = ctx.WorktreeManager.AddTracking(
+					branch,
+					remoteSource,
+					path,
+				)
+			}
 		} else {
-			worktreePath, err = ctx.WorktreeManager.Add(branch, path, addBranch)
+			if addExpires != "" {
+				worktreePath, worktreeGeneration, err =
+					ctx.WorktreeManager.AddWithGeneration(
+						branch,
+						path,
+						addBranch,
+						worktree.AddOptions{},
+					)
+			} else {
+				worktreePath, err = ctx.WorktreeManager.Add(
+					branch,
+					path,
+					addBranch,
+				)
+			}
 		}
 		if err != nil {
 			return err
@@ -236,6 +262,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			entry.Path = worktreePath
 			entry.IsMain = false
 			entry.ExpiresAt = expiresAt
+			entry.Generation = worktreeGeneration
 
 			if err := reg.Register(entry); err != nil {
 				return fmt.Errorf("failed to register worktree: %w", err)

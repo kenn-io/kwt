@@ -82,6 +82,17 @@ func (m *mockGit) AddWorktree(path, branch string, createBranch bool) error {
 	return nil
 }
 
+func (m *mockGit) AddWorktreeWithGeneration(
+	path,
+	branch string,
+	createBranch bool,
+) (string, error) {
+	if err := m.AddWorktree(path, branch, createBranch); err != nil {
+		return "", err
+	}
+	return "0123456789abcdef0123456789abcdef", nil
+}
+
 func (m *mockGit) AddWorktreeTracking(
 	path, branch, remoteBranch string,
 	protectedNames []string,
@@ -98,6 +109,23 @@ func (m *mockGit) AddWorktreeTracking(
 	return nil
 }
 
+func (m *mockGit) AddWorktreeTrackingWithGeneration(
+	path,
+	branch,
+	remoteBranch string,
+	protectedNames []string,
+) (string, error) {
+	if err := m.AddWorktreeTracking(
+		path,
+		branch,
+		remoteBranch,
+		protectedNames,
+	); err != nil {
+		return "", err
+	}
+	return "0123456789abcdef0123456789abcdef", nil
+}
+
 func (m *mockGit) AddWorktreeExisting(
 	path, branch string,
 	protectedNames []string,
@@ -112,6 +140,17 @@ func (m *mockGit) AddWorktreeExisting(
 		Branch: branch,
 	})
 	return nil
+}
+
+func (m *mockGit) AddWorktreeExistingWithGeneration(
+	path,
+	branch string,
+	protectedNames []string,
+) (string, error) {
+	if err := m.AddWorktreeExisting(path, branch, protectedNames); err != nil {
+		return "", err
+	}
+	return "0123456789abcdef0123456789abcdef", nil
 }
 
 func (m *mockGit) RemoveWorktree(

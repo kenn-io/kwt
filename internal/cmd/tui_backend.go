@@ -1000,11 +1000,12 @@ func (b *tuiBackend) MaterializeWorktree(ctx context.Context, row dashboard.Row)
 	}
 	manager := worktree.New(repo, cfg)
 	var (
-		path          string
-		branchCreated bool
+		path               string
+		worktreeGeneration string
+		branchCreated      bool
 	)
 	if branchExisted {
-		path, err = manager.AddWithOptions(
+		path, worktreeGeneration, err = manager.AddWithGeneration(
 			row.Fleet.Branch,
 			"",
 			false,
@@ -1014,7 +1015,7 @@ func (b *tuiBackend) MaterializeWorktree(ctx context.Context, row dashboard.Row)
 		var source string
 		source, err = resolveFetchedRemoteSource(repo, row.Fleet.Branch)
 		if err == nil {
-			path, err = manager.AddTracking(
+			path, worktreeGeneration, err = manager.AddTrackingWithGeneration(
 				row.Fleet.Branch,
 				source,
 				"",
@@ -1030,7 +1031,13 @@ func (b *tuiBackend) MaterializeWorktree(ctx context.Context, row dashboard.Row)
 		)
 		return "", syncErr
 	}
-	if err := b.verifyMaterializedHead(ctx, project.Path, path, row.Fleet); err != nil {
+	if err := b.verifyMaterializedHead(
+		ctx,
+		project.Path,
+		path,
+		worktreeGeneration,
+		row.Fleet,
+	); err != nil {
 		if branchCreated {
 			err = b.rollbackMaterializedBranch(
 				repo,
@@ -1090,7 +1097,13 @@ func (b *tuiBackend) rollbackMaterializedBranch(
 	return materializeErr
 }
 
-func (b *tuiBackend) verifyMaterializedHead(ctx context.Context, repoRoot string, worktreePath string, info *dashboard.FleetInfo) error {
+func (b *tuiBackend) verifyMaterializedHead(
+	ctx context.Context,
+	repoRoot string,
+	worktreePath string,
+	worktreeGeneration string,
+	info *dashboard.FleetInfo,
+) error {
 	if info == nil || strings.TrimSpace(info.RemoteHead) == "" {
 		return nil
 	}
@@ -1100,6 +1113,7 @@ func (b *tuiBackend) verifyMaterializedHead(ctx context.Context, repoRoot string
 		return b.failMaterializedHeadVerification(
 			repoRoot,
 			worktreePath,
+			worktreeGeneration,
 			fmt.Errorf(
 				"could not verify synced head for %s; push or fetch it first: %w",
 				info.Branch,
@@ -1114,6 +1128,7 @@ func (b *tuiBackend) verifyMaterializedHead(ctx context.Context, repoRoot string
 	return b.failMaterializedHeadVerification(
 		repoRoot,
 		worktreePath,
+		worktreeGeneration,
 		fmt.Errorf(
 			"synced %s at %s, but hub reported head %s; push or fetch the reported commit first",
 			info.Branch,
@@ -1126,12 +1141,19 @@ func (b *tuiBackend) verifyMaterializedHead(ctx context.Context, repoRoot string
 func (b *tuiBackend) failMaterializedHeadVerification(
 	repoRoot string,
 	worktreePath string,
+	worktreeGeneration string,
 	verificationErr error,
 ) error {
+	if err := git.ValidateWorktreeGeneration(worktreeGeneration); err != nil {
+		return fmt.Errorf(
+			"%w (rejected worktree preserved because its generation is unavailable)",
+			verificationErr,
+		)
+	}
 	if err := worktree.New(git.New(repoRoot), b.cfg).Remove(
 		worktreePath,
 		true,
-		"",
+		worktreeGeneration,
 	); err != nil {
 		return fmt.Errorf(
 			"%w (failed to remove rejected worktree: %v)",

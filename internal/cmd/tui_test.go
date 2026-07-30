@@ -2426,6 +2426,7 @@ func TestTUIBackendMaterializeWorktreeUnregistersWhenHeadCannotBeRead(t *testing
 		context.Background(),
 		repoPath,
 		worktreePath,
+		tuiTestWorktreeGeneration(t, repoPath, worktreePath),
 		&dashboard.FleetInfo{
 			Branch:     "feature/studio-only",
 			RemoteHead: strings.Repeat("b", 40),
@@ -2438,6 +2439,60 @@ func TestTUIBackendMaterializeWorktreeUnregistersWhenHeadCannotBeRead(t *testing
 	reg, registryErr := registry.New()
 	require.NoError(t, registryErr)
 	assert.False(t, reg.IsUnreviewedRemoteSource(worktreePath))
+}
+
+func TestTUIBackendMaterializationCleanupPreservesReplacementWorktree(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "materialized")
+	runTUITestGit(t, repoPath, "branch", "feature/materialized")
+	runTUITestGit(
+		t,
+		repoPath,
+		"worktree",
+		"add",
+		worktreePath,
+		"feature/materialized",
+	)
+	originalGeneration := tuiTestWorktreeGeneration(
+		t,
+		repoPath,
+		worktreePath,
+	)
+	runTUITestGit(t, repoPath, "worktree", "remove", "--force", worktreePath)
+	runTUITestGit(t, repoPath, "branch", "feature/replacement")
+	runTUITestGit(
+		t,
+		repoPath,
+		"worktree",
+		"add",
+		worktreePath,
+		"feature/replacement",
+	)
+
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	err := backend.failMaterializedHeadVerification(
+		repoPath,
+		worktreePath,
+		originalGeneration,
+		errors.New("stale materialized head"),
+	)
+
+	require.Error(t, err)
+	assert.DirExists(t, worktreePath)
+	assert.Equal(
+		t,
+		"feature/replacement",
+		strings.TrimSpace(runTUITestGitOutput(
+			t,
+			worktreePath,
+			"rev-parse",
+			"--abbrev-ref",
+			"HEAD",
+		)),
+	)
 }
 
 func tuiTestBranchExists(repoPath string, branch string) bool {

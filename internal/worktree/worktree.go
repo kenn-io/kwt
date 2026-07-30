@@ -21,11 +21,23 @@ import (
 type GitInterface interface {
 	ListWorktrees() ([]models.Worktree, error)
 	AddWorktree(path, branch string, createBranch bool) error
+	AddWorktreeWithGeneration(
+		path, branch string,
+		createBranch bool,
+	) (string, error)
 	AddWorktreeExisting(path, branch string, protectedNames []string) error
+	AddWorktreeExistingWithGeneration(
+		path, branch string,
+		protectedNames []string,
+	) (string, error)
 	AddWorktreeTracking(
 		path, branch, remoteBranch string,
 		protectedNames []string,
 	) error
+	AddWorktreeTrackingWithGeneration(
+		path, branch, remoteBranch string,
+		protectedNames []string,
+	) (string, error)
 	AddWorktreeFromBase(path, branch, baseBranch string) error
 	RemoveWorktree(path string, force bool, ifGeneration string) error
 	DeleteBranch(branch string, force bool) error
@@ -91,18 +103,74 @@ func (m *Manager) AddWithOptions(branch string, customPath string, createBranch 
 	return path, nil
 }
 
+// AddWithGeneration creates a worktree and returns the durable generation
+// captured before creation synchronization is released.
+func (m *Manager) AddWithGeneration(
+	branch string,
+	customPath string,
+	createBranch bool,
+	opts AddOptions,
+) (string, string, error) {
+	if !createBranch {
+		return m.addExistingWithGeneration(branch, customPath)
+	}
+
+	path, err := m.preparePath(customPath, branch, nil)
+	if err != nil {
+		return "", "", err
+	}
+	generation, err := m.git.AddWorktreeWithGeneration(
+		path,
+		branch,
+		createBranch,
+	)
+	if err != nil {
+		return "", "", err
+	}
+	if !opts.SkipSetup {
+		m.runPostWorktreeSetup(branch, path)
+	}
+	return path, generation, nil
+}
+
 func (m *Manager) addExisting(branch, customPath string) (string, error) {
 	path, err := m.preparePath(customPath, branch, nil)
 	if err != nil {
 		return "", err
 	}
-	return m.addUnreviewedSource(path, branch, func() error {
-		return m.git.AddWorktreeExisting(
-			path,
-			branch,
-			credentials.ProtectedNames(m.config),
-		)
-	})
+	path, _, err = m.addUnreviewedSource(
+		path,
+		branch,
+		func() (string, error) {
+			return "", m.git.AddWorktreeExisting(
+				path,
+				branch,
+				credentials.ProtectedNames(m.config),
+			)
+		},
+	)
+	return path, err
+}
+
+func (m *Manager) addExistingWithGeneration(
+	branch,
+	customPath string,
+) (string, string, error) {
+	path, err := m.preparePath(customPath, branch, nil)
+	if err != nil {
+		return "", "", err
+	}
+	return m.addUnreviewedSource(
+		path,
+		branch,
+		func() (string, error) {
+			return m.git.AddWorktreeExistingWithGeneration(
+				path,
+				branch,
+				credentials.ProtectedNames(m.config),
+			)
+		},
+	)
 }
 
 // AddTracking creates a worktree on a local branch that tracks remoteBranch.
@@ -114,23 +182,54 @@ func (m *Manager) AddTracking(branch, remoteBranch, customPath string) (string, 
 		return "", err
 	}
 
-	return m.addUnreviewedSource(path, branch, func() error {
-		return m.git.AddWorktreeTracking(
-			path,
-			branch,
-			remoteBranch,
-			credentials.ProtectedNames(m.config),
-		)
-	})
+	path, _, err = m.addUnreviewedSource(
+		path,
+		branch,
+		func() (string, error) {
+			return "", m.git.AddWorktreeTracking(
+				path,
+				branch,
+				remoteBranch,
+				credentials.ProtectedNames(m.config),
+			)
+		},
+	)
+	return path, err
+}
+
+// AddTrackingWithGeneration creates a tracking worktree and returns the
+// generation captured before its mutation lock is released.
+func (m *Manager) AddTrackingWithGeneration(
+	branch,
+	remoteBranch,
+	customPath string,
+) (string, string, error) {
+	path, err := m.preparePath(customPath, branch, nil)
+	if err != nil {
+		return "", "", err
+	}
+	return m.addUnreviewedSource(
+		path,
+		branch,
+		func() (string, error) {
+			return m.git.AddWorktreeTrackingWithGeneration(
+				path,
+				branch,
+				remoteBranch,
+				credentials.ProtectedNames(m.config),
+			)
+		},
+	)
 }
 
 func (m *Manager) addUnreviewedSource(
-	path, branch string,
-	add func() error,
-) (string, error) {
+	path,
+	branch string,
+	add func() (string, error),
+) (string, string, error) {
 	state, err := m.openRemoteSourceState()
 	if err != nil {
-		return "", fmt.Errorf("open remote-source state: %w", err)
+		return "", "", fmt.Errorf("open remote-source state: %w", err)
 	}
 	previous, existed := state.Get(path)
 	entry := &registry.WorktreeEntry{
@@ -139,10 +238,11 @@ func (m *Manager) addUnreviewedSource(
 		UnreviewedRemoteSource: true,
 	}
 	if err := state.Register(entry); err != nil {
-		return "", fmt.Errorf("mark remote-source worktree unreviewed: %w", err)
+		return "", "", fmt.Errorf("mark remote-source worktree unreviewed: %w", err)
 	}
 
-	if err := add(); err != nil {
+	generation, err := add()
+	if err != nil {
 		var restoreErr error
 		switch {
 		case existed:
@@ -153,16 +253,15 @@ func (m *Manager) addUnreviewedSource(
 			}
 		}
 		if restoreErr != nil {
-			return "", fmt.Errorf(
+			return "", "", fmt.Errorf(
 				"%w (failed to restore remote-source state: %v)",
 				err,
 				restoreErr,
 			)
 		}
-		return "", err
+		return "", "", err
 	}
-
-	return path, nil
+	return path, generation, nil
 }
 
 // AddFromBase creates a new worktree with a branch from a specific base branch

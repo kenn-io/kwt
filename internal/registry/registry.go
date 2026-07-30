@@ -21,6 +21,7 @@ type WorktreeEntry struct {
 	IsMain                 bool       `json:"is_main"`
 	RegisteredAt           time.Time  `json:"registered_at"`
 	ExpiresAt              *time.Time `json:"expires_at,omitempty"`
+	Generation             string     `json:"generation,omitempty"`
 	UnreviewedRemoteSource bool       `json:"unreviewed_remote_source,omitempty"`
 }
 

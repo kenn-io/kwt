@@ -128,6 +128,7 @@ func TestAddFromRemoteBranchCreatesTrackingWorktreeWithoutLaunching(t *testing.T
 	require.True(t, ok)
 	assert.True(t, entry.UnreviewedRemoteSource)
 	assert.NotNil(t, entry.ExpiresAt)
+	assert.NotEmpty(t, entry.Generation)
 }
 
 func TestAddFromResolvesRemoteRefAcrossLocalNamespaceCollision(t *testing.T) {
