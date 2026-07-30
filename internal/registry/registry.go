@@ -217,12 +217,11 @@ func (r *Registry) CompareAndSwap(
 	replaced := false
 	err := r.mutate(func(entries map[string]*WorktreeEntry) bool {
 		keys := matchingRegistryKeys(entries, path)
-		switch {
-		case expected == nil:
+		if expected == nil {
 			if len(keys) != 0 {
 				return false
 			}
-		default:
+		} else {
 			if len(keys) != 1 ||
 				!sameWorktreeEntry(entries[keys[0]], expected) {
 				return false
