@@ -72,9 +72,13 @@ func (g *Git) listWorktrees() ([]models.Worktree, error) {
 
 // AddWorktree creates a new worktree.
 func (g *Git) AddWorktree(path, branch string, createBranch bool) error {
-	return g.withWorktreeMutationLock(nil, func() error {
-		return g.addWorktree(path, branch, createBranch)
-	})
+	// Checkout hooks may call back into kwt, so Git must not run while kwt's
+	// non-reentrant mutation lock is held. Once Git and its hooks finish, lock
+	// the completed worktree long enough to persist its removal identity.
+	if err := g.addWorktree(path, branch, createBranch); err != nil {
+		return err
+	}
+	return g.initializeWorktreeGeneration(path, nil)
 }
 
 func (g *Git) addWorktree(path, branch string, createBranch bool) error {
@@ -456,9 +460,12 @@ func (g *Git) refExists(ref string) bool {
 
 // AddWorktreeFromBase creates a new worktree with a branch from a specific base branch.
 func (g *Git) AddWorktreeFromBase(path, branch, baseBranch string) error {
-	return g.withWorktreeMutationLock(nil, func() error {
-		return g.addWorktreeFromBase(path, branch, baseBranch)
-	})
+	// Keep the hook-capable checkout outside kwt's mutation lock; finalize the
+	// durable identity under the lock only after Git returns.
+	if err := g.addWorktreeFromBase(path, branch, baseBranch); err != nil {
+		return err
+	}
+	return g.initializeWorktreeGeneration(path, nil)
 }
 
 func (g *Git) addWorktreeFromBase(path, branch, baseBranch string) error {
@@ -527,6 +534,18 @@ func (g *Git) requireWorktreeGeneration(path string, expected string) error {
 		return fmt.Errorf("worktree generation changed for %s", path)
 	}
 	return nil
+}
+
+func (g *Git) initializeWorktreeGeneration(
+	path string,
+	protectedNames []string,
+) error {
+	return g.withWorktreeMutationLock(protectedNames, func() error {
+		if _, err := g.WorktreeGeneration(path); err != nil {
+			return fmt.Errorf("initialize worktree generation: %w", err)
+		}
+		return nil
+	})
 }
 
 // WorktreeGeneration returns a durable identity stored in the worktree's Git

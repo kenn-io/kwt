@@ -540,6 +540,71 @@ exec "$REAL_GIT" "$@"
 	})
 }
 
+func TestHookReentrantWorktreeList(t *testing.T) {
+	if os.Getenv("KWT_TEST_HOOK_REENTRANT_LIST") != "1" {
+		t.Skip("helper process")
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := New(os.Getenv("KWT_TEST_HOOK_REPO")).ListWorktrees()
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		fmt.Fprintln(os.Stderr, "hook could not re-enter kwt worktree listing")
+		os.Exit(2)
+	}
+}
+
+func TestHookCapableWorktreeAddsAllowHookToListWorktrees(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test hook uses a POSIX shell")
+	}
+
+	tests := []struct {
+		name string
+		add  func(*Git, string) error
+	}{
+		{
+			name: "default base",
+			add: func(g *Git, path string) error {
+				return g.AddWorktree(path, "hook-default-base", true)
+			},
+		},
+		{
+			name: "explicit base",
+			add: func(g *Git, path string) error {
+				return g.AddWorktreeFromBase(path, "hook-explicit-base", "main")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := NewTestRepository(t)
+			hooksDir := filepath.Join(repo.Path, ".git", "hooks")
+			hookPath := filepath.Join(hooksDir, "post-checkout")
+			hook := `#!/bin/sh
+"$KWT_TEST_BINARY" -test.run=^TestHookReentrantWorktreeList$
+`
+			require.NoError(t, os.WriteFile(hookPath, []byte(hook), 0755))
+			t.Setenv("KWT_TEST_BINARY", os.Args[0])
+			t.Setenv("KWT_TEST_HOOK_REENTRANT_LIST", "1")
+			t.Setenv("KWT_TEST_HOOK_REPO", repo.Path)
+
+			worktreePath := filepath.Join(t.TempDir(), "hook-worktree")
+			require.NoError(t, tt.add(New(repo.Path), worktreePath))
+			assert.DirExists(t, worktreePath)
+		})
+	}
+}
+
 func TestAddWorktreeExistingDisablesCheckoutHooks(t *testing.T) {
 	repo := NewTestRepository(t)
 	repo.CreateBranch(t, "existing-unreviewed")

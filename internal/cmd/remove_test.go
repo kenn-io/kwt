@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/pkg/models"
 )
@@ -188,6 +189,44 @@ func TestRemoveGlobalPublishesOnceAfterSuccessfulRemoval(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, calls)
+}
+
+func TestMatchGlobalRemovalEntriesPrefersExactPath(t *testing.T) {
+	exact := &discovery.GlobalWorktreeEntry{
+		Path:   "/work/foo",
+		Branch: "task/foo",
+	}
+	prefix := &discovery.GlobalWorktreeEntry{
+		Path:   "/work/foo-old",
+		Branch: "task/foo-old",
+	}
+
+	matches := matchGlobalRemovalEntries(
+		[]*discovery.GlobalWorktreeEntry{exact, prefix},
+		"/work/foo",
+	)
+
+	require.Len(t, matches, 1)
+	assert.Same(t, exact, matches[0])
+}
+
+func TestMatchGlobalRemovalEntriesNormalizesWindowsSeparators(t *testing.T) {
+	exact := &discovery.GlobalWorktreeEntry{
+		Path:   `C:/work/foo`,
+		Branch: "task/foo",
+	}
+	prefix := &discovery.GlobalWorktreeEntry{
+		Path:   `C:/work/foo-old`,
+		Branch: "task/foo-old",
+	}
+
+	matches := matchGlobalRemovalEntries(
+		[]*discovery.GlobalWorktreeEntry{exact, prefix},
+		`C:\work\foo`,
+	)
+
+	require.Len(t, matches, 1)
+	assert.Same(t, exact, matches[0])
 }
 
 func TestRemoveGlobalDoesNotPublishOnDryRun(t *testing.T) {

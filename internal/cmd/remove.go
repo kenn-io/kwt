@@ -3,6 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
+	pathpkg "path"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -10,6 +12,7 @@ import (
 	"go.kenn.io/kwt/internal/finder"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/registry"
+	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 )
@@ -261,25 +264,7 @@ func removeGlobalWorktree(ctx *CommandContext, args []string) (int, error) {
 	var toRemove []*discovery.GlobalWorktreeEntry
 
 	if len(args) > 0 {
-		// Pattern matching
-		pattern := strings.ToLower(args[0])
-		var matches []*discovery.GlobalWorktreeEntry
-
-		for _, entry := range nonMainEntries {
-			branchLower := strings.ToLower(entry.Branch)
-			var repoName string
-			if entry.RepositoryInfo != nil {
-				repoName = strings.ToLower(entry.RepositoryInfo.Repository)
-			}
-
-			// Match against branch name, path, repo name, or repo:branch pattern
-			if strings.Contains(branchLower, pattern) ||
-				strings.Contains(strings.ToLower(entry.Path), pattern) ||
-				strings.Contains(repoName, pattern) ||
-				strings.Contains(repoName+":"+branchLower, pattern) {
-				matches = append(matches, entry)
-			}
-		}
+		matches := matchGlobalRemovalEntries(nonMainEntries, args[0])
 
 		if len(matches) == 0 {
 			return 0, fmt.Errorf("no worktree matches pattern: %s", args[0])
@@ -454,6 +439,66 @@ func removeGlobalWorktree(ctx *CommandContext, args []string) (int, error) {
 	}
 
 	return removed, nil
+}
+
+func matchGlobalRemovalEntries(
+	entries []*discovery.GlobalWorktreeEntry,
+	pattern string,
+) []*discovery.GlobalWorktreeEntry {
+	if patternPath, ok := globalRemovalPathKey(pattern); ok {
+		var exactPathMatches []*discovery.GlobalWorktreeEntry
+		for _, entry := range entries {
+			entryPath, entryOK := globalRemovalPathKey(entry.Path)
+			if entryOK && entryPath == patternPath {
+				exactPathMatches = append(exactPathMatches, entry)
+			}
+		}
+		if len(exactPathMatches) > 0 {
+			return exactPathMatches
+		}
+	}
+
+	lowerPattern := strings.ToLower(
+		strings.ReplaceAll(filepath.ToSlash(pattern), `\`, "/"),
+	)
+	var matches []*discovery.GlobalWorktreeEntry
+	for _, entry := range entries {
+		branchLower := strings.ToLower(entry.Branch)
+		pathLower := strings.ToLower(
+			strings.ReplaceAll(filepath.ToSlash(entry.Path), `\`, "/"),
+		)
+		var repoName string
+		if entry.RepositoryInfo != nil {
+			repoName = strings.ToLower(entry.RepositoryInfo.Repository)
+		}
+
+		if strings.Contains(branchLower, lowerPattern) ||
+			strings.Contains(pathLower, lowerPattern) ||
+			strings.Contains(repoName, lowerPattern) ||
+			strings.Contains(repoName+":"+branchLower, lowerPattern) {
+			matches = append(matches, entry)
+		}
+	}
+	return matches
+}
+
+func globalRemovalPathKey(rawPath string) (string, bool) {
+	windowsPath := (len(rawPath) >= 2 && rawPath[1] == ':') ||
+		strings.HasPrefix(rawPath, `\\`) ||
+		strings.HasPrefix(rawPath, "//")
+	if !filepath.IsAbs(rawPath) && !windowsPath {
+		return "", false
+	}
+	if filepath.IsAbs(rawPath) {
+		rawPath = utils.CanonicalPath(rawPath)
+	}
+	key := pathpkg.Clean(
+		strings.ReplaceAll(filepath.ToSlash(rawPath), `\`, "/"),
+	)
+	if windowsPath {
+		key = strings.ToLower(key)
+	}
+	return key, true
 }
 
 func worktreePathRemoved(path string) bool {
