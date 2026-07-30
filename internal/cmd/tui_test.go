@@ -2783,7 +2783,7 @@ func TestTUIBackendRemoveWorktreeRejectsBrokenGitFile(t *testing.T) {
 
 	require.Error(t, err)
 	output := runTUITestGitOutput(t, repoPath, "worktree", "list", "--porcelain")
-	assert.Contains(t, output, worktreePath)
+	assert.Contains(t, output, "branch refs/heads/codex/broken")
 	assert.DirExists(t, worktreePath)
 }
 
