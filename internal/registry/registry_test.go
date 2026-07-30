@@ -501,6 +501,54 @@ func TestRegistryCreationLockKeepsIdentityAfterDestinationAppears(
 	require.NoError(t, release())
 }
 
+func TestRegistryReclaimsAliasedAbandonedCreation(t *testing.T) {
+	r := &Registry{
+		entries: make(map[string]*WorktreeEntry),
+		path:    filepath.Join(t.TempDir(), "registry.json"),
+	}
+	canonicalParent := t.TempDir()
+	aliasParent := filepath.Join(t.TempDir(), "alias")
+	require.NoError(t, os.Symlink(canonicalParent, aliasParent))
+	aliasPath := filepath.Join(aliasParent, "creating-worktree")
+	canonicalPath := filepath.Join(canonicalParent, "creating-worktree")
+	require.NoError(t, r.Register(&WorktreeEntry{
+		Path:                   aliasPath,
+		Branch:                 "feature/abandoned",
+		CreationToken:          "abandoned-creation",
+		UnreviewedRemoteSource: true,
+	}))
+	replacement := &WorktreeEntry{
+		Path:                   canonicalPath,
+		Branch:                 "feature/recovered",
+		CreationToken:          "replacement-creation",
+		UnreviewedRemoteSource: true,
+	}
+
+	reclaimed, err := r.ReclaimCreation(
+		canonicalPath,
+		"abandoned-creation",
+		replacement,
+	)
+
+	require.NoError(t, err)
+	require.True(t, reclaimed)
+	assert.Len(t, r.List(), 1)
+	require.NoError(t, os.Mkdir(canonicalPath, 0755))
+	completed, err := r.CompleteCreation(
+		canonicalPath,
+		"replacement-creation",
+		"0123456789abcdef0123456789abcdef",
+	)
+	require.NoError(t, err)
+	require.True(t, completed)
+	assert.Len(t, r.List(), 1)
+	entry, ok := r.Get(aliasPath)
+	require.True(t, ok)
+	assert.Equal(t, canonicalPath, entry.Path)
+	assert.Empty(t, entry.CreationToken)
+	assert.Equal(t, "0123456789abcdef0123456789abcdef", entry.Generation)
+}
+
 func TestRegistryCreationFinalizationPreservesAcknowledgement(t *testing.T) {
 	r := &Registry{
 		entries: make(map[string]*WorktreeEntry),

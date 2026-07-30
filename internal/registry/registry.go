@@ -252,7 +252,7 @@ func (r *Registry) AcquireCreation(
 			err,
 		)
 	}
-	pathHash := sha256.Sum256([]byte(creationPathKey(path)))
+	pathHash := sha256.Sum256([]byte(comparableRegistryPath(path)))
 	lockPath := filepath.Join(
 		filepath.Dir(r.path),
 		fmt.Sprintf(".creation-%x.lock", pathHash),
@@ -266,28 +266,6 @@ func (r *Registry) AcquireCreation(
 		return nil, false, nil
 	}
 	return lock.Unlock, true, nil
-}
-
-func creationPathKey(path string) string {
-	if absolute, err := filepath.Abs(path); err == nil {
-		path = absolute
-	}
-	current := filepath.Clean(path)
-	var missing []string
-	for {
-		if resolved, err := filepath.EvalSymlinks(current); err == nil {
-			for i := len(missing) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, missing[i])
-			}
-			return utils.PathKey(resolved)
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return utils.PathKey(path)
-		}
-		missing = append(missing, filepath.Base(current))
-		current = parent
-	}
 }
 
 // CompleteCreation finalizes only the provisional owner named by token. Other
@@ -564,7 +542,25 @@ func matchingRegistryKeys(
 }
 
 func comparableRegistryPath(path string) string {
-	return utils.PathKey(path)
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	current := filepath.Clean(path)
+	var missing []string
+	for {
+		if resolved, err := filepath.EvalSymlinks(current); err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return utils.PathKey(resolved)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return utils.PathKey(path)
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
 }
 
 // ListExpired returns all worktrees that have expired.
