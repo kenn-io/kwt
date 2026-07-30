@@ -1925,6 +1925,45 @@ func TestAddWorktreeTrackingReusesMatchingOrphanBranch(t *testing.T) {
 	)
 }
 
+func TestAddWorktreeTrackingRejectsDivergentOrphanBranch(t *testing.T) {
+	repo := NewTestRepository(t)
+	gitOutput(t, repo.Path, "remote", "add", "origin", repo.Path)
+	gitOutput(
+		t,
+		repo.Path,
+		"update-ref",
+		"refs/remotes/origin/diverged",
+		"HEAD",
+	)
+	gitOutput(
+		t,
+		repo.Path,
+		"branch",
+		"--track",
+		"diverged",
+		"refs/remotes/origin/diverged",
+	)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repo.Path, "local-only"),
+		[]byte("different content"),
+		0o600,
+	))
+	gitOutput(t, repo.Path, "add", "local-only")
+	gitOutput(t, repo.Path, "commit", "-m", "advance local branch source")
+	gitOutput(t, repo.Path, "update-ref", "refs/heads/diverged", "HEAD")
+	worktreePath := filepath.Join(t.TempDir(), "diverged")
+
+	err := New(repo.Path).AddWorktreeTracking(
+		worktreePath,
+		"diverged",
+		"refs/remotes/origin/diverged",
+		nil,
+	)
+
+	require.ErrorContains(t, err, "points to a different commit")
+	assert.NoDirExists(t, worktreePath)
+}
+
 func TestAddWorktreeExistingRefusesGenerationlessRegisteredWorktree(
 	t *testing.T,
 ) {

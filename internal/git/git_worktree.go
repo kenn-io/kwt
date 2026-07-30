@@ -558,14 +558,18 @@ func (g *Git) reusableTrackingBranch(
 	isolationArgs []string,
 ) (bool, error) {
 	fullBranch := "refs/heads/" + branch
+	expectedSource := remoteBranch
+	if !strings.HasPrefix(expectedSource, "refs/") {
+		expectedSource = "refs/remotes/" + expectedSource
+	}
 	args := append([]string(nil), isolationArgs...)
 	args = append(
 		args,
 		"for-each-ref",
-		"--format=%(refname)%00%(upstream)",
-		"--count=1",
+		"--format=%(refname)%00%(objectname)%00%(upstream)",
 		"--",
 		fullBranch,
+		expectedSource,
 	)
 	output, err := g.runWithoutCredentials(protectedNames, args...)
 	if err != nil {
@@ -575,18 +579,36 @@ func (g *Git) reusableTrackingBranch(
 	if output == "" {
 		return false, nil
 	}
-	parts := strings.SplitN(output, "\x00", 2)
-	if len(parts) != 2 || parts[0] != fullBranch {
-		return false, fmt.Errorf("inspect local tracking branch: invalid response")
+	var localOID string
+	var upstream string
+	var sourceOID string
+	for line := range strings.SplitSeq(output, "\n") {
+		parts := strings.Split(line, "\x00")
+		if len(parts) != 3 {
+			return false, fmt.Errorf("inspect local tracking branch: invalid response")
+		}
+		switch parts[0] {
+		case fullBranch:
+			localOID = parts[1]
+			upstream = parts[2]
+		case expectedSource:
+			sourceOID = parts[1]
+		}
 	}
-	expectedSource := remoteBranch
-	if !strings.HasPrefix(expectedSource, "refs/") {
-		expectedSource = "refs/remotes/" + expectedSource
+	if localOID == "" {
+		return false, nil
 	}
-	if parts[1] != expectedSource {
+	if upstream != expectedSource {
 		return false, fmt.Errorf(
 			"local branch %s already exists with a different upstream",
 			branch,
+		)
+	}
+	if sourceOID == "" || localOID != sourceOID {
+		return false, fmt.Errorf(
+			"local branch %s points to a different commit than %s",
+			branch,
+			expectedSource,
 		)
 	}
 	return true, nil
