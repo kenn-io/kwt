@@ -18,6 +18,24 @@ verified with the repo's commands.
 | `pkg/models`         | Shared data models.                                          |
 | `docs`               | Zensical docs and maintained design notes.                   |
 
+## Local installation
+
+Install the current checkout into the shared Go bin directory with:
+
+```sh
+make install
+```
+
+The target defaults to `$(go env GOPATH)/bin`, even when a toolchain manager
+sets a private `GOBIN`. Override it when needed with
+`make INSTALL_DIR=/custom/bin install`. After installing, verify that sibling
+repositories resolve the refreshed binary:
+
+```sh
+command -v kwt
+kwt --version
+```
+
 ## Local checks
 
 ```sh

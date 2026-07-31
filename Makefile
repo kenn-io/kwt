@@ -4,6 +4,7 @@ PACKAGE := go.kenn.io/kwt
 VERSION := $(shell git describe --tags --always --dirty)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 GO_FILES := $(shell find . -name '*.go' -type f -not -path './vendor/*')
+INSTALL_DIR ?= $(shell go env GOPATH)/bin
 
 # Build variables
 BUILD_DIR := build
@@ -120,9 +121,10 @@ mod:
 	@go mod verify
 
 ## install: Install the binary
-install: build
-	@echo "Installing $(BINARY_NAME)..."
-	@go install -ldflags "$(LDFLAGS)" ./cmd/kwt
+install:
+	@echo "Installing $(BINARY_NAME) to $(INSTALL_DIR)..."
+	@mkdir -p "$(INSTALL_DIR)"
+	@GOBIN="$(INSTALL_DIR)" go install -ldflags "$(LDFLAGS)" ./cmd/kwt
 
 ## check: Run all checks (fmt, vet, lint, test)
 check: fmt vet lint test
