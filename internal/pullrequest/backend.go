@@ -108,6 +108,11 @@ func (b *GitBackend) ImportPullRequest(
 	}
 	runner := gitcmd.New()
 	runner.Env = append([]string(nil), b.gitEnvironment...)
+	// Pull-request fetches use the same credential helpers as ordinary Git.
+	// Kit still strips inherited Git state, suppresses prompts, and neutralizes
+	// executable checkout configuration before materializing untrusted content.
+	runner.NullGlobalConfig = false
+	runner.NoSystemConfig = false
 	runner.DisableSafeDirectoryForward = true
 	created, createErr := createMergeRequestWorktree(
 		ctx, managedworktree.MergeRequestWorktreeOptions{

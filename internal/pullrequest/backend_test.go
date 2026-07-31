@@ -131,6 +131,51 @@ func TestGitBackendDelegatesPullRequestLifecycleToKit(t *testing.T) {
 	assert.NotEmpty(t, workspace.SessionName)
 }
 
+func TestGitBackendMakesCredentialHelpersAvailableToLifecycle(t *testing.T) {
+	configDir := t.TempDir()
+	helper := filepath.Join(configDir, "credential-helper")
+	require.NoError(t, os.WriteFile(helper, []byte(`#!/bin/sh
+while IFS= read -r line && [ -n "$line" ]; do :; done
+if [ "$1" = get ]; then
+	printf 'username=helper-user\npassword=helper-token\n'
+fi
+`), 0o755))
+	globalConfig := filepath.Join(configDir, ".gitconfig")
+	require.NoError(t, os.WriteFile(globalConfig, []byte(
+		"[credential \"https://example.com\"]\n\thelper = !"+helper+"\n",
+	), 0o600))
+	t.Setenv("HOME", configDir)
+
+	repo, backend := newBackendRepo(t)
+	var credentialOutput []byte
+	var credentialErr error
+	original := createMergeRequestWorktree
+	createMergeRequestWorktree = func(
+		ctx context.Context, opts managedworktree.MergeRequestWorktreeOptions,
+	) (managedworktree.CreateWorktreeResult, error) {
+		assert.False(t, opts.Runner.NullGlobalConfig)
+		assert.False(t, opts.Runner.NoSystemConfig)
+		assert.True(t, opts.Runner.StripEnv)
+		assert.False(t, opts.Runner.TerminalPrompt)
+		credentialOutput, _, credentialErr = opts.Runner.Run(
+			ctx,
+			repo,
+			strings.NewReader("url=https://example.com/acme/widget.git\n\n"),
+			"credential", "fill",
+		)
+		return managedworktree.CreateWorktreeResult{}, errors.New("stop after credential lookup")
+	}
+	t.Cleanup(func() { createMergeRequestWorktree = original })
+
+	_, _ = backend.ImportPullRequest(
+		t.Context(), testPR(17, false), "pr-17-feature-widgets",
+	)
+
+	require.NoError(t, credentialErr)
+	assert.Contains(t, string(credentialOutput), "username=helper-user")
+	assert.Contains(t, string(credentialOutput), "password=helper-token")
+}
+
 func TestGitBackendSameRepositoryImportRejectsBroadPush(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
