@@ -20,7 +20,9 @@ func TestMakeInstallUsesSharedGoBinByDefault(t *testing.T) {
 	}
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	scratch := t.TempDir()
-	gopath := filepath.Join(scratch, "gopath")
+	firstGopath := filepath.Join(scratch, "gopath")
+	secondGopath := filepath.Join(scratch, "secondary-gopath")
+	gopath := strings.Join([]string{firstGopath, secondGopath}, string(os.PathListSeparator))
 	privateBin := filepath.Join(scratch, "toolchain-bin")
 	buildPath := filepath.Join(scratch, "kwt")
 	moduleCacheOutput, err := exec.Command("go", "env", "GOMODCACHE").Output()
@@ -46,9 +48,12 @@ func TestMakeInstallUsesSharedGoBinByDefault(t *testing.T) {
 	}
 
 	runMake("install")
-	sharedBinary := filepath.Join(gopath, "bin", "kwt")
+	sharedBinary := filepath.Join(firstGopath, "bin", "kwt")
 	if _, err := os.Stat(sharedBinary); err != nil {
 		t.Fatalf("default install did not create %s: %v", sharedBinary, err)
+	}
+	if _, err := os.Stat(filepath.Join(secondGopath, "bin", "kwt")); !os.IsNotExist(err) {
+		t.Fatalf("default install unexpectedly used the second GOPATH entry: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(privateBin, "kwt")); !os.IsNotExist(err) {
 		t.Fatalf("default install unexpectedly used private GOBIN: %v", err)

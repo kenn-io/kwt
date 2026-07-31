@@ -4,12 +4,18 @@ PACKAGE := go.kenn.io/kwt
 VERSION := $(shell git describe --tags --always --dirty)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 GO_FILES := $(shell find . -name '*.go' -type f -not -path './vendor/*')
-INSTALL_DIR ?= $(shell go env GOPATH)/bin
 
 # Build variables
 BUILD_DIR := build
 GOOS := $(shell go env GOOS)
 GOARCH := $(shell go env GOARCH)
+GO_PATHS := $(shell go env GOPATH)
+ifeq ($(GOOS),windows)
+GO_PATH_FIRST := $(word 1,$(subst ;, ,$(GO_PATHS)))
+else
+GO_PATH_FIRST := $(word 1,$(subst :, ,$(GO_PATHS)))
+endif
+INSTALL_DIR ?= $(GO_PATH_FIRST)/bin
 
 .PHONY: all build clean test test-verbose test-coverage lint fmt vet install help docs-install docs-build docs-serve docs-check docs-deploy
 
