@@ -9,11 +9,10 @@ GO_FILES := $(shell find . -name '*.go' -type f -not -path './vendor/*')
 BUILD_DIR := build
 GOOS := $(shell go env GOOS)
 GOARCH := $(shell go env GOARCH)
-GO_PATHS := $(shell go env GOPATH)
 ifeq ($(GOOS),windows)
-GO_PATH_FIRST := $(word 1,$(subst ;, ,$(GO_PATHS)))
+GO_PATH_FIRST := $(shell go env GOPATH | sed 's/;.*//')
 else
-GO_PATH_FIRST := $(word 1,$(subst :, ,$(GO_PATHS)))
+GO_PATH_FIRST := $(shell go env GOPATH | sed 's/:.*//')
 endif
 INSTALL_DIR ?= $(GO_PATH_FIRST)/bin
 

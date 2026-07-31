@@ -20,7 +20,7 @@ func TestMakeInstallUsesSharedGoBinByDefault(t *testing.T) {
 	}
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	scratch := t.TempDir()
-	firstGopath := filepath.Join(scratch, "gopath")
+	firstGopath := filepath.Join(scratch, "gopath with spaces")
 	secondGopath := filepath.Join(scratch, "secondary-gopath")
 	gopath := strings.Join([]string{firstGopath, secondGopath}, string(os.PathListSeparator))
 	privateBin := filepath.Join(scratch, "toolchain-bin")
