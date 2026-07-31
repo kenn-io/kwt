@@ -10,6 +10,10 @@ import (
 )
 
 func TestMakeInstallUsesSharedGoBinByDefault(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Makefile installation integration test requires POSIX make")
+	}
+
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
