@@ -2,7 +2,7 @@
 BINARY_NAME := kwt
 PACKAGE := go.kenn.io/kwt
 VERSION := $(shell git describe --tags --always --dirty)
-LDFLAGS := -s -w -X main.version=$(VERSION)
+LDFLAGS := -s -w -X $(PACKAGE)/internal/cmd.version=$(VERSION)
 GO_FILES := $(shell find . -name '*.go' -type f -not -path './vendor/*')
 
 # Build variables
@@ -40,6 +40,8 @@ build-all: clean
 	@GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 cmd/kwt/main.go
 	# Windows AMD64
 	@GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe cmd/kwt/main.go
+	# Windows ARM64
+	@GOOS=windows GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-windows-arm64.exe cmd/kwt/main.go
 	@echo "Build complete. Binaries are in $(BUILD_DIR)/"
 
 ## clean: Clean build files

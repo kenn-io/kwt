@@ -60,3 +60,23 @@ jobs:
 
       - name: Build
         run: go build ./cmd/kwt
+
+      - name: Cross-build Windows ARM64
+        if: runner.os == 'Linux'
+        run: GOOS=windows GOARCH=arm64 go build -o /tmp/kwt-windows-arm64.exe ./cmd/kwt
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Build docs
+        run: make docs-install docs-check

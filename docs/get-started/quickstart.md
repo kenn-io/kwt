@@ -1,18 +1,9 @@
 # Quickstart
 
-## Install
+## Before you start
 
-```sh
-go install go.kenn.io/kwt/cmd/kwt@latest
-```
-
-From a clone:
-
-```sh
-git clone https://github.com/kenn-io/kwt.git
-cd kwt
-go build -o kwt ./cmd/kwt
-```
+[Install kwt](install.md), then make sure `kwt`, Git, and tmux are available in
+your terminal. You do not need to edit configuration before the first run.
 
 ## Open the dashboard
 
@@ -107,6 +98,16 @@ cd "$(kwt get feature/new-ui)"
 kwt exec feature/new-ui -- npm test
 ```
 
+Machine-readable surfaces are available when another tool needs to coordinate
+with kwt:
+
+```sh
+kwt branches --json
+kwt list --json
+kwt projects --json
+kwt pr list --project github.com/acme/widget --json
+```
+
 ## Clean up
 
 ```sh
@@ -117,3 +118,7 @@ kwt prune
 
 `remove -b` removes both the worktree and the matching branch. `prune` cleans up
 stale Git worktree metadata.
+
+Next, see [Agent workspaces](../workflows/agent-workspaces.md) to configure tmux
+layouts or the [CLI reference](../reference/cli.md) for the complete command
+surface.

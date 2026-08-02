@@ -60,7 +60,8 @@ the created worktree matches it and removes the stale checkout if it does not.
 Remote-only sync does not run repository setup (`copy_files` or
 `setup_commands`); those hooks are reserved for locally initiated `kwt add`
 worktrees.
-Detached-head rows are shown for awareness but are not synced by v1.
+Detached-head rows are shown for awareness but are not synced by the current
+protocol.
 
 ## Configure it
 

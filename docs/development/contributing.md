@@ -66,7 +66,14 @@ make docs-serve
 ```
 
 `make docs-check` runs the same strict Zensical build used for docs
-verification. `make docs-deploy` deploys the docs site with Vercel.
+verification. Pull requests run that check in CI. `make docs-deploy` deploys the
+docs site with Vercel.
+
+## Releases
+
+Version tags publish platform archives and checksums through GoReleaser. See
+[Releasing kwt](releasing.md) for the complete maintainer checklist. Do not move
+or replace an existing release tag.
 
 ## Test discipline
 

@@ -7,11 +7,23 @@ Run `kwt` from a terminal to open the dashboard. The dashboard shows known
 projects and worktrees, lets you create/delete worktrees, and attaches to a
 tmux workspace for the selected branch.
 
+## Used by Ghosthub
+
+[Ghosthub](https://ghosthub.ai) bundles kwt as its worktree helper. The native
+macOS terminal uses kwt to register projects, manage linked-worktree lifecycle,
+and resolve canonical tmux sessions for local and SSH-hosted workspaces. No
+separate system kwt installation is required for Ghosthub's bundled workflow;
+the standalone CLI remains available for terminal-first use.
+
 ## Install
 
 ```bash
 go install go.kenn.io/kwt/cmd/kwt@latest
 ```
+
+Pin a version with `@v0.3.0`. Release automation was introduced after that tag;
+newer versions also publish prebuilt archives and checksums on
+[GitHub Releases](https://github.com/kenn-io/kwt/releases).
 
 From source:
 
@@ -272,13 +284,21 @@ Run `kwt <command> --help` for flags and examples.
 
 ## Documentation
 
-The maintained docs live in [docs](docs/):
+The maintained guide and reference live at [kwt.sh](https://kwt.sh/). To build
+the site locally:
 
 ```bash
 make docs-install
 make docs-build
 make docs-serve
 ```
+
+## Releases
+
+kwt uses semantic-version tags. Pushing a `vMAJOR.MINOR.PATCH` tag runs the test
+suite and publishes macOS, Linux, and Windows archives plus checksums. The
+[release checklist](docs/development/releasing.md) documents the maintainer
+workflow.
 
 ## License
 

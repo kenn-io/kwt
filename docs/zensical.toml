@@ -1,7 +1,7 @@
 [project]
 site_name = "kwt"
 site_url = "https://kwt.sh/"
-site_description = "A Git worktree manager for terminal-native, tmux-backed agentic engineering."
+site_description = "One terminal dashboard for every project, worktree, and agent workspace."
 site_author = "Kenn Software LLC"
 copyright = 'Copyright &copy; 2026 <a href="https://kenn.io">Kenn Software LLC</a>'
 docs_dir = "docs"
@@ -13,6 +13,7 @@ extra_css = ["stylesheets/extra.css"]
 nav = [
   { "Start" = [
     { "Overview" = "index.md" },
+    { "Install" = "get-started/install.md" },
     { "Quickstart" = "get-started/quickstart.md" },
   ] },
   { "Reference" = [
@@ -23,18 +24,18 @@ nav = [
   { "Workflows" = [
     { "Agent workspaces" = "workflows/agent-workspaces.md" },
     { "Directory workspaces" = "workflows/directory-workspaces.md" },
+    { "Multi-machine sync" = "multi-machine-sync.md" },
   ] },
-  { "Multi-machine sync" = [
-    { "Overview" = "multi-machine-sync.md" },
-  ] },
-  { "Design" = [
-    { "Design notes" = "design/index.md" },
-    { "TUI and project registry" = "design/tui-projects.md" },
-    { "Multi-machine sync architecture" = "design/multi-machine-sync.md" },
-  ] },
-  { "Development" = [
+  { "Project" = [
+    { "Releases" = "releases.md" },
     { "Contributing" = "development/contributing.md" },
     { "Threat model" = "development/threat-model.md" },
+    { "Releasing" = "development/releasing.md" },
+    { "Design notes" = [
+      { "Overview" = "design/index.md" },
+      { "TUI and project registry" = "design/tui-projects.md" },
+      { "Multi-machine sync architecture" = "design/multi-machine-sync.md" },
+    ] },
   ] },
 ]
 
@@ -47,6 +48,7 @@ features = [
   "navigation.tracking",
   "navigation.sections",
   "navigation.path",
+  "navigation.top",
   "content.action.edit",
   "content.code.copy",
 ]

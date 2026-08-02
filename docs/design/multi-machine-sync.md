@@ -125,7 +125,7 @@ Worktree identity is `(project_identity, kind, ref)`. Branch worktrees use
 
 ## CLI surface
 
-The planned v1 commands are:
+The v1 commands are:
 
 | Command                     | Purpose                                                                   |
 | --------------------------- | ------------------------------------------------------------------------- |
@@ -134,7 +134,7 @@ The planned v1 commands are:
 | `kwt sync status`           | Publish best-effort, fetch hub state, and render the multi-machine table. |
 | `kwt sync forget <host_id>` | Ask the hub to delete a retired host.                                     |
 
-Existing worktree mutation commands should publish after successful local
+Existing worktree mutation commands publish after successful local
 mutations when multi-machine sync is enabled. Publish failures must not fail the
 mutation.
 
@@ -152,7 +152,7 @@ remain visible but are not synced in v1.
 
 ## Hub API
 
-The planned v1 API is intentionally small:
+The v1 API is intentionally small:
 
 | Route                                         | Purpose                             |
 | --------------------------------------------- | ----------------------------------- |
