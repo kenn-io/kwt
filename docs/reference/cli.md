@@ -23,7 +23,7 @@ stable command surface.
 | `kwt workspace`  | Manage directory workspaces.                           |
 | `kwt config`     | Read and write config values.                          |
 | `kwt completion` | Generate shell completion and integration.             |
-| `kwt version`    | Show version and build information.                     |
+| `kwt version`    | Show version and build information.                    |
 
 ## Examples
 
