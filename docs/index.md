@@ -20,6 +20,14 @@ hide:
       <a class="md-button" href="get-started/quickstart/">Quickstart</a>
     </div>
   </div>
+  <figure class="kwt-hero__preview">
+    <img
+      src="assets/og.png"
+      alt="The kwt dashboard filtering eight worktrees to three matching fix branches"
+      width="1200"
+      height="630"
+    >
+  </figure>
 </section>
 
 ## The dashboard, for you
