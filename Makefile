@@ -15,6 +15,8 @@ else
 GO_PATH_FIRST := $(shell go env GOPATH | sed 's/:.*//')
 endif
 INSTALL_DIR ?= $(GO_PATH_FIRST)/bin
+VERCEL_SCOPE ?= kenn-software
+VERCEL_PROJECT ?= kwt-docs
 
 .PHONY: all build clean test test-verbose test-coverage lint fmt vet install help docs-install docs-build docs-serve docs-check docs-deploy
 
@@ -95,7 +97,7 @@ docs-check: docs-build
 
 ## docs-deploy: Build docs and deploy to Vercel
 docs-deploy: docs-build
-	@vercel deploy --prod
+	@vercel deploy --prod --yes --cwd docs/site --scope "$(VERCEL_SCOPE)" --project "$(VERCEL_PROJECT)"
 
 ## lint: Run golangci-lint
 lint:

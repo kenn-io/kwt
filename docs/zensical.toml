@@ -15,6 +15,7 @@ nav = [
     { "Overview" = "index.md" },
     { "Install" = "get-started/install.md" },
     { "Quickstart" = "get-started/quickstart.md" },
+    { "Changelog" = "changelog.md" },
   ] },
   { "Reference" = [
     { "CLI" = "reference/cli.md" },
