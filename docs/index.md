@@ -20,14 +20,6 @@ hide:
       <a class="md-button" href="get-started/quickstart/">Quickstart</a>
     </div>
   </div>
-  <figure class="kwt-hero__preview">
-    <img
-      src="assets/og.png"
-      alt="The kwt dashboard showing eight worktrees and their Git and workspace status"
-      width="1200"
-      height="630"
-    >
-  </figure>
 </section>
 
 ## The dashboard, for you
