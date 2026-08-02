@@ -1,34 +1,28 @@
 ---
 title: Git worktrees for terminal workflows
-description: One terminal dashboard for every project, worktree, and agent workspace.
+description: A terminal dashboard for managing Git worktrees, and a scriptable CLI for agents working in isolated checkouts with tmux sessions.
 hide:
   - toc
 ---
 
 <section class="kwt-hero">
   <div class="kwt-hero__copy">
-    <p class="kwt-eyebrow">Git worktrees, made operational</p>
-    <h1>Keep every branch, project, and coding agent within reach.</h1>
+    <h1>One worktree per branch. One tmux session per worktree.</h1>
     <p class="kwt-hero__lede">
-      kwt turns Git worktrees into durable terminal workspaces. Create an
-      isolated checkout, open its tmux session, and see the state of all your
-      active work from one keyboard-driven dashboard.
+      kwt is a Git worktree manager with two surfaces. The dashboard is for
+      you: see and manage the worktrees across all your projects from one
+      keyboard-driven view. The CLI is for your coding agents: plain commands
+      and stable JSON for creating worktrees and working inside their tmux
+      sessions.
     </p>
     <div class="kwt-hero__actions">
       <a class="md-button md-button--primary" href="get-started/install/">Install kwt</a>
-      <a class="md-button" href="get-started/quickstart/">Take the quickstart</a>
+      <a class="md-button" href="get-started/quickstart/">Quickstart</a>
     </div>
   </div>
 </section>
 
-<div class="kwt-signal-row" aria-label="kwt highlights">
-  <span><strong>Cross-project</strong> by default</span>
-  <span><strong>Local-first</strong> state</span>
-  <span><strong>tmux-backed</strong> sessions</span>
-  <span><strong>Scriptable</strong> CLI + JSON</span>
-</div>
-
-## One command to get oriented
+## The dashboard, for you
 
 ```sh
 go install go.kenn.io/kwt/cmd/kwt@latest
@@ -36,29 +30,45 @@ kwt
 ```
 
 Run `kwt` inside a repository and it registers the project, discovers its
-worktrees, and opens the dashboard. Run it from a regular directory and that
-directory can become a tmux-backed workspace too.
+worktrees, and opens a full-screen dashboard. From one view you can:
 
-<div class="kwt-card-grid">
-  <article>
-    <span class="kwt-card__number">01</span>
-    <h3>Separate the work</h3>
-    <p>Create a worktree for each feature, fix, review, or agent. Branches stop competing for one checkout.</p>
-    <a href="get-started/quickstart/#create-a-worktree">Create a worktree →</a>
-  </article>
-  <article>
-    <span class="kwt-card__number">02</span>
-    <h3>Keep context alive</h3>
-    <p>Every worktree can have a predictable tmux session, from one plain shell to an explicit agent layout.</p>
-    <a href="workflows/agent-workspaces/">Build an agent workflow →</a>
-  </article>
-  <article>
-    <span class="kwt-card__number">03</span>
-    <h3>See the whole fleet</h3>
-    <p>Scan project, Git, and workspace state locally—or opt in to an advisory view across your machines.</p>
-    <a href="multi-machine-sync/">Understand multi-machine sync →</a>
-  </article>
-</div>
+- Attach to a worktree's tmux session (`enter`), creating it when needed.
+- Create a branch and worktree (`n`), or search local and remote branches for
+  one (`b`).
+- See per-branch Git state — dirty, ahead, behind — across every project.
+- Delete worktrees (`d`), kill live sessions (`K`), and switch the active
+  project (`P`).
+
+A plain directory can be a workspace too: run `kwt` there and `enter` opens a
+tmux session in place. The [quickstart](get-started/quickstart.md) walks
+through the full key map.
+
+## The CLI, for your agents
+
+Every dashboard operation is also a plain command, so coding agents and
+scripts can manage worktrees and their bound tmux sessions without a UI:
+
+```sh
+kwt add -b feature/new-ui              # isolated checkout + tmux workspace
+kwt exec feature/new-ui -- make test   # run a command in the worktree
+cd "$(kwt get feature/new-ui)"         # resolve a worktree path
+kwt list --json                        # machine-readable worktree state
+kwt remove -b feature/new-ui           # delete the worktree and its branch
+```
+
+`kwt pr import` checks a GitHub pull request out into a fresh worktree, and
+`kwt status` shows which branches are dirty, ahead, or behind — useful when
+several agents are working in parallel. Configurable
+[layouts](workflows/agent-workspaces.md) define the tmux panes each workspace
+starts with, from a single shell to a preset arrangement of agents.
+
+## Guardrails
+
+Checkouts of existing or remote branches are created inert: kwt skips
+repository hooks, setup commands, and workspace launch until you review the
+files and explicitly open the workspace. Pull-request imports use a protected
+session boundary and preserve exact push routing. Multi-machine sync stays off
+until you [configure it](multi-machine-sync.md).
 
 <aside class="kwt-ecosystem">
   <div>
@@ -77,54 +87,9 @@ directory can become a tmux-backed workspace too.
   </div>
 </aside>
 
-## A direct daily loop
-
-<div class="kwt-workflow">
-  <div>
-    <span>1</span>
-    <div>
-      <h3>Create an isolated checkout</h3>
-      <code>kwt add -b feature/new-ui</code>
-    </div>
-  </div>
-  <div>
-    <span>2</span>
-    <div>
-      <h3>Run work where the branch lives</h3>
-      <code>kwt exec feature/new-ui -- make test</code>
-    </div>
-  </div>
-  <div>
-    <span>3</span>
-    <div>
-      <h3>Return to its persistent workspace</h3>
-      <code>kwt open feature/new-ui</code>
-    </div>
-  </div>
-</div>
-
-kwt also imports pull requests through a stable JSON contract, manages plain
-directory workspaces, runs commands in exact worktree paths, and can publish an
-advisory multi-machine view without syncing files or locking branches.
-
-## Designed for automation without giving up control
-
-Existing or remote branch checkouts are created inertly: kwt skips repository
-setup commands and workspace launch until you inspect the files and explicitly
-open the workspace. Pull-request imports use a protected session boundary and
-preserve exact push routing. Multi-machine sync is disabled until you configure
-it.
-
 <div class="kwt-link-grid">
   <a href="reference/cli/"><strong>CLI reference</strong><span>Commands, flags, JSON, and attachment contracts</span></a>
   <a href="reference/configuration/"><strong>Configuration</strong><span>Paths, layouts, agents, setup, and trust</span></a>
   <a href="reference/pull-requests/"><strong>Pull-request automation</strong><span>Discover, import, and attach safely</span></a>
   <a href="releases/"><strong>Releases</strong><span>Versions, artifacts, and upgrade guidance</span></a>
-</div>
-
-<div class="kwt-closing">
-  <p class="kwt-eyebrow">Ready when your next branch is</p>
-  <h2>Start with one worktree. Keep the dashboard.</h2>
-  <a class="md-button md-button--primary" href="get-started/install/">Install kwt</a>
-  <a class="md-button" href="https://github.com/kenn-io/kwt">View the source</a>
 </div>

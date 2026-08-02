@@ -1,7 +1,7 @@
 [project]
 site_name = "kwt"
 site_url = "https://kwt.sh/"
-site_description = "One terminal dashboard for every project, worktree, and agent workspace."
+site_description = "A terminal dashboard for managing Git worktrees, and a scriptable CLI for agents working in isolated checkouts with tmux sessions."
 site_author = "Kenn Software LLC"
 copyright = 'Copyright &copy; 2026 <a href="https://kenn.io">Kenn Software LLC</a>'
 docs_dir = "docs"

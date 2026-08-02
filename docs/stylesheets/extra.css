@@ -123,64 +123,6 @@ body {
   margin-top: 1.7rem;
 }
 
-.kwt-signal-row {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  margin: 0 0 4rem;
-  border-top: 1px solid rgba(126, 177, 185, 0.16);
-  border-bottom: 1px solid rgba(126, 177, 185, 0.16);
-}
-
-.kwt-signal-row span {
-  padding: 1rem 0.6rem;
-  color: var(--md-default-fg-color--lighter);
-  font-size: 0.7rem;
-  text-align: center;
-}
-
-.kwt-signal-row strong {
-  color: var(--md-default-fg-color);
-}
-
-.kwt-card-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.9rem;
-  margin: 1.8rem 0 4rem;
-}
-
-.kwt-card-grid article {
-  display: flex;
-  min-height: 13rem;
-  flex-direction: column;
-  padding: 1.25rem;
-  border: 1px solid rgba(126, 177, 185, 0.16);
-  border-radius: 0.65rem;
-  background: var(--md-default-bg-color--light);
-}
-
-.kwt-card__number {
-  color: var(--kwt-cyan);
-  font-family: var(--md-code-font-family);
-  font-size: 0.66rem;
-}
-
-.kwt-card-grid h3 {
-  margin: 1.1rem 0 0.35rem;
-}
-
-.kwt-card-grid p {
-  color: var(--md-default-fg-color--light);
-  font-size: 0.76rem;
-  line-height: 1.6;
-}
-
-.kwt-card-grid a {
-  margin-top: auto;
-  font-size: 0.7rem;
-  font-weight: 700;
-}
-
 .kwt-ecosystem {
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
@@ -204,42 +146,6 @@ body {
 .kwt-ecosystem .kwt-text-link {
   font-size: 0.72rem;
   font-weight: 750;
-}
-
-.kwt-workflow {
-  margin: 1.6rem 0 2.2rem;
-  border-top: 1px solid rgba(126, 177, 185, 0.16);
-}
-
-.kwt-workflow > div {
-  display: grid;
-  grid-template-columns: 2.5rem 1fr;
-  gap: 0.8rem;
-  align-items: start;
-  padding: 1.2rem 0;
-  border-bottom: 1px solid rgba(126, 177, 185, 0.16);
-}
-
-.kwt-workflow > div > span {
-  display: grid;
-  width: 1.75rem;
-  height: 1.75rem;
-  place-items: center;
-  border: 1px solid rgba(67, 214, 197, 0.45);
-  border-radius: 50%;
-  color: var(--kwt-cyan);
-  font-family: var(--md-code-font-family);
-  font-size: 0.62rem;
-}
-
-.kwt-workflow h3 {
-  margin: 0 0 0.45rem;
-}
-
-.kwt-workflow code {
-  display: inline-block;
-  padding: 0.32rem 0.5rem;
-  color: var(--md-code-fg-color);
 }
 
 .kwt-link-grid {
@@ -274,22 +180,6 @@ body {
   font-size: 0.68rem;
 }
 
-.kwt-closing {
-  margin: 4rem 0 1rem;
-  padding: clamp(1.5rem, 5vw, 3rem);
-  border: 1px solid rgba(67, 214, 197, 0.25);
-  border-radius: 0.8rem;
-  background: #0b2029;
-}
-
-.kwt-closing h2 {
-  margin: 0.45rem 0 1.4rem;
-}
-
-.kwt-closing .md-button {
-  margin-right: 0.45rem;
-}
-
 @media screen and (min-width: 76.25em) {
   .md-content__inner {
     max-width: 58rem;
@@ -307,16 +197,10 @@ body {
 }
 
 @media screen and (max-width: 44rem) {
-  .kwt-card-grid,
   .kwt-link-grid,
   .kwt-ecosystem {
     grid-template-columns: 1fr;
   }
-
-  .kwt-signal-row {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
 }
 
 @media (prefers-reduced-motion: reduce) {
