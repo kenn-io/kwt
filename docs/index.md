@@ -23,7 +23,7 @@ hide:
   <figure class="kwt-hero__preview">
     <img
       src="assets/og.png"
-      alt="The kwt dashboard filtering eight worktrees to three matching fix branches"
+      alt="The kwt dashboard showing eight worktrees and their Git and workspace status"
       width="1200"
       height="630"
     >
