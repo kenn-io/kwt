@@ -21,9 +21,7 @@
 }
 
 body {
-  background:
-    radial-gradient(circle at 72% 0%, rgba(31, 111, 123, 0.16), transparent 28rem),
-    var(--md-default-bg-color);
+  background: var(--md-default-bg-color);
 }
 
 .md-header {
@@ -92,19 +90,14 @@ body {
 }
 
 .kwt-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1.04fr) minmax(22rem, 0.96fr);
-  gap: clamp(2rem, 6vw, 5.6rem);
-  align-items: center;
-  margin: 1.6rem 0 3rem;
-  min-height: 30rem;
+  margin: clamp(2.5rem, 7vw, 5.5rem) 0 clamp(3rem, 7vw, 5rem);
 }
 
 .kwt-hero__copy h1 {
   margin: 0.25rem 0 1rem;
-  max-width: 13ch;
-  font-size: clamp(2.5rem, 5.6vw, 4.6rem);
-  line-height: 0.98;
+  max-width: 18ch;
+  font-size: clamp(2.5rem, 5vw, 4.4rem);
+  line-height: 1;
 }
 
 .kwt-eyebrow {
@@ -128,103 +121,6 @@ body {
   flex-wrap: wrap;
   gap: 0.7rem;
   margin-top: 1.7rem;
-}
-
-.kwt-terminal {
-  overflow: hidden;
-  border: 1px solid rgba(93, 206, 194, 0.28);
-  border-radius: 0.8rem;
-  background: #061016;
-  box-shadow:
-    0 2rem 5rem rgba(0, 0, 0, 0.38),
-    0 0 0 0.5rem rgba(67, 214, 197, 0.035);
-  font-family: var(--md-code-font-family);
-  font-size: clamp(0.52rem, 1vw, 0.68rem);
-  transform: rotate(0.8deg);
-}
-
-.kwt-terminal__bar {
-  display: flex;
-  gap: 0.32rem;
-  align-items: center;
-  padding: 0.62rem 0.8rem;
-  border-bottom: 1px solid rgba(126, 177, 185, 0.14);
-  color: #66838b;
-}
-
-.kwt-terminal__bar span {
-  width: 0.52rem;
-  height: 0.52rem;
-  border-radius: 50%;
-  background: #ff6b63;
-}
-
-.kwt-terminal__bar span:nth-child(2) {
-  background: #ffbd66;
-}
-
-.kwt-terminal__bar span:nth-child(3) {
-  background: #43d98b;
-}
-
-.kwt-terminal__bar strong {
-  margin-left: auto;
-  font-weight: 600;
-}
-
-.kwt-terminal__body {
-  padding: 1.05rem;
-  color: #b9cdd1;
-}
-
-.kwt-terminal__body p {
-  display: grid;
-  grid-template-columns: 0.7fr 1.6fr 0.78fr 0.78fr;
-  gap: 0.65rem;
-  margin: 0 -0.4rem;
-  padding: 0.4rem;
-  white-space: nowrap;
-}
-
-.kwt-terminal__body p:first-child {
-  color: #5f7d84;
-  font-size: 0.58rem;
-  letter-spacing: 0.08em;
-}
-
-.kwt-terminal__body p.is-active {
-  border-radius: 0.28rem;
-  background: var(--kwt-cyan);
-  color: #061016;
-}
-
-.kwt-terminal .is-warm {
-  color: var(--kwt-amber);
-}
-
-.kwt-terminal .is-cool {
-  color: var(--kwt-cyan);
-}
-
-.kwt-terminal__detail {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 1.1rem;
-  padding-top: 0.8rem;
-  border-top: 1px solid rgba(126, 177, 185, 0.13);
-  color: #78959c;
-}
-
-.kwt-terminal__detail span:last-child {
-  color: var(--kwt-cyan);
-}
-
-.kwt-terminal__keys {
-  margin: 1rem -1.05rem -1.05rem;
-  padding: 0.64rem 1rem;
-  background: #102f3d;
-  color: #b7d9dc;
-  white-space: nowrap;
 }
 
 .kwt-signal-row {
@@ -260,7 +156,7 @@ body {
   padding: 1.25rem;
   border: 1px solid rgba(126, 177, 185, 0.16);
   border-radius: 0.65rem;
-  background: linear-gradient(145deg, rgba(16, 47, 61, 0.55), rgba(7, 20, 27, 0.4));
+  background: var(--md-default-bg-color--light);
 }
 
 .kwt-card__number {
@@ -293,9 +189,7 @@ body {
   padding: clamp(1.4rem, 4vw, 2.4rem);
   border: 1px solid rgba(67, 214, 197, 0.28);
   border-radius: 0.8rem;
-  background:
-    linear-gradient(135deg, rgba(67, 214, 197, 0.1), transparent 48%),
-    #0b2029;
+  background: #0b2029;
 }
 
 .kwt-ecosystem h2 {
@@ -385,9 +279,7 @@ body {
   padding: clamp(1.5rem, 5vw, 3rem);
   border: 1px solid rgba(67, 214, 197, 0.25);
   border-radius: 0.8rem;
-  background:
-    radial-gradient(circle at 90% 20%, rgba(67, 214, 197, 0.14), transparent 15rem),
-    #0b2029;
+  background: #0b2029;
 }
 
 .kwt-closing h2 {
@@ -402,21 +294,15 @@ body {
   .md-content__inner {
     max-width: 58rem;
   }
+
+  .md-content__inner:has(.kwt-hero) {
+    max-width: 64rem;
+  }
 }
 
 @media screen and (max-width: 60rem) {
-  .kwt-hero {
-    grid-template-columns: 1fr;
-    min-height: auto;
-  }
-
   .kwt-hero__copy h1 {
     max-width: 15ch;
-  }
-
-  .kwt-terminal {
-    max-width: 38rem;
-    transform: none;
   }
 }
 
@@ -431,19 +317,6 @@ body {
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .kwt-terminal__body p {
-    grid-template-columns: 0.65fr 1.55fr 0.7fr;
-  }
-
-  .kwt-terminal__body p > :last-child,
-  .kwt-terminal__body p > b:last-child {
-    display: none;
-  }
-
-  .kwt-terminal__detail,
-  .kwt-terminal__keys {
-    font-size: 0.5rem;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -19,24 +19,6 @@ hide:
       <a class="md-button" href="get-started/quickstart/">Take the quickstart</a>
     </div>
   </div>
-  <div class="kwt-terminal" aria-label="Example kwt terminal dashboard">
-    <div class="kwt-terminal__bar">
-      <span></span><span></span><span></span>
-      <strong>kwt</strong>
-    </div>
-    <div class="kwt-terminal__body">
-      <p><b>REPO</b><b>BRANCH</b><b>CHANGES</b><b>WORKSPACE</b></p>
-      <p class="is-active"><span>kwt</span><span>main [primary]</span><span>clean</span><span>live</span></p>
-      <p><span>kwt</span><span>docs/refresh</span><span class="is-warm">~3</span><span>live</span></p>
-      <p><span>api</span><span>feat/oauth</span><span>clean</span><span>quiet</span></p>
-      <p><span>web</span><span>fix/nav</span><span class="is-cool">remote</span><span>remote</span></p>
-      <div class="kwt-terminal__detail">
-        <span>docs/refresh</span>
-        <span>↑2 · agent workspace active</span>
-      </div>
-      <div class="kwt-terminal__keys">enter open&nbsp;&nbsp; n new&nbsp;&nbsp; b branch&nbsp;&nbsp; / search&nbsp;&nbsp; ? help</div>
-    </div>
-  </div>
 </section>
 
 <div class="kwt-signal-row" aria-label="kwt highlights">
