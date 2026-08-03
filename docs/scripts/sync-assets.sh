@@ -11,6 +11,7 @@ raw_root="${KWT_WEBSITE_ASSETS_RAW_ROOT:-https://raw.githubusercontent.com/kenn-
 asset_name="og.png"
 manifest="$asset_dir/.website-assets.synced"
 stage_root="$(mktemp -d "${TMPDIR:-/tmp}/kwt-docs-assets.XXXXXX")"
+asset_repository="$stage_root/repository.git"
 trap 'rm -rf "$stage_root"' EXIT
 
 valid_png() {
@@ -20,9 +21,9 @@ valid_png() {
 }
 
 stage_ref() {
-  local ref="$1"
-  git -C "$repo_root" cat-file -e "$ref:$asset_name" 2>/dev/null \
-    && git -C "$repo_root" show "$ref:$asset_name" > "$stage_root/$asset_name" \
+  local repository="$1" ref="$2"
+  git -C "$repository" cat-file -e "$ref:$asset_name" 2>/dev/null \
+    && git -C "$repository" show "$ref:$asset_name" > "$stage_root/$asset_name" \
     && valid_png "$stage_root/$asset_name"
 }
 
@@ -42,8 +43,15 @@ publish_asset() {
   printf 'synced docs asset from %s\n' "$source_label"
 }
 
-if git -C "$repo_root" fetch --depth=1 "$asset_remote" "$asset_branch" >/dev/null 2>&1; then
-  if ! stage_ref FETCH_HEAD; then
+resolved_remote="$asset_remote"
+if remote_url="$(git -C "$repo_root" remote get-url "$asset_remote" 2>/dev/null)"; then
+  resolved_remote="$remote_url"
+fi
+
+git init --bare -q "$asset_repository"
+if git -C "$asset_repository" fetch --depth=1 --no-tags \
+  "$resolved_remote" "$asset_branch" >/dev/null 2>&1; then
+  if ! stage_ref "$asset_repository" FETCH_HEAD; then
     printf 'error: fetched %s is missing a valid %s\n' "$asset_branch" "$asset_name" >&2
     exit 1
   fi
@@ -51,7 +59,7 @@ if git -C "$repo_root" fetch --depth=1 "$asset_remote" "$asset_branch" >/dev/nul
   exit 0
 fi
 
-if [[ "$asset_remote" == "origin" ]] && stage_ref "$asset_branch"; then
+if [[ "$asset_remote" == "origin" ]] && stage_ref "$repo_root" "$asset_branch"; then
   publish_asset "local $asset_branch"
   exit 0
 fi
