@@ -18,7 +18,7 @@ INSTALL_DIR ?= $(GO_PATH_FIRST)/bin
 VERCEL_SCOPE ?= kenn-software
 VERCEL_PROJECT ?= kwt-docs
 
-.PHONY: all build clean test test-verbose test-coverage lint fmt vet install help docs-install docs-build docs-serve docs-check docs-deploy
+.PHONY: all build clean test test-verbose test-coverage lint fmt vet install help docs-install docs-assets docs-assets-test docs-build docs-serve docs-check docs-deploy
 
 # Default target
 all: clean build
@@ -84,16 +84,24 @@ bench:
 docs-install:
 	@cd docs && uv sync --frozen --no-dev
 
+## docs-assets: Materialize website binaries from the orphan asset branch
+docs-assets:
+	@bash docs/scripts/sync-assets.sh
+
+## docs-assets-test: Verify orphan asset hydration behavior
+docs-assets-test:
+	@bash docs/scripts/test-sync-assets.sh
+
 ## docs-build: Build Zensical docs
-docs-build:
+docs-build: docs-assets
 	@cd docs && uv run --frozen bash ./zensical-docs.sh build
 
 ## docs-serve: Serve Zensical docs locally
-docs-serve:
+docs-serve: docs-assets
 	@cd docs && uv run bash ./zensical-docs.sh serve
 
 ## docs-check: Verify docs build
-docs-check: docs-build
+docs-check: docs-assets-test docs-build
 
 ## docs-deploy: Build docs and deploy to Vercel
 docs-deploy: docs-build

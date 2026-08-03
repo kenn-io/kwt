@@ -3,3 +3,5 @@
 site/
 .zensical-build.*
 zensical-public-docs.*
+assets/*.png
+assets/.website-assets.synced

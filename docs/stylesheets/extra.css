@@ -123,6 +123,21 @@ body {
   margin-top: 1.7rem;
 }
 
+.kwt-hero__preview {
+  overflow: hidden;
+  margin: clamp(2rem, 5vw, 3rem) 0 0;
+  border: 1px solid rgba(126, 177, 185, 0.2);
+  border-radius: 0.7rem;
+  background: #07141b;
+  box-shadow: 0 1rem 2.5rem rgba(0, 0, 0, 0.18);
+}
+
+.kwt-hero__preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
 .kwt-ecosystem {
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
