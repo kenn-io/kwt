@@ -225,7 +225,7 @@ func removeLocalWorktree(
 				forceDeleteBranch,
 				generationCondition.generation,
 			); err != nil {
-				if worktreePathRemoved(wt.Path) {
+				if worktreeRemovalCompleted(wt.Path, err) {
 					removed++
 					unregisterWorktreeRecord(registryRecord)
 				}
@@ -245,7 +245,7 @@ func removeLocalWorktree(
 				removeForce,
 				generationCondition.generation,
 			); err != nil {
-				if worktreePathRemoved(wt.Path) {
+				if worktreeRemovalCompleted(wt.Path, err) {
 					removed++
 					unregisterWorktreeRecord(registryRecord)
 				}
@@ -422,7 +422,7 @@ func removeGlobalWorktree(
 				forceDeleteBranch,
 				generationCondition.generation,
 			); err != nil {
-				if worktreePathRemoved(entry.Path) {
+				if worktreeRemovalCompleted(entry.Path, err) {
 					removed++
 					unregisterWorktreeRecord(registryRecord)
 				}
@@ -444,7 +444,7 @@ func removeGlobalWorktree(
 				removeForce,
 				generationCondition.generation,
 			); err != nil {
-				if worktreePathRemoved(entry.Path) {
+				if worktreeRemovalCompleted(entry.Path, err) {
 					removed++
 					unregisterWorktreeRecord(registryRecord)
 				}
@@ -550,6 +550,10 @@ func windowsStyleRemovalPath(rawPath string) bool {
 func worktreePathRemoved(path string) bool {
 	_, err := os.Stat(path)
 	return os.IsNotExist(err)
+}
+
+func worktreeRemovalCompleted(path string, err error) bool {
+	return worktreePathRemoved(path) || git.WorktreeWasRemoved(err)
 }
 
 type removalRegistryRecord struct {

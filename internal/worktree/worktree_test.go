@@ -35,6 +35,7 @@ type mockGit struct {
 	trackingSource    string
 	existingSource    string
 	protectedNames    []string
+	deletedBranches   []string
 }
 
 type mockRemoteSourceState struct {
@@ -46,7 +47,15 @@ type materializedAddError struct {
 	error
 }
 
+type removedWorktreeError struct {
+	error
+}
+
 func (materializedAddError) WorktreeCreated() bool {
+	return true
+}
+
+func (removedWorktreeError) WorktreeRemoved() bool {
 	return true
 }
 
@@ -305,6 +314,7 @@ func (m *mockGit) GetRepositoryURL() (string, error) {
 }
 
 func (m *mockGit) DeleteBranch(branch string, force bool) error {
+	m.deletedBranches = append(m.deletedBranches, branch)
 	if m.deleteBranchError != nil {
 		return m.deleteBranchError
 	}
@@ -792,6 +802,24 @@ func TestManagerRemove(t *testing.T) {
 	if mockG.worktrees[0].Path != "/path/to/worktree2" {
 		t.Errorf("Wrong worktree remained: %s", mockG.worktrees[0].Path)
 	}
+}
+
+func TestManagerRemoveWithBranchContinuesAfterPartialRemoval(t *testing.T) {
+	partialErr := removedWorktreeError{errors.New("files remain")}
+	mockG := &mockGit{removeError: partialErr}
+	m := New(mockG, &models.Config{})
+
+	err := m.RemoveWithBranch(
+		"/path/to/worktree",
+		"feature",
+		false,
+		true,
+		false,
+		"generation",
+	)
+
+	require.ErrorIs(t, err, partialErr)
+	assert.Equal(t, []string{"feature"}, mockG.deletedBranches)
 }
 
 func TestManagerList(t *testing.T) {

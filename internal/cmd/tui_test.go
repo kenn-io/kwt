@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -1945,6 +1946,100 @@ func TestTUIBackendRemoveWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, published)
+}
+
+func TestTUIBackendCompletesBookkeepingAfterGitDeregistersWithResidualFiles(
+	t *testing.T,
+) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a POSIX shell wrapper")
+	}
+	resetFleetCommandDeps(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "tui-remove-residual")
+	runTUITestGit(
+		t,
+		repoPath,
+		"worktree",
+		"add",
+		"-b",
+		"codex/tui-remove-residual",
+		worktreePath,
+	)
+	generation := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
+	reg, err := registry.New()
+	require.NoError(t, err)
+	require.NoError(t, reg.Register(&registry.WorktreeEntry{
+		Path:       worktreePath,
+		Branch:     "codex/tui-remove-residual",
+		Generation: generation,
+	}))
+
+	realGit, err := exec.LookPath("git")
+	require.NoError(t, err)
+	wrapperDir := t.TempDir()
+	wrapperPath := filepath.Join(wrapperDir, "git")
+	wrapper := `#!/bin/sh
+if [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
+	"$REAL_GIT" "$@" || exit $?
+	mkdir -p "$3"
+	printf 'created during removal\n' > "$3/residual"
+	printf "error: failed to delete '%s': Directory not empty\n" "$3" >&2
+	exit 1
+fi
+exec "$REAL_GIT" "$@"
+`
+	require.NoError(t, os.WriteFile(wrapperPath, []byte(wrapper), 0755))
+	t.Setenv("REAL_GIT", realGit)
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cfg := &models.Config{
+		Fleet: models.FleetConfig{Enabled: true},
+		Projects: []models.Project{{
+			Repository: "github.com/example/service-api",
+			Name:       "service-api",
+			Path:       repoPath,
+		}},
+	}
+	published := 0
+	newFleetManifestBuilder = func() fleet.ManifestBuildProvider {
+		return &stubFleetManifestBuilder{}
+	}
+	publishFleetBestEffort = func(
+		context.Context,
+		*models.Config,
+		fleet.ManifestBuildProvider,
+		*bytes.Buffer,
+	) error {
+		published++
+		return nil
+	}
+	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
+		RepositoryInfo: &url.RepositoryInfo{
+			Host:       "github.com",
+			Owner:      "example",
+			Repository: "service-api",
+			FullPath:   "github.com/example/service-api",
+		},
+		Branch:     "codex/tui-remove-residual",
+		Path:       worktreePath,
+		Generation: generation,
+	}}
+	backend := newTUIBackendWithLaunchDir(cfg, "")
+
+	err = backend.RemoveWorktree(context.Background(), row, false)
+
+	require.ErrorContains(t, err, "worktree removed, but files remain at ")
+	assert.True(t, git.WorktreeWasRemoved(err))
+	assert.Equal(t, 1, published)
+	assert.FileExists(t, filepath.Join(worktreePath, "residual"))
+	refreshedRegistry, registryErr := registry.New()
+	require.NoError(t, registryErr)
+	_, registered := refreshedRegistry.Get(worktreePath)
+	assert.False(t, registered)
 }
 
 func TestTUIBackendRemoveWorktreeUnregistersLegacyEntry(t *testing.T) {

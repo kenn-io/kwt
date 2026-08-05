@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go.kenn.io/kwt/internal/credentials"
+	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/template"
 	"go.kenn.io/kwt/internal/tmux"
@@ -443,24 +444,29 @@ func (m *Manager) RemoveWithBranch(
 	forceBranch bool,
 	ifGeneration string,
 ) error {
-	// First remove the worktree
-	if err := m.git.RemoveWorktree(
+	removalErr := m.git.RemoveWorktree(
 		path,
 		forceWorktree,
 		ifGeneration,
-	); err != nil {
-		return err
+	)
+	if removalErr != nil && !git.WorktreeWasRemoved(removalErr) {
+		return removalErr
 	}
 
-	// Then delete the branch if requested
 	if deleteBranch && branch != "" {
 		if err := m.git.DeleteBranch(branch, forceBranch); err != nil {
-			// Return error but worktree is already removed
-			return fmt.Errorf("worktree removed but failed to delete branch: %w", err)
+			branchErr := fmt.Errorf(
+				"worktree removed but failed to delete branch: %w",
+				err,
+			)
+			if removalErr != nil {
+				return errors.Join(removalErr, branchErr)
+			}
+			return branchErr
 		}
 	}
 
-	return nil
+	return removalErr
 }
 
 // List returns all worktrees.

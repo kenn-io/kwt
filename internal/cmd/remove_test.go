@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -69,6 +70,77 @@ func TestRemoveLocalUnregistersLegacyEntry(t *testing.T) {
 	require.NoError(t, err)
 	refreshedRegistry, err := registry.New()
 	require.NoError(t, err)
+	_, registered := refreshedRegistry.Get(worktreePath)
+	assert.False(t, registered)
+}
+
+func TestRemoveLocalCompletesBookkeepingAfterGitDeregistersWithResidualFiles(
+	t *testing.T,
+) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a POSIX shell wrapper")
+	}
+	resetFleetCommandDeps(t)
+	resetRemoveCommandFlags(t)
+
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	t.Chdir(repoPath)
+	worktreePath := filepath.Join(t.TempDir(), "remove-local-residual")
+	runTUITestGit(
+		t,
+		repoPath,
+		"worktree",
+		"add",
+		"-b",
+		"task7/remove-local-residual",
+		worktreePath,
+	)
+	removeIfGeneration = tuiTestWorktreeGeneration(t, repoPath, worktreePath)
+	reg, err := registry.New()
+	require.NoError(t, err)
+	require.NoError(t, reg.Register(&registry.WorktreeEntry{
+		Path:       worktreePath,
+		Branch:     "task7/remove-local-residual",
+		Generation: removeIfGeneration,
+	}))
+
+	realGit, err := exec.LookPath("git")
+	require.NoError(t, err)
+	wrapperDir := t.TempDir()
+	wrapperPath := filepath.Join(wrapperDir, "git")
+	wrapper := `#!/bin/sh
+if [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
+	"$REAL_GIT" "$@" || exit $?
+	mkdir -p "$3"
+	printf 'created during removal\n' > "$3/residual"
+	printf "error: failed to delete '%s': Directory not empty\n" "$3" >&2
+	exit 1
+fi
+exec "$REAL_GIT" "$@"
+`
+	require.NoError(t, os.WriteFile(wrapperPath, []byte(wrapper), 0755))
+	t.Setenv("REAL_GIT", realGit)
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	publishCalls := 0
+	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) {
+		publishCalls++
+	}
+	cmd, _, _ := fleetTestCommand()
+	setRemoveGenerationFlag(t, cmd, removeIfGeneration)
+
+	err = runRemove(cmd, []string{worktreePath})
+
+	require.ErrorContains(
+		t,
+		err,
+		"worktree removed, but files remain at ",
+	)
+	assert.Equal(t, 1, publishCalls)
+	assert.FileExists(t, filepath.Join(worktreePath, "residual"))
+	refreshedRegistry, registryErr := registry.New()
+	require.NoError(t, registryErr)
 	_, registered := refreshedRegistry.Get(worktreePath)
 	assert.False(t, registered)
 }
