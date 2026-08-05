@@ -131,6 +131,12 @@ paths that live outside the configured worktree base directory without
 parsing the config file. `repository` uses the same `host/owner/name` slug as
 `kwt list --json`'s `repository` field, so the two surfaces can be joined.
 
+Entries whose configured paths are missing, inaccessible, not Git repositories,
+or empty are omitted from both table and JSON output. Kwt does not delete those
+registry records or scan for moved checkouts; running kwt in the checkout's new
+location, or using `kwt projects add <new-path>`, updates the existing record by
+repository identity.
+
 `kwt projects add <path>` registers an existing Git checkout without opening
 the dashboard. A linked-worktree path resolves to its main repository before
 registration, and repeating the command updates the existing entry rather than

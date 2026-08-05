@@ -52,11 +52,12 @@ func TestProjectsCommandSkipsCwdConfigMerge(t *testing.T) {
 }
 
 func TestRunProjectsJSONEmitsRegistry(t *testing.T) {
+	repoPath := newTUITestRepo(t)
 	withProjectsConfig(t, []models.Project{
 		{
 			Repository:  "github.com/wesm/kwt",
 			Name:        "kwt",
-			Path:        "/home/wesm/code/kwt",
+			Path:        repoPath,
 			LastTouched: "2026-07-16T00:00:00Z",
 		},
 	})
@@ -71,16 +72,17 @@ func TestRunProjectsJSONEmitsRegistry(t *testing.T) {
 		t.Fatalf("expected 1 project, got %d", len(got))
 	}
 	if got[0].Repository != "github.com/wesm/kwt" || got[0].Name != "kwt" ||
-		got[0].Path != "/home/wesm/code/kwt" || got[0].LastTouched != "2026-07-16T00:00:00Z" {
+		got[0].Path != repoPath || got[0].LastTouched != "2026-07-16T00:00:00Z" {
 		t.Errorf("unexpected project: %+v", got[0])
 	}
 }
 
 func TestRunProjectsRendersTable(t *testing.T) {
+	repoPath := newTUITestRepo(t)
 	withProjectsConfig(t, []models.Project{{
 		Repository:  "github.com/wesm/kwt",
 		Name:        "kwt",
-		Path:        "/home/wesm/code/kwt",
+		Path:        repoPath,
 		LastTouched: "2026-07-16T00:00:00Z",
 	}})
 
@@ -89,7 +91,7 @@ func TestRunProjectsRendersTable(t *testing.T) {
 	assert.Contains(t, out, "NAME")
 	assert.Contains(t, out, "REPOSITORY")
 	assert.Contains(t, out, "github.com/wesm/kwt")
-	assert.Contains(t, out, "/home/wesm/code/kwt")
+	assert.Contains(t, out, repoPath)
 }
 
 func TestRunProjectsReturnsConfigLoadError(t *testing.T) {
@@ -223,10 +225,11 @@ func TestRunProjectsConfiguredIdentityIsAuthoritative(t *testing.T) {
 // already-canonical host/owner/name slug (the common case) is emitted
 // exactly as registered.
 func TestRunProjectsJSONLeavesCanonicalSlugUntouched(t *testing.T) {
+	repoPath := newTUITestRepo(t)
 	withProjectsConfig(t, []models.Project{{
 		Repository: "github.com/wesm/kwt",
 		Name:       "kwt",
-		Path:       "/home/wesm/code/kwt",
+		Path:       repoPath,
 	}})
 
 	out := runProjectsForTest(t, true)
@@ -258,10 +261,11 @@ func TestRunProjectsNormalizesRemoteURLIdentities(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			repoPath := newTUITestRepo(t)
 			withProjectsConfig(t, []models.Project{{
 				Repository: tt.repository,
 				Name:       "kwt",
-				Path:       "/home/wesm/code/kwt",
+				Path:       repoPath,
 			}})
 
 			out := runProjectsForTest(t, true)
@@ -316,24 +320,22 @@ func TestRunProjectsNeverEmitsRegistryCredentials(t *testing.T) {
 	}
 }
 
-// TestRunProjectsFallsBackToStoredLocalIdentityWithoutPath confirms a
-// registry entry that already carries the canonical local/... fallback keeps
-// it when there is no path to re-derive it from, and that a non-canonical
-// value with no usable path is dropped rather than emitted raw.
-func TestRunProjectsFallsBackToStoredLocalIdentityWithoutPath(t *testing.T) {
+func TestRunProjectsOmitsInaccessibleRegistryEntries(t *testing.T) {
+	livePath := newTUITestRepo(t)
+	missingPath := filepath.Join(t.TempDir(), "missing")
 	withProjectsConfig(t, []models.Project{
-		{Repository: "local/home/wesm/code/kwt", Name: "kwt"},
-		{Repository: "wesm:ghp_secret123@github.com:wesm/kwt.git", Name: "leaky"},
+		{Repository: "github.com/example/live", Name: "live", Path: livePath},
+		{Repository: "github.com/example/missing", Name: "missing", Path: missingPath},
+		{Repository: "local/pathless", Name: "pathless"},
 	})
 
 	out := runProjectsForTest(t, true)
 
 	var got []models.Project
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
-	require.Len(t, got, 2)
-	assert.Equal(t, "local/home/wesm/code/kwt", got[0].Repository)
-	assert.Equal(t, "", got[1].Repository)
-	assert.NotContains(t, out, "ghp_secret123")
+	require.Len(t, got, 1)
+	assert.Equal(t, "live", got[0].Name)
+	assert.Equal(t, livePath, got[0].Path)
 }
 
 func TestRunProjectsJSONEmptyIsArray(t *testing.T) {
@@ -345,9 +347,28 @@ func TestRunProjectsJSONEmptyIsArray(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("unmarshal JSON output: %v (out=%q)", err, out)
 	}
+	require.NotNil(t, got)
 	if len(got) != 0 {
 		t.Errorf("expected empty array, got %d entries", len(got))
 	}
+}
+
+func TestRunProjectsJSONFullyFilteredIsArray(t *testing.T) {
+	withProjectsConfig(t, []models.Project{
+		{
+			Repository: "github.com/example/missing",
+			Name:       "missing",
+			Path:       filepath.Join(t.TempDir(), "missing"),
+		},
+		{Repository: "local/pathless", Name: "pathless"},
+	})
+
+	out := runProjectsForTest(t, true)
+
+	var got []models.Project
+	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	require.NotNil(t, got)
+	assert.Empty(t, got)
 }
 
 func TestRunProjectsAddJSONRegistersCanonicalProject(t *testing.T) {

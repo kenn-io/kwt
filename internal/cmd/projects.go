@@ -293,14 +293,28 @@ func projectCommandJSONRequested() bool {
 	return requested
 }
 
-// canonicalizeProjectIdentities returns a copy of projects with every
-// Repository value resolved through the canonical identity bar, so projects
+// canonicalizeProjectIdentities returns accessible registered projects with
+// Repository values resolved through the canonical identity bar, so projects
 // output (JSON and table) emits the same identities kwt list --json reports.
 func canonicalizeProjectIdentities(projects []models.Project) []models.Project {
-	out := make([]models.Project, len(projects))
-	for i, project := range projects {
-		out[i] = project
-		out[i].Repository = publishableProjectRepository(project)
+	out := make([]models.Project, 0, len(projects))
+	for _, project := range projects {
+		if strings.TrimSpace(project.Path) == "" {
+			continue
+		}
+		repositoryGit := worktree.NewCachedIdentityGit(git.New(project.Path))
+		if _, err := repositoryGit.GetMainRepositoryPath(); err != nil {
+			continue
+		}
+		info, err := worktree.RepositoryInfoWithProjects(
+			repositoryGit,
+			[]models.Project{project},
+		)
+		if err != nil {
+			continue
+		}
+		project.Repository = info.FullPath
+		out = append(out, project)
 	}
 	return out
 }
