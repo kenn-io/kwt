@@ -1276,7 +1276,18 @@ exec "$REAL_GIT" "$@"
 
 	err = g.RemoveWorktree(worktreePath, false, generation)
 
-	require.ErrorContains(t, err, "failed to remove worktree")
+	require.Error(t, err)
+	assert.True(t, WorktreeWasRemoved(err))
+	assert.ErrorContains(
+		t,
+		err,
+		"worktree removed, but files remain at "+worktreePath,
+	)
+	assert.ErrorContains(
+		t,
+		err,
+		"stop processes using that directory, then delete it",
+	)
 	assert.FileExists(t, filepath.Join(worktreePath, "replacement"))
 }
 

@@ -31,6 +31,33 @@ type worktreeCreatedError struct {
 	err error
 }
 
+type incompleteWorktreeRemovalError struct {
+	path  string
+	cause error
+}
+
+func (e *incompleteWorktreeRemovalError) Error() string {
+	return fmt.Sprintf(
+		"worktree removed, but files remain at %s; stop processes using that directory, then delete it",
+		e.path,
+	)
+}
+
+func (e *incompleteWorktreeRemovalError) Unwrap() error {
+	return e.cause
+}
+
+func (e *incompleteWorktreeRemovalError) WorktreeRemoved() bool {
+	return true
+}
+
+// WorktreeWasRemoved reports whether an error was returned after Git had
+// already deregistered the selected worktree.
+func WorktreeWasRemoved(err error) bool {
+	var removed interface{ WorktreeRemoved() bool }
+	return errors.As(err, &removed) && removed.WorktreeRemoved()
+}
+
 // IncompleteInventoryError reports a repository whose worktree inventory
 // cannot be observed completely enough to publish or replace cached state.
 type IncompleteInventoryError struct {
@@ -868,10 +895,10 @@ func (g *Git) removeWorktree(path string, force bool, conditional bool) error {
 		stillRegistered, listErr := registryGit.hasRegisteredWorktree(canonicalPath)
 		if wasRegistered && listErr == nil && !stillRegistered {
 			if conditional {
-				return fmt.Errorf(
-					"failed to remove worktree: %w (Git deregistered the worktree; residual directory preserved because removal was generation-conditional)",
-					err,
-				)
+				return &incompleteWorktreeRemovalError{
+					path:  path,
+					cause: err,
+				}
 			}
 			if removeErr := os.RemoveAll(path); removeErr != nil {
 				return fmt.Errorf(
