@@ -14,7 +14,7 @@
 - Continue emitting accessible entries and exit successfully when other entries are omitted.
 - Emit `[]`, not `null`, when filtering removes every JSON entry.
 - Do not scan for moved repositories or mutate persisted registry metadata.
-- Remove the obsolete identity fallbacks and the test that pinned path-less output.
+- Preserve `publishableProjectRepository` for pull-request selection while removing its path-less behavior from project listings.
 - Use test-first development and keep tests focused on observable command behavior.
 
 ---
@@ -32,7 +32,13 @@
 
 - [ ] **Step 1: Repair existing test fixtures and write failing regression coverage**
 
-Update `TestRunProjectsJSONEmitsRegistry` and `TestRunProjectsRendersTable` to create `repoPath := newTUITestRepo(t)`, use `repoPath` as the registered path, and assert that emitted output contains that path instead of `/home/wesm/code/kwt`.
+Update `TestRunProjectsJSONEmitsRegistry`, `TestRunProjectsRendersTable`, and
+`TestRunProjectsJSONLeavesCanonicalSlugUntouched` to create
+`repoPath := newTUITestRepo(t)`, use `repoPath` as the registered path, and
+assert that emitted output contains that path instead of
+`/home/wesm/code/kwt`. In each
+`TestRunProjectsNormalizesRemoteURLIdentities` subtest, create a live
+`repoPath := newTUITestRepo(t)` and use it instead of the hardcoded path.
 
 Replace `TestRunProjectsFallsBackToStoredLocalIdentityWithoutPath` with:
 
@@ -88,9 +94,10 @@ go test ./internal/cmd -run 'TestRunProjects(JSONEmitsRegistry|RendersTable|Omit
 
 Expected: `TestRunProjectsOmitsInaccessibleRegistryEntries` and `TestRunProjectsJSONFullyFilteredIsArray` fail because inaccessible and path-less entries are still emitted. The repaired existing fixtures pass.
 
-- [ ] **Step 3: Implement the minimal shared filter and delete dead fallbacks**
+- [ ] **Step 3: Implement the minimal shared filter**
 
-Remove the unused `go.kenn.io/kwt/internal/url` import and replace `canonicalizeProjectIdentities` plus `publishableProjectRepository` with:
+Keep `publishableProjectRepository` unchanged because pull-request project
+selection also calls it. Replace only `canonicalizeProjectIdentities` with:
 
 ```go
 // canonicalizeProjectIdentities returns accessible registered projects with
@@ -99,6 +106,9 @@ Remove the unused `go.kenn.io/kwt/internal/url` import and replace `canonicalize
 func canonicalizeProjectIdentities(projects []models.Project) []models.Project {
 	out := make([]models.Project, 0, len(projects))
 	for _, project := range projects {
+		if strings.TrimSpace(project.Path) == "" {
+			continue
+		}
 		repositoryGit := worktree.NewCachedIdentityGit(git.New(project.Path))
 		if _, err := repositoryGit.GetMainRepositoryPath(); err != nil {
 			continue

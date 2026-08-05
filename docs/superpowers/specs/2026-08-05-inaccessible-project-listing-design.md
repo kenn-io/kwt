@@ -29,10 +29,11 @@ the existing entry through its repository identity.
 
 Project-list preparation will validate each path through kwt's existing Git
 repository boundary before canonicalizing and emitting its repository
-identity. Entries that fail validation are skipped. The identity fallbacks
-that only served path-less or inaccessible entries will be removed rather than
-retained as dead compatibility code. No filesystem scan, new CLI field,
-fallback path, or registry cleanup behavior will be introduced.
+identity. Entries that fail validation are skipped. The shared
+`publishableProjectRepository` resolver will remain unchanged because
+pull-request project selection also uses its identity fallbacks; only project
+listing will enforce the accessible-path requirement. No filesystem scan, new
+CLI field, fallback path, or registry cleanup behavior will be introduced.
 
 ## Testing and Documentation
 
@@ -40,7 +41,9 @@ A focused command test will provide one live repository, one missing path, and
 one path-less entry, then assert that only the live repository is emitted. It
 will also confirm that a fully filtered JSON result remains `[]`, not `null`.
 The existing JSON and table contract tests will use live temporary
-repositories so they remain valid under the accessibility requirement. The
-obsolete path-less fallback test will be removed with the behavior it pins.
+repositories so they remain valid under the accessibility requirement, as
+will identity-normalization tests whose hardcoded paths are currently
+inaccessible. The obsolete project-list path-less fallback test will be
+removed with the behavior it pins.
 CLI documentation will state that inaccessible registered paths are omitted
 and that registry entries remain available for later re-registration.
