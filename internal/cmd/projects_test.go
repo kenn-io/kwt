@@ -323,9 +323,12 @@ func TestRunProjectsNeverEmitsRegistryCredentials(t *testing.T) {
 func TestRunProjectsOmitsInaccessibleRegistryEntries(t *testing.T) {
 	livePath := newTUITestRepo(t)
 	missingPath := filepath.Join(t.TempDir(), "missing")
+	nestedPath := filepath.Join(livePath, "nested")
+	require.NoError(t, os.Mkdir(nestedPath, 0o755))
 	withProjectsConfig(t, []models.Project{
 		{Repository: "github.com/example/live", Name: "live", Path: livePath},
 		{Repository: "github.com/example/missing", Name: "missing", Path: missingPath},
+		{Repository: "github.com/example/nested", Name: "nested", Path: nestedPath},
 		{Repository: "local/pathless", Name: "pathless"},
 	})
 

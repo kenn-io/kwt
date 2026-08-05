@@ -303,7 +303,8 @@ func canonicalizeProjectIdentities(projects []models.Project) []models.Project {
 			continue
 		}
 		repositoryGit := worktree.NewCachedIdentityGit(git.New(project.Path))
-		if _, err := repositoryGit.GetMainRepositoryPath(); err != nil {
+		mainPath, err := repositoryGit.GetMainRepositoryPath()
+		if err != nil || !samePath(mainPath, project.Path) {
 			continue
 		}
 		info, err := worktree.RepositoryInfoWithProjects(
