@@ -30,6 +30,7 @@ dist/
 # Claude Code
 .claude/todos/
 .superpowers/
+.worktrees/
 .vercel
 .env*
 .kata.local.toml
