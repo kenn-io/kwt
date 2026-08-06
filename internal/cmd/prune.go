@@ -171,9 +171,12 @@ func runPruneExpired(cmd *cobra.Command, args []string) error {
 			pruneForce,
 			entry.Generation,
 		); err != nil {
-			fmt.Printf("Failed to remove worktree %s: %v\n", entry.Path, err)
-			skipped++
-			continue
+			if !git.WorktreeWasRemoved(err) {
+				fmt.Printf("Failed to remove worktree %s: %v\n", entry.Path, err)
+				skipped++
+				continue
+			}
+			fmt.Printf("Warning: %v\n", err)
 		}
 		changed++
 

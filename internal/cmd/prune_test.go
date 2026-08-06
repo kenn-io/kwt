@@ -1,7 +1,10 @@
 package cmd
 
 import (
+	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -246,6 +249,79 @@ func TestPruneExpiredRemovesMatchingGeneration(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NoDirExists(t, worktreePath)
+	reloaded, registryErr := registry.New()
+	require.NoError(t, registryErr)
+	_, exists := reloaded.Get(worktreePath)
+	assert.False(t, exists)
+}
+
+func TestPruneExpiredCompletesBookkeepingAfterGitDeregistersWithResidualFiles(
+	t *testing.T,
+) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a POSIX shell wrapper")
+	}
+	resetFleetCommandDeps(t)
+	resetPruneCommandFlags(t)
+
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	worktreePath := filepath.Join(t.TempDir(), "expired-residual")
+	runTUITestGit(
+		t,
+		repoPath,
+		"worktree",
+		"add",
+		"-b",
+		"task7/expired-residual",
+		worktreePath,
+	)
+	generation := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
+	expiredAt := time.Now().Add(-time.Hour)
+	reg, err := registry.New()
+	require.NoError(t, err)
+	require.NoError(t, reg.Register(&registry.WorktreeEntry{
+		Repository: "repo",
+		Branch:     "task7/expired-residual",
+		Path:       worktreePath,
+		ExpiresAt:  &expiredAt,
+		Generation: generation,
+	}))
+	pruneExpired = true
+
+	realGit, err := exec.LookPath("git")
+	require.NoError(t, err)
+	wrapperDir := t.TempDir()
+	wrapperPath := filepath.Join(wrapperDir, "git")
+	wrapper := `#!/bin/sh
+if [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
+	"$REAL_GIT" "$@" || exit $?
+	mkdir -p "$3"
+	printf 'created during removal\n' > "$3/residual"
+	printf "error: failed to delete '%s': Directory not empty\n" "$3" >&2
+	exit 1
+fi
+exec "$REAL_GIT" "$@"
+`
+	require.NoError(t, os.WriteFile(wrapperPath, []byte(wrapper), 0755))
+	t.Setenv("REAL_GIT", realGit)
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	publishCalls := 0
+	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) {
+		publishCalls++
+	}
+	cmd, _, _ := fleetTestCommand()
+	output := captureStdout(t, func() {
+		err = runPrune(cmd, nil)
+	})
+
+	require.NoError(t, err)
+	assert.Contains(t, output, "worktree removed, but files remain at ")
+	assert.Contains(t, output, "Removed 1 expired worktree(s), skipped 0")
+	assert.NotContains(t, output, "Failed to remove worktree")
+	assert.Equal(t, 1, publishCalls)
+	assert.FileExists(t, filepath.Join(worktreePath, "residual"))
 	reloaded, registryErr := registry.New()
 	require.NoError(t, registryErr)
 	_, exists := reloaded.Get(worktreePath)
