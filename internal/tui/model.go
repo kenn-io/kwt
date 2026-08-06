@@ -105,6 +105,7 @@ type Model struct {
 	showHelp            bool
 	message             string
 	err                 error
+	stickyError         bool
 	handoff             Handoff
 	anchorPath          string
 	// creating holds the destinations of worktree creations whose command has
@@ -391,6 +392,7 @@ func (m Model) applyRows(msg rowsMsg) (Model, tea.Cmd) {
 	m.fetching = false
 	if msg.err != nil {
 		m.err = msg.err
+		m.stickyError = false
 		return m.startPendingRefresh()
 	}
 	m.warnings = msg.warnings
@@ -440,7 +442,9 @@ func (m Model) applyRows(msg rowsMsg) (Model, tea.Cmd) {
 		m.cursor = anchorCursorByPath(oldRows, oldCursor, newRows)
 	}
 	m.cursor = clampCursor(m.cursor, len(newRows))
-	m.err = nil
+	if !m.stickyError {
+		m.err = nil
+	}
 	if m.pendingRefresh {
 		return m.startPendingRefresh()
 	}
@@ -477,6 +481,7 @@ func (m Model) applyActionDone(msg actionDoneMsg) (Model, tea.Cmd) {
 			m = m.dropPendingRow(msg.pendingPath)
 		}
 		m.err = msg.err
+		m.stickyError = msg.refresh
 		m.message = ""
 	} else {
 		if msg.pendingPath != "" && msg.anchorPath != "" && msg.pendingPath != msg.anchorPath {
@@ -485,6 +490,7 @@ func (m Model) applyActionDone(msg actionDoneMsg) (Model, tea.Cmd) {
 			m = m.dropPendingRow(msg.pendingPath)
 		}
 		m.err = nil
+		m.stickyError = false
 		m.message = msg.message
 		if msg.anchorPath != "" {
 			m.anchorPath = msg.anchorPath
@@ -508,6 +514,7 @@ func (m Model) applyBranchList(msg branchListMsg) (Model, tea.Cmd) {
 	m.branchesLoading = false
 	if msg.err != nil {
 		m.err = msg.err
+		m.stickyError = false
 		return m, nil
 	}
 	m.branches = append([]models.Branch(nil), msg.branches...)
@@ -631,6 +638,7 @@ func (m Model) cancelFleetMerge() Model {
 func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if m.err != nil {
 		m.err = nil
+		m.stickyError = false
 	}
 
 	if m.showHelp {
@@ -795,6 +803,7 @@ func (m Model) startCreateWorktree(
 	planned, err := m.backend.PreviewWorktree(row, branch)
 	if err != nil {
 		m.err = err
+		m.stickyError = false
 		m.message = ""
 		return m, nil
 	}
@@ -833,6 +842,7 @@ func (m Model) startCreateWorktree(
 func (m Model) handlePaste(msg tea.PasteMsg) (Model, tea.Cmd) {
 	if m.err != nil {
 		m.err = nil
+		m.stickyError = false
 	}
 	if m.showHelp || m.confirm.kind != confirmNone || m.inputMode == inputNone {
 		return m, nil

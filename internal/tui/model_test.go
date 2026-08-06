@@ -1295,6 +1295,16 @@ func TestModelRefreshesAfterPartialRemovalWarning(t *testing.T) {
 	require.NotNil(t, refreshCmd)
 	assert.ErrorContains(t, updated.err, "files remain")
 	assert.True(t, updated.fetching)
+
+	backend.rows = nil
+	updated, fullRefreshCmd := updateModel(t, updated, refreshCmd())
+	require.NotNil(t, fullRefreshCmd)
+	updated, _ = updateModel(t, updated, fullRefreshCmd())
+	assert.Empty(t, updated.rows)
+	assert.ErrorContains(t, updated.err, "files remain")
+
+	updated, _ = updateModel(t, updated, press("j"))
+	assert.NoError(t, updated.err)
 }
 
 func TestModelDeleteDirtyWorktreeConfirmsDiscardAndForcesRemove(t *testing.T) {
