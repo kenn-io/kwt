@@ -1301,7 +1301,12 @@ func (b *tuiBackend) RemoveWorktree(ctx context.Context, row dashboard.Row, forc
 	publishTUIFleetBestEffort(ctx, b.cfg)
 
 	if row.SessionLive && row.SessionName != "" {
-		return b.tmux.KillSession(row.SessionName)
+		if err := b.tmux.KillSession(row.SessionName); err != nil {
+			if removalErr != nil {
+				return errors.Join(removalErr, err)
+			}
+			return err
+		}
 	}
 	return removalErr
 }

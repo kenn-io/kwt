@@ -1993,6 +1993,11 @@ fi
 exec "$REAL_GIT" "$@"
 `
 	require.NoError(t, os.WriteFile(wrapperPath, []byte(wrapper), 0755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(wrapperDir, "tmux"),
+		[]byte("#!/bin/sh\nexit 0\n"),
+		0755,
+	))
 	t.Setenv("REAL_GIT", realGit)
 	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
@@ -2017,17 +2022,21 @@ exec "$REAL_GIT" "$@"
 		published++
 		return nil
 	}
-	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
-		RepositoryInfo: &url.RepositoryInfo{
-			Host:       "github.com",
-			Owner:      "example",
-			Repository: "service-api",
-			FullPath:   "github.com/example/service-api",
+	row := dashboard.Row{
+		Entry: &discovery.GlobalWorktreeEntry{
+			RepositoryInfo: &url.RepositoryInfo{
+				Host:       "github.com",
+				Owner:      "example",
+				Repository: "service-api",
+				FullPath:   "github.com/example/service-api",
+			},
+			Branch:     "codex/tui-remove-residual",
+			Path:       worktreePath,
+			Generation: generation,
 		},
-		Branch:     "codex/tui-remove-residual",
-		Path:       worktreePath,
-		Generation: generation,
-	}}
+		SessionLive: true,
+		SessionName: "kwt-workspace-service-api-residual",
+	}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
 
 	err = backend.RemoveWorktree(context.Background(), row, false)
