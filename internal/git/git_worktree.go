@@ -38,7 +38,7 @@ type incompleteWorktreeRemovalError struct {
 
 func (e *incompleteWorktreeRemovalError) Error() string {
 	return fmt.Sprintf(
-		"worktree removed, but files remain at %s; stop processes using that directory, then delete it",
+		"worktree removed, but files remain at %s; inspect the path and remove it only if it contains leftovers from the removed worktree",
 		e.path,
 	)
 }
@@ -901,11 +901,16 @@ func (g *Git) removeWorktree(path string, force bool, conditional bool) error {
 				}
 			}
 			if removeErr := os.RemoveAll(path); removeErr != nil {
-				return fmt.Errorf(
-					"failed to remove worktree: %w (Git deregistered the worktree but directory cleanup failed: %v)",
-					err,
-					removeErr,
-				)
+				return &incompleteWorktreeRemovalError{
+					path: path,
+					cause: errors.Join(
+						err,
+						fmt.Errorf(
+							"remove residual worktree directory: %w",
+							removeErr,
+						),
+					),
+				}
 			}
 			return nil
 		}

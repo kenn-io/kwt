@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1234,6 +1235,54 @@ exec "$REAL_GIT" "$@"
 	}
 }
 
+func TestRemoveWorktreeClassifiesResidualCleanupFailureAfterGitDeregistersWorktree(
+	t *testing.T,
+) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses POSIX permissions and a shell wrapper")
+	}
+
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "partially-removed-cleanup-fails")
+	worktreePath := filepath.Join(t.TempDir(), "remove-wt")
+	repo.CreateWorktree(t, worktreePath, "partially-removed-cleanup-fails")
+	protectedPath := filepath.Join(worktreePath, "protected")
+	t.Cleanup(func() {
+		_ = os.Chmod(protectedPath, 0700)
+		_ = os.RemoveAll(worktreePath)
+	})
+
+	realGit, err := exec.LookPath("git")
+	require.NoError(t, err)
+	wrapperDir := t.TempDir()
+	wrapperPath := filepath.Join(wrapperDir, "git")
+	wrapper := `#!/bin/sh
+if [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
+	"$REAL_GIT" "$@" || exit $?
+	mkdir -p "$3/protected"
+	printf 'created during removal\n' > "$3/protected/residual"
+	chmod 500 "$3/protected"
+	printf "error: failed to delete '%s': Directory not empty\n" "$3" >&2
+	exit 1
+fi
+exec "$REAL_GIT" "$@"
+`
+	require.NoError(t, os.WriteFile(wrapperPath, []byte(wrapper), 0755))
+	t.Setenv("REAL_GIT", realGit)
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	err = New(worktreePath).RemoveWorktree(worktreePath, false, "")
+
+	require.Error(t, err)
+	assert.True(t, WorktreeWasRemoved(err))
+	assert.DirExists(t, protectedPath)
+	cause := errors.Unwrap(err)
+	require.Error(t, cause)
+	assert.ErrorContains(t, cause, "git worktree remove")
+	var pathErr *os.PathError
+	require.ErrorAs(t, cause, &pathErr)
+}
+
 func TestConditionalRemoveWorktreePreservesDirectoryAfterGitDeregistersWorktree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses a POSIX shell wrapper")
@@ -1286,7 +1335,7 @@ exec "$REAL_GIT" "$@"
 	assert.ErrorContains(
 		t,
 		err,
-		"stop processes using that directory, then delete it",
+		"inspect the path and remove it only if it contains leftovers from the removed worktree",
 	)
 	assert.FileExists(t, filepath.Join(worktreePath, "replacement"))
 }
