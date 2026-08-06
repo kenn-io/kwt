@@ -46,6 +46,14 @@ type fakeBackend struct {
 	unregistered    []Row
 }
 
+type removedWithResidualFilesError struct {
+	error
+}
+
+func (removedWithResidualFilesError) WorktreeRemoved() bool {
+	return true
+}
+
 func (b *fakeBackend) ListFast(ctx context.Context) ([]Row, []string, error) {
 	b.fastListCalls++
 	return append([]Row(nil), b.rows...), nil, nil
@@ -1266,6 +1274,27 @@ func TestModelDeleteLiveWorktreeConfirmsAndCallsRemove(t *testing.T) {
 	assert.IsType(t, actionDoneMsg{}, msg)
 	assert.Equal(t, []string{"/w/kwt/feature"}, backend.removeCalls)
 	assert.Equal(t, []bool{false}, backend.removeForces)
+}
+
+func TestModelRefreshesAfterPartialRemovalWarning(t *testing.T) {
+	row := testRow("kwt", "feature", "/w/kwt/feature")
+	backend := &fakeBackend{
+		rows: []Row{row},
+		removeErr: removedWithResidualFilesError{
+			errors.New("worktree removed, but files remain"),
+		},
+	}
+	model := NewModel(backend, "/worktrees")
+	model, _ = updateModel(t, model, rowsMsg{rows: backend.rows})
+	done, ok := model.removeWorktreeCmd(row, false)().(actionDoneMsg)
+	require.True(t, ok)
+
+	require.Error(t, done.err)
+	assert.True(t, done.refresh)
+	updated, refreshCmd := updateModel(t, model, done)
+	require.NotNil(t, refreshCmd)
+	assert.ErrorContains(t, updated.err, "files remain")
+	assert.True(t, updated.fetching)
 }
 
 func TestModelDeleteDirtyWorktreeConfirmsDiscardAndForcesRemove(t *testing.T) {

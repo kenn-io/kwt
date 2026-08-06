@@ -10,6 +10,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/pkg/models"
 )
 
@@ -477,17 +478,17 @@ func (m Model) applyActionDone(msg actionDoneMsg) (Model, tea.Cmd) {
 		}
 		m.err = msg.err
 		m.message = ""
-		return m, nil
-	}
-	if msg.pendingPath != "" && msg.anchorPath != "" && msg.pendingPath != msg.anchorPath {
-		// The preview mispredicted the destination; drop the row it added so it
-		// cannot outlive the creation it stood in for.
-		m = m.dropPendingRow(msg.pendingPath)
-	}
-	m.err = nil
-	m.message = msg.message
-	if msg.anchorPath != "" {
-		m.anchorPath = msg.anchorPath
+	} else {
+		if msg.pendingPath != "" && msg.anchorPath != "" && msg.pendingPath != msg.anchorPath {
+			// The preview mispredicted the destination; drop the row it added so it
+			// cannot outlive the creation it stood in for.
+			m = m.dropPendingRow(msg.pendingPath)
+		}
+		m.err = nil
+		m.message = msg.message
+		if msg.anchorPath != "" {
+			m.anchorPath = msg.anchorPath
+		}
 	}
 	if msg.refresh && m.fetching {
 		m.pendingRefresh = true
@@ -1340,7 +1341,10 @@ func (m Model) materializeWorktreeCmd(row Row) tea.Cmd {
 func (m Model) removeWorktreeCmd(row Row, force bool) tea.Cmd {
 	return func() tea.Msg {
 		if err := m.backend.RemoveWorktree(context.Background(), row, force); err != nil {
-			return actionDoneMsg{err: err}
+			return actionDoneMsg{
+				err:     err,
+				refresh: git.WorktreeWasRemoved(err),
+			}
 		}
 		return actionDoneMsg{message: fmt.Sprintf("removed %s", rowLabel(row)), refresh: true}
 	}
