@@ -1,0 +1,264 @@
+package daemon
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+
+	kitdaemon "go.kenn.io/kit/daemon"
+	"go.kenn.io/kwt/service"
+)
+
+const (
+	RuntimePrefix         = "kwt"
+	metadataHome          = "home"
+	metadataRevision      = "revision"
+	metadataSchemaMajor   = "schema_major"
+	metadataSchemaVersion = "schema_version"
+	metadataCapabilities  = "capabilities"
+	metadataToken         = "bearer"
+)
+
+type Build struct {
+	Version  string
+	Revision string
+}
+
+type RuntimeState uint8
+
+const (
+	RuntimeAbsent RuntimeState = iota
+	RuntimeReady
+	RuntimeDraining
+	RuntimeIncompatible
+	RuntimeUnresponsive
+)
+
+type Observation struct {
+	State  RuntimeState
+	Record kitdaemon.RuntimeRecord
+	Status Status
+	Token  string
+	Client *Client
+	Err    error
+}
+
+type runtimeMetadata struct {
+	home          string
+	revision      string
+	schemaMajor   int
+	schemaVersion string
+	capabilities  []string
+	token         string
+}
+
+func RuntimeStore(home string) kitdaemon.RuntimeStore {
+	return kitdaemon.RuntimeStore{
+		Dir:    filepath.Join(home, "runtime"),
+		Prefix: RuntimePrefix,
+	}
+}
+
+func NewRuntimeRecord(
+	home string,
+	build Build,
+	ep kitdaemon.Endpoint,
+) (kitdaemon.RuntimeRecord, string, error) {
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return kitdaemon.RuntimeRecord{}, "", err
+	}
+	token := base64.RawURLEncoding.EncodeToString(secret)
+	rec := kitdaemon.NewRuntimeRecord(ServiceName, build.Version, ep)
+	rec.Metadata = map[string]string{
+		metadataHome:          home,
+		metadataRevision:      build.Revision,
+		metadataSchemaMajor:   strconv.Itoa(APISchemaMajor),
+		metadataSchemaVersion: APISchemaVersion,
+		metadataCapabilities: strings.Join([]string{
+			CapabilityShutdown,
+			CapabilityStatus,
+		}, ","),
+		metadataToken: token,
+	}
+	return rec, token, nil
+}
+
+func Inspect(
+	ctx context.Context,
+	store kitdaemon.RuntimeStore,
+	home string,
+) (Observation, error) {
+	records, err := store.List()
+	if err != nil {
+		return Observation{}, err
+	}
+	var found *Observation
+	for _, rec := range records {
+		if rec.Service != ServiceName || rec.Metadata[metadataHome] != home {
+			continue
+		}
+		if !kitdaemon.ProcessAlive(rec.PID) || kitdaemon.CompareProcessIdentity(
+			rec.PID,
+			rec.ProcessIdentity,
+		) == kitdaemon.ProcessIdentityMismatch {
+			if err := removeStaleRecord(store, rec); err != nil {
+				return Observation{}, err
+			}
+			continue
+		}
+		candidate := inspectLiveRecord(ctx, rec, home)
+		if found != nil {
+			return Observation{}, service.NewError(
+				service.Conflict,
+				"multiple kwt daemon owners found",
+				false,
+				nil,
+				nil,
+			)
+		}
+		found = &candidate
+	}
+	if found == nil {
+		return Observation{State: RuntimeAbsent}, nil
+	}
+	return *found, nil
+}
+
+func inspectLiveRecord(
+	ctx context.Context,
+	rec kitdaemon.RuntimeRecord,
+	home string,
+) Observation {
+	observation := Observation{
+		State:  RuntimeUnresponsive,
+		Record: rec,
+	}
+	metadata, err := parseRuntimeMetadata(rec, home)
+	if err != nil {
+		observation.Err = err
+		return observation
+	}
+	observation.Token = metadata.token
+	client, err := NewVerifiedClient(ctx, rec, metadata.token)
+	if err != nil {
+		observation.Err = err
+		return observation
+	}
+	status, err := client.Status(ctx)
+	if err != nil {
+		observation.Err = err
+		return observation
+	}
+	if err := validateRuntimeStatus(rec, metadata, status); err != nil {
+		observation.Err = err
+		return observation
+	}
+	observation.Client = client
+	observation.Status = status
+	if status.SchemaMajor != APISchemaMajor {
+		observation.State = RuntimeIncompatible
+	} else if status.State == StateDraining {
+		observation.State = RuntimeDraining
+	} else {
+		observation.State = RuntimeReady
+	}
+	return observation
+}
+
+func parseRuntimeMetadata(
+	rec kitdaemon.RuntimeRecord,
+	home string,
+) (runtimeMetadata, error) {
+	if rec.Service != ServiceName {
+		return runtimeMetadata{}, fmt.Errorf("runtime service is not %s", ServiceName)
+	}
+	metadata := runtimeMetadata{
+		home:          rec.Metadata[metadataHome],
+		revision:      rec.Metadata[metadataRevision],
+		schemaVersion: rec.Metadata[metadataSchemaVersion],
+		token:         rec.Metadata[metadataToken],
+	}
+	if metadata.home == "" || metadata.home != home {
+		return runtimeMetadata{}, errors.New("runtime home does not match")
+	}
+	if metadata.token == "" {
+		return runtimeMetadata{}, errors.New("runtime bearer token is missing")
+	}
+	major, err := strconv.Atoi(rec.Metadata[metadataSchemaMajor])
+	if err != nil || major <= 0 {
+		return runtimeMetadata{}, errors.New("runtime schema major is invalid")
+	}
+	metadata.schemaMajor = major
+	if metadata.schemaVersion == "" {
+		return runtimeMetadata{}, errors.New("runtime schema version is missing")
+	}
+	metadata.capabilities, err = parseCapabilities(rec.Metadata[metadataCapabilities])
+	if err != nil {
+		return runtimeMetadata{}, err
+	}
+	return metadata, nil
+}
+
+func parseCapabilities(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, errors.New("runtime capabilities are missing")
+	}
+	capabilities := strings.Split(raw, ",")
+	for index, capability := range capabilities {
+		if capability == "" || strings.TrimSpace(capability) != capability {
+			return nil, errors.New("runtime capabilities are invalid")
+		}
+		if index > 0 && capabilities[index-1] >= capability {
+			return nil, errors.New("runtime capabilities must be sorted and unique")
+		}
+	}
+	return capabilities, nil
+}
+
+func validateRuntimeStatus(
+	rec kitdaemon.RuntimeRecord,
+	metadata runtimeMetadata,
+	status Status,
+) error {
+	if status.Service != ServiceName || status.Home != metadata.home ||
+		status.PID != rec.PID || status.Endpoint != rec.Endpoint().Address {
+		return errors.New("daemon status does not match its runtime record")
+	}
+	if status.SchemaMajor <= 0 || status.SchemaMajor != metadata.schemaMajor ||
+		status.SchemaVersion == "" || status.SchemaVersion != metadata.schemaVersion {
+		return errors.New("daemon schema does not match its runtime record")
+	}
+	capabilities, err := parseCapabilities(strings.Join(status.Capabilities, ","))
+	if err != nil {
+		return err
+	}
+	if !slices.Equal(capabilities, metadata.capabilities) {
+		return errors.New("daemon capabilities do not match its runtime record")
+	}
+	return nil
+}
+
+func removeStaleRecord(
+	store kitdaemon.RuntimeStore,
+	rec kitdaemon.RuntimeRecord,
+) error {
+	expected, err := store.Path(rec.PID)
+	if err != nil {
+		return err
+	}
+	if rec.SourcePath != expected {
+		return fmt.Errorf("runtime record path %q does not match %q", rec.SourcePath, expected)
+	}
+	if err := os.Remove(expected); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove stale runtime record: %w", err)
+	}
+	return nil
+}

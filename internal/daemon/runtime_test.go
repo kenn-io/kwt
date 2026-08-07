@@ -1,0 +1,142 @@
+package daemon
+
+import (
+	"context"
+	"math"
+	"net"
+	"net/http"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	kitdaemon "go.kenn.io/kit/daemon"
+)
+
+type fixedRuntimeStatus struct{ status Status }
+
+func (s fixedRuntimeStatus) Status(time.Time) Status { return s.status }
+
+func validMetadata(home, token string) map[string]string {
+	return map[string]string{
+		metadataHome:          home,
+		metadataRevision:      "abc",
+		metadataSchemaMajor:   strconv.Itoa(APISchemaMajor),
+		metadataSchemaVersion: APISchemaVersion,
+		metadataCapabilities: strings.Join([]string{
+			CapabilityShutdown,
+			CapabilityStatus,
+		}, ","),
+		metadataToken: token,
+	}
+}
+
+func TestInspectRemovesADeadPIDRuntimeRecord(t *testing.T) {
+	store := kitdaemon.RuntimeStore{Dir: t.TempDir(), Prefix: RuntimePrefix}
+	rec := kitdaemon.RuntimeRecord{
+		PID:             math.MaxInt32,
+		ProcessIdentity: "1",
+		Network:         kitdaemon.NetworkTCP,
+		Address:         "127.0.0.1:1",
+		Service:         ServiceName,
+		Metadata:        validMetadata(t.TempDir(), "secret"),
+	}
+	path, err := store.Write(rec)
+	require.NoError(t, err)
+
+	observation, err := Inspect(
+		context.Background(),
+		store,
+		rec.Metadata[metadataHome],
+	)
+	require.NoError(t, err)
+	assert.Equal(t, RuntimeAbsent, observation.State)
+	assert.NoFileExists(t, path)
+}
+
+func TestInspectRemovesAReusedPIDRecord(t *testing.T) {
+	store := kitdaemon.RuntimeStore{Dir: t.TempDir(), Prefix: RuntimePrefix}
+	rec := kitdaemon.NewRuntimeRecord(
+		ServiceName,
+		"v1",
+		kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: "127.0.0.1:1"},
+	)
+	rec.ProcessIdentity = "1"
+	rec.Metadata = validMetadata(t.TempDir(), "secret")
+	path, err := store.Write(rec)
+	require.NoError(t, err)
+
+	observation, err := Inspect(context.Background(), store, rec.Metadata[metadataHome])
+	require.NoError(t, err)
+	assert.Equal(t, RuntimeAbsent, observation.State)
+	assert.NoFileExists(t, path)
+}
+
+func TestInspectPreservesMatchingButUnresponsiveOwner(t *testing.T) {
+	home := t.TempDir()
+	store := kitdaemon.RuntimeStore{
+		Dir:    filepath.Join(home, "runtime"),
+		Prefix: RuntimePrefix,
+	}
+	rec := kitdaemon.NewRuntimeRecord(
+		ServiceName,
+		"v1",
+		kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: "127.0.0.1:1"},
+	)
+	rec.Metadata = validMetadata(home, "secret")
+	path, err := store.Write(rec)
+	require.NoError(t, err)
+
+	observation, err := Inspect(context.Background(), store, home)
+	require.NoError(t, err)
+	assert.Equal(t, RuntimeUnresponsive, observation.State)
+	assert.FileExists(t, path)
+}
+
+func TestInspectReturnsAProofVerifiedRuntime(t *testing.T) {
+	home := t.TempDir()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	ep := kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: listener.Addr().String()}
+	rec := kitdaemon.NewRuntimeRecord(ServiceName, "v1", ep)
+	rec.Metadata = validMetadata(home, "secret")
+	proof, err := kitdaemon.NewProof([]byte("secret"))
+	require.NoError(t, err)
+	ping, err := proof.NewPingHandler(rec)
+	require.NoError(t, err)
+	status := Status{
+		Service:       ServiceName,
+		State:         StateReady,
+		PID:           rec.PID,
+		Version:       rec.Version,
+		Home:          home,
+		Endpoint:      ep.Address,
+		SchemaMajor:   APISchemaMajor,
+		SchemaVersion: APISchemaVersion,
+		Capabilities:  []string{CapabilityShutdown, CapabilityStatus},
+	}
+	handler := NewServer(ServerOptions{
+		Token:        "secret",
+		ExpectedHost: ep.Address,
+		Status:       fixedRuntimeStatus{status: status},
+		Ping:         ping,
+		Shutdown: func(context.Context, ShutdownRequest) (Status, error) {
+			return status, nil
+		},
+	})
+	server := &http.Server{Handler: handler}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+	store := RuntimeStore(home)
+	_, err = store.Write(rec)
+	require.NoError(t, err)
+
+	observation, err := Inspect(context.Background(), store, home)
+	require.NoError(t, err)
+	assert.Equal(t, RuntimeReady, observation.State)
+	assert.Equal(t, "abc", observation.Record.Metadata[metadataRevision])
+	require.NotNil(t, observation.Client)
+}
