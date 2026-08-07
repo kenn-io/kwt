@@ -158,6 +158,10 @@ func requireConfigInitialization() error {
 	return nil
 }
 
+func globalOnlyPreRun(*cobra.Command, []string) error {
+	return requireConfigInitialization()
+}
+
 type buildInfo struct {
 	Version  string
 	Revision string
