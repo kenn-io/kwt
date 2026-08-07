@@ -62,7 +62,10 @@ func TestInspectorClassifiesLocalFindings(t *testing.T) {
 				"/copies/topic":    "/old/widget/.git/worktrees/topic",
 			},
 			exists: map[string]bool{"/worktrees/topic": true, "/copies/topic": true},
-			want:   []FindingCode{AmbiguousWorktreeBacklink},
+			want: []FindingCode{
+				AmbiguousWorktreeBacklink,
+				ProjectUnreachable,
+			},
 		},
 		{
 			name:     "missing path",
@@ -753,7 +756,19 @@ func TestInspectorReportsConfiguredRepositoryIdentityClaims(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			snapshot := repositorySnapshot("/repos/widget")
+			snapshot := repositorySnapshot(
+				"/repos/widget",
+				gitadapter.WorktreeInspection{
+					Path: "/configured/widget-a", Exists: true,
+					Generation:       projectInspectionGeneration,
+					GenerationStatus: gitadapter.GenerationValid,
+				},
+				gitadapter.WorktreeInspection{
+					Path: "/configured/widget-b", Exists: true,
+					Generation:       projectInspectionGeneration,
+					GenerationStatus: gitadapter.GenerationValid,
+				},
+			)
 			inspector := fakeInspector(
 				[]models.Project{
 					{
@@ -863,7 +878,19 @@ func TestInspectRepositorySupportsSeparateGitDirectory(t *testing.T) {
 }
 
 func TestInspectorDeduplicatesProjectsByCommonDirectory(t *testing.T) {
-	snapshot := repositorySnapshot("/repos/widget")
+	snapshot := repositorySnapshot(
+		"/repos/widget",
+		gitadapter.WorktreeInspection{
+			Path: "/aliases/zeta", Exists: true,
+			Generation:       projectInspectionGeneration,
+			GenerationStatus: gitadapter.GenerationValid,
+		},
+		gitadapter.WorktreeInspection{
+			Path: "/aliases/alpha", Exists: true,
+			Generation:       projectInspectionGeneration,
+			GenerationStatus: gitadapter.GenerationValid,
+		},
+	)
 	inspector := fakeInspector(
 		[]models.Project{
 			{Name: "zeta", Repository: "github.com/acme/widget", Path: "/aliases/zeta"},
@@ -964,6 +991,22 @@ func TestInspectorReportsUnreadableGlobalDotGit(t *testing.T) {
 }
 
 func repositorySnapshot(root string, worktrees ...gitadapter.WorktreeInspection) RepositorySnapshot {
+	hasMain := false
+	for _, inspection := range worktrees {
+		if pathKey(inspection.Path) == pathKey(root) {
+			hasMain = true
+			break
+		}
+	}
+	if !hasMain {
+		worktrees = append([]gitadapter.WorktreeInspection{{
+			Path: root, IsMain: true, Exists: true,
+			GitDir:           filepath.Join(root, ".git"),
+			DotGitTarget:     filepath.Join(root, ".git"),
+			Generation:       projectInspectionGeneration,
+			GenerationStatus: gitadapter.GenerationValid,
+		}}, worktrees...)
+	}
 	return RepositorySnapshot{
 		Root:               root,
 		CommonDir:          root + "/.git",

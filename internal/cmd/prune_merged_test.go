@@ -575,6 +575,36 @@ func TestPruneMergedInventoryIncludesFinalizedRegistryWorktreeRoot(t *testing.T)
 	assert.True(t, candidates[0].RegistryExpected)
 }
 
+func TestPruneMergedInventoryRejectsRegistrySubdirectory(t *testing.T) {
+	repositoryRoot := newTUITestRepo(t)
+	runTUITestGit(
+		t, repositoryRoot, "remote", "add", "origin",
+		"https://github.com/acme/widget.git",
+	)
+	branch := "feature/registered-subdirectory"
+	worktreePath := filepath.Join(t.TempDir(), "registered-subdirectory")
+	runTUITestGit(t, repositoryRoot, "branch", branch)
+	runTUITestGit(t, repositoryRoot, "worktree", "add", worktreePath, branch)
+	_, err := git.New(repositoryRoot).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	registryPath := filepath.Join(worktreePath, "nested")
+	require.NoError(t, os.Mkdir(registryPath, 0o755))
+	entry := &registry.WorktreeEntry{
+		Path: registryPath, Repository: commandBaseRepo,
+	}
+
+	candidates, err := defaultInspectPruneMergedCandidates(
+		context.Background(), &models.Config{}, nil, []*registry.WorktreeEntry{entry},
+	)
+
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	assert.Equal(t, utils.PathKey(registryPath), utils.PathKey(candidates[0].Policy.Path))
+	require.NotNil(t, candidates[0].InitialOutcome)
+	assert.Equal(t, prunepolicy.DoctorRequired, candidates[0].InitialOutcome.Reason)
+	assert.Contains(t, candidates[0].InitialOutcome.Message, "exact worktree root")
+}
+
 func TestPruneMergedInventoryExcludesRegistryWorktreeWithCreationToken(t *testing.T) {
 	entry := &registry.WorktreeEntry{
 		Path: filepath.Join(t.TempDir(), "creating"), CreationToken: "creator",

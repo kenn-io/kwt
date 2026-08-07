@@ -380,6 +380,7 @@ func defaultInspectPruneMergedCandidates(
 	var candidates []pruneMergedCandidate
 	configuredClaims := make(map[string]map[string]struct{})
 	backlinkClaims := make(map[string]map[string]string)
+	invalidInventoryRoots := make(map[string][]string)
 	configuredClaimKey := func(raw string) string {
 		identity, ok := repositoryurl.CanonicalRepositoryIdentity(raw)
 		if !ok {
@@ -430,6 +431,34 @@ func defaultInspectPruneMergedCandidates(
 			return nil, fmt.Errorf("inspect main repository path for %s: %w", root.path, err)
 		}
 		mainRepositoryPath = utils.CanonicalPath(mainRepositoryPath)
+		if !git.HasExactWorktreeRoot(inspections, root.path) {
+			if root.configured {
+				configuredInventoryIncomplete = true
+			}
+			mainKey := utils.PathKey(mainRepositoryPath)
+			invalidInventoryRoots[mainKey] = append(
+				invalidInventoryRoots[mainKey],
+				utils.CanonicalPath(root.path),
+			)
+			pathKey := utils.PathKey(root.path)
+			if !seen[pathKey] {
+				seen[pathKey] = true
+				policy := prunepolicy.MergedCandidate{
+					Path: root.path, MainRepositoryPath: mainRepositoryPath,
+				}
+				candidates = append(candidates, pruneMergedCandidate{
+					Policy:         policy,
+					RepositoryRoot: mainRepositoryPath,
+					ProtectedNames: append([]string(nil), protectedNames...),
+					InitialOutcome: initialMergedOutcome(
+						policy,
+						prunepolicy.DoctorRequired,
+						"inventory path is not an exact worktree root",
+					),
+				})
+			}
+			continue
+		}
 		if root.configured {
 			mainKey := utils.PathKey(mainRepositoryPath)
 			claims := configuredClaims[mainKey]
@@ -536,6 +565,17 @@ func defaultInspectPruneMergedCandidates(
 	}
 	for index := range candidates {
 		candidate := &candidates[index]
+		invalidRoots := invalidInventoryRoots[utils.PathKey(candidate.Policy.MainRepositoryPath)]
+		if len(invalidRoots) != 0 {
+			sort.Strings(invalidRoots)
+			candidate.InitialOutcome = initialMergedOutcome(
+				candidate.Policy,
+				prunepolicy.DoctorRequired,
+				"repository inventory includes a path that is not an exact worktree root",
+			)
+			candidate.InitialOutcome.Evidence["inventory_paths"] =
+				strings.Join(invalidRoots, "\n")
+		}
 		claims := configuredClaims[utils.PathKey(candidate.Policy.MainRepositoryPath)]
 		if len(claims) >= 2 {
 			candidate.InitialOutcome = initialMergedOutcome(

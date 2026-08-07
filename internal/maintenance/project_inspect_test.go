@@ -363,6 +363,35 @@ func TestInspectorDoesNotArbitrarilyJoinRegistryEntryToOneOfMultipleClones(t *te
 	assert.Empty(t, owner.ProjectNames)
 }
 
+func TestInspectorDoesNotUseRegistrySubdirectoryForProjectRelocation(t *testing.T) {
+	registration := projectRegistration(
+		"github.com/acme/widget", "~/old/widget", "/old/widget",
+	)
+	repositoryRoot := "/repos/widget"
+	registryPath := "/repos/widget/nested"
+	inspector := projectRepairInspector(
+		[]config.ProjectRegistration{registration},
+		[]*registry.WorktreeEntry{{
+			Path: registryPath, Repository: "github.com/acme/widget",
+			Generation: projectInspectionGeneration,
+		}},
+		map[string]RepositorySnapshot{
+			registryPath: projectTargetSnapshot(repositoryRoot, repositoryRoot),
+		},
+		nil,
+		map[string]bool{registration.Effective.Path: false, registryPath: true},
+		nil,
+		nil,
+	)
+
+	report, err := inspector.Inspect(context.Background())
+
+	require.NoError(t, err)
+	assert.Contains(t, findingCodes(report), UnverifiedRegistryEntry)
+	assert.NotContains(t, findingCodes(report), ProjectPathMoved)
+	assert.NotContains(t, findingCodes(report), StaleProjectRegistration)
+}
+
 func TestInspectorDoesNotInventoryRegistryEntryOwnedByCreation(t *testing.T) {
 	entry := &registry.WorktreeEntry{
 		Path: "/repos/creating", Repository: "github.com/acme/widget",

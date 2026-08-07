@@ -264,6 +264,21 @@ func (g *Git) InspectWorktreesWithoutCredentials(
 	return inspections, err
 }
 
+// HasExactWorktreeRoot reports whether path identifies exactly one worktree in
+// an inspected repository inventory. Git accepts paths below a worktree root,
+// so callers must use this check before treating an arbitrary path as an
+// inventory root.
+func HasExactWorktreeRoot(inspections []WorktreeInspection, path string) bool {
+	matches := 0
+	key := utils.PathKey(path)
+	for _, inspection := range inspections {
+		if utils.PathKey(inspection.Path) == key {
+			matches++
+		}
+	}
+	return matches == 1
+}
+
 func (g *Git) inspectWorktreesLocked(
 	excludedPath string,
 	immediateExpiry bool,

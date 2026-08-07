@@ -92,6 +92,15 @@ func (i *Inspector) Inspect(ctx context.Context) (Report, error) {
 			i.addUnreachableProject(reports, project, message)
 			continue
 		}
+		if !gitadapter.HasExactWorktreeRoot(snapshot.Worktrees, project.Path) {
+			inventoryComplete = false
+			i.addUnreachableProject(
+				reports,
+				project,
+				"configured project path is not an exact Git worktree root",
+			)
+			continue
+		}
 		report := mergeSnapshot(reports, snapshot)
 		mergeLiveRepositoryIdentities(liveRepositoryIdentities, snapshot)
 		addConfiguredRepositoryClaim(
@@ -152,6 +161,17 @@ func (i *Inspector) Inspect(ctx context.Context) (Report, error) {
 			})
 			continue
 		}
+		if !gitadapter.HasExactWorktreeRoot(snapshot.Worktrees, path) {
+			inventoryComplete = false
+			report := reportForKey(reports, "unreachable:"+pathKey(path))
+			report.Root = path
+			addFinding(report, Finding{
+				Code: ProjectUnreachable, Severity: SeverityError, Path: path,
+				Message:     "global inventory path is not an exact Git worktree root",
+				Remediation: "Review or remove the invalid path and rerun kwt doctor.",
+			})
+			continue
+		}
 		mergeSnapshot(reports, snapshot)
 		mergeLiveRepositoryIdentities(liveRepositoryIdentities, snapshot)
 	}
@@ -189,6 +209,10 @@ func (i *Inspector) Inspect(ctx context.Context) (Report, error) {
 				Message:     message,
 				Remediation: "Restore access to the registered worktree and rerun kwt doctor.",
 			})
+			continue
+		}
+		if !gitadapter.HasExactWorktreeRoot(snapshot.Worktrees, entry.Path) {
+			inventoryComplete = false
 			continue
 		}
 		mergeSnapshot(reports, snapshot)
