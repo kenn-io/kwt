@@ -1508,10 +1508,18 @@ func (g *Git) requireWorktreeGenerationWithoutCredentials(
 		protectedNames,
 	)
 	if err != nil {
-		return fmt.Errorf("worktree generation changed for %s", path)
+		return fmt.Errorf(
+			"worktree generation changed for %s: %w",
+			path,
+			&ConditionError{Reason: ReasonGenerationChanged, Path: path},
+		)
 	}
 	if generation != expected {
-		return fmt.Errorf("worktree generation changed for %s", path)
+		return fmt.Errorf(
+			"worktree generation changed for %s: %w",
+			path,
+			&ConditionError{Reason: ReasonGenerationChanged, Path: path},
+		)
 	}
 	return nil
 }

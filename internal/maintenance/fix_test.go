@@ -506,6 +506,55 @@ func TestFixerDoesNotAdoptGenerationAfterWorktreeReplacement(t *testing.T) {
 	assert.False(t, swapped)
 }
 
+func TestFixerIgnoresGenerationChangeFromRealGitAdapter(t *testing.T) {
+	const (
+		inspectedGeneration   = "0123456789abcdef0123456789abcdef"
+		replacementGeneration = "fedcba9876543210fedcba9876543210"
+	)
+	repositoryPath := newMaintenanceTestRepository(t)
+	worktreePath := filepath.Join(t.TempDir(), "replacement")
+	g := gitadapter.New(repositoryPath)
+	_, err := g.RunCommand("branch", "replacement")
+	require.NoError(t, err)
+	_, err = g.RunCommand("worktree", "add", worktreePath, "replacement")
+	require.NoError(t, err)
+	gitDir, err := gitadapter.ReadWorktreeBacklink(worktreePath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(gitDir, "kwt-generation"),
+		[]byte(replacementGeneration+"\n"),
+		0o600,
+	))
+	entry := &registry.WorktreeEntry{Path: worktreePath}
+	report := Report{Repositories: []RepositoryReport{{
+		Worktrees: []gitadapter.WorktreeInspection{{
+			Path: worktreePath, Exists: true, Generation: inspectedGeneration,
+			GenerationStatus: gitadapter.GenerationValid,
+		}},
+		Findings: []Finding{{
+			Code: RegistryGenerationMismatch, Path: worktreePath, Fixable: true,
+		}},
+	}}}
+	var swapped bool
+	fixer := &Fixer{
+		Registry: &fakeRegistryMutator{compareAndSwap: func(
+			string,
+			*registry.WorktreeEntry,
+			*registry.WorktreeEntry,
+		) (bool, error) {
+			swapped = true
+			return true, nil
+		}},
+		RegistryEntries: []*registry.WorktreeEntry{entry},
+		PathExists:      func(string) (bool, error) { return true, nil },
+	}
+
+	err = fixer.Fix(context.Background(), report)
+
+	require.NoError(t, err)
+	assert.False(t, swapped)
+}
+
 func TestFixerAdoptsGenerationThroughSymlinkedRegistryPath(t *testing.T) {
 	gitGeneration := "0123456789abcdef0123456789abcdef"
 	realParent := t.TempDir()
