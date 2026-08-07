@@ -80,6 +80,7 @@ func TestPruneHelpDescribesExplicitPoliciesAndMigration(t *testing.T) {
 	assert.Contains(t, help, "clean worktrees")
 	assert.Contains(t, help, "bare kwt prune")
 	assert.Contains(t, help, "kwt doctor --fix")
+	assert.Contains(t, help, "Git 2.31")
 }
 
 func TestPruneRejectsMultiplePolicies(t *testing.T) {
@@ -106,6 +107,81 @@ func TestPruneMergedRejectsForce(t *testing.T) {
 
 	assertExitCode(t, err, 2)
 	assert.Contains(t, stderr.String(), "--force")
+}
+
+func TestPrunePoliciesRejectUnsupportedGitVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  func()
+		jsonOut bool
+	}{
+		{name: "expired human", policy: func() { pruneExpired = true }},
+		{name: "merged json", policy: func() { pruneMerged = true }, jsonOut: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetPruneCommandFlags(t)
+			tt.policy()
+			pruneJSON = tt.jsonOut
+			requireMaintenanceGitVersion = func() error {
+				return errors.New("Git 2.31 or newer is required; found Git 2.30.2")
+			}
+			cmd, stdout, stderr := fleetTestCommand()
+
+			err := runPrune(cmd, nil)
+
+			assertExitCode(t, err, 2)
+			assert.Contains(t, stderr.String(), "unsupported_git_version")
+			if tt.jsonOut {
+				var envelope maintenanceErrorEnvelope
+				require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+				assert.Equal(t, "prune", envelope.Command)
+				assert.Equal(t, "unsupported_git_version", envelope.Error.Code)
+			} else {
+				assert.Empty(t, stdout.String())
+			}
+		})
+	}
+}
+
+func TestPruneInvalidUsageWinsOverGitVersionCheck(t *testing.T) {
+	tests := []struct {
+		name   string
+		setup  func()
+		needle string
+	}{
+		{name: "policy required", setup: func() {}, needle: "policy_required"},
+		{
+			name:   "multiple policies",
+			setup:  func() { pruneExpired, pruneMerged = true, true },
+			needle: "incompatible_policies",
+		},
+		{
+			name:   "merged force",
+			setup:  func() { pruneMerged, pruneForce = true, true },
+			needle: "incompatible_flags",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetPruneCommandFlags(t)
+			tt.setup()
+			var versionChecks int
+			requireMaintenanceGitVersion = func() error {
+				versionChecks++
+				return errors.New("unsupported Git")
+			}
+			cmd, _, stderr := fleetTestCommand()
+
+			err := runPrune(cmd, nil)
+
+			assertExitCode(t, err, 2)
+			assert.Zero(t, versionChecks)
+			assert.Contains(t, stderr.String(), tt.needle)
+		})
+	}
 }
 
 func TestPruneExpiredMissingPathReportsDoctorRequired(t *testing.T) {
@@ -557,6 +633,7 @@ func resetPruneCommandFlags(t *testing.T) {
 	oldOpenExpiredRegistry := openPruneExpiredRegistry
 	oldValidateExpired := validatePruneExpiredWorktree
 	oldRemoveExpired := removePruneExpiredWorktree
+	oldRequireMaintenanceGitVersion := requireMaintenanceGitVersion
 	t.Cleanup(func() {
 		pruneExpired = oldPruneExpired
 		pruneMerged = oldPruneMerged
@@ -568,12 +645,14 @@ func resetPruneCommandFlags(t *testing.T) {
 		openPruneExpiredRegistry = oldOpenExpiredRegistry
 		validatePruneExpiredWorktree = oldValidateExpired
 		removePruneExpiredWorktree = oldRemoveExpired
+		requireMaintenanceGitVersion = oldRequireMaintenanceGitVersion
 	})
 	pruneExpired = false
 	pruneMerged = false
 	pruneDryRun = false
 	pruneForce = false
 	pruneJSON = false
+	requireMaintenanceGitVersion = func() error { return nil }
 }
 
 func registerExpiredWorktree(t *testing.T, path string, generation string) {

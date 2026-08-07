@@ -52,6 +52,7 @@ func TestDoctorHelpDescribesMaintenanceContract(t *testing.T) {
 	assert.Contains(t, help, "project registrations")
 	assert.Contains(t, help, "confirmed-absent")
 	assert.Contains(t, help, "relocate or remove")
+	assert.Contains(t, help, "Git 2.31")
 }
 
 func TestDoctorInitializationFailureUsesMaintenanceErrorContract(t *testing.T) {
@@ -70,6 +71,37 @@ func TestDoctorInitializationFailureUsesMaintenanceErrorContract(t *testing.T) {
 	assert.Equal(t, "doctor", envelope.Command)
 	assert.Equal(t, "initialization_failed", envelope.Error.Code)
 	assert.Contains(t, stderr.String(), "config unavailable")
+}
+
+func TestDoctorRejectsUnsupportedGitVersion(t *testing.T) {
+	for _, jsonOutput := range []bool{false, true} {
+		t.Run(map[bool]string{false: "human", true: "json"}[jsonOutput], func(t *testing.T) {
+			resetDoctorCommandDeps(t)
+			doctorJSON = jsonOutput
+			requireMaintenanceGitVersion = func() error {
+				return errors.New("Git 2.31 or newer is required; found Git 2.30.2")
+			}
+			loadDoctorSnapshot = func() (*config.GlobalSnapshot, error) {
+				t.Fatal("configuration must not load when Git is unsupported")
+				return nil, nil
+			}
+			cmd, stdout, stderr := doctorTestCommand()
+
+			err := runDoctor(cmd, nil)
+
+			assertExitCode(t, err, 2)
+			assert.Contains(t, stderr.String(), "unsupported_git_version")
+			assert.Contains(t, stderr.String(), "Git 2.31")
+			if jsonOutput {
+				var envelope maintenanceErrorEnvelope
+				require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+				assert.Equal(t, "doctor", envelope.Command)
+				assert.Equal(t, "unsupported_git_version", envelope.Error.Code)
+			} else {
+				assert.Empty(t, stdout.String())
+			}
+		})
+	}
 }
 
 func TestRenderDoctorReportUsesHumanDashboard(t *testing.T) {
@@ -169,6 +201,10 @@ func TestDoctorRejectsQuietWithJSON(t *testing.T) {
 	resetDoctorCommandDeps(t)
 	doctorQuiet = true
 	doctorJSON = true
+	requireMaintenanceGitVersion = func() error {
+		t.Fatal("version check must not hide incompatible flag usage")
+		return nil
+	}
 	cmd, _, stderr := doctorTestCommand()
 
 	err := runDoctor(cmd, nil)
@@ -395,6 +431,7 @@ func resetDoctorCommandDeps(t *testing.T) {
 	oldOpen := openDoctorRegistry
 	oldInspect := doctorInspect
 	oldFixes := doctorApplyFixes
+	oldRequireMaintenanceGitVersion := requireMaintenanceGitVersion
 	oldSilenceUsage := rootCmd.SilenceUsage
 	oldSilenceErrors := rootCmd.SilenceErrors
 	t.Cleanup(func() {
@@ -405,12 +442,14 @@ func resetDoctorCommandDeps(t *testing.T) {
 		openDoctorRegistry = oldOpen
 		doctorInspect = oldInspect
 		doctorApplyFixes = oldFixes
+		requireMaintenanceGitVersion = oldRequireMaintenanceGitVersion
 		rootCmd.SilenceUsage = oldSilenceUsage
 		rootCmd.SilenceErrors = oldSilenceErrors
 	})
 	doctorFix = false
 	doctorJSON = false
 	doctorQuiet = false
+	requireMaintenanceGitVersion = func() error { return nil }
 	loadDoctorSnapshot = func() (*config.GlobalSnapshot, error) {
 		return &config.GlobalSnapshot{Config: &models.Config{}}, nil
 	}

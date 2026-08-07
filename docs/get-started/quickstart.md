@@ -2,7 +2,7 @@
 
 ## Before you start
 
-[Install kwt](install.md), then make sure `kwt`, Git 2.31 or newer, and tmux are
+[Install kwt](install.md), then make sure `kwt`, Git 2.20 or newer, and tmux are
 available in your terminal. You do not need to edit configuration before the
 first run.
 
@@ -130,7 +130,8 @@ merged timestamp. It preserves the local branch.
 
 Bare `kwt prune` no longer mutates metadata. Use `kwt doctor --fix` for
 structural cleanup, `kwt prune --expired` for live expiration policy, and
-`kwt prune --merged` for merged-pull-request policy.
+`kwt prune --merged` for merged-pull-request policy. These maintenance commands
+require Git 2.31 or newer.
 
 Next, see [Agent workspaces](../workflows/agent-workspaces.md) to configure tmux
 layouts or the [CLI reference](../reference/cli.md) for the complete command

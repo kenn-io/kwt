@@ -3,9 +3,9 @@
 Run `kwt <command> --help` for command-specific flags. This page summarizes the
 stable command surface.
 
-Kwt requires Git 2.31 or newer. Maintenance inventory relies on
-`git worktree list --expire`, and structural repair uses
-`git worktree repair`.
+Kwt requires Git 2.20 or newer. `kwt doctor` and the `kwt prune --expired` or
+`--merged` policies require Git 2.31 or newer: maintenance inventory relies on
+`git worktree list --expire`, and structural repair uses `git worktree repair`.
 
 | Command          | Purpose                                                |
 | ---------------- | ------------------------------------------------------ |
@@ -151,6 +151,8 @@ not alter the generation.
 
 ## `kwt doctor`
 
+Requires Git 2.31 or newer.
+
 ```sh
 kwt doctor          # inspect without changing anything
 kwt doctor --fix    # apply only confirmed, unambiguous repairs
@@ -235,7 +237,7 @@ inspection or requested fixes cannot complete.
 
 ## `kwt prune`
 
-Prune requires exactly one live-removal policy:
+Prune requires Git 2.31 or newer and exactly one live-removal policy:
 
 ```sh
 kwt prune --expired --dry-run

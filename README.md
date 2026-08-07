@@ -294,7 +294,8 @@ Run `kwt <command> --help` for flags and examples.
 
 ## Requirements
 
-- Git 2.31+
+- Git 2.20+
+  - Git 2.31+ for `kwt doctor` and `kwt prune --expired` or `--merged`
 - Go 1.26+ to build from source
 - tmux for workspace launch and `kwt tmux`
 

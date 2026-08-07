@@ -49,9 +49,9 @@ var pruneCmd = &cobra.Command{
 	Long: `Remove live worktrees only when an explicit policy confirms them.
 
 Use --expired for expiration-based removal or --merged for pull-request-based
-removal. Structural Git metadata and
-registry cleanup belong to kwt doctor --fix; bare kwt prune is no longer a
-mutation command.`,
+removal. Structural Git metadata and registry cleanup belong to
+kwt doctor --fix; bare kwt prune is no longer a mutation command. Prune
+policies require Git 2.31 or newer.`,
 	Example: `  # Preview expired worktrees
   kwt prune --expired --dry-run
 
@@ -100,20 +100,23 @@ func runPrune(cmd *cobra.Command, args []string) error {
 			"--force is not available with --merged", 2, pruneJSON,
 		)
 	}
+	if !pruneExpired && !pruneMerged {
+		return writeMaintenanceError(
+			cmd,
+			"prune",
+			"policy_required",
+			"choose --expired or --merged for live removal; run kwt doctor --fix for structural metadata cleanup",
+			2,
+			pruneJSON,
+		)
+	}
+	if err := checkMaintenanceGitVersion(cmd, "prune", pruneJSON); err != nil {
+		return err
+	}
 	if pruneExpired {
 		return runPruneExpired(cmd, args)
 	}
-	if pruneMerged {
-		return runPruneMerged(cmd, args)
-	}
-	return writeMaintenanceError(
-		cmd,
-		"prune",
-		"policy_required",
-		"choose --expired or --merged for live removal; run kwt doctor --fix for structural metadata cleanup",
-		2,
-		pruneJSON,
-	)
+	return runPruneMerged(cmd, args)
 }
 
 func runPruneExpired(cmd *cobra.Command, _ []string) error {

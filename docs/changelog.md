@@ -44,9 +44,10 @@ Notable user-facing changes to kwt, grouped by release.
 
 ### Breaking changes
 
-- Raise the minimum supported Git version from 2.20 to 2.31. Doctor and merged
-  pruning rely on the worktree inventory annotations introduced in 2.31, while
-  structural repair uses Git's native worktree repair command.
+- Keep the general minimum supported Git version at 2.20. `kwt doctor` and the
+  `kwt prune --expired` or `--merged` policies require Git 2.31 because their
+  inventory relies on worktree annotations introduced in 2.31; structural
+  repair also uses Git's native worktree repair command.
 - Bare `kwt prune` no longer performs Git metadata pruning. For structural
   cleanup, run `kwt doctor --fix`. `kwt prune --expired` is now only a live
   expiration policy; already-absent paths report `doctor_required` instead of

@@ -73,7 +73,7 @@ unambiguous.
 
 Read-only inspection does not initialize a missing generation. Adopt a live
 generation-less worktree with kwt list from its verified repository before
-requesting automated policy removal.`,
+requesting automated policy removal. Doctor requires Git 2.31 or newer.`,
 	Args: cobra.NoArgs,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		if err := requireConfigInitialization(); err != nil {
@@ -98,6 +98,9 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		return writeMaintenanceError(
 			cmd, "doctor", "incompatible_flags", "--quiet and --json are mutually exclusive", 2, false,
 		)
+	}
+	if err := checkMaintenanceGitVersion(cmd, "doctor", doctorJSON); err != nil {
+		return err
 	}
 	ctx := cmd.Context()
 	snapshot, err := loadDoctorSnapshot()

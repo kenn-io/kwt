@@ -165,11 +165,12 @@ commands therefore do not run during PR import: environment scrubbing alone
 cannot prevent same-user processes from reading kwt configuration or token
 files from disk.
 
-Kwt requires Git 2.31 or newer. PR import uses per-worktree Git configuration
+Kwt requires Git 2.20 or newer. PR import uses per-worktree Git configuration
 to make plain `git push` target the PR head without changing push behavior in
 the main checkout, and checks that capability before it fetches refs, adds
-remotes, or creates a worktree. The global version floor also supplies the
-worktree inventory and repair operations used by maintenance commands.
+remotes, or creates a worktree. The `kwt doctor` command and explicit
+`kwt prune` policies require Git 2.31 or newer for their worktree inventory and
+repair operations.
 
 ## Listing contract
 
