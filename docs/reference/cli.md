@@ -27,6 +27,8 @@ Kwt requires Git 2.20 or newer. `kwt doctor` and the `kwt prune --expired` or
 | `kwt tmux`       | Manage standalone tmux sessions.                       |
 | `kwt workspace`  | Manage directory workspaces.                           |
 | `kwt config`     | Read and write config values.                          |
+| `kwt daemon`     | Manage the background local service daemon.            |
+| `kwt serve`      | Run the local service daemon in the foreground.        |
 | `kwt completion` | Generate shell completion and integration.             |
 | `kwt version`    | Show version and build information.                    |
 
@@ -52,7 +54,17 @@ kwt workspace list --json
 kwt open ~/notes --start-session
 kwt config get layouts.default
 kwt config set --local layouts.default stack
+kwt daemon start
+kwt daemon status
+kwt daemon status --json
+kwt daemon restart
+kwt daemon stop
+kwt serve
 ```
+
+The daemon foundation does not yet route worktree, TUI, or SSH operations
+through the service. Each domain moves as a complete later migration without a
+simultaneous direct fallback.
 
 When `kwt add -b` creates a branch, it fetches `origin` and starts from its
 default branch. If that remote base is unavailable, it falls back to local

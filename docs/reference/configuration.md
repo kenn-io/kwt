@@ -36,6 +36,11 @@ roborev = "roborev tui"
 # default = "quad"  # unset or "none" = blank single-pane session
 auto_launch_on_add = true
 
+[daemon]
+idle_timeout = "2h"        # 0s disables automatic background shutdown
+auto_restart = "newer"     # newer or never
+replacement_grace = "5m"  # must be positive
+
 [[layouts.presets]]
 name = "quad"
 arrange = "even-horizontal"
@@ -59,6 +64,13 @@ command-line paths. In a global naming template, expansion applies only to
 literal template text, preserving Go template variables inside actions.
 Global `naming.sanitize_chars` replacement values expand before branch
 sanitization.
+
+Daemon lifecycle policy is global-only. Repository-local `.kwt.toml` files
+never control daemon lifetime, replacement, or authority. `idle_timeout`
+applies only to the detached background daemon; `kwt serve` stays active until
+it is stopped. With `auto_restart = "newer"`, a newer compatible kwt binary
+drains and replaces an older daemon, while an older binary continues using a
+newer daemon. `auto_restart = "never"` disables automatic version replacement.
 
 Resolved worktree and directory-workspace paths cannot contain `#`, which tmux
 reserves for format expansion. kwt rejects such paths before creating or

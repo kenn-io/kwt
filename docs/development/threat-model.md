@@ -62,6 +62,20 @@ non-loopback fleet transport requires HTTPS.
 Ordinary developer credentials and environment variables outside `kwt`'s own
 credential surfaces remain the user's responsibility.
 
+## Local daemon authority
+
+The operating-system account is the local daemon trust boundary. The daemon
+runtime directory and bearer record are owner-only because the credential can
+authorize future worktree mutations and authenticated SSH use. Clients prove
+the recorded endpoint before sending the bearer. The server accepts only its
+exact loopback Host, rejects browser Origin requests, bounds bodies and
+diagnostics, and never logs credentials or request bodies.
+
+PID liveness alone does not authorize cleanup or replacement. Kwt also checks
+the recorded process creation identity. A dead PID or exact creation mismatch
+makes a runtime record stale; an identity that cannot be read, a timed-out
+probe, or failed proof preserves the record and blocks a second writer.
+
 ## Out of scope
 
 Do not report an issue as a `kwt` vulnerability when exploitation requires:
