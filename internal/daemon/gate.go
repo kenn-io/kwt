@@ -1,4 +1,4 @@
-package daemonhost
+package daemon
 
 import (
 	"context"

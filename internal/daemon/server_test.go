@@ -1,4 +1,4 @@
-package daemonapi
+package daemon
 
 import (
 	"context"
