@@ -7,10 +7,10 @@ directory also holds `registry.json` and `pull-requests.json`, isolating kwt's
 persistent state as a unit. Without it, each store follows its documented
 platform config-directory behavior.
 
-When an existing installation first upgrades to this layout with `KWT_HOME`
-set, kwt copies a legacy platform-config `registry.json` into `KWT_HOME` if the
-new registry does not exist. An existing `KWT_HOME/registry.json` always wins,
-and the legacy file is retained as a rollback copy.
+`KWT_HOME` is an isolation boundary: kwt never imports registry entries from
+the platform config directory automatically. To move an existing installation,
+stop other kwt processes and copy its `registry.json` into `KWT_HOME` before
+running kwt with the new home. Do not combine two registry files.
 
 The global file is the source of truth for worktree naming, tmux layouts, agent
 commands, repository setup rules, and the known project registry.

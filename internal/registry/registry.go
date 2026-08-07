@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 	"time"
 
@@ -48,12 +47,10 @@ type Registry struct {
 // New creates a new registry instance.
 func New() (*Registry, error) {
 	registryDir := os.Getenv("KWT_HOME")
-	legacyPath := ""
 	if registryDir != "" {
 		if expanded, err := utils.ExpandPath(registryDir); err == nil {
 			registryDir = expanded
 		}
-		legacyPath = filepath.Join(platformRegistryDir(), "registry.json")
 	} else {
 		registryDir = platformRegistryDir()
 	}
@@ -62,12 +59,6 @@ func New() (*Registry, error) {
 	}
 
 	registryPath := filepath.Join(registryDir, "registry.json")
-	if legacyPath != "" && utils.PathKey(legacyPath) != utils.PathKey(registryPath) {
-		if err := migrateLegacyRegistry(legacyPath, registryPath); err != nil {
-			return nil, err
-		}
-	}
-
 	r := &Registry{
 		entries: make(map[string]*WorktreeEntry),
 		path:    registryPath,
@@ -87,64 +78,6 @@ func platformRegistryDir() string {
 		configDir = filepath.Join(home, ".config")
 	}
 	return filepath.Join(configDir, "kwt")
-}
-
-func migrateLegacyRegistry(legacyPath, targetPath string) error {
-	if _, err := os.Stat(targetPath); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("failed to inspect KWT_HOME registry: %w", err)
-	}
-	if _, err := os.Stat(legacyPath); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to inspect legacy registry: %w", err)
-	}
-
-	lockPaths := []string{legacyPath + ".lock", targetPath + ".lock"}
-	sort.Slice(lockPaths, func(left, right int) bool {
-		return utils.PathKey(lockPaths[left]) < utils.PathKey(lockPaths[right])
-	})
-	locks := make([]*flock.Flock, 0, len(lockPaths))
-	for _, lockPath := range lockPaths {
-		if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
-			return fmt.Errorf("failed to create registry lock directory: %w", err)
-		}
-		lock := flock.New(lockPath, flock.SetPermissions(0600))
-		if err := lock.Lock(); err != nil {
-			for index := len(locks) - 1; index >= 0; index-- {
-				_ = locks[index].Unlock()
-			}
-			return fmt.Errorf("failed to lock registry migration: %w", err)
-		}
-		locks = append(locks, lock)
-	}
-	defer func() {
-		for index := len(locks) - 1; index >= 0; index-- {
-			_ = locks[index].Unlock()
-		}
-	}()
-
-	if _, err := os.Stat(targetPath); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("failed to inspect KWT_HOME registry: %w", err)
-	}
-	if _, err := os.Stat(legacyPath); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to inspect legacy registry: %w", err)
-	}
-	entries, err := loadEntries(legacyPath)
-	if err != nil {
-		return fmt.Errorf("failed to migrate legacy registry: %w", err)
-	}
-	if err := saveEntries(targetPath, entries); err != nil {
-		return fmt.Errorf("failed to migrate legacy registry: %w", err)
-	}
-	return nil
 }
 
 // load reads the registry from disk.

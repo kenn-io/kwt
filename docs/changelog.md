@@ -104,10 +104,11 @@ Notable user-facing changes to kwt, grouped by release.
   exist, its target permissions, and unknown project fields written by newer
   versions. Project relocation also refuses a target already claimed by another
   current registration inside that transaction.
-- Existing `KWT_HOME` installations retain their pre-upgrade worktree registry:
-  when the new registry is absent, kwt validates and atomically copies the
-  platform-config registry without overwriting either file. Ordinary project
-  registration also preserves unknown fields from newer kwt versions.
+- `KWT_HOME` now isolates registry state as well as configuration. kwt never
+  imports the platform-config registry automatically; users moving an existing
+  installation must copy `registry.json` explicitly before using the new home.
+  Ordinary project registration also preserves unknown fields from newer kwt
+  versions.
 - Merged cleanliness checks include ignored untracked files, and every global
   candidate is removed through the stable resolved main repository rather than
   a linked worktree that an earlier removal may delete. Expiration cleanliness

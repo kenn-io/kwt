@@ -81,7 +81,7 @@ func TestNewUsesKWT_HOME(t *testing.T) {
 	assert.DirExists(t, kwtHome)
 }
 
-func TestNewMigratesLegacyRegistryIntoKwtHome(t *testing.T) {
+func TestNewWithFreshKwtHomeDoesNotImportPlatformRegistry(t *testing.T) {
 	root := t.TempDir()
 	platformConfigHome := filepath.Join(root, "platform-config")
 	t.Setenv("HOME", filepath.Join(root, "home"))
@@ -101,22 +101,14 @@ func TestNewMigratesLegacyRegistryIntoKwtHome(t *testing.T) {
 	require.NoError(t, saveEntries(legacyPath, map[string]*WorktreeEntry{
 		legacyEntry.Path: legacyEntry,
 	}))
-	legacyContents, err := os.ReadFile(legacyPath)
-	require.NoError(t, err)
-
 	kwtHome := filepath.Join(root, "kwt-home")
 	t.Setenv("KWT_HOME", kwtHome)
 	reg, err := New()
 
 	require.NoError(t, err)
-	require.Len(t, reg.List(), 1)
-	assert.Equal(t, legacyEntry, reg.List()[0])
-	targetContents, err := os.ReadFile(filepath.Join(kwtHome, "registry.json"))
-	require.NoError(t, err)
-	assert.JSONEq(t, string(legacyContents), string(targetContents))
-	afterLegacyContents, err := os.ReadFile(legacyPath)
-	require.NoError(t, err)
-	assert.Equal(t, legacyContents, afterLegacyContents)
+	assert.Empty(t, reg.List())
+	assert.NoFileExists(t, filepath.Join(kwtHome, "registry.json"))
+	assert.FileExists(t, legacyPath)
 }
 
 func TestNewWithFreshKwtHomeDoesNotCreateLegacyRegistryArtifacts(t *testing.T) {
