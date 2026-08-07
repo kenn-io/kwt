@@ -53,6 +53,124 @@ func TestWorktreeEntry_IsExpired(t *testing.T) {
 	}
 }
 
+func TestPathKeyResolvesNearestExistingAncestor(t *testing.T) {
+	assert.Empty(t, PathKey(""))
+	realParent := t.TempDir()
+	aliasParent := filepath.Join(t.TempDir(), "worktrees-link")
+	if err := os.Symlink(realParent, aliasParent); err != nil {
+		t.Skipf("symbolic links are not supported on this filesystem: %v", err)
+	}
+	realPath := filepath.Join(realParent, "missing", "topic")
+	aliasPath := filepath.Join(aliasParent, "missing", "topic")
+
+	assert.Equal(t, PathKey(realPath), PathKey(aliasPath))
+}
+
+func TestNewUsesKWT_HOME(t *testing.T) {
+	kwtHome := filepath.Join(t.TempDir(), "kwt-home")
+	platformConfigHome := filepath.Join(t.TempDir(), "platform-config")
+	t.Setenv("KWT_HOME", kwtHome)
+	t.Setenv("HOME", platformConfigHome)
+	t.Setenv("APPDATA", platformConfigHome)
+	t.Setenv("XDG_CONFIG_HOME", platformConfigHome)
+
+	reg, err := New()
+
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(kwtHome, "registry.json"), reg.path)
+	assert.DirExists(t, kwtHome)
+}
+
+func TestNewMigratesLegacyRegistryIntoKwtHome(t *testing.T) {
+	root := t.TempDir()
+	platformConfigHome := filepath.Join(root, "platform-config")
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("APPDATA", platformConfigHome)
+	t.Setenv("XDG_CONFIG_HOME", platformConfigHome)
+
+	configDir, err := os.UserConfigDir()
+	require.NoError(t, err)
+	legacyPath := filepath.Join(configDir, "kwt", "registry.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(legacyPath), 0o755))
+	legacyEntry := &WorktreeEntry{
+		Repository: "github.com/example/widget",
+		Branch:     "feature",
+		Path:       filepath.Join(root, "worktrees", "feature"),
+		Generation: "legacy-generation",
+	}
+	require.NoError(t, saveEntries(legacyPath, map[string]*WorktreeEntry{
+		legacyEntry.Path: legacyEntry,
+	}))
+	legacyContents, err := os.ReadFile(legacyPath)
+	require.NoError(t, err)
+
+	kwtHome := filepath.Join(root, "kwt-home")
+	t.Setenv("KWT_HOME", kwtHome)
+	reg, err := New()
+
+	require.NoError(t, err)
+	require.Len(t, reg.List(), 1)
+	assert.Equal(t, legacyEntry, reg.List()[0])
+	targetContents, err := os.ReadFile(filepath.Join(kwtHome, "registry.json"))
+	require.NoError(t, err)
+	assert.JSONEq(t, string(legacyContents), string(targetContents))
+	afterLegacyContents, err := os.ReadFile(legacyPath)
+	require.NoError(t, err)
+	assert.Equal(t, legacyContents, afterLegacyContents)
+}
+
+func TestNewWithFreshKwtHomeDoesNotCreateLegacyRegistryArtifacts(t *testing.T) {
+	root := t.TempDir()
+	platformConfigHome := filepath.Join(root, "platform-config")
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("APPDATA", platformConfigHome)
+	t.Setenv("XDG_CONFIG_HOME", platformConfigHome)
+	t.Setenv("KWT_HOME", filepath.Join(root, "kwt-home"))
+
+	configDir, err := os.UserConfigDir()
+	require.NoError(t, err)
+	legacyDir := filepath.Join(configDir, "kwt")
+	_, err = New()
+
+	require.NoError(t, err)
+	assert.NoDirExists(t, legacyDir)
+}
+
+func TestNewDoesNotOverwriteExistingKwtHomeRegistry(t *testing.T) {
+	root := t.TempDir()
+	platformConfigHome := filepath.Join(root, "platform-config")
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("APPDATA", platformConfigHome)
+	t.Setenv("XDG_CONFIG_HOME", platformConfigHome)
+
+	configDir, err := os.UserConfigDir()
+	require.NoError(t, err)
+	legacyPath := filepath.Join(configDir, "kwt", "registry.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(legacyPath), 0o755))
+	legacyEntry := &WorktreeEntry{Path: filepath.Join(root, "legacy")}
+	require.NoError(t, saveEntries(legacyPath, map[string]*WorktreeEntry{
+		legacyEntry.Path: legacyEntry,
+	}))
+
+	kwtHome := filepath.Join(root, "kwt-home")
+	require.NoError(t, os.MkdirAll(kwtHome, 0o755))
+	targetPath := filepath.Join(kwtHome, "registry.json")
+	targetEntry := &WorktreeEntry{Path: filepath.Join(root, "target")}
+	require.NoError(t, saveEntries(targetPath, map[string]*WorktreeEntry{
+		targetEntry.Path: targetEntry,
+	}))
+	t.Setenv("KWT_HOME", kwtHome)
+
+	reg, err := New()
+
+	require.NoError(t, err)
+	require.Len(t, reg.List(), 1)
+	assert.Equal(t, targetEntry, reg.List()[0])
+	legacyEntries, err := loadEntries(legacyPath)
+	require.NoError(t, err)
+	assert.Contains(t, legacyEntries, legacyEntry.Path)
+}
+
 func TestRegistry_ListExpired(t *testing.T) {
 	// Create a temporary registry
 	tmpDir, err := os.MkdirTemp("", "registry-test")
@@ -442,6 +560,170 @@ func TestRegistryCreationFinalizationPreservesReplacementOwner(t *testing.T) {
 	assert.True(t, entry.ExpiresAt.Equal(replacementExpiry))
 }
 
+func TestRegistryCompareAndSwapAliases(t *testing.T) {
+	const generation = "0123456789abcdef0123456789abcdef"
+	worktreePath := t.TempDir()
+	aliasPath := filepath.Dir(worktreePath) + string(os.PathSeparator) + "." +
+		string(os.PathSeparator) + filepath.Base(worktreePath)
+	thirdAliasPath := filepath.Dir(worktreePath) + string(os.PathSeparator) + "." +
+		string(os.PathSeparator) + "." + string(os.PathSeparator) + filepath.Base(worktreePath)
+	registeredAt := time.Date(2026, time.August, 6, 12, 0, 0, 0, time.UTC)
+	first := &WorktreeEntry{
+		Repository: "github.com/acme/widget", Branch: "feature/topic",
+		Path: worktreePath, Hash: "abc123", RegisteredAt: registeredAt,
+		Generation: generation,
+	}
+	second := *first
+	second.Path = aliasPath
+
+	tests := []struct {
+		name        string
+		current     []*WorktreeEntry
+		expected    []*WorktreeEntry
+		wantChanged bool
+	}{
+		{
+			name:        "collapse exact group",
+			current:     []*WorktreeEntry{first, &second},
+			expected:    []*WorktreeEntry{first, &second},
+			wantChanged: true,
+		},
+		{
+			name: "preserve metadata change",
+			current: func() []*WorktreeEntry {
+				changed := second
+				changed.Branch = "feature/changed"
+				return []*WorktreeEntry{first, &changed}
+			}(),
+			expected: []*WorktreeEntry{first, &second},
+		},
+		{
+			name: "preserve added alias",
+			current: func() []*WorktreeEntry {
+				third := second
+				third.Path = thirdAliasPath
+				return []*WorktreeEntry{first, &second, &third}
+			}(),
+			expected: []*WorktreeEntry{first, &second},
+		},
+		{
+			name: "preserve active creation",
+			current: func() []*WorktreeEntry {
+				active := second
+				active.CreationToken = "active-owner"
+				return []*WorktreeEntry{first, &active}
+			}(),
+			expected: func() []*WorktreeEntry {
+				active := second
+				active.CreationToken = "active-owner"
+				return []*WorktreeEntry{first, &active}
+			}(),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registryPath := filepath.Join(t.TempDir(), "registry.json")
+			stored := make(map[string]*WorktreeEntry, len(tt.current))
+			for _, entry := range tt.current {
+				copy := *entry
+				stored[entry.Path] = &copy
+			}
+			require.NoError(t, saveEntries(registryPath, stored))
+			r := &Registry{entries: make(map[string]*WorktreeEntry), path: registryPath}
+			require.NoError(t, r.load())
+
+			changed, err := r.CompareAndSwapAliases(tt.expected, first)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantChanged, changed)
+			entries := r.List()
+			if tt.wantChanged {
+				require.Len(t, entries, 1)
+				assert.Equal(t, first.Path, entries[0].Path)
+				assert.Equal(t, first.Generation, entries[0].Generation)
+			} else {
+				assert.Len(t, entries, len(tt.current))
+			}
+		})
+	}
+}
+
+func TestRegistryCompareAndSwapAliasesRemovesExactGroup(t *testing.T) {
+	realParent := t.TempDir()
+	aliasParent := filepath.Join(t.TempDir(), "worktrees-link")
+	if err := os.Symlink(realParent, aliasParent); err != nil {
+		t.Skipf("symbolic links are not supported on this filesystem: %v", err)
+	}
+	worktreePath := filepath.Join(realParent, "missing-worktree")
+	aliasPath := filepath.Join(aliasParent, "missing-worktree")
+	thirdAliasPath := realParent + string(os.PathSeparator) + "." +
+		string(os.PathSeparator) + "." + string(os.PathSeparator) + filepath.Base(worktreePath)
+	registeredAt := time.Date(2026, time.August, 7, 12, 0, 0, 0, time.UTC)
+	first := &WorktreeEntry{
+		Repository: "github.com/acme/widget", Branch: "feature/topic",
+		Path: worktreePath, RegisteredAt: registeredAt,
+	}
+	second := *first
+	second.Path = aliasPath
+	tests := []struct {
+		name        string
+		current     []*WorktreeEntry
+		wantChanged bool
+	}{
+		{name: "remove exact group", current: []*WorktreeEntry{first, &second}, wantChanged: true},
+		{
+			name: "preserve metadata change",
+			current: func() []*WorktreeEntry {
+				changed := second
+				changed.Branch = "feature/changed"
+				return []*WorktreeEntry{first, &changed}
+			}(),
+		},
+		{
+			name: "preserve added alias",
+			current: func() []*WorktreeEntry {
+				third := second
+				third.Path = thirdAliasPath
+				return []*WorktreeEntry{first, &second, &third}
+			}(),
+		},
+		{
+			name: "preserve active creation",
+			current: func() []*WorktreeEntry {
+				active := second
+				active.CreationToken = "active-owner"
+				return []*WorktreeEntry{first, &active}
+			}(),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registryPath := filepath.Join(t.TempDir(), "registry.json")
+			stored := make(map[string]*WorktreeEntry, len(tt.current))
+			for _, entry := range tt.current {
+				copy := *entry
+				stored[entry.Path] = &copy
+			}
+			require.NoError(t, saveEntries(registryPath, stored))
+			r := &Registry{entries: make(map[string]*WorktreeEntry), path: registryPath}
+			require.NoError(t, r.load())
+
+			changed, err := r.CompareAndSwapAliases(
+				[]*WorktreeEntry{first, &second},
+				nil,
+			)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantChanged, changed)
+			if tt.wantChanged {
+				assert.Empty(t, r.List())
+			} else {
+				assert.Len(t, r.List(), len(tt.current))
+			}
+		})
+	}
+}
+
 func TestRegistryCreationLockDistinguishesActiveAndAbandonedClaims(
 	t *testing.T,
 ) {
@@ -469,6 +751,26 @@ func TestRegistryCreationLockDistinguishesActiveAndAbandonedClaims(
 	require.NoError(t, err)
 	require.True(t, acquired)
 	require.NoError(t, releaseSecond())
+}
+
+func TestRegistryReportsWhetherCreationOwnerIsActive(t *testing.T) {
+	r := &Registry{
+		entries: make(map[string]*WorktreeEntry),
+		path:    filepath.Join(t.TempDir(), "registry.json"),
+	}
+	worktreePath := filepath.Join(t.TempDir(), "creating-worktree")
+	release, acquired, err := r.AcquireCreation(worktreePath)
+	require.NoError(t, err)
+	require.True(t, acquired)
+
+	active, err := r.CreationActive(worktreePath)
+	require.NoError(t, err)
+	assert.True(t, active)
+	require.NoError(t, release())
+
+	active, err = r.CreationActive(worktreePath)
+	require.NoError(t, err)
+	assert.False(t, active)
 }
 
 func TestRegistryCreationLockKeepsIdentityAfterDestinationAppears(
@@ -606,7 +908,7 @@ func TestRegistryCreationAbortPreservesReviewedState(t *testing.T) {
 	assert.False(t, entry.UnreviewedRemoteSource)
 }
 
-func TestRegistryExpirationUpdatePreservesAcknowledgement(t *testing.T) {
+func TestRegistryExpirationUpdatePreservesAcknowledgementAndCanonicalizesIdentity(t *testing.T) {
 	r := &Registry{
 		entries: make(map[string]*WorktreeEntry),
 		path:    filepath.Join(t.TempDir(), "registry.json"),
@@ -625,7 +927,7 @@ func TestRegistryExpirationUpdatePreservesAcknowledgement(t *testing.T) {
 	updated, err := r.SetExpirationIfGeneration(
 		path,
 		generation,
-		"https://github.com/example/repository.git",
+		"https://user:credential-must-not-appear@github.com/example/repository.git",
 		"feature/reviewed",
 		&expiresAt,
 	)
@@ -636,9 +938,12 @@ func TestRegistryExpirationUpdatePreservesAcknowledgement(t *testing.T) {
 	require.True(t, ok)
 	assert.False(t, entry.UnreviewedRemoteSource)
 	assert.Equal(t, generation, entry.Generation)
-	assert.Equal(t, "https://github.com/example/repository.git", entry.Repository)
+	assert.Equal(t, "github.com/example/repository", entry.Repository)
 	require.NotNil(t, entry.ExpiresAt)
 	assert.True(t, entry.ExpiresAt.Equal(expiresAt))
+	stored, err := os.ReadFile(r.path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(stored), "credential-must-not-appear")
 }
 
 func TestRegistryCreationClaimRejectsChangedObservedEntry(t *testing.T) {
@@ -676,6 +981,37 @@ func TestRegistryCreationClaimRejectsChangedObservedEntry(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "feature/replacement", entry.Branch)
 	assert.Equal(t, "fedcba9876543210fedcba9876543210", entry.Generation)
+}
+
+func TestRegistryRemoveIfMatchAfterDoesNotRunRemovalForChangedExpiration(t *testing.T) {
+	r := &Registry{
+		entries: make(map[string]*WorktreeEntry),
+		path:    filepath.Join(t.TempDir(), "registry.json"),
+	}
+	path := filepath.Join(t.TempDir(), "worktree")
+	expired := time.Now().Add(-time.Hour)
+	observed := &WorktreeEntry{
+		Path: path, Repository: "github.com/acme/widget",
+		Generation: "0123456789abcdef0123456789abcdef", ExpiresAt: &expired,
+	}
+	require.NoError(t, r.Register(observed))
+	extended := *observed
+	future := time.Now().Add(time.Hour)
+	extended.ExpiresAt = &future
+	require.NoError(t, r.Register(&extended))
+	removalCalled := false
+
+	removed, err := r.RemoveIfMatchAfter(path, observed, func() error {
+		removalCalled = true
+		return nil
+	})
+
+	require.NoError(t, err)
+	assert.False(t, removed)
+	assert.False(t, removalCalled)
+	current, ok := r.Get(path)
+	require.True(t, ok)
+	assert.True(t, future.Equal(*current.ExpiresAt))
 }
 
 func TestRegistryLegacyCleanupPreservesProvisionalCreation(t *testing.T) {

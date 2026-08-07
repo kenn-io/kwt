@@ -184,7 +184,6 @@ func TestRegisterWorktreeExpirationRejectsRecreatedWorktree(t *testing.T) {
 		reg,
 		worktreePath,
 		originalGeneration,
-		"https://github.com/example/original.git",
 		"feature/original",
 		&staleExpiry,
 	)
@@ -223,7 +222,6 @@ func TestRegisterWorktreeExpirationCreatesOrdinaryWorktreeEntry(t *testing.T) {
 		reg,
 		worktreePath,
 		generation,
-		"https://github.com/example/repository.git",
 		"feature/ordinary",
 		&expiresAt,
 	)
@@ -235,6 +233,54 @@ func TestRegisterWorktreeExpirationCreatesOrdinaryWorktreeEntry(t *testing.T) {
 	assert.Equal(t, "feature/ordinary", entry.Branch)
 	require.NotNil(t, entry.ExpiresAt)
 	assert.True(t, entry.ExpiresAt.Equal(expiresAt))
+}
+
+func TestRegisterWorktreeExpirationUsesDestinationRemoteIdentity(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "destination-origin")
+	runTUITestGit(t, repoPath, "worktree", "add", "-b", "feature/destination-origin", worktreePath)
+	runTUITestGit(t, repoPath, "config", "extensions.worktreeConfig", "true")
+	runTUITestGit(t, worktreePath, "config", "--worktree", "remote.origin.url", "https://github.com/acme/destination.git")
+	generation := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
+	reg, err := registry.New()
+	require.NoError(t, err)
+	expiresAt := time.Now().Add(time.Hour)
+
+	err = registerWorktreeExpiration(
+		git.New(repoPath), reg, worktreePath, generation,
+		"feature/destination-origin", &expiresAt,
+	)
+
+	require.NoError(t, err)
+	entry, ok := reg.Get(worktreePath)
+	require.True(t, ok)
+	assert.Equal(t, "github.com/acme/destination", entry.Repository)
+}
+
+func TestRegisterWorktreeExpirationRejectsRelativeDestinationRemote(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "relative-origin")
+	runTUITestGit(t, repoPath, "worktree", "add", "-b", "feature/relative-origin", worktreePath)
+	runTUITestGit(t, repoPath, "config", "extensions.worktreeConfig", "true")
+	runTUITestGit(t, worktreePath, "config", "--worktree", "remote.origin.url", "credentials/team/repo.git")
+	generation := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
+	reg, err := registry.New()
+	require.NoError(t, err)
+	expiresAt := time.Now().Add(time.Hour)
+
+	err = registerWorktreeExpiration(
+		git.New(repoPath), reg, worktreePath, generation,
+		"feature/relative-origin", &expiresAt,
+	)
+
+	require.NoError(t, err)
+	entry, ok := reg.Get(worktreePath)
+	require.True(t, ok)
+	assert.Empty(t, entry.Repository)
 }
 
 func TestRegisterWorktreeExpirationRejectsProvisionalCreation(t *testing.T) {
@@ -267,7 +313,6 @@ func TestRegisterWorktreeExpirationRejectsProvisionalCreation(t *testing.T) {
 		reg,
 		worktreePath,
 		generation,
-		"https://github.com/example/repository.git",
 		"feature/creating",
 		&expiresAt,
 	)

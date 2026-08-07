@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 type ErrorCode string
@@ -89,6 +90,7 @@ type PullRequest struct {
 	Draft      bool       `json:"draft"`
 	State      string     `json:"state"`
 	HeadSHA    string     `json:"head_sha"`
+	MergedAt   *time.Time `json:"merged_at,omitempty"`
 	Imported   bool       `json:"imported"`
 	Workspace  *Workspace `json:"workspace,omitempty"`
 }
@@ -98,6 +100,7 @@ type Workspace struct {
 	Repository     string `json:"repository"`
 	Branch         string `json:"branch"`
 	Path           string `json:"path"`
+	Generation     string `json:"generation,omitempty"`
 	State          string `json:"state"`
 	SessionName    string `json:"session_name"`
 	TmuxSocketName string `json:"tmux_socket_name,omitempty"`

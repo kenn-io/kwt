@@ -380,12 +380,14 @@ func TestOpenSelectedWorktreeRefusesProtectedPullRequestWorkspace(
 ) {
 	t.Setenv("KWT_HOME", t.TempDir())
 	workspacePath := t.TempDir()
+	liveGeneration := "0123456789abcdef0123456789abcdef"
+	stubPRWorkspaceGeneration(t, workspacePath, liveGeneration)
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
 		context.Background(),
 		func(records map[string]pullrequest.Provenance) error {
-			records["pr-32"] = pullrequest.Provenance{
-				Workspace: pullrequest.Workspace{Path: workspacePath},
-			}
+			records["pr-32"] = pullrequest.Provenance{Workspace: pullrequest.Workspace{
+				Path: workspacePath, Generation: liveGeneration,
+			}}
 			return nil
 		},
 	))
@@ -394,7 +396,8 @@ func TestOpenSelectedWorktreeRefusesProtectedPullRequestWorkspace(
 		context.Background(),
 		&CommandContext{Config: &models.Config{}},
 		&discovery.GlobalWorktreeEntry{
-			Path: workspacePath,
+			Path:       workspacePath,
+			Generation: "fedcba9876543210fedcba9876543210",
 			RepositoryInfo: &url.RepositoryInfo{
 				FullPath: "github.com/acme/widget",
 			},

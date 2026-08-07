@@ -1,6 +1,7 @@
 package git
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -122,6 +123,36 @@ func gitOutput(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git %s failed: %v\nOutput: %s", strings.Join(args, " "), err, output)
 	}
 	return strings.TrimSpace(string(output))
+}
+
+func newSeparateGitDirectoryRepository(t *testing.T) (string, string) {
+	t.Helper()
+	base := t.TempDir()
+	mainPath := filepath.Join(base, "main-worktree")
+	separateGitDir := filepath.Join(base, "repository.git")
+	linkedPath := filepath.Join(base, "linked-worktree")
+	gitOutput(
+		t,
+		base,
+		"init",
+		"-b",
+		"main",
+		"--separate-git-dir",
+		separateGitDir,
+		mainPath,
+	)
+	gitOutput(t, mainPath, "config", "user.name", "Test User")
+	gitOutput(t, mainPath, "config", "user.email", "test@example.com")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(mainPath, "README.md"),
+		[]byte("# Separate Git directory\n"),
+		0o644,
+	))
+	gitOutput(t, mainPath, "add", "README.md")
+	gitOutput(t, mainPath, "commit", "-m", "Initial commit")
+	gitOutput(t, mainPath, "branch", "topic")
+	gitOutput(t, mainPath, "worktree", "add", linkedPath, "topic")
+	return mainPath, linkedPath
 }
 
 func commitTestFile(t *testing.T, dir, name, contents, message string) {
@@ -988,6 +1019,228 @@ func TestListWorktreesKeepsGenerationStableWhenDirectoryChanges(t *testing.T) {
 	t.Fatal("worktree missing after ordinary directory change")
 }
 
+func TestInspectWorktreesDoesNotInitializeGeneration(t *testing.T) {
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "raw-topic")
+	worktreePath := filepath.Join(t.TempDir(), "raw-topic")
+	repo.CreateWorktree(t, worktreePath, "raw-topic")
+	g := New(repo.Path)
+	adminDir, err := g.worktreeGitDir(worktreePath)
+	require.NoError(t, err)
+	assert.NoFileExists(t, filepath.Join(adminDir, "kwt-generation"))
+
+	inspections, err := g.InspectWorktrees()
+	require.NoError(t, err)
+	inspection := requireWorktreeInspection(t, inspections, worktreePath)
+	assert.Equal(t, GenerationMissing, inspection.GenerationStatus)
+	assert.Empty(t, inspection.Generation)
+	assert.NoFileExists(t, filepath.Join(adminDir, "kwt-generation"))
+}
+
+func TestReadWorktreeBacklinkReturnsDirectAdministrativeDirectory(t *testing.T) {
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "backlink-topic")
+	worktreePath := filepath.Join(t.TempDir(), "backlink-topic")
+	repo.CreateWorktree(t, worktreePath, "backlink-topic")
+	expected, err := New(repo.Path).worktreeGitDir(worktreePath)
+	require.NoError(t, err)
+
+	actual, err := ReadWorktreeBacklink(worktreePath)
+
+	require.NoError(t, err)
+	assert.Equal(t, utils.PathKey(expected), utils.PathKey(actual))
+}
+
+func TestInspectWorktreesReportsMissingDirectoryWithoutInitializing(t *testing.T) {
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "missing-topic")
+	worktreePath := filepath.Join(t.TempDir(), "missing-topic")
+	repo.CreateWorktree(t, worktreePath, "missing-topic")
+	g := New(repo.Path)
+	adminDir, err := g.worktreeGitDir(worktreePath)
+	require.NoError(t, err)
+	require.NoError(t, os.RemoveAll(worktreePath))
+
+	inspections, err := g.InspectWorktrees()
+	require.NoError(t, err)
+	inspection := requireWorktreeInspection(t, inspections, worktreePath)
+	assert.False(t, inspection.Exists)
+	assert.True(t, inspection.Prunable)
+	assert.Equal(t, GenerationMissing, inspection.GenerationStatus)
+	assert.NoFileExists(t, filepath.Join(adminDir, "kwt-generation"))
+}
+
+func TestInspectWorktreesReturnsIncompleteInventoryForWorktreeStatError(t *testing.T) {
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "inaccessible-topic")
+	worktreePath := filepath.Join(t.TempDir(), "inaccessible-topic")
+	repo.CreateWorktree(t, worktreePath, "inaccessible-topic")
+	g := New(repo.Path)
+	wantErr := errors.New("worktree path is inaccessible")
+	originalStat := inspectWorktreeStat
+	inspectWorktreeStat = func(path string) (os.FileInfo, error) {
+		if comparableWorktreePath(path) == comparableWorktreePath(worktreePath) {
+			return nil, wantErr
+		}
+		return os.Stat(path)
+	}
+	t.Cleanup(func() { inspectWorktreeStat = originalStat })
+
+	_, err := g.InspectWorktrees()
+
+	require.Error(t, err)
+	assert.True(t, IsIncompleteInventory(err))
+	assert.ErrorIs(t, err, wantErr)
+}
+
+func TestInspectWorktreesReturnsIncompleteInventoryForDotGitReadError(t *testing.T) {
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "unreadable-backlink")
+	worktreePath := filepath.Join(t.TempDir(), "unreadable-backlink")
+	repo.CreateWorktree(t, worktreePath, "unreadable-backlink")
+	g := New(repo.Path)
+	wantErr := errors.New("backlink is unreadable")
+	originalRead := inspectDotGitRead
+	inspectDotGitRead = func(path string) ([]byte, error) {
+		if comparableWorktreePath(path) ==
+			comparableWorktreePath(filepath.Join(worktreePath, ".git")) {
+			return nil, wantErr
+		}
+		return os.ReadFile(path)
+	}
+	t.Cleanup(func() { inspectDotGitRead = originalRead })
+
+	_, err := g.InspectWorktrees()
+
+	require.Error(t, err)
+	assert.True(t, IsIncompleteInventory(err))
+	assert.ErrorIs(t, err, wantErr)
+}
+
+func TestInspectWorktreesReturnsIncompleteInventoryForDotGitStatError(t *testing.T) {
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "unstatable-backlink")
+	worktreePath := filepath.Join(t.TempDir(), "unstatable-backlink")
+	repo.CreateWorktree(t, worktreePath, "unstatable-backlink")
+	g := New(repo.Path)
+	wantErr := errors.New("backlink metadata is inaccessible")
+	originalStat := inspectWorktreeStat
+	inspectWorktreeStat = func(path string) (os.FileInfo, error) {
+		if comparableWorktreePath(path) ==
+			comparableWorktreePath(filepath.Join(worktreePath, ".git")) {
+			return nil, wantErr
+		}
+		return os.Stat(path)
+	}
+	t.Cleanup(func() { inspectWorktreeStat = originalStat })
+
+	_, err := g.InspectWorktrees()
+
+	require.Error(t, err)
+	assert.True(t, IsIncompleteInventory(err))
+	assert.ErrorIs(t, err, wantErr)
+}
+
+func TestWorktreeInspectionJSONUsesSnakeCaseFields(t *testing.T) {
+	encoded, err := json.Marshal(WorktreeInspection{
+		Path:             "/worktrees/topic",
+		GenerationStatus: GenerationValid,
+		IsMain:           true,
+		LockedReason:     "maintenance",
+	})
+	require.NoError(t, err)
+
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &fields))
+	assert.Equal(t, "/worktrees/topic", fields["path"])
+	assert.Equal(t, string(GenerationValid), fields["generation_status"])
+	assert.Equal(t, true, fields["is_main"])
+	assert.Equal(t, "maintenance", fields["locked_reason"])
+	assert.NotContains(t, fields, "Path")
+}
+
+func requireWorktreeInspection(
+	t *testing.T,
+	inspections []WorktreeInspection,
+	path string,
+) WorktreeInspection {
+	t.Helper()
+	for _, inspection := range inspections {
+		if comparableWorktreePath(inspection.Path) == comparableWorktreePath(path) {
+			return inspection
+		}
+	}
+	t.Fatalf("worktree inspection missing for %s", path)
+	return WorktreeInspection{}
+}
+
+func TestBranchUpstream(t *testing.T) {
+	tests := []struct {
+		name       string
+		remote     string
+		remoteURL  string
+		mergeRef   string
+		wantBranch string
+	}{
+		{
+			name:       "same repository",
+			remote:     "origin",
+			remoteURL:  "https://github.com/acme/widget.git",
+			mergeRef:   "refs/heads/topic",
+			wantBranch: "topic",
+		},
+		{
+			name:       "fork remote",
+			remote:     "fork",
+			remoteURL:  "git@github.com:alice/widget.git",
+			mergeRef:   "refs/heads/topic",
+			wantBranch: "topic",
+		},
+		{
+			name:       "slash remote name",
+			remote:     "fork/alice",
+			remoteURL:  "ssh://git@github.com/alice/widget.git",
+			mergeRef:   "refs/heads/team/topic",
+			wantBranch: "team/topic",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := NewTestRepository(t)
+			require.NoError(t, repo.run("config", "branch.topic.remote", tt.remote))
+			require.NoError(t, repo.run("config", "branch.topic.merge", tt.mergeRef))
+			require.NoError(t, repo.run("config", "remote."+tt.remote+".url", tt.remoteURL))
+
+			got, err := New(repo.Path).BranchUpstream("topic")
+			require.NoError(t, err)
+			assert.Equal(t, tt.remote, got.Remote)
+			assert.Equal(t, tt.wantBranch, got.Branch)
+			assert.Equal(t, tt.remoteURL, got.RepositoryURL)
+		})
+	}
+}
+
+func TestBranchUpstreamResolvesInsteadOfURL(t *testing.T) {
+	repo := NewTestRepository(t)
+	require.NoError(t, repo.run("config", "branch.topic.remote", "origin"))
+	require.NoError(t, repo.run("config", "branch.topic.merge", "refs/heads/topic"))
+	require.NoError(t, repo.run("config", "remote.origin.url", "gh:acme/widget.git"))
+	require.NoError(t, repo.run("config", "url.https://github.com/.insteadOf", "gh:"))
+
+	got, err := New(repo.Path).BranchUpstream("topic")
+
+	require.NoError(t, err)
+	assert.Equal(t, "https://github.com/acme/widget.git", got.RepositoryURL)
+}
+
+func TestBranchUpstreamRejectsMissingUpstream(t *testing.T) {
+	repo := NewTestRepository(t)
+
+	_, err := New(repo.Path).BranchUpstream("topic")
+
+	require.ErrorContains(t, err, "upstream remote")
+}
+
 func TestListWorktreesDoesNotAdoptGenerationFromAnotherRepository(t *testing.T) {
 	repoA := NewTestRepository(t)
 	repoB := NewTestRepository(t)
@@ -1016,6 +1269,117 @@ func TestListWorktreesDoesNotAdoptGenerationFromAnotherRepository(t *testing.T) 
 	_, err = New(repoA.Path).ListWorktrees()
 
 	require.ErrorContains(t, err, "belongs to a different repository")
+}
+
+func TestReadWorktreeGenerationRejectsAnotherWorktreeAdministrativeDirectory(
+	t *testing.T,
+) {
+	repo := NewTestRepository(t)
+	g := New(repo.Path)
+	repo.CreateBranch(t, "first-worktree")
+	repo.CreateBranch(t, "second-worktree")
+	firstPath := filepath.Join(t.TempDir(), "first-worktree")
+	secondPath := filepath.Join(t.TempDir(), "second-worktree")
+	repo.CreateWorktree(t, firstPath, "first-worktree")
+	repo.CreateWorktree(t, secondPath, "second-worktree")
+	firstGeneration, err := g.WorktreeGeneration(firstPath)
+	require.NoError(t, err)
+	secondGeneration, err := g.WorktreeGeneration(secondPath)
+	require.NoError(t, err)
+	require.NotEqual(t, firstGeneration, secondGeneration)
+	secondAdminDir, err := g.worktreeGitDir(secondPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(firstPath, ".git"),
+		[]byte("gitdir: "+secondAdminDir+"\n"),
+		0o600,
+	))
+
+	generation, err := g.ReadWorktreeGeneration(firstPath)
+
+	require.NoError(t, err)
+	assert.Equal(t, firstGeneration, generation)
+}
+
+func TestWorktreeGitDirRejectsDuplicateAdministrativeBacklinks(t *testing.T) {
+	repo := NewTestRepository(t)
+	g := New(repo.Path)
+	repo.CreateBranch(t, "duplicate-backlink")
+	worktreePath := filepath.Join(t.TempDir(), "duplicate-backlink")
+	repo.CreateWorktree(t, worktreePath, "duplicate-backlink")
+	_, err := g.worktreeGitDir(worktreePath)
+	require.NoError(t, err)
+	commonDir, err := g.worktreeCommonDir(nil)
+	require.NoError(t, err)
+	duplicateAdminDir := filepath.Join(
+		commonDir,
+		"worktrees",
+		"duplicate-backlink-claim",
+	)
+	require.NoError(t, os.Mkdir(duplicateAdminDir, 0o700))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(duplicateAdminDir, "gitdir"),
+		[]byte(filepath.Join(worktreePath, ".git")+"\n"),
+		0o600,
+	))
+
+	_, err = g.worktreeGitDir(worktreePath)
+
+	require.ErrorContains(t, err, "multiple administrative directories")
+}
+
+func TestWorktreeGenerationSupportsSeparateGitDirectory(t *testing.T) {
+	base := t.TempDir()
+	worktreePath := filepath.Join(base, "worktree")
+	separateGitDir := filepath.Join(base, "repository.git")
+	gitOutput(
+		t,
+		base,
+		"init",
+		"--separate-git-dir",
+		separateGitDir,
+		worktreePath,
+	)
+	g := New(worktreePath)
+
+	generation, err := g.WorktreeGeneration(worktreePath)
+
+	require.NoError(t, err)
+	require.NoError(t, ValidateWorktreeGeneration(generation))
+	repeated, err := g.WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	assert.Equal(t, generation, repeated)
+}
+
+func TestWorktreeGenerationRejectsSeparateGitDirectoryDuplicateClaim(
+	t *testing.T,
+) {
+	base := t.TempDir()
+	worktreePath := filepath.Join(base, "worktree")
+	separateGitDir := filepath.Join(base, "repository.git")
+	gitOutput(
+		t,
+		base,
+		"init",
+		"--separate-git-dir",
+		separateGitDir,
+		worktreePath,
+	)
+	duplicateAdminDir := filepath.Join(
+		separateGitDir,
+		"worktrees",
+		"duplicate-main-claim",
+	)
+	require.NoError(t, os.MkdirAll(duplicateAdminDir, 0o700))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(duplicateAdminDir, "gitdir"),
+		[]byte(filepath.Join(worktreePath, ".git")+"\n"),
+		0o600,
+	))
+
+	_, err := New(worktreePath).WorktreeGeneration(worktreePath)
+
+	require.ErrorContains(t, err, "multiple Git directory claims")
 }
 
 func TestWorktreeGenerationRecoversFromRelativeAdministrativeGitDir(
@@ -1191,6 +1555,417 @@ func TestRemoveWorktreeRejectsChangedGeneration(t *testing.T) {
 
 	require.ErrorContains(t, err, "generation changed")
 	assert.DirExists(t, worktreePath)
+}
+
+func TestRemoveWorktreeCheckedRejectsDirtyWorktree(t *testing.T) {
+	repo, g, worktreePath, conditions := checkedRemovalFixture(t, "dirty")
+	lock := lockWorktreeMutationsForTest(t, repo.Path)
+	result := make(chan error, 1)
+	go func() {
+		result <- g.RemoveWorktreeChecked(worktreePath, false, conditions)
+	}()
+	assertRemovalWaitsForLock(t, result)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(worktreePath, "untracked.txt"),
+		[]byte("dirty\n"),
+		0o644,
+	))
+	require.NoError(t, lock.Unlock())
+
+	err := receiveRemovalResult(t, result)
+	var conditionErr *ConditionError
+	require.ErrorAs(t, err, &conditionErr)
+	assert.Equal(t, ReasonDirty, conditionErr.Reason)
+	assert.DirExists(t, worktreePath)
+}
+
+func TestRemoveWorktreeCheckedRejectsIgnoredUntrackedFileWhenRequested(t *testing.T) {
+	repo, g, worktreePath, conditions := checkedRemovalFixture(t, "ignored")
+	conditions.IncludeIgnored = true
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repo.Path, ".git", "info", "exclude"),
+		[]byte("valuable.local\n"),
+		0o644,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(worktreePath, "valuable.local"),
+		[]byte("keep me\n"),
+		0o644,
+	))
+
+	err := g.RemoveWorktreeChecked(worktreePath, false, conditions)
+
+	var conditionErr *ConditionError
+	require.ErrorAs(t, err, &conditionErr)
+	assert.Equal(t, ReasonDirty, conditionErr.Reason)
+	assert.DirExists(t, worktreePath)
+}
+
+func TestRemoveWorktreeCheckedRejectsChangedHead(t *testing.T) {
+	repo, g, worktreePath, conditions := checkedRemovalFixture(t, "head")
+	lock := lockWorktreeMutationsForTest(t, repo.Path)
+	result := make(chan error, 1)
+	go func() {
+		result <- g.RemoveWorktreeChecked(worktreePath, false, conditions)
+	}()
+	assertRemovalWaitsForLock(t, result)
+	commitTestFile(t, worktreePath, "advanced.txt", "advanced\n", "advance head")
+	require.NoError(t, lock.Unlock())
+
+	err := receiveRemovalResult(t, result)
+	var conditionErr *ConditionError
+	require.ErrorAs(t, err, &conditionErr)
+	assert.Equal(t, ReasonHeadChanged, conditionErr.Reason)
+	assert.DirExists(t, worktreePath)
+}
+
+func TestRemoveWorktreeCheckedRejectsRepositoryIdentityChange(t *testing.T) {
+	_, g, worktreePath, conditions := checkedRemovalFixture(t, "identity")
+	gitOutput(
+		t,
+		worktreePath,
+		"remote",
+		"set-url",
+		"origin",
+		"https://github.com/other/widget.git",
+	)
+
+	err := g.RemoveWorktreeChecked(worktreePath, false, conditions)
+
+	var conditionErr *ConditionError
+	require.ErrorAs(t, err, &conditionErr)
+	assert.Equal(t, ReasonRepositoryChanged, conditionErr.Reason)
+	assert.DirExists(t, worktreePath)
+}
+
+func TestRemoveWorktreeCheckedRejectsChangedBacklink(t *testing.T) {
+	repo, g, worktreePath, conditions := checkedRemovalFixture(t, "backlink")
+	expectedGitDir, err := g.worktreeGitDir(worktreePath)
+	require.NoError(t, err)
+	conditions.ExpectedGitDir = expectedGitDir
+	repo.CreateBranch(t, "backlink-sibling")
+	siblingPath := filepath.Join(t.TempDir(), "backlink-sibling")
+	repo.CreateWorktree(t, siblingPath, "backlink-sibling")
+	siblingGitDir, err := g.worktreeGitDir(siblingPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(worktreePath, ".git"),
+		[]byte("gitdir: "+siblingGitDir+"\n"),
+		0o644,
+	))
+
+	err = g.RemoveWorktreeChecked(worktreePath, false, conditions)
+
+	var conditionErr *ConditionError
+	require.ErrorAs(t, err, &conditionErr)
+	assert.Equal(t, ReasonBacklinkChanged, conditionErr.Reason)
+	assert.DirExists(t, worktreePath)
+}
+
+func TestRemoveWorktreeCheckedRejectsChangedBranchAndUpstream(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		wantReason ConditionReason
+		mutate     func(*testing.T, *TestRepository, string, string)
+	}{
+		{
+			name:       "local branch",
+			wantReason: ReasonBranchChanged,
+			mutate: func(t *testing.T, _ *TestRepository, path, _ string) {
+				gitOutput(t, path, "checkout", "-b", "replacement-branch")
+			},
+		},
+		{
+			name:       "upstream repository",
+			wantReason: ReasonUpstreamRepositoryChanged,
+			mutate: func(t *testing.T, _ *TestRepository, path, _ string) {
+				gitOutput(t, path, "remote", "set-url", "source", "https://github.com/hubot/widget.git")
+			},
+		},
+		{
+			name:       "upstream branch",
+			wantReason: ReasonUpstreamBranchChanged,
+			mutate: func(t *testing.T, _ *TestRepository, path, branch string) {
+				gitOutput(t, path, "config", "branch."+branch+".merge", "refs/heads/replacement-topic")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, g, worktreePath, conditions := checkedRemovalFixture(t, "upstream-"+strings.ReplaceAll(tc.name, " ", "-"))
+			branch := "checked-upstream-" + strings.ReplaceAll(tc.name, " ", "-")
+			gitOutput(t, repo.Path, "remote", "add", "source", "https://github.com/octocat/widget.git")
+			gitOutput(t, worktreePath, "config", "branch."+branch+".remote", "source")
+			gitOutput(t, worktreePath, "config", "branch."+branch+".merge", "refs/heads/topic")
+			conditions.Branch = branch
+			conditions.UpstreamRepository = "github.com/octocat/widget"
+			conditions.UpstreamBranch = "topic"
+			tc.mutate(t, repo, worktreePath, branch)
+
+			err := g.RemoveWorktreeChecked(worktreePath, false, conditions)
+
+			var conditionErr *ConditionError
+			require.ErrorAs(t, err, &conditionErr)
+			assert.Equal(t, tc.wantReason, conditionErr.Reason)
+			assert.DirExists(t, worktreePath)
+		})
+	}
+}
+
+func TestRemoveWorktreeCheckedRejectsChangedGeneration(t *testing.T) {
+	_, g, worktreePath, conditions := checkedRemovalFixture(t, "generation")
+	conditions.Generation = strings.Repeat("a", 32)
+
+	err := g.RemoveWorktreeChecked(worktreePath, false, conditions)
+
+	var conditionErr *ConditionError
+	require.ErrorAs(t, err, &conditionErr)
+	assert.Equal(t, ReasonGenerationChanged, conditionErr.Reason)
+	assert.DirExists(t, worktreePath)
+}
+
+func checkedRemovalFixture(
+	t *testing.T,
+	suffix string,
+) (*TestRepository, *Git, string, WorktreeRemovalConditions) {
+	t.Helper()
+	repo := NewTestRepository(t)
+	gitOutput(
+		t,
+		repo.Path,
+		"remote",
+		"add",
+		"origin",
+		"https://github.com/acme/widget.git",
+	)
+	branch := "checked-" + suffix
+	repo.CreateBranch(t, branch)
+	worktreePath := filepath.Join(t.TempDir(), branch)
+	repo.CreateWorktree(t, worktreePath, branch)
+	g := New(repo.Path)
+	worktrees, err := g.ListWorktrees()
+	require.NoError(t, err)
+	var generation string
+	for _, worktree := range worktrees {
+		if comparableWorktreePath(worktree.Path) == comparableWorktreePath(worktreePath) {
+			generation = worktree.Generation
+			break
+		}
+	}
+	require.NotEmpty(t, generation)
+	expectedGitDir, err := g.worktreeGitDir(worktreePath)
+	require.NoError(t, err)
+	return repo, g, worktreePath, WorktreeRemovalConditions{
+		ExpectedGitDir:     expectedGitDir,
+		Generation:         generation,
+		Head:               gitOutput(t, worktreePath, "rev-parse", "HEAD"),
+		RepositoryIdentity: "github.com/acme/widget",
+		RequireClean:       true,
+	}
+}
+
+func lockWorktreeMutationsForTest(t *testing.T, repositoryPath string) *flock.Flock {
+	t.Helper()
+	lock := flock.New(
+		filepath.Join(repositoryPath, ".git", worktreeMutationLockName),
+		flock.SetPermissions(0o600),
+	)
+	require.NoError(t, lock.Lock())
+	t.Cleanup(func() { _, _ = lock.TryLock(); _ = lock.Unlock() })
+	return lock
+}
+
+func assertRemovalWaitsForLock(t *testing.T, result <-chan error) {
+	t.Helper()
+	select {
+	case err := <-result:
+		t.Fatalf("checked removal completed while mutation lock was held: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func receiveRemovalResult(t *testing.T, result <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-result:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("checked removal did not resume after mutation lock release")
+		return nil
+	}
+}
+
+func TestMaintainWorktreesRepairsBeforeImmediatePrune(t *testing.T) {
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "live-linked")
+	livePath := filepath.Join(t.TempDir(), "live-linked")
+	repo.CreateWorktree(t, livePath, "live-linked")
+	repo.CreateBranch(t, "missing-linked")
+	missingPath := filepath.Join(t.TempDir(), "missing-linked")
+	repo.CreateWorktree(t, missingPath, "missing-linked")
+	require.NoError(t, os.RemoveAll(missingPath))
+	movedPath := filepath.Join(t.TempDir(), "moved-main")
+	require.NoError(t, os.Rename(repo.Path, movedPath))
+	g := New(movedPath)
+	before, err := g.InspectWorktrees()
+	require.NoError(t, err)
+	require.Len(t, before, 3)
+	expected := make([]WorktreeStructuralCondition, 0, len(before))
+	for _, inspection := range before {
+		expected = append(expected, WorktreeStructuralCondition{
+			Path:         inspection.Path,
+			GitDir:       inspection.GitDir,
+			DotGitTarget: inspection.DotGitTarget,
+			Generation:   inspection.Generation,
+			Exists:       inspection.Exists,
+		})
+	}
+
+	after, err := g.MaintainWorktrees(WorktreeMaintenanceRequest{
+		Expected:        expected,
+		RepairBacklinks: true,
+		PruneMissing:    true,
+	})
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, gitOutput(t, livePath, "status", "--short", "--branch"))
+	for _, inspection := range after {
+		assert.NotEqual(
+			t,
+			comparableWorktreePath(missingPath),
+			comparableWorktreePath(inspection.Path),
+		)
+	}
+}
+
+func TestMaintainWorktreesRepairsOnlyExpectedBacklinks(t *testing.T) {
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "expected-repair")
+	expectedPath := filepath.Join(t.TempDir(), "expected-repair")
+	repo.CreateWorktree(t, expectedPath, "expected-repair")
+	repo.CreateBranch(t, "manual-repair")
+	manualPath := filepath.Join(t.TempDir(), "manual-repair")
+	repo.CreateWorktree(t, manualPath, "manual-repair")
+	movedPath := filepath.Join(t.TempDir(), "moved-main")
+	require.NoError(t, os.Rename(repo.Path, movedPath))
+	g := New(movedPath)
+	before, err := g.InspectWorktrees()
+	require.NoError(t, err)
+	expectedInspection := requireWorktreeInspection(t, before, expectedPath)
+	manualInspection := requireWorktreeInspection(t, before, manualPath)
+	require.NotEqual(t, expectedInspection.GitDir, expectedInspection.DotGitTarget)
+	require.NotEqual(t, manualInspection.GitDir, manualInspection.DotGitTarget)
+
+	_, err = g.MaintainWorktrees(WorktreeMaintenanceRequest{
+		Expected: []WorktreeStructuralCondition{{
+			Path:         expectedInspection.Path,
+			GitDir:       expectedInspection.GitDir,
+			DotGitTarget: expectedInspection.DotGitTarget,
+			Generation:   expectedInspection.Generation,
+			Exists:       expectedInspection.Exists,
+		}},
+		RepairBacklinks: true,
+	})
+
+	require.ErrorContains(t, err, "unexpected repairable worktree")
+	after, inspectErr := g.InspectWorktrees()
+	require.NoError(t, inspectErr)
+	repaired := requireWorktreeInspection(t, after, expectedPath)
+	manual := requireWorktreeInspection(t, after, manualPath)
+	assert.Equal(t, expectedInspection.DotGitTarget, repaired.DotGitTarget)
+	assert.Equal(t, manualInspection.DotGitTarget, manual.DotGitTarget)
+}
+
+func TestMaintainWorktreesRejectsPruneWhenAnyPrunableRecordIsUnexpected(t *testing.T) {
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "expected-missing")
+	expectedPath := filepath.Join(t.TempDir(), "expected-missing")
+	repo.CreateWorktree(t, expectedPath, "expected-missing")
+	repo.CreateBranch(t, "unexpected-missing")
+	unexpectedPath := filepath.Join(t.TempDir(), "unexpected-missing")
+	repo.CreateWorktree(t, unexpectedPath, "unexpected-missing")
+	require.NoError(t, os.RemoveAll(expectedPath))
+	require.NoError(t, os.RemoveAll(unexpectedPath))
+	g := New(repo.Path)
+	before, err := g.InspectWorktrees()
+	require.NoError(t, err)
+	expectedInspection := requireWorktreeInspection(t, before, expectedPath)
+	require.True(t, expectedInspection.Prunable)
+	require.True(t, requireWorktreeInspection(t, before, unexpectedPath).Prunable)
+
+	_, err = g.MaintainWorktrees(WorktreeMaintenanceRequest{
+		Expected: []WorktreeStructuralCondition{{
+			Path:         expectedInspection.Path,
+			GitDir:       expectedInspection.GitDir,
+			DotGitTarget: expectedInspection.DotGitTarget,
+			Generation:   expectedInspection.Generation,
+			Exists:       expectedInspection.Exists,
+		}},
+		PruneMissing: true,
+	})
+
+	require.ErrorContains(t, err, "unexpected prunable worktree")
+	after, inspectErr := g.InspectWorktrees()
+	require.NoError(t, inspectErr)
+	requireWorktreeInspection(t, after, expectedPath)
+	requireWorktreeInspection(t, after, unexpectedPath)
+}
+
+func TestValidatePruneScopeRejectsChangedExpectedRecord(t *testing.T) {
+	expected := WorktreeStructuralCondition{
+		Path: "/worktrees/missing", GitDir: "/repo/.git/worktrees/missing",
+		Generation: "0123456789abcdef0123456789abcdef", Exists: false,
+	}
+	tests := []struct {
+		name   string
+		change func(*WorktreeInspection)
+	}{
+		{
+			name: "git directory changed",
+			change: func(inspection *WorktreeInspection) {
+				inspection.GitDir = "/repo/.git/worktrees/replacement"
+			},
+		},
+		{
+			name: "generation changed",
+			change: func(inspection *WorktreeInspection) {
+				inspection.Generation = "fedcba9876543210fedcba9876543210"
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inspection := WorktreeInspection{
+				Path: expected.Path, GitDir: expected.GitDir,
+				Generation: expected.Generation, Exists: false, Prunable: true,
+			}
+			tt.change(&inspection)
+
+			err := validatePruneScope(
+				[]WorktreeInspection{inspection},
+				[]WorktreeStructuralCondition{expected},
+			)
+
+			require.ErrorContains(t, err, "structural state changed")
+		})
+	}
+}
+
+func TestMaintainWorktreesRejectsActiveCreationReservation(t *testing.T) {
+	repo := NewTestRepository(t)
+	g := New(repo.Path)
+	reservation, err := g.reserveWorktreeCreation(
+		filepath.Join(t.TempDir(), "creating-worktree"),
+		nil,
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reservation.release()) })
+
+	_, err = g.MaintainWorktrees(WorktreeMaintenanceRequest{
+		RepairBacklinks: true,
+		PruneMissing:    true,
+	})
+
+	require.ErrorContains(t, err, "worktree creation in progress")
 }
 
 func TestRemoveWorktreeCleansDirectoryAfterGitDeregistersWorktree(t *testing.T) {
@@ -2350,6 +3125,66 @@ func TestGetMainRepositoryPath(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetMainRepositoryPathResolvesSeparateGitDirectoryMain(t *testing.T) {
+	mainPath, _ := newSeparateGitDirectoryRepository(t)
+
+	got, err := New(mainPath).GetMainRepositoryPath()
+
+	require.NoError(t, err)
+	assert.Equal(t, utils.PathKey(mainPath), utils.PathKey(got))
+}
+
+func TestGetMainRepositoryPathRejectsUnresolvedSeparateGitDirectoryLinkedWorktree(
+	t *testing.T,
+) {
+	_, linkedPath := newSeparateGitDirectoryRepository(t)
+
+	_, err := New(linkedPath).GetMainRepositoryPath()
+
+	require.ErrorContains(t, err, "main worktree path")
+}
+
+func TestGetMainRepositoryPathUsesCoreWorktreeForSeparateGitDirectoryLinkedWorktree(
+	t *testing.T,
+) {
+	mainPath, linkedPath := newSeparateGitDirectoryRepository(t)
+	_, err := New(mainPath).RunCommand("config", "core.worktree", mainPath)
+	require.NoError(t, err)
+
+	got, err := New(linkedPath).GetMainRepositoryPath()
+
+	require.NoError(t, err)
+	assert.Equal(t, utils.PathKey(mainPath), utils.PathKey(got))
+}
+
+func TestGetMainRepositoryPathRejectsUnrelatedCoreWorktree(t *testing.T) {
+	mainPath, linkedPath := newSeparateGitDirectoryRepository(t)
+	unrelatedPath := t.TempDir()
+	_, err := New(mainPath).RunCommand(
+		"config",
+		"core.worktree",
+		unrelatedPath,
+	)
+	require.NoError(t, err)
+
+	_, err = New(linkedPath).GetMainRepositoryPath()
+
+	require.ErrorContains(t, err, "configured core.worktree")
+}
+
+func TestInspectWorktreesNormalizesSeparateGitDirectoryMain(t *testing.T) {
+	mainPath, linkedPath := newSeparateGitDirectoryRepository(t)
+
+	inspections, err := New(mainPath).InspectWorktrees()
+
+	require.NoError(t, err)
+	require.Len(t, inspections, 2)
+	mainInspection := requireWorktreeInspection(t, inspections, mainPath)
+	linkedInspection := requireWorktreeInspection(t, inspections, linkedPath)
+	assert.True(t, mainInspection.IsMain)
+	assert.False(t, linkedInspection.IsMain)
 }
 
 func TestListWorktrees_IsMainFromWorktree(t *testing.T) {

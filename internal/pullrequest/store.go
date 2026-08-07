@@ -59,6 +59,24 @@ func (s *FileStore) Update(ctx context.Context, fn func(map[string]Provenance) e
 	})
 }
 
+// RemoveIfMatch deletes key only when its complete persisted value still
+// matches the caller's observed provenance.
+func (s *FileStore) RemoveIfMatch(
+	ctx context.Context, key string, expected Provenance,
+) (bool, error) {
+	removed := false
+	err := s.Update(ctx, func(records map[string]Provenance) error {
+		current, ok := records[key]
+		if !ok || !reflect.DeepEqual(current, expected) {
+			return nil
+		}
+		delete(records, key)
+		removed = true
+		return nil
+	})
+	return removed, err
+}
+
 func (s *FileStore) withLock(ctx context.Context, write bool, fn func() error) error {
 	if s == nil || s.path == "" {
 		return fmt.Errorf("pull-request provenance path is empty")

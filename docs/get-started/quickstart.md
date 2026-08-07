@@ -2,8 +2,9 @@
 
 ## Before you start
 
-[Install kwt](install.md), then make sure `kwt`, Git, and tmux are available in
-your terminal. You do not need to edit configuration before the first run.
+[Install kwt](install.md), then make sure `kwt`, Git 2.31 or newer, and tmux are
+available in your terminal. You do not need to edit configuration before the
+first run.
 
 ## Open the dashboard
 
@@ -113,11 +114,23 @@ kwt pr list --project github.com/acme/widget --json
 ```sh
 kwt remove feature/new-ui
 kwt remove -b feature/new-ui
-kwt prune
+kwt doctor
+kwt doctor --fix
+kwt prune --merged --dry-run
+kwt prune --merged
 ```
 
-`remove -b` removes both the worktree and the matching branch. `prune` cleans up
-stale Git worktree metadata.
+`remove -b` removes both the worktree and the matching branch. `doctor` is a
+read-only consistency check; `doctor --fix` repairs uniquely owned backlinks
+and stale metadata, then prints completed repairs before any issues that
+remain. Add `--quiet` when a script needs only the exit status. Merged pruning
+removes only clean linked worktrees with a
+valid kwt generation and one exact GitHub pull request that has an explicit
+merged timestamp. It preserves the local branch.
+
+Bare `kwt prune` no longer mutates metadata. Use `kwt doctor --fix` for
+structural cleanup, `kwt prune --expired` for live expiration policy, and
+`kwt prune --merged` for merged-pull-request policy.
 
 Next, see [Agent workspaces](../workflows/agent-workspaces.md) to configure tmux
 layouts or the [CLI reference](../reference/cli.md) for the complete command

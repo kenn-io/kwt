@@ -92,3 +92,73 @@ func TestFileStoreDoesNotRewriteUnchangedState(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, before.ModTime(), after.ModTime())
 }
+
+func TestFileStoreRemoveIfMatchDeletesObservedRecord(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pull-requests.json")
+	store := NewFileStore(path)
+	record := Provenance{PullRequestID: "pr-17", Number: 17, HeadSHA: "head-17"}
+	require.NoError(t, store.Update(context.Background(), func(records map[string]Provenance) error {
+		records[record.PullRequestID] = record
+		return nil
+	}))
+
+	removed, err := store.RemoveIfMatch(context.Background(), record.PullRequestID, record)
+
+	require.NoError(t, err)
+	assert.True(t, removed)
+	require.NoError(t, store.View(context.Background(), func(records map[string]Provenance) error {
+		_, exists := records[record.PullRequestID]
+		assert.False(t, exists)
+		return nil
+	}))
+}
+
+func TestFileStoreRemoveIfMatchPreservesReplacement(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pull-requests.json")
+	store := NewFileStore(path)
+	observed := Provenance{PullRequestID: "pr-17", Number: 17, HeadSHA: "old-head"}
+	replacement := observed
+	replacement.HeadSHA = "replacement-head"
+	require.NoError(t, store.Update(context.Background(), func(records map[string]Provenance) error {
+		records[observed.PullRequestID] = replacement
+		return nil
+	}))
+
+	removed, err := store.RemoveIfMatch(context.Background(), observed.PullRequestID, observed)
+
+	require.NoError(t, err)
+	assert.False(t, removed)
+	require.NoError(t, store.View(context.Background(), func(records map[string]Provenance) error {
+		assert.Equal(t, replacement, records[observed.PullRequestID])
+		return nil
+	}))
+}
+
+func TestFileStoreRemoveIfMatchPreservesReimportedWorkspaceGeneration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pull-requests.json")
+	store := NewFileStore(path)
+	observed := Provenance{
+		PullRequestID: "pr-17", Number: 17, HeadSHA: "same-head",
+		Workspace: Workspace{
+			Path: "/worktrees/pr-17", Branch: "pr-17",
+			Generation: "0123456789abcdef0123456789abcdef",
+		},
+	}
+	replacement := observed
+	replacement.Workspace.Generation = "fedcba9876543210fedcba9876543210"
+	require.NoError(t, store.Update(context.Background(), func(records map[string]Provenance) error {
+		records[observed.PullRequestID] = replacement
+		return nil
+	}))
+
+	removed, err := store.RemoveIfMatch(
+		context.Background(), observed.PullRequestID, observed,
+	)
+
+	require.NoError(t, err)
+	assert.False(t, removed)
+	require.NoError(t, store.View(context.Background(), func(records map[string]Provenance) error {
+		assert.Equal(t, replacement, records[observed.PullRequestID])
+		return nil
+	}))
+}

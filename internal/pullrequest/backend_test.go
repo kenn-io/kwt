@@ -127,6 +127,7 @@ func TestGitBackendDelegatesPullRequestLifecycleToKit(t *testing.T) {
 	assert.Contains(t, filepath.ToSlash(got.Path), "github.com/acme/widget/pr-17-feature-widgets")
 	assert.Equal(t, got.Path, workspace.Path)
 	assert.Equal(t, "pr-17-feature-widgets", workspace.Branch)
+	assert.NoError(t, gitadapter.ValidateWorktreeGeneration(workspace.Generation))
 	assert.NotEmpty(t, workspace.ID)
 	assert.NotEmpty(t, workspace.SessionName)
 }

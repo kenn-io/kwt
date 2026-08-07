@@ -3528,12 +3528,14 @@ func TestTUIBackendAttachAcknowledgesRemoteSourceBeforeWorkspaceLaunch(t *testin
 func TestTUIBackendRefusesProtectedPullRequestWorkspace(t *testing.T) {
 	t.Setenv("KWT_HOME", t.TempDir())
 	workspacePath := t.TempDir()
+	liveGeneration := "0123456789abcdef0123456789abcdef"
+	stubPRWorkspaceGeneration(t, workspacePath, liveGeneration)
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
 		context.Background(),
 		func(records map[string]pullrequest.Provenance) error {
-			records["pr-32"] = pullrequest.Provenance{
-				Workspace: pullrequest.Workspace{Path: workspacePath},
-			}
+			records["pr-32"] = pullrequest.Provenance{Workspace: pullrequest.Workspace{
+				Path: workspacePath, Generation: liveGeneration,
+			}}
 			return nil
 		},
 	))

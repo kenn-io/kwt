@@ -1,8 +1,8 @@
 # Install kwt
 
-kwt supports macOS, Linux, and Windows. Git is required. tmux is required for
-workspace launch and the `kwt tmux` commands, but the worktree-oriented CLI can
-still be used without it.
+kwt supports macOS, Linux, and Windows. Git 2.31 or newer is required. tmux is
+required for workspace launch and the `kwt tmux` commands, but the
+worktree-oriented CLI can still be used without it.
 
 ## Install with Go
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/google/go-github/v89/github"
 )
@@ -113,6 +114,86 @@ func (p *GitHubProvider) List(ctx context.Context, repository Repository, state 
 	return result, nil
 }
 
+func (p *GitHubProvider) ListForCommit(
+	ctx context.Context, repository Repository, sha string,
+) ([]PullRequest, error) {
+	if p == nil || p.client == nil {
+		return nil, NewError(CodeNetwork, "GitHub client is not configured", false, nil)
+	}
+	options := &github.ListOptions{PerPage: 100}
+	var result []PullRequest
+	for {
+		prs, response, err := p.client.PullRequests.ListPullRequestsWithCommit(
+			ctx, repository.Owner, repository.Name, sha, options,
+		)
+		if err != nil {
+			return nil, classifyGitHubError(err, "list pull requests for commit")
+		}
+		result, err = appendGitHubPullRequests(result, prs, repository)
+		if err != nil {
+			return nil, err
+		}
+		if response == nil || response.NextPage == 0 {
+			break
+		}
+		options.Page = response.NextPage
+	}
+	return result, nil
+}
+
+func (p *GitHubProvider) ListByHead(
+	ctx context.Context, repository Repository, sourceOwner, branch string,
+) ([]PullRequest, error) {
+	if p == nil || p.client == nil {
+		return nil, NewError(CodeNetwork, "GitHub client is not configured", false, nil)
+	}
+	options := &github.PullRequestListOptions{
+		State: "closed",
+		Head:  sourceOwner + ":" + branch,
+		ListOptions: github.ListOptions{
+			PerPage: 100,
+		},
+	}
+	var result []PullRequest
+	for {
+		prs, response, err := p.client.PullRequests.List(
+			ctx, repository.Owner, repository.Name, options,
+		)
+		if err != nil {
+			return nil, classifyGitHubError(err, "list pull requests by head")
+		}
+		result, err = appendGitHubPullRequests(result, prs, repository)
+		if err != nil {
+			return nil, err
+		}
+		if response == nil || response.NextPage == 0 {
+			break
+		}
+		options.Page = response.NextPage
+	}
+	return result, nil
+}
+
+func appendGitHubPullRequests(
+	result []PullRequest, values []*github.PullRequest, repository Repository,
+) ([]PullRequest, error) {
+	for _, value := range values {
+		pr, err := mapGitHubPullRequest(value)
+		if err != nil {
+			var typed *Error
+			if errors.As(err, &typed) && typed.Code == CodeInaccessibleHead {
+				continue
+			}
+			return nil, err
+		}
+		if err := validateGitHubPullRequest(pr, repository, 0); err != nil {
+			return nil, err
+		}
+		result = append(result, pr)
+	}
+	return result, nil
+}
+
 func (p *GitHubProvider) Get(ctx context.Context, repository Repository, number int) (PullRequest, error) {
 	if p == nil || p.client == nil {
 		return PullRequest{}, NewError(CodeNetwork, "GitHub client is not configured", false, nil)
@@ -191,12 +272,17 @@ func mapGitHubPullRequest(value *github.PullRequest) (PullRequest, error) {
 		return PullRequest{}, NewError(CodeMalformedResponse,
 			"GitHub returned a pull request with incomplete branch information", false, nil)
 	}
+	var mergedAt *time.Time
+	if value.MergedAt != nil {
+		value := value.MergedAt.Time
+		mergedAt = &value
+	}
 	return PullRequest{
 		ID: OpaqueID(base.Identity, value.GetNumber()), Provider: "github", Repository: base,
 		Number: value.GetNumber(), URL: value.GetHTMLURL(), Title: value.GetTitle(),
 		Author: value.User.GetLogin(), Source: Branch{Name: value.Head.GetRef(), Repository: head},
 		Target: Branch{Name: value.Base.GetRef(), Repository: base}, Draft: value.GetDraft(),
-		State: value.GetState(), HeadSHA: value.Head.GetSHA(),
+		State: value.GetState(), HeadSHA: value.Head.GetSHA(), MergedAt: mergedAt,
 	}, nil
 }
 

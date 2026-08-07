@@ -10,6 +10,94 @@ import (
 	"go.kenn.io/kwt/pkg/models"
 )
 
+// BranchUpstream describes the configured source branch and its remote URL.
+type BranchUpstream struct {
+	Remote        string
+	Branch        string
+	RepositoryURL string
+}
+
+// BranchUpstream returns the exact configured upstream for a local branch.
+func (g *Git) BranchUpstream(branch string) (BranchUpstream, error) {
+	return g.branchUpstream(branch, nil)
+}
+
+// BranchUpstreamWithoutCredentials returns the configured upstream without
+// exposing the named credentials to Git configuration selected by a worktree.
+func (g *Git) BranchUpstreamWithoutCredentials(
+	branch string,
+	protectedNames []string,
+) (BranchUpstream, error) {
+	return g.branchUpstream(branch, protectedNames)
+}
+
+func (g *Git) branchUpstream(
+	branch string,
+	protectedNames []string,
+) (BranchUpstream, error) {
+	remote, err := g.runWithoutCredentials(
+		protectedNames,
+		"config", "--get", "branch."+branch+".remote",
+	)
+	if err != nil {
+		return BranchUpstream{}, fmt.Errorf(
+			"resolve branch %q upstream remote: %w",
+			branch,
+			err,
+		)
+	}
+	remote = strings.TrimSpace(remote)
+	if remote == "" {
+		return BranchUpstream{}, fmt.Errorf(
+			"resolve branch %q upstream remote: value is empty",
+			branch,
+		)
+	}
+	mergeRef, err := g.runWithoutCredentials(
+		protectedNames,
+		"config", "--get", "branch."+branch+".merge",
+	)
+	if err != nil {
+		return BranchUpstream{}, fmt.Errorf(
+			"resolve branch %q upstream merge ref: %w",
+			branch,
+			err,
+		)
+	}
+	mergeRef = strings.TrimSpace(mergeRef)
+	const headsPrefix = "refs/heads/"
+	if !strings.HasPrefix(mergeRef, headsPrefix) ||
+		strings.TrimPrefix(mergeRef, headsPrefix) == "" {
+		return BranchUpstream{}, fmt.Errorf(
+			"resolve branch %q upstream merge ref: expected refs/heads/ reference",
+			branch,
+		)
+	}
+	repositoryURL, err := g.runWithoutCredentials(
+		protectedNames,
+		"remote", "get-url", remote,
+	)
+	if err != nil {
+		return BranchUpstream{}, fmt.Errorf(
+			"resolve branch %q upstream remote URL: %w",
+			branch,
+			err,
+		)
+	}
+	repositoryURL = strings.TrimSpace(repositoryURL)
+	if repositoryURL == "" {
+		return BranchUpstream{}, fmt.Errorf(
+			"resolve branch %q upstream remote URL: value is empty",
+			branch,
+		)
+	}
+	return BranchUpstream{
+		Remote:        remote,
+		Branch:        strings.TrimPrefix(mergeRef, headsPrefix),
+		RepositoryURL: repositoryURL,
+	}, nil
+}
+
 // ListBranches returns a list of all branches.
 func (g *Git) ListBranches(includeRemote bool) ([]models.Branch, error) {
 	args := []string{

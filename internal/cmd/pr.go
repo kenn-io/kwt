@@ -41,7 +41,14 @@ var (
 	validatePRWorkspaceSessionConfig = defaultValidatePRWorkspaceSessionConfig
 	startPRWorkspaceSession          = defaultStartPRWorkspaceSession
 	attachPRWorkspaceSession         = defaultAttachPRWorkspaceSession
+	readPRWorkspaceGeneration        = func(path string) (string, error) {
+		return gitadapter.New(path).ReadWorktreeGeneration(path)
+	}
 )
+
+func provenanceGenerationMatches(recorded, live string) bool {
+	return recorded == "" || recorded == live
+}
 
 var prCmd = &cobra.Command{
 	Use:   "pr",
@@ -233,13 +240,13 @@ func importedWorkspaceProvenance(
 	workspacePath string,
 ) (pullrequest.Provenance, error) {
 	path := utils.CanonicalPath(workspacePath)
-	var matches []pullrequest.Provenance
+	var pathMatches []pullrequest.Provenance
 	err := pullrequest.NewFileStore(prStorePath()).View(
 		ctx,
 		func(records map[string]pullrequest.Provenance) error {
 			for _, record := range records {
 				if utils.CanonicalPath(record.Workspace.Path) == path {
-					matches = append(matches, record)
+					pathMatches = append(pathMatches, record)
 				}
 			}
 			return nil
@@ -252,6 +259,31 @@ func importedWorkspaceProvenance(
 			false,
 			err,
 		)
+	}
+	liveGeneration := ""
+	for _, record := range pathMatches {
+		if record.Workspace.Generation == "" {
+			continue
+		}
+		liveGeneration, err = readPRWorkspaceGeneration(workspacePath)
+		if err != nil {
+			return pullrequest.Provenance{}, pullrequest.NewError(
+				pullrequest.CodeWorkspaceCreation,
+				"failed to inspect live workspace generation",
+				false,
+				err,
+			)
+		}
+		break
+	}
+	matches := make([]pullrequest.Provenance, 0, len(pathMatches))
+	for _, record := range pathMatches {
+		if provenanceGenerationMatches(
+			record.Workspace.Generation,
+			liveGeneration,
+		) {
+			matches = append(matches, record)
+		}
 	}
 	if len(matches) != 1 {
 		return pullrequest.Provenance{}, pullrequest.NewError(
@@ -291,14 +323,16 @@ func rejectProtectedWorkspaceOpen(
 	workspacePath string,
 ) error {
 	path := utils.CanonicalPath(workspacePath)
-	protected := false
+	var recordedGenerations []string
 	err := pullrequest.NewFileStore(prStorePath()).View(
 		ctx,
 		func(records map[string]pullrequest.Provenance) error {
 			for _, record := range records {
 				if utils.CanonicalPath(record.Workspace.Path) == path {
-					protected = true
-					break
+					recordedGenerations = append(
+						recordedGenerations,
+						record.Workspace.Generation,
+					)
 				}
 			}
 			return nil
@@ -310,7 +344,26 @@ func rejectProtectedWorkspaceOpen(
 			err,
 		)
 	}
-	if protected {
+	if len(recordedGenerations) == 0 {
+		return nil
+	}
+	liveGeneration, err := readPRWorkspaceGeneration(workspacePath)
+	if err != nil {
+		return fmt.Errorf(
+			"failed to verify live generation for pull-request workspace: %w",
+			err,
+		)
+	}
+	if err := gitadapter.ValidateWorktreeGeneration(liveGeneration); err != nil {
+		return fmt.Errorf(
+			"failed to verify live generation for pull-request workspace: %w",
+			err,
+		)
+	}
+	for _, recordedGeneration := range recordedGenerations {
+		if !provenanceGenerationMatches(recordedGeneration, liveGeneration) {
+			continue
+		}
 		return fmt.Errorf(
 			"protected pull-request workspaces must be opened with kwt pr attach %s",
 			workspacePath,
@@ -413,6 +466,7 @@ func livePRWorkspaces(
 			Path:       candidate.Path,
 			Branch:     candidate.Branch,
 			Repository: project.Identity,
+			Generation: candidate.Generation,
 			SessionName: tmux.WorkspaceSessionName(
 				info,
 				candidate.Branch,
@@ -463,6 +517,10 @@ func containsPRWorkspace(
 		if utils.CanonicalPath(candidate.Path) ==
 			utils.CanonicalPath(recorded.Workspace.Path) &&
 			candidate.Branch == recorded.Workspace.Branch &&
+			provenanceGenerationMatches(
+				recorded.Workspace.Generation,
+				candidate.Generation,
+			) &&
 			prWorkspaceIdentityMatches(candidate, recorded) {
 			return true
 		}
@@ -846,7 +904,7 @@ func samePRPath(left, right string) bool {
 	leftAbs, leftErr := filepath.Abs(left)
 	rightAbs, rightErr := filepath.Abs(right)
 	if leftErr != nil || rightErr != nil {
-		return filepath.Clean(left) == filepath.Clean(right)
+		return utils.PathKey(left) == utils.PathKey(right)
 	}
 	if resolved, err := filepath.EvalSymlinks(leftAbs); err == nil {
 		leftAbs = resolved
@@ -854,7 +912,7 @@ func samePRPath(left, right string) bool {
 	if resolved, err := filepath.EvalSymlinks(rightAbs); err == nil {
 		rightAbs = resolved
 	}
-	return filepath.Clean(leftAbs) == filepath.Clean(rightAbs)
+	return utils.PathKey(leftAbs) == utils.PathKey(rightAbs)
 }
 
 func prStorePath() string {

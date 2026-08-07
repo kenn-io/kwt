@@ -3,16 +3,193 @@ package pullrequest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-github/v89/github"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGitHubProviderListsPullRequestsForCommit(t *testing.T) {
+	const headSHA = "0123456789abcdef0123456789abcdef01234567"
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/repos/acme/widget/commits/"+headSHA+"/pulls", r.URL.Path)
+		assert.Equal(t, "100", r.URL.Query().Get("per_page"))
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") == "2" {
+			_, _ = io.WriteString(w, "["+testGitHubPRJSON(18, headSHA, "")+"]")
+			return
+		}
+		w.Header().Set(
+			"Link",
+			fmt.Sprintf("<%s/repos/acme/widget/commits/%s/pulls?page=2>; rel=\"next\"", serverURL, headSHA),
+		)
+		_, _ = io.WriteString(w, "["+testGitHubPRJSON(17, headSHA, "2026-08-01T12:00:00Z")+"]")
+	}))
+	defer server.Close()
+	serverURL = server.URL
+	baseURL := server.URL + "/"
+	client, err := github.NewClient(github.WithURLs(&baseURL, nil))
+	require.NoError(t, err)
+	provider := NewGitHubProvider(client)
+
+	prs, err := provider.ListForCommit(context.Background(), testGitHubRepository(), headSHA)
+
+	require.NoError(t, err)
+	require.Len(t, prs, 2)
+	require.NotNil(t, prs[0].MergedAt)
+	assert.Equal(t, "2026-08-01T12:00:00Z", prs[0].MergedAt.UTC().Format(time.RFC3339))
+	assert.Nil(t, prs[1].MergedAt)
+}
+
+func TestGitHubProviderListsClosedPullRequestsByHead(t *testing.T) {
+	const headSHA = "0123456789abcdef0123456789abcdef01234567"
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/repos/acme/widget/pulls", r.URL.Path)
+		assert.Equal(t, "closed", r.URL.Query().Get("state"))
+		assert.Equal(t, "octocat:topic", r.URL.Query().Get("head"))
+		assert.Equal(t, "100", r.URL.Query().Get("per_page"))
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") == "2" {
+			_, _ = io.WriteString(w, "["+testGitHubPRJSON(18, headSHA, "")+"]")
+			return
+		}
+		w.Header().Set(
+			"Link",
+			fmt.Sprintf("<%s/repos/acme/widget/pulls?page=2>; rel=\"next\"", serverURL),
+		)
+		_, _ = io.WriteString(w, "["+testGitHubPRJSON(17, headSHA, "2026-08-01T12:00:00Z")+"]")
+	}))
+	defer server.Close()
+	serverURL = server.URL
+	baseURL := server.URL + "/"
+	client, err := github.NewClient(github.WithURLs(&baseURL, nil))
+	require.NoError(t, err)
+	provider := NewGitHubProvider(client)
+
+	prs, err := provider.ListByHead(
+		context.Background(),
+		testGitHubRepository(),
+		"octocat",
+		"topic",
+	)
+
+	require.NoError(t, err)
+	require.Len(t, prs, 2)
+	assert.Equal(t, 17, prs[0].Number)
+	assert.Equal(t, 18, prs[1].Number)
+}
+
+func TestGitHubProviderMapsMergedTimestamp(t *testing.T) {
+	mergedAt := github.Timestamp{Time: time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)}
+	value := testGitHubPullRequest(17)
+	value.MergedAt = &mergedAt
+
+	mapped, err := mapGitHubPullRequest(value)
+
+	require.NoError(t, err)
+	require.NotNil(t, mapped.MergedAt)
+	assert.Equal(t, mergedAt.Time, *mapped.MergedAt)
+	value.MergedAt = nil
+	mapped, err = mapGitHubPullRequest(value)
+	require.NoError(t, err)
+	assert.Nil(t, mapped.MergedAt)
+}
+
+func TestGitHubProviderEvidenceMethodsClassifyFailures(t *testing.T) {
+	const headSHA = "0123456789abcdef0123456789abcdef01234567"
+	for _, method := range []struct {
+		name string
+		call func(*GitHubProvider) error
+	}{
+		{name: "commit", call: func(provider *GitHubProvider) error {
+			_, err := provider.ListForCommit(context.Background(), testGitHubRepository(), headSHA)
+			return err
+		}},
+		{name: "head", call: func(provider *GitHubProvider) error {
+			_, err := provider.ListByHead(context.Background(), testGitHubRepository(), "octocat", "topic")
+			return err
+		}},
+	} {
+		for _, failure := range []struct {
+			name      string
+			status    int
+			body      string
+			headers   map[string]string
+			want      ErrorCode
+			retryable bool
+		}{
+			{name: "authentication", status: http.StatusUnauthorized, body: `{"message":"Bad credentials"}`, want: CodeAuthentication},
+			{name: "rate limit", status: http.StatusForbidden, body: `{"message":"API rate limit exceeded"}`, headers: map[string]string{"X-RateLimit-Remaining": "0"}, want: CodeNetwork, retryable: true},
+			{name: "malformed head", status: http.StatusOK, body: `[{"number":17,"head":{},"base":null}]`, want: CodeMalformedResponse},
+		} {
+			t.Run(method.name+"/"+failure.name, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					for key, value := range failure.headers {
+						w.Header().Set(key, value)
+					}
+					w.WriteHeader(failure.status)
+					_, _ = io.WriteString(w, failure.body)
+				}))
+				defer server.Close()
+				baseURL := server.URL + "/"
+				client, err := github.NewClient(github.WithURLs(&baseURL, nil))
+				require.NoError(t, err)
+
+				err = method.call(NewGitHubProvider(client))
+
+				var typed *Error
+				require.ErrorAs(t, err, &typed)
+				assert.Equal(t, failure.want, typed.Code)
+				assert.Equal(t, failure.retryable, typed.Retryable)
+			})
+		}
+	}
+}
+
+func testGitHubRepository() Repository {
+	return Repository{
+		Provider: "github", Identity: "github.com/acme/widget", Host: "github.com",
+		Owner: "acme", Name: "widget",
+	}
+}
+
+func testGitHubPRJSON(number int, headSHA string, mergedAt string) string {
+	mergedJSON := "null"
+	if mergedAt != "" {
+		mergedJSON = fmt.Sprintf("%q", mergedAt)
+	}
+	return fmt.Sprintf(`{"number":%d,"html_url":"https://github.com/acme/widget/pull/%d","title":"Topic",`+
+		`"user":{"login":"octocat"},"draft":false,"state":"closed","merged_at":%s,`+
+		`"head":{"ref":"topic","sha":"%s","repo":{"name":"widget","full_name":"octocat/widget","clone_url":"https://github.com/octocat/widget.git"}},`+
+		`"base":{"ref":"main","repo":{"name":"widget","full_name":"acme/widget","clone_url":"https://github.com/acme/widget.git"}}}`,
+		number, number, mergedJSON, headSHA)
+}
+
+func testGitHubPullRequest(number int) *github.PullRequest {
+	return &github.PullRequest{
+		Number: github.Ptr(number), HTMLURL: github.Ptr(fmt.Sprintf("https://github.com/acme/widget/pull/%d", number)),
+		Title: github.Ptr("Topic"), User: &github.User{Login: github.Ptr("octocat")},
+		State: github.Ptr("closed"),
+		Head: &github.PullRequestBranch{
+			Ref: github.Ptr("topic"), SHA: github.Ptr("0123456789abcdef0123456789abcdef01234567"),
+			Repo: &github.Repository{Name: github.Ptr("widget"), FullName: github.Ptr("octocat/widget"), CloneURL: github.Ptr("https://github.com/octocat/widget.git")},
+		},
+		Base: &github.PullRequestBranch{
+			Ref:  github.Ptr("main"),
+			Repo: &github.Repository{Name: github.Ptr("widget"), FullName: github.Ptr("acme/widget"), CloneURL: github.Ptr("https://github.com/acme/widget.git")},
+		},
+	}
+}
 
 func TestResolveGitHubTokenPrefersEnvironment(t *testing.T) {
 	called := false

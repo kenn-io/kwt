@@ -35,79 +35,21 @@ type worktreeCandidate struct {
 	isMain bool
 }
 
+var (
+	walkGlobalWorktreePaths = filepath.Walk
+	statGlobalWorktreeGit   = os.Stat
+	readGlobalWorktreeGit   = os.ReadFile
+)
+
 // DiscoverGlobalWorktrees finds all worktrees in the configured base
 // directory. projects carries the registered projects so repository identity
 // follows the single registered-identity precedence (a registered canonical
 // identity wins over a fork origin; see worktree.RepositoryInfoWithProjects);
 // pass nil when no registry is available.
 func DiscoverGlobalWorktrees(baseDir string, projects []models.Project) ([]*GlobalWorktreeEntry, error) {
-	if baseDir == "" {
-		return nil, fmt.Errorf("base directory not configured")
-	}
-
-	// Expand path (handles ~, env vars, and relative paths)
-	expandedPath, err := utils.ExpandPath(baseDir)
+	candidates, err := findGlobalWorktreeCandidates(baseDir, false)
 	if err != nil {
-		return nil, fmt.Errorf("failed to expand base directory path: %w", err)
-	}
-	baseDir = expandedPath
-
-	// Check if base directory exists
-	if _, err := os.Stat(baseDir); os.IsNotExist(err) {
-		return []*GlobalWorktreeEntry{}, nil
-	}
-
-	var candidates []worktreeCandidate
-
-	err = filepath.Walk(baseDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil // Skip errors and continue walking
-		}
-
-		if !info.IsDir() {
-			return nil
-		}
-
-		// Skip .git directories themselves
-		if info.Name() == ".git" {
-			return filepath.SkipDir
-		}
-
-		gitPath := filepath.Join(path, ".git")
-		gitInfo, err := os.Stat(gitPath)
-		if err != nil {
-			return nil // No .git entry, continue
-		}
-
-		if gitInfo.IsDir() {
-			// Main worktree (.git is a directory)
-			candidates = append(candidates, worktreeCandidate{path: path, isMain: true})
-			return filepath.SkipDir // Don't descend into the repo
-		}
-
-		// Linked worktree (.git is a file)
-		gitContent, err := os.ReadFile(gitPath)
-		if err != nil {
-			return nil
-		}
-
-		gitContentStr := strings.TrimSpace(string(gitContent))
-		if !strings.HasPrefix(gitContentStr, "gitdir: ") {
-			return nil
-		}
-
-		// Skip submodules — their gitdir points to .git/modules/...
-		gitDir := strings.TrimPrefix(gitContentStr, "gitdir: ")
-		if isSubmoduleGitDir(gitDir) {
-			return nil
-		}
-
-		candidates = append(candidates, worktreeCandidate{path: path})
-		return filepath.SkipDir
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to walk directory: %w", err)
+		return nil, err
 	}
 
 	snapshots, err := snapshotCandidateWorktrees(candidates)
@@ -125,6 +67,152 @@ func DiscoverGlobalWorktrees(baseDir string, projects []models.Project) ([]*Glob
 			return extractWorktreeInfoFromSnapshot(path, projects, snapshot)
 		},
 	), nil
+}
+
+// FindGlobalWorktreePaths returns filesystem worktree candidates without
+// snapshotting repositories or initializing durable generations.
+func FindGlobalWorktreePaths(baseDir string) ([]string, error) {
+	candidates, err := findGlobalWorktreeCandidates(baseDir, false)
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		paths = append(paths, candidate.path)
+	}
+	return paths, nil
+}
+
+// FindGlobalWorktreePathsStrict returns filesystem worktree candidates only
+// when the complete configured tree can be traversed and inspected.
+func FindGlobalWorktreePathsStrict(baseDir string) ([]string, error) {
+	candidates, err := findGlobalWorktreeCandidates(baseDir, true)
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		paths = append(paths, candidate.path)
+	}
+	return paths, nil
+}
+
+func findGlobalWorktreeCandidates(baseDir string, strict bool) ([]worktreeCandidate, error) {
+	if baseDir == "" {
+		return nil, fmt.Errorf("base directory not configured")
+	}
+
+	// Expand path (handles ~, env vars, and relative paths)
+	expandedPath, err := utils.ExpandPath(baseDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to expand base directory path: %w", err)
+	}
+	baseDir = expandedPath
+
+	// Inspect the link itself before resolving the root so strict discovery can
+	// distinguish a genuinely absent directory from a dangling configured
+	// symlink. Resolve a healthy symlink so Walk enters its target tree.
+	baseInfo, err := os.Lstat(baseDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []worktreeCandidate{}, nil
+		}
+		if strict {
+			return nil, fmt.Errorf("inspect base directory %s: %w", baseDir, err)
+		}
+	}
+	if err == nil && baseInfo.Mode()&os.ModeSymlink != 0 {
+		resolved, resolveErr := filepath.EvalSymlinks(baseDir)
+		if resolveErr != nil {
+			if strict {
+				return nil, fmt.Errorf("resolve base directory %s: %w", baseDir, resolveErr)
+			}
+		} else {
+			baseDir = resolved
+		}
+	}
+
+	var candidates []worktreeCandidate
+
+	err = walkGlobalWorktreePaths(baseDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			if strict {
+				return err
+			}
+			return nil // Skip errors and continue walking
+		}
+
+		if !info.IsDir() {
+			return nil
+		}
+
+		// Skip .git directories themselves
+		if info.Name() == ".git" {
+			return filepath.SkipDir
+		}
+
+		gitPath := filepath.Join(path, ".git")
+		gitInfo, err := statGlobalWorktreeGit(gitPath)
+		if err != nil {
+			if strict && os.IsNotExist(err) {
+				_, linkErr := os.Lstat(gitPath)
+				if linkErr == nil {
+					return fmt.Errorf("inspect worktree metadata %s: %w", gitPath, err)
+				}
+				if !os.IsNotExist(linkErr) {
+					return fmt.Errorf("inspect worktree metadata %s: %w", gitPath, linkErr)
+				}
+			}
+			if strict && !os.IsNotExist(err) {
+				return fmt.Errorf("inspect worktree metadata %s: %w", gitPath, err)
+			}
+			return nil // No .git entry, continue
+		}
+
+		if gitInfo.IsDir() {
+			// Main worktree (.git is a directory)
+			candidates = append(candidates, worktreeCandidate{path: path, isMain: true})
+			return filepath.SkipDir // Don't descend into the repo
+		}
+
+		// Linked worktree (.git is a file)
+		gitContent, err := readGlobalWorktreeGit(gitPath)
+		if err != nil {
+			if strict {
+				return fmt.Errorf("read linked worktree metadata %s: %w", gitPath, err)
+			}
+			return nil
+		}
+
+		gitContentStr := strings.TrimSpace(string(gitContent))
+		if !strings.HasPrefix(gitContentStr, "gitdir: ") {
+			if strict {
+				return fmt.Errorf("invalid linked worktree metadata %s", gitPath)
+			}
+			return nil
+		}
+
+		// Skip submodules — their gitdir points to .git/modules/...
+		gitDir := strings.TrimSpace(strings.TrimPrefix(gitContentStr, "gitdir: "))
+		if gitDir == "" || strings.ContainsAny(gitDir, "\r\n") {
+			if strict {
+				return fmt.Errorf("invalid linked worktree metadata %s", gitPath)
+			}
+			return nil
+		}
+		if isSubmoduleGitDir(gitDir) {
+			return nil
+		}
+
+		candidates = append(candidates, worktreeCandidate{path: path})
+		return filepath.SkipDir
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to walk directory: %w", err)
+	}
+
+	return candidates, nil
 }
 
 // DiscoverWorktree resolves one exact worktree root independently of the

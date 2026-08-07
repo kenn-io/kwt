@@ -249,8 +249,6 @@ func runAdd(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("failed to open registry: %w", err)
 			}
 
-			repoURL, _ := ctx.Git.GetRepositoryURL()
-
 			t := time.Now().Add(expiresDuration)
 			expiresAt = &t
 
@@ -259,7 +257,6 @@ func runAdd(cmd *cobra.Command, args []string) error {
 				reg,
 				worktreePath,
 				worktreeGeneration,
-				repoURL,
 				branch,
 				expiresAt,
 			); err != nil {
@@ -291,10 +288,11 @@ func registerWorktreeExpiration(
 	reg *registry.Registry,
 	worktreePath string,
 	generation string,
-	repository string,
 	branch string,
 	expiresAt *time.Time,
 ) error {
+	remote, _ := git.New(worktreePath).GetRepositoryURL()
+	repository, _ := url.CanonicalRepositoryIdentityFromRemote(remote)
 	return g.WithWorktreeGeneration(
 		worktreePath,
 		generation,

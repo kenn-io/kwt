@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -37,6 +39,20 @@ func defaultAgents() map[string]string {
 		"claude":  "claude",
 		"roborev": "roborev tui",
 	}
+}
+
+func applyGlobalDefaults(target *viper.Viper) {
+	target.SetDefault("cd.launch_shell", true)
+	target.SetDefault("worktree.basedir", "~/.kwt/worktrees")
+	target.SetDefault("worktree.auto_mkdir", true)
+	target.SetDefault("finder.preview", true)
+	target.SetDefault("ui.icons", true)
+	target.SetDefault("ui.tilde_home", true)
+	target.SetDefault("naming.template", DefaultNamingTemplate)
+	target.SetDefault("naming.sanitize_chars", map[string]string{
+		"/": "-",
+		":": "-",
+	})
 }
 
 // getConfigDir returns the configuration directory path.
@@ -244,23 +260,11 @@ func Init() error {
 	viper.SetConfigType(configType)
 	viper.AddConfigPath(configDir)
 
-	viper.SetDefault("cd.launch_shell", true)
-	viper.SetDefault("worktree.basedir", "~/.kwt/worktrees")
-	viper.SetDefault("worktree.auto_mkdir", true)
-	viper.SetDefault("finder.preview", true)
-	viper.SetDefault("ui.icons", true)
-	viper.SetDefault("ui.tilde_home", true)
-
-	// Naming defaults
-	viper.SetDefault("naming.template", DefaultNamingTemplate)
-	viper.SetDefault("naming.sanitize_chars", map[string]string{
-		"/": "-",
-		":": "-",
-	})
+	applyGlobalDefaults(viper.GetViper())
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			if err := writeDefaultConfig(configPath); err != nil {
+			if _, err := (globalConfigStore{path: configPath}).ensure(defaultConfigTOML()); err != nil {
 				return fmt.Errorf("failed to create config file: %w", err)
 			}
 			if err := viper.ReadInConfig(); err != nil {
@@ -285,59 +289,35 @@ func Init() error {
 }
 
 func backfillWorkspaceConfig(configPath string) (bool, error) {
-	globalViper := viper.New()
-	globalViper.SetConfigFile(configPath)
-	globalViper.SetConfigType(configType)
-	if err := globalViper.ReadInConfig(); err != nil {
-		return false, err
-	}
+	return (globalConfigStore{path: configPath}).mutate(
+		func(globalViper *viper.Viper) (bool, error) {
+			migrated := false
+			agents := globalViper.GetStringMapString("agents")
+			if agents == nil {
+				agents = make(map[string]string)
+			}
+			for name, command := range defaultAgents() {
+				if strings.TrimSpace(agents[name]) == "" {
+					agents[name] = command
+					migrated = true
+				}
+			}
+			if migrated {
+				globalViper.Set("agents", agents)
+			}
 
-	migrated := false
-	agents := globalViper.GetStringMapString("agents")
-	if agents == nil {
-		agents = make(map[string]string)
-	}
-	for name, command := range defaultAgents() {
-		if strings.TrimSpace(agents[name]) == "" {
-			agents[name] = command
-			migrated = true
-		}
-	}
-	if migrated {
-		globalViper.Set("agents", agents)
-	}
+			if strings.TrimSpace(globalViper.GetString("naming.template")) == legacyDefaultNamingTemplate {
+				globalViper.Set("naming.template", DefaultNamingTemplate)
+				migrated = true
+			}
 
-	if strings.TrimSpace(globalViper.GetString("naming.template")) == legacyDefaultNamingTemplate {
-		globalViper.Set("naming.template", DefaultNamingTemplate)
-		migrated = true
-	}
-
-	if !globalViper.IsSet("layouts.auto_launch_on_add") {
-		globalViper.Set("layouts.auto_launch_on_add", true)
-		migrated = true
-	}
-
-	if !migrated {
-		return false, nil
-	}
-	if err := globalViper.WriteConfigAs(configPath); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func writeDefaultConfig(configPath string) (err error) {
-	file, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if closeErr := file.Close(); err == nil {
-			err = closeErr
-		}
-	}()
-	_, err = file.WriteString(defaultConfigTOML())
-	return err
+			if !globalViper.IsSet("layouts.auto_launch_on_add") {
+				globalViper.Set("layouts.auto_launch_on_add", true)
+				migrated = true
+			}
+			return migrated, nil
+		},
+	)
 }
 
 func defaultConfigTOML() string {
@@ -688,6 +668,163 @@ func Load() (*models.Config, error) {
 	return &cfg, nil
 }
 
+// ProjectRegistration keeps the raw project value persisted in global TOML
+// alongside the independently expanded value used for filesystem inspection.
+type ProjectRegistration struct {
+	Persisted models.Project
+	Effective models.Project
+	raw       map[string]any
+}
+
+// SamePersistedEntry compares the complete raw project values used as CAS
+// tokens. Manually constructed registrations fall back to the known model.
+func (p ProjectRegistration) SamePersistedEntry(other ProjectRegistration) bool {
+	if p.raw == nil && other.raw == nil {
+		return p.Persisted == other.Persisted
+	}
+	return reflect.DeepEqual(p.raw, other.raw)
+}
+
+// GlobalSnapshot is a fresh global-only configuration view. Projects are
+// paired by their stable order in the single TOML snapshot.
+type GlobalSnapshot struct {
+	Config   *models.Config
+	Projects []ProjectRegistration
+}
+
+// LoadGlobalSnapshot re-reads global configuration without merging a
+// repository-local .kwt.toml file.
+func LoadGlobalSnapshot() (*GlobalSnapshot, error) {
+	configPath := filepath.Join(getConfigDir(), configName+"."+configType)
+	globalViper, err := readGlobalViper(configPath)
+	if err != nil {
+		return nil, err
+	}
+	applyGlobalDefaults(globalViper)
+
+	var persisted models.Config
+	if err := globalViper.Unmarshal(&persisted); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal global config: %w", err)
+	}
+	effective := persisted
+	effective.Projects = slices.Clone(persisted.Projects)
+	effective.Workspaces = slices.Clone(persisted.Workspaces)
+	effective.RepositorySettings = slices.Clone(persisted.RepositorySettings)
+	if err := expandConfigPaths(&effective); err != nil {
+		return nil, err
+	}
+
+	projects := make([]ProjectRegistration, len(persisted.Projects))
+	rawProjects, err := rawProjectEntries(globalViper)
+	if err != nil {
+		return nil, err
+	}
+	if len(rawProjects) != len(projects) {
+		return nil, fmt.Errorf(
+			"global project representations disagree: %d typed, %d raw",
+			len(projects), len(rawProjects),
+		)
+	}
+	for index := range persisted.Projects {
+		projects[index] = ProjectRegistration{
+			Persisted: persisted.Projects[index],
+			Effective: effective.Projects[index],
+			raw:       cloneStringMap(rawProjects[index]),
+		}
+	}
+	return &GlobalSnapshot{Config: &effective, Projects: projects}, nil
+}
+
+// CompareAndSwapProject replaces or removes exactly one raw persisted project
+// entry. Expanded path equality is intentionally not used as a concurrency
+// token because it would collapse distinct user edits and symlink spellings.
+func CompareAndSwapProject(
+	expected ProjectRegistration,
+	replacement *models.Project,
+) (bool, error) {
+	var copiedReplacement *models.Project
+	if replacement != nil {
+		copied := *replacement
+		copiedReplacement = &copied
+	}
+	var projects []map[string]any
+	configPath := filepath.Join(getConfigDir(), configName+"."+configType)
+	changed, err := (globalConfigStore{path: configPath}).mutate(
+		func(globalViper *viper.Viper) (bool, error) {
+			var err error
+			projects, err = rawProjectEntries(globalViper)
+			if err != nil {
+				return false, err
+			}
+			var persisted []models.Project
+			if err := globalViper.UnmarshalKey("projects", &persisted); err != nil {
+				return false, fmt.Errorf("failed to read projects: %w", err)
+			}
+			if len(persisted) != len(projects) {
+				return false, fmt.Errorf(
+					"global project representations disagree: %d typed, %d raw",
+					len(persisted),
+					len(projects),
+				)
+			}
+			match := -1
+			matches := 0
+			for index := range projects {
+				if reflect.DeepEqual(projects[index], expected.raw) {
+					match = index
+					matches++
+				}
+			}
+			if matches != 1 {
+				return false, nil
+			}
+			if copiedReplacement == nil {
+				projects = append(projects[:match], projects[match+1:]...)
+			} else {
+				for index := range persisted {
+					if index != match && sameProjectPath(
+						persisted[index].Path,
+						copiedReplacement.Path,
+					) {
+						return false, nil
+					}
+				}
+				updated := cloneStringMap(projects[match])
+				updated["repository"] = copiedReplacement.Repository
+				updated["name"] = copiedReplacement.Name
+				updated["path"] = copiedReplacement.Path
+				updated["last_touched"] = copiedReplacement.LastTouched
+				projects[match] = updated
+			}
+			globalViper.Set("projects", projects)
+			return true, nil
+		},
+	)
+	if err != nil {
+		return false, err
+	}
+	if changed {
+		viper.Set("projects", projects)
+	}
+	return changed, nil
+}
+
+func rawProjectEntries(source *viper.Viper) ([]map[string]any, error) {
+	var projects []map[string]any
+	if err := source.UnmarshalKey("projects", &projects); err != nil {
+		return nil, fmt.Errorf("failed to read raw projects: %w", err)
+	}
+	return projects, nil
+}
+
+func cloneStringMap(source map[string]any) map[string]any {
+	result := make(map[string]any, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
 // expandConfigPaths expands all path fields in the configuration.
 func expandConfigPaths(cfg *models.Config) error {
 	expandedPath, err := utils.ExpandPath(cfg.Worktree.BaseDir)
@@ -787,46 +924,54 @@ func RegisterProject(project models.Project) error {
 	}
 	project.LastTouched = time.Now().UTC().Format(time.RFC3339)
 
-	configDir := getConfigDir()
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		return fmt.Errorf("failed to create config directory: %w", err)
-	}
-
-	globalViper := viper.New()
-	globalViper.SetConfigName(configName)
-	globalViper.SetConfigType(configType)
-	globalViper.AddConfigPath(configDir)
-	if err := globalViper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return fmt.Errorf("failed to read config: %w", err)
-		}
-	}
-
-	var projects []models.Project
-	if err := globalViper.UnmarshalKey("projects", &projects); err != nil {
-		return fmt.Errorf("failed to read projects: %w", err)
-	}
-
-	updated := false
-	for i := range projects {
-		if sameProject(projects[i], project) {
-			projects[i] = project
-			updated = true
-			break
-		}
-	}
-	if !updated {
-		projects = append(projects, project)
-	}
-
-	globalViper.Set("projects", projects)
-	configPath := filepath.Join(configDir, configName+"."+configType)
-	if err := globalViper.WriteConfigAs(configPath); err != nil {
+	var projects []map[string]any
+	configPath := filepath.Join(getConfigDir(), configName+"."+configType)
+	if _, err := (globalConfigStore{path: configPath}).mutate(
+		func(globalViper *viper.Viper) (bool, error) {
+			var persisted []models.Project
+			if err := globalViper.UnmarshalKey("projects", &persisted); err != nil {
+				return false, fmt.Errorf("failed to read projects: %w", err)
+			}
+			var err error
+			projects, err = rawProjectEntries(globalViper)
+			if err != nil {
+				return false, err
+			}
+			if len(projects) != len(persisted) {
+				return false, fmt.Errorf(
+					"project representations disagree: %d typed, %d raw",
+					len(persisted), len(projects),
+				)
+			}
+			updated := false
+			for i := range persisted {
+				if sameProject(persisted[i], project) {
+					projects[i] = updateRawProject(projects[i], project)
+					updated = true
+					break
+				}
+			}
+			if !updated {
+				projects = append(projects, updateRawProject(nil, project))
+			}
+			globalViper.Set("projects", projects)
+			return true, nil
+		},
+	); err != nil {
 		return err
 	}
 
 	viper.Set("projects", projects)
 	return nil
+}
+
+func updateRawProject(raw map[string]any, project models.Project) map[string]any {
+	updated := cloneStringMap(raw)
+	updated["repository"] = project.Repository
+	updated["name"] = project.Name
+	updated["path"] = project.Path
+	updated["last_touched"] = project.LastTouched
+	return updated
 }
 
 func normalizeProjectPath(path string) (string, error) {
@@ -872,23 +1017,19 @@ func sameProjectPath(existingPath, nextPath string) bool {
 	if err != nil {
 		nextNormalized = filepath.Clean(nextPath)
 	}
-	return existingNormalized == nextNormalized
+	return utils.PathKey(existingNormalized) == utils.PathKey(nextNormalized)
 }
 
 // SetGlobal sets a configuration value and writes to the global config file only.
 // This uses a separate viper instance to avoid writing merged local settings.
 func SetGlobal(key string, value any) error {
-	globalViper := viper.New()
-	globalViper.SetConfigName(configName)
-	globalViper.SetConfigType(configType)
-	globalViper.AddConfigPath(getConfigDir())
-
-	// Read only global config (ignore error if file doesn't exist)
-	_ = globalViper.ReadInConfig()
-	globalViper.Set(key, value)
-
 	configPath := filepath.Join(getConfigDir(), configName+"."+configType)
-	if err := globalViper.WriteConfigAs(configPath); err != nil {
+	if _, err := (globalConfigStore{path: configPath}).mutate(
+		func(globalViper *viper.Viper) (bool, error) {
+			globalViper.Set(key, value)
+			return true, nil
+		},
+	); err != nil {
 		return err
 	}
 

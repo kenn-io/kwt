@@ -1,10 +1,14 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,143 +16,380 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/git"
+	"go.kenn.io/kwt/internal/prunepolicy"
 	"go.kenn.io/kwt/internal/registry"
+	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
 )
 
-func TestPrunePublishesAfterSuccessfulNormalPrune(t *testing.T) {
+func TestPruneRequiresPolicy(t *testing.T) {
 	resetFleetCommandDeps(t)
 	resetPruneCommandFlags(t)
+	cmd, _, stderr := fleetTestCommand()
 
-	repoPath := newTUITestRepo(t)
-	initCommandTestConfig(t, t.TempDir())
-	t.Chdir(repoPath)
-
-	var calls int
-	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) {
-		calls++
-	}
-
-	cmd, _, _ := fleetTestCommand()
 	err := runPrune(cmd, nil)
 
-	require.NoError(t, err)
-	assert.Equal(t, 1, calls)
+	assertExitCode(t, err, 2)
+	assert.Contains(t, stderr.String(), "kwt doctor --fix")
 }
 
-func TestPruneDoesNotPublishWhenNormalPruneFails(t *testing.T) {
+// TestPruneCmdIsolatesFromCwdConfig guards the global-scope invariant:
+// pruneCmd must not inherit root's PersistentPreRunE, which merges the caller's
+// repository-local .kwt.toml and can redirect the fleet worktree base directory.
+func TestPruneCmdIsolatesFromCwdConfig(t *testing.T) {
+	oldMerge := mergeCwdLocal
+	t.Cleanup(func() { mergeCwdLocal = oldMerge })
+	mergeCwdLocal = func() error {
+		return errors.New("repository-local configuration must not be merged")
+	}
+	require.NotNil(t, pruneCmd.PersistentPreRunE,
+		"prune must define its own PersistentPreRunE to bypass root's cwd merge")
+	require.NoError(t, pruneCmd.PersistentPreRunE(pruneCmd, nil))
+}
+
+func TestPruneInitializationFailureUsesMaintenanceErrorContract(t *testing.T) {
+	resetPruneCommandFlags(t)
+	pruneJSON = true
+	oldInitErr := configInitErr
+	configInitErr = errors.New("config unavailable")
+	t.Cleanup(func() { configInitErr = oldInitErr })
+	cmd, stdout, stderr := fleetTestCommand()
+
+	err := pruneCmd.PersistentPreRunE(cmd, nil)
+
+	assertExitCode(t, err, 2)
+	var envelope maintenanceErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	assert.Equal(t, "prune", envelope.Command)
+	assert.Equal(t, "initialization_failed", envelope.Error.Code)
+	assert.Contains(t, stderr.String(), "config unavailable")
+}
+
+func TestPruneHelpDescribesExplicitPoliciesAndMigration(t *testing.T) {
+	var output bytes.Buffer
+	pruneCmd.SetOut(&output)
+	t.Cleanup(func() { pruneCmd.SetOut(nil) })
+
+	require.NoError(t, pruneCmd.Help())
+
+	help := output.String()
+	assert.Contains(t, help, "--expired")
+	assert.Contains(t, help, "--merged")
+	assert.Contains(t, help, "--dry-run")
+	assert.Contains(t, help, "--json")
+	assert.Contains(t, help, "clean worktrees")
+	assert.Contains(t, help, "bare kwt prune")
+	assert.Contains(t, help, "kwt doctor --fix")
+}
+
+func TestPruneRejectsMultiplePolicies(t *testing.T) {
 	resetFleetCommandDeps(t)
 	resetPruneCommandFlags(t)
+	pruneExpired = true
+	pruneMerged = true
+	cmd, _, stderr := fleetTestCommand()
 
-	initCommandTestConfig(t, t.TempDir())
-	t.Chdir(t.TempDir())
-
-	var calls int
-	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) {
-		calls++
-	}
-
-	cmd, _, _ := fleetTestCommand()
 	err := runPrune(cmd, nil)
 
-	require.Error(t, err)
-	assert.Zero(t, calls)
+	assertExitCode(t, err, 2)
+	assert.Contains(t, stderr.String(), "mutually exclusive")
 }
 
-func TestPruneExpiredPublishesOnceAfterUnregisteringExpiredEntry(t *testing.T) {
+func TestPruneMergedRejectsForce(t *testing.T) {
 	resetFleetCommandDeps(t)
 	resetPruneCommandFlags(t)
+	pruneMerged = true
+	pruneForce = true
+	cmd, _, stderr := fleetTestCommand()
 
+	err := runPrune(cmd, nil)
+
+	assertExitCode(t, err, 2)
+	assert.Contains(t, stderr.String(), "--force")
+}
+
+func TestPruneExpiredMissingPathReportsDoctorRequired(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetPruneCommandFlags(t)
 	initCommandTestConfig(t, t.TempDir())
 	pruneExpired = true
 	expiredPath := filepath.Join(t.TempDir(), "missing-expired")
-	registerExpiredWorktree(t, expiredPath)
+	registerExpiredWorktree(t, expiredPath, "0123456789abcdef0123456789abcdef")
+	cmd, stdout, _ := fleetTestCommand()
 
-	var calls int
-	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) {
-		calls++
-	}
-
-	cmd, _, _ := fleetTestCommand()
 	err := runPrune(cmd, nil)
 
-	require.NoError(t, err)
-	assert.Equal(t, 1, calls)
-	reg, err := registry.New()
-	require.NoError(t, err)
-	_, exists := reg.Get(expiredPath)
-	assert.False(t, exists)
-}
-
-func TestPruneExpiredDoesNotPublishOnNoop(t *testing.T) {
-	resetFleetCommandDeps(t)
-	resetPruneCommandFlags(t)
-
-	initCommandTestConfig(t, t.TempDir())
-	pruneExpired = true
-
-	var calls int
-	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) {
-		calls++
-	}
-
-	cmd, _, _ := fleetTestCommand()
-	err := runPrune(cmd, nil)
-
-	require.NoError(t, err)
-	assert.Zero(t, calls)
-}
-
-func TestPruneExpiredDoesNotPublishOnDryRun(t *testing.T) {
-	resetFleetCommandDeps(t)
-	resetPruneCommandFlags(t)
-
-	initCommandTestConfig(t, t.TempDir())
-	pruneExpired = true
-	pruneDryRun = true
-	expiredPath := filepath.Join(t.TempDir(), "missing-expired-dry-run")
-	registerExpiredWorktree(t, expiredPath)
-
-	var calls int
-	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) {
-		calls++
-	}
-
-	cmd, _, _ := fleetTestCommand()
-	err := runPrune(cmd, nil)
-
-	require.NoError(t, err)
-	assert.Zero(t, calls)
-	reg, err := registry.New()
-	require.NoError(t, err)
+	assertExitCode(t, err, 1)
+	assert.Contains(t, stdout.String(), string(prunepolicy.DoctorRequired))
+	assert.Contains(t, stdout.String(), "kwt doctor --fix")
+	reg, registryErr := registry.New()
+	require.NoError(t, registryErr)
 	_, exists := reg.Get(expiredPath)
 	assert.True(t, exists)
 }
 
-func TestPruneExpiredPreservesLiveWorktreeWithoutGeneration(t *testing.T) {
+func TestPruneExpiredMissingGenerationReportsReason(t *testing.T) {
 	resetFleetCommandDeps(t)
 	resetPruneCommandFlags(t)
-
 	repoPath := newTUITestRepo(t)
 	initCommandTestConfig(t, t.TempDir())
 	worktreePath := filepath.Join(t.TempDir(), "legacy-expired")
 	runTUITestGit(t, repoPath, "branch", "feature/legacy-expired")
-	runTUITestGit(
-		t,
-		repoPath,
-		"worktree",
-		"add",
-		worktreePath,
-		"feature/legacy-expired",
-	)
-	registerExpiredWorktree(t, worktreePath)
+	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/legacy-expired")
+	registerExpiredWorktree(t, worktreePath, "")
 	pruneExpired = true
-	pruneForce = true
+	cmd, stdout, _ := fleetTestCommand()
 
-	cmd, _, _ := fleetTestCommand()
 	err := runPrune(cmd, nil)
 
+	assertExitCode(t, err, 1)
+	assert.Contains(t, stdout.String(), string(prunepolicy.MissingGeneration))
+	assert.Contains(t, stdout.String(), "kwt doctor --fix")
+	assert.DirExists(t, worktreePath)
+}
+
+func TestPruneExpiredJSONContainsStableReasons(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetPruneCommandFlags(t)
+	initCommandTestConfig(t, t.TempDir())
+	pruneExpired = true
+	pruneJSON = true
+	expiredPath := filepath.Join(t.TempDir(), "missing-expired")
+	registerExpiredWorktree(t, expiredPath, "0123456789abcdef0123456789abcdef")
+	cmd, stdout, stderr := fleetTestCommand()
+
+	err := runPrune(cmd, nil)
+
+	assertExitCode(t, err, 1)
+	var report prunepolicy.Report
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
+	assert.Equal(t, prunepolicy.SchemaVersion, report.SchemaVersion)
+	assert.Equal(t, "expired", report.Policy)
+	require.Len(t, report.Outcomes, 1)
+	assert.Equal(t, prunepolicy.DoctorRequired, report.Outcomes[0].Reason)
+	assert.NotContains(t, stdout.String(), "Expired worktree:")
+	assert.Empty(t, stderr.String())
+}
+
+func TestPruneExpiredForceStillRequiresGeneration(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetPruneCommandFlags(t)
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	worktreePath := filepath.Join(t.TempDir(), "legacy-force")
+	runTUITestGit(t, repoPath, "branch", "feature/legacy-force")
+	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/legacy-force")
+	registerExpiredWorktree(t, worktreePath, "")
+	pruneExpired = true
+	pruneForce = true
+	cmd, stdout, _ := fleetTestCommand()
+
+	err := runPrune(cmd, nil)
+
+	assertExitCode(t, err, 1)
+	assert.Contains(t, stdout.String(), string(prunepolicy.MissingGeneration))
+	assert.DirExists(t, worktreePath)
+}
+
+func TestPruneExpiredDryRunReportsDirtyWorktree(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetPruneCommandFlags(t)
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	worktreePath := filepath.Join(t.TempDir(), "dirty-expired")
+	runTUITestGit(t, repoPath, "branch", "feature/dirty-expired")
+	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/dirty-expired")
+	generation, err := git.New(repoPath).WorktreeGeneration(worktreePath)
 	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, "dirty.txt"), []byte("dirty\n"), 0o644))
+	registerExpiredWorktree(t, worktreePath, generation)
+	pruneExpired = true
+	pruneDryRun = true
+	cmd, stdout, _ := fleetTestCommand()
+
+	err = runPrune(cmd, nil)
+
+	assertExitCode(t, err, 1)
+	assert.Contains(t, stdout.String(), string(prunepolicy.DirtyWorktree))
+	assert.DirExists(t, worktreePath)
+}
+
+func TestPruneExpiredRejectsMismatchedWorktreeBacklink(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetPruneCommandFlags(t)
+	repositoryRoot := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	firstPath := filepath.Join(t.TempDir(), "expired-first")
+	secondPath := filepath.Join(t.TempDir(), "expired-second")
+	runTUITestGit(
+		t, repositoryRoot, "worktree", "add", "-b", "expired-first", firstPath,
+	)
+	runTUITestGit(
+		t, repositoryRoot, "worktree", "add", "-b", "expired-second", secondPath,
+	)
+	generation, err := git.New(repositoryRoot).WorktreeGeneration(firstPath)
+	require.NoError(t, err)
+	registerExpiredWorktree(t, firstPath, generation)
+	secondGitDir := strings.TrimSpace(
+		runTUITestGitOutput(t, secondPath, "rev-parse", "--absolute-git-dir"),
+	)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(firstPath, ".git"),
+		[]byte("gitdir: "+secondGitDir+"\n"),
+		0o644,
+	))
+	pruneExpired = true
+	pruneDryRun = true
+	cmd, stdout, _ := fleetTestCommand()
+
+	err = runPrune(cmd, nil)
+
+	assertExitCode(t, err, 1)
+	assert.Contains(t, stdout.String(), string(prunepolicy.DoctorRequired))
+	assert.Contains(t, stdout.String(), "backlink")
+	assert.DirExists(t, firstPath)
+}
+
+func TestPruneExpiredCarriesVerifiedGitDirIntoValidation(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetPruneCommandFlags(t)
+	repositoryRoot := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	worktreePath := filepath.Join(t.TempDir(), "expired-verified-backlink")
+	runTUITestGit(
+		t, repositoryRoot, "worktree", "add", "-b", "expired-verified-backlink",
+		worktreePath,
+	)
+	generation, err := git.New(repositoryRoot).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	registerExpiredWorktree(t, worktreePath, generation)
+	expectedGitDir := strings.TrimSpace(
+		runTUITestGitOutput(t, worktreePath, "rev-parse", "--absolute-git-dir"),
+	)
+	var captured git.WorktreeRemovalConditions
+	validatePruneExpiredWorktree = func(
+		_ *git.Git, _ string, conditions git.WorktreeRemovalConditions,
+	) error {
+		captured = conditions
+		return &git.ConditionError{Reason: git.ReasonLocked, Path: worktreePath}
+	}
+	pruneExpired = true
+	pruneDryRun = true
+	cmd, _, _ := fleetTestCommand()
+
+	err = runPrune(cmd, nil)
+
+	assertExitCode(t, err, 1)
+	require.NotEmpty(t, captured.ExpectedGitDir)
+	assert.Equal(t, utils.PathKey(expectedGitDir), utils.PathKey(captured.ExpectedGitDir))
+}
+
+func TestPruneExpiredDryRunReportsLockedWorktree(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetPruneCommandFlags(t)
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	worktreePath := filepath.Join(t.TempDir(), "locked-expired")
+	runTUITestGit(t, repoPath, "branch", "feature/locked-expired")
+	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/locked-expired")
+	generation, err := git.New(repoPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	registerExpiredWorktree(t, worktreePath, generation)
+	runTUITestGit(t, repoPath, "worktree", "lock", "--reason", "maintenance", worktreePath)
+	pruneExpired = true
+	pruneDryRun = true
+	pruneJSON = true
+	cmd, stdout, stderr := fleetTestCommand()
+
+	err = runPrune(cmd, nil)
+
+	assertExitCode(t, err, 1)
+	var report prunepolicy.Report
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
+	require.Len(t, report.Outcomes, 1)
+	assert.Equal(t, prunepolicy.LockedWorktree, report.Outcomes[0].Reason)
+	assert.Empty(t, stderr.String())
+	assert.DirExists(t, worktreePath)
+}
+
+func TestPruneExpiredDryRunRevalidatesMainWorktree(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetPruneCommandFlags(t)
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	generation, err := git.New(repoPath).WorktreeGeneration(repoPath)
+	require.NoError(t, err)
+	registerExpiredWorktree(t, repoPath, generation)
+	pruneExpired = true
+	pruneDryRun = true
+	pruneJSON = true
+	cmd, stdout, stderr := fleetTestCommand()
+
+	err = runPrune(cmd, nil)
+
+	assertExitCode(t, err, 1)
+	var report prunepolicy.Report
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
+	require.Len(t, report.Outcomes, 1)
+	assert.Equal(t, prunepolicy.MainWorktree, report.Outcomes[0].Reason)
+	assert.Empty(t, stderr.String())
+	assert.DirExists(t, repoPath)
+}
+
+func TestPruneExpiredRemovesWorktreeWithIgnoredArtifact(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetPruneCommandFlags(t)
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	worktreePath := filepath.Join(t.TempDir(), "ignored-expired")
+	runTUITestGit(t, repoPath, "branch", "feature/ignored-expired")
+	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/ignored-expired")
+	generation, err := git.New(repoPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repoPath, ".git", "info", "exclude"),
+		[]byte("build-output.local\n"),
+		0o644,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(worktreePath, "build-output.local"),
+		[]byte("generated\n"),
+		0o644,
+	))
+	registerExpiredWorktree(t, worktreePath, generation)
+	pruneExpired = true
+	cmd, stdout, stderr := fleetTestCommand()
+
+	err = runPrune(cmd, nil)
+
+	require.NoError(t, err, "stdout=%s stderr=%s", stdout.String(), stderr.String())
+	assert.NoDirExists(t, worktreePath)
+}
+
+func TestPruneExpiredPreservesReplacementGeneration(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetPruneCommandFlags(t)
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	worktreePath := filepath.Join(t.TempDir(), "expired-replacement")
+	runTUITestGit(t, repoPath, "branch", "feature/expired-original")
+	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/expired-original")
+	originalGeneration, err := git.New(repoPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	registerExpiredWorktree(t, worktreePath, originalGeneration)
+	runTUITestGit(t, repoPath, "worktree", "remove", "--force", worktreePath)
+	runTUITestGit(t, repoPath, "branch", "feature/expired-replacement")
+	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/expired-replacement")
+	_, err = git.New(repoPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	pruneExpired = true
+	pruneForce = true
+	cmd, stdout, _ := fleetTestCommand()
+
+	err = runPrune(cmd, nil)
+
+	assertExitCode(t, err, 1)
+	assert.Contains(t, stdout.String(), string(prunepolicy.GenerationChanged))
 	assert.DirExists(t, worktreePath)
 	reg, registryErr := registry.New()
 	require.NoError(t, registryErr)
@@ -156,103 +397,82 @@ func TestPruneExpiredPreservesLiveWorktreeWithoutGeneration(t *testing.T) {
 	assert.True(t, exists)
 }
 
-func TestPruneExpiredPreservesReplacementGeneration(t *testing.T) {
+func TestPruneExpiredPreservesWorktreeWhenExpirationChangesAfterInspection(t *testing.T) {
 	resetFleetCommandDeps(t)
 	resetPruneCommandFlags(t)
-
 	repoPath := newTUITestRepo(t)
 	initCommandTestConfig(t, t.TempDir())
-	worktreePath := filepath.Join(t.TempDir(), "expired-replacement")
-	runTUITestGit(t, repoPath, "branch", "feature/expired-original")
-	runTUITestGit(
-		t,
-		repoPath,
-		"worktree",
-		"add",
-		worktreePath,
-		"feature/expired-original",
-	)
-	originalGeneration, generationErr := git.New(repoPath).WorktreeGeneration(
-		worktreePath,
-	)
-	require.NoError(t, generationErr)
-	expiredAt := time.Now().Add(-time.Hour)
-	reg, registryErr := registry.New()
-	require.NoError(t, registryErr)
-	require.NoError(t, reg.Register(&registry.WorktreeEntry{
-		Repository: "repo",
-		Branch:     "feature/expired-original",
-		Path:       worktreePath,
-		ExpiresAt:  &expiredAt,
-		Generation: originalGeneration,
-	}))
-
-	runTUITestGit(t, repoPath, "worktree", "remove", "--force", worktreePath)
-	runTUITestGit(t, repoPath, "branch", "feature/expired-replacement")
-	runTUITestGit(
-		t,
-		repoPath,
-		"worktree",
-		"add",
-		worktreePath,
-		"feature/expired-replacement",
-	)
+	worktreePath := filepath.Join(t.TempDir(), "expiration-extended")
+	runTUITestGit(t, repoPath, "branch", "feature/expiration-extended")
+	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/expiration-extended")
+	generation, err := git.New(repoPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	registerExpiredWorktree(t, worktreePath, generation)
 	pruneExpired = true
 	pruneForce = true
+	validatePruneExpiredWorktree = func(
+		g *git.Git, path string, conditions git.WorktreeRemovalConditions,
+	) error {
+		reg, registryErr := registry.New()
+		require.NoError(t, registryErr)
+		entry, ok := reg.Get(path)
+		require.True(t, ok)
+		future := time.Now().Add(time.Hour)
+		entry.ExpiresAt = &future
+		require.NoError(t, reg.Register(entry))
+		return g.ValidateWorktreeRemoval(path, conditions)
+	}
+	cmd, stdout, _ := fleetTestCommand()
 
-	cmd, _, _ := fleetTestCommand()
-	err := runPrune(cmd, nil)
+	err = runPrune(cmd, nil)
 
-	require.NoError(t, err)
+	assertExitCode(t, err, 1)
+	assert.Contains(t, stdout.String(), string(prunepolicy.ExpirationPolicyChanged))
 	assert.DirExists(t, worktreePath)
-	reloaded, registryErr := registry.New()
-	require.NoError(t, registryErr)
-	_, exists := reloaded.Get(worktreePath)
-	assert.True(t, exists)
 }
 
-func TestPruneExpiredRemovesMatchingGeneration(t *testing.T) {
+func TestPruneExpiredRemovesMatchingGenerationAndPublishesOnce(t *testing.T) {
 	resetFleetCommandDeps(t)
 	resetPruneCommandFlags(t)
-
 	repoPath := newTUITestRepo(t)
 	initCommandTestConfig(t, t.TempDir())
 	worktreePath := filepath.Join(t.TempDir(), "expired-matching")
 	runTUITestGit(t, repoPath, "branch", "feature/expired-matching")
-	runTUITestGit(
-		t,
-		repoPath,
-		"worktree",
-		"add",
-		worktreePath,
-		"feature/expired-matching",
-	)
-	generation, generationErr := git.New(repoPath).WorktreeGeneration(
-		worktreePath,
-	)
-	require.NoError(t, generationErr)
-	expiredAt := time.Now().Add(-time.Hour)
-	reg, registryErr := registry.New()
-	require.NoError(t, registryErr)
-	require.NoError(t, reg.Register(&registry.WorktreeEntry{
-		Repository: "repo",
-		Branch:     "feature/expired-matching",
-		Path:       worktreePath,
-		ExpiresAt:  &expiredAt,
-		Generation: generation,
-	}))
+	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/expired-matching")
+	generation, err := git.New(repoPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	registerExpiredWorktree(t, worktreePath, generation)
 	pruneExpired = true
 	pruneForce = true
+	var publications int
+	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) { publications++ }
+	cmd, stdout, _ := fleetTestCommand()
 
+	err = runPrune(cmd, nil)
+
+	require.NoError(t, err)
+	assert.Contains(t, stdout.String(), string(prunepolicy.Removed))
+	assert.NoDirExists(t, worktreePath)
+	assert.Equal(t, 1, publications)
+	reg, registryErr := registry.New()
+	require.NoError(t, registryErr)
+	_, exists := reg.Get(worktreePath)
+	assert.False(t, exists)
+}
+
+func TestPruneExpiredNoopDoesNotPublish(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetPruneCommandFlags(t)
+	initCommandTestConfig(t, t.TempDir())
+	pruneExpired = true
+	var publications int
+	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) { publications++ }
 	cmd, _, _ := fleetTestCommand()
+
 	err := runPrune(cmd, nil)
 
 	require.NoError(t, err)
-	assert.NoDirExists(t, worktreePath)
-	reloaded, registryErr := registry.New()
-	require.NoError(t, registryErr)
-	_, exists := reloaded.Get(worktreePath)
-	assert.False(t, exists)
+	assert.Zero(t, publications)
 }
 
 func TestPruneExpiredCompletesBookkeepingAfterGitDeregistersWithResidualFiles(
@@ -311,15 +531,12 @@ exec "$REAL_GIT" "$@"
 	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) {
 		publishCalls++
 	}
-	cmd, _, _ := fleetTestCommand()
-	output := captureStdout(t, func() {
-		err = runPrune(cmd, nil)
-	})
+	cmd, stdout, _ := fleetTestCommand()
+	err = runPrune(cmd, nil)
 
-	require.NoError(t, err)
-	assert.Contains(t, output, "worktree removed, but files remain at ")
-	assert.Contains(t, output, "Removed 1 expired worktree(s), skipped 0")
-	assert.NotContains(t, output, "Failed to remove worktree")
+	assertExitCode(t, err, 1)
+	assert.Contains(t, stdout.String(), string(prunepolicy.CleanupIncomplete))
+	assert.Contains(t, stdout.String(), "worktree removed, but files remain at ")
 	assert.Equal(t, 1, publishCalls)
 	assert.FileExists(t, filepath.Join(worktreePath, "residual"))
 	reloaded, registryErr := registry.New()
@@ -330,32 +547,42 @@ exec "$REAL_GIT" "$@"
 
 func resetPruneCommandFlags(t *testing.T) {
 	t.Helper()
-
 	oldPruneExpired := pruneExpired
+	oldPruneMerged := pruneMerged
 	oldPruneDryRun := pruneDryRun
 	oldPruneForce := pruneForce
-
+	oldPruneJSON := pruneJSON
+	oldSilenceUsage := rootCmd.SilenceUsage
+	oldSilenceErrors := rootCmd.SilenceErrors
+	oldOpenExpiredRegistry := openPruneExpiredRegistry
+	oldValidateExpired := validatePruneExpiredWorktree
+	oldRemoveExpired := removePruneExpiredWorktree
 	t.Cleanup(func() {
 		pruneExpired = oldPruneExpired
+		pruneMerged = oldPruneMerged
 		pruneDryRun = oldPruneDryRun
 		pruneForce = oldPruneForce
+		pruneJSON = oldPruneJSON
+		rootCmd.SilenceUsage = oldSilenceUsage
+		rootCmd.SilenceErrors = oldSilenceErrors
+		openPruneExpiredRegistry = oldOpenExpiredRegistry
+		validatePruneExpiredWorktree = oldValidateExpired
+		removePruneExpiredWorktree = oldRemoveExpired
 	})
-
 	pruneExpired = false
+	pruneMerged = false
 	pruneDryRun = false
 	pruneForce = false
+	pruneJSON = false
 }
 
-func registerExpiredWorktree(t *testing.T, path string) {
+func registerExpiredWorktree(t *testing.T, path string, generation string) {
 	t.Helper()
-
 	reg, err := registry.New()
 	require.NoError(t, err)
 	expiredAt := time.Now().Add(-time.Hour)
 	require.NoError(t, reg.Register(&registry.WorktreeEntry{
-		Repository: "repo",
-		Branch:     "task7/expired",
-		Path:       path,
-		ExpiresAt:  &expiredAt,
+		Repository: "repo", Branch: "expired", Path: path,
+		ExpiresAt: &expiredAt, Generation: generation,
 	}))
 }

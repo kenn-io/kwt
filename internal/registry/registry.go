@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
 	"github.com/gofrs/flock"
+	repositoryurl "go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
 )
 
@@ -45,18 +47,26 @@ type Registry struct {
 
 // New creates a new registry instance.
 func New() (*Registry, error) {
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		home, _ := os.UserHomeDir()
-		configDir = filepath.Join(home, ".config")
+	registryDir := os.Getenv("KWT_HOME")
+	legacyPath := ""
+	if registryDir != "" {
+		if expanded, err := utils.ExpandPath(registryDir); err == nil {
+			registryDir = expanded
+		}
+		legacyPath = filepath.Join(platformRegistryDir(), "registry.json")
+	} else {
+		registryDir = platformRegistryDir()
 	}
-
-	registryDir := filepath.Join(configDir, "kwt")
 	if err := os.MkdirAll(registryDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create registry directory: %w", err)
 	}
 
 	registryPath := filepath.Join(registryDir, "registry.json")
+	if legacyPath != "" && utils.PathKey(legacyPath) != utils.PathKey(registryPath) {
+		if err := migrateLegacyRegistry(legacyPath, registryPath); err != nil {
+			return nil, err
+		}
+	}
 
 	r := &Registry{
 		entries: make(map[string]*WorktreeEntry),
@@ -68,6 +78,73 @@ func New() (*Registry, error) {
 	}
 
 	return r, nil
+}
+
+func platformRegistryDir() string {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		home, _ := os.UserHomeDir()
+		configDir = filepath.Join(home, ".config")
+	}
+	return filepath.Join(configDir, "kwt")
+}
+
+func migrateLegacyRegistry(legacyPath, targetPath string) error {
+	if _, err := os.Stat(targetPath); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to inspect KWT_HOME registry: %w", err)
+	}
+	if _, err := os.Stat(legacyPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to inspect legacy registry: %w", err)
+	}
+
+	lockPaths := []string{legacyPath + ".lock", targetPath + ".lock"}
+	sort.Slice(lockPaths, func(left, right int) bool {
+		return utils.PathKey(lockPaths[left]) < utils.PathKey(lockPaths[right])
+	})
+	locks := make([]*flock.Flock, 0, len(lockPaths))
+	for _, lockPath := range lockPaths {
+		if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
+			return fmt.Errorf("failed to create registry lock directory: %w", err)
+		}
+		lock := flock.New(lockPath, flock.SetPermissions(0600))
+		if err := lock.Lock(); err != nil {
+			for index := len(locks) - 1; index >= 0; index-- {
+				_ = locks[index].Unlock()
+			}
+			return fmt.Errorf("failed to lock registry migration: %w", err)
+		}
+		locks = append(locks, lock)
+	}
+	defer func() {
+		for index := len(locks) - 1; index >= 0; index-- {
+			_ = locks[index].Unlock()
+		}
+	}()
+
+	if _, err := os.Stat(targetPath); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to inspect KWT_HOME registry: %w", err)
+	}
+	if _, err := os.Stat(legacyPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to inspect legacy registry: %w", err)
+	}
+	entries, err := loadEntries(legacyPath)
+	if err != nil {
+		return fmt.Errorf("failed to migrate legacy registry: %w", err)
+	}
+	if err := saveEntries(targetPath, entries); err != nil {
+		return fmt.Errorf("failed to migrate legacy registry: %w", err)
+	}
+	return nil
 }
 
 // load reads the registry from disk.
@@ -157,6 +234,14 @@ func saveEntries(path string, entriesByPath map[string]*WorktreeEntry) error {
 func (r *Registry) mutate(
 	change func(map[string]*WorktreeEntry) bool,
 ) error {
+	return r.mutateChecked(func(entries map[string]*WorktreeEntry) (bool, error) {
+		return change(entries), nil
+	})
+}
+
+func (r *Registry) mutateChecked(
+	change func(map[string]*WorktreeEntry) (bool, error),
+) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -173,7 +258,11 @@ func (r *Registry) mutate(
 	if err != nil {
 		return err
 	}
-	changed := change(entries)
+	changed, err := change(entries)
+	if err != nil {
+		r.entries = entries
+		return err
+	}
 	if changed {
 		if err := saveEntries(r.path, entries); err != nil {
 			return err
@@ -240,6 +329,111 @@ func (r *Registry) CompareAndSwap(
 	return replaced, err
 }
 
+// CompareAndSwapAliases collapses one complete canonical-path alias group only
+// while every stored entry still matches the inspected group. A non-nil
+// retained entry must be one of the expected entries; nil removes the complete
+// group. Active creation ownership always prevents mutation.
+func (r *Registry) CompareAndSwapAliases(
+	expected []*WorktreeEntry,
+	retained *WorktreeEntry,
+) (bool, error) {
+	if len(expected) < 2 {
+		return false, nil
+	}
+	groupPath := expected[0].Path
+	groupKey := PathKey(groupPath)
+	retainedExpected := retained == nil
+	for _, entry := range expected {
+		if entry == nil || PathKey(entry.Path) != groupKey {
+			return false, nil
+		}
+		if retained != nil && sameWorktreeEntry(entry, retained) {
+			retainedExpected = true
+		}
+	}
+	if !retainedExpected {
+		return false, nil
+	}
+
+	var copied *WorktreeEntry
+	if retained != nil {
+		value := *retained
+		copied = &value
+	}
+	replaced := false
+	err := r.mutate(func(entries map[string]*WorktreeEntry) bool {
+		keys := matchingRegistryKeys(entries, groupPath)
+		if len(keys) != len(expected) {
+			return false
+		}
+		matched := make([]bool, len(expected))
+		for _, key := range keys {
+			current := entries[key]
+			if current == nil || current.CreationToken != "" {
+				return false
+			}
+			found := false
+			for index, wanted := range expected {
+				if !matched[index] && sameWorktreeEntry(current, wanted) {
+					matched[index] = true
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+		}
+		for _, key := range keys {
+			delete(entries, key)
+		}
+		if copied != nil {
+			entries[copied.Path] = copied
+		}
+		replaced = true
+		return true
+	})
+	return replaced, err
+}
+
+// RemoveIfMatchAfter runs removal and deletes a registry entry while the
+// complete observed policy record remains unchanged under the registry lock.
+// The registry entry is retained when removal fails.
+func (r *Registry) RemoveIfMatchAfter(
+	path string,
+	expected *WorktreeEntry,
+	removal func() error,
+) (bool, error) {
+	removed := false
+	err := r.mutateChecked(func(entries map[string]*WorktreeEntry) (bool, error) {
+		keys := matchingRegistryKeys(entries, path)
+		if expected == nil || len(keys) != 1 ||
+			!sameWorktreeEntry(entries[keys[0]], expected) {
+			return false, nil
+		}
+		if err := removal(); err != nil {
+			return false, err
+		}
+		delete(entries, keys[0])
+		removed = true
+		return true, nil
+	})
+	return removed, err
+}
+
+// EntryMatches reports whether path still has the complete observed registry
+// entry after refreshing from disk under the registry lock.
+func (r *Registry) EntryMatches(path string, expected *WorktreeEntry) (bool, error) {
+	matched := false
+	err := r.mutateChecked(func(entries map[string]*WorktreeEntry) (bool, error) {
+		keys := matchingRegistryKeys(entries, path)
+		matched = expected != nil && len(keys) == 1 &&
+			sameWorktreeEntry(entries[keys[0]], expected)
+		return false, nil
+	})
+	return matched, err
+}
+
 // AcquireCreation holds path's creation ownership until the returned release
 // function is called. The operating system releases the lock if the creating
 // process exits, allowing a later operation to recover its provisional entry.
@@ -252,7 +446,7 @@ func (r *Registry) AcquireCreation(
 			err,
 		)
 	}
-	pathHash := sha256.Sum256([]byte(comparableRegistryPath(path)))
+	pathHash := sha256.Sum256([]byte(PathKey(path)))
 	lockPath := filepath.Join(
 		filepath.Dir(r.path),
 		fmt.Sprintf(".creation-%x.lock", pathHash),
@@ -266,6 +460,22 @@ func (r *Registry) AcquireCreation(
 		return nil, false, nil
 	}
 	return lock.Unlock, true, nil
+}
+
+// CreationActive reports whether another process currently owns path's
+// creation lock. A persisted token without a lock is abandoned state.
+func (r *Registry) CreationActive(path string) (bool, error) {
+	release, acquired, err := r.AcquireCreation(path)
+	if err != nil {
+		return false, err
+	}
+	if !acquired {
+		return true, nil
+	}
+	if err := release(); err != nil {
+		return false, fmt.Errorf("release worktree creation inspection: %w", err)
+	}
+	return false, nil
 }
 
 // CompleteCreation finalizes only the provisional owner named by token. Other
@@ -351,6 +561,7 @@ func (r *Registry) SetExpirationIfGeneration(
 	branch string,
 	expiresAt *time.Time,
 ) (bool, error) {
+	repository, _ = repositoryurl.CanonicalRepositoryIdentity(repository)
 	updated := false
 	err := r.mutate(func(entries map[string]*WorktreeEntry) bool {
 		keys := matchingRegistryKeys(entries, path)
@@ -517,9 +728,9 @@ func entryForPath(
 	if entry, ok := entries[path]; ok {
 		return entry, true
 	}
-	want := comparableRegistryPath(path)
+	want := PathKey(path)
 	for _, entry := range entries {
-		if comparableRegistryPath(entry.Path) == want {
+		if PathKey(entry.Path) == want {
 			return entry, true
 		}
 	}
@@ -530,18 +741,24 @@ func matchingRegistryKeys(
 	entries map[string]*WorktreeEntry,
 	path string,
 ) []string {
-	want := comparableRegistryPath(path)
+	want := PathKey(path)
 	keys := make([]string, 0, 1)
 	for key, entry := range entries {
 		if key == path || entry.Path == path ||
-			comparableRegistryPath(entry.Path) == want {
+			PathKey(entry.Path) == want {
 			keys = append(keys, key)
 		}
 	}
 	return keys
 }
 
-func comparableRegistryPath(path string) string {
+// PathKey returns the canonical identity used for registry path matching. It
+// resolves the nearest existing ancestor before restoring missing path
+// components, then applies the platform's path comparison rules.
+func PathKey(path string) string {
+	if path == "" {
+		return ""
+	}
 	if absolute, err := filepath.Abs(path); err == nil {
 		path = absolute
 	}

@@ -81,6 +81,7 @@ func (b *GitBackend) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
 			Repository: b.project.Identity,
 			Branch:     candidate.Branch,
 			Path:       candidate.Path,
+			Generation: candidate.Generation,
 			State:      "ready",
 			SessionName: tmux.WorkspaceSessionName(
 				info, candidate.Branch, candidate.Path,
@@ -170,6 +171,15 @@ func (b *GitBackend) ImportPullRequest(
 			false, err,
 		)
 	}
+	generation, err := gitadapter.New(created.Path).EnsureWorktreeGeneration(created.Path)
+	if err != nil {
+		return workspace, NewError(
+			CodeWorkspaceCreation,
+			"failed to persist pull-request worktree identity",
+			false, err,
+		)
+	}
+	workspace.Generation = generation
 	return workspace, nil
 }
 

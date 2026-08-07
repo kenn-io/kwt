@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -994,6 +995,84 @@ func TestRegisterProjectUpdatesExistingProject(t *testing.T) {
 	require.Len(t, cfg.Projects, 1)
 	assert.Equal(t, "kwt-renamed", cfg.Projects[0].Name)
 	assert.Equal(t, wantSecondPath, cfg.Projects[0].Path)
+}
+
+func TestRegisterProjectPreservesUnknownProjectFields(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(func() { viper.Reset() })
+
+	kwtHome := t.TempDir()
+	t.Setenv("KWT_HOME", kwtHome)
+	firstPath := t.TempDir()
+	secondPath := t.TempDir()
+	replacementPath := t.TempDir()
+	configPath := filepath.Join(kwtHome, "config.toml")
+	contents := fmt.Sprintf(`[[projects]]
+repository = "github.com/example/widget"
+name = "widget"
+path = %q
+last_touched = "2026-08-01T00:00:00Z"
+future_policy = "retain"
+
+[[projects]]
+repository = "github.com/example/other"
+name = "other"
+path = %q
+last_touched = "2026-08-01T00:00:00Z"
+future_policy = "untouched"
+`, firstPath, secondPath)
+	require.NoError(t, os.WriteFile(configPath, []byte(contents), 0o600))
+
+	require.NoError(t, RegisterProject(models.Project{
+		Repository: "github.com/example/widget",
+		Name:       "widget-renamed",
+		Path:       replacementPath,
+	}))
+	wantReplacementPath, err := filepath.EvalSymlinks(replacementPath)
+	require.NoError(t, err)
+
+	stored, err := readGlobalViper(configPath)
+	require.NoError(t, err)
+	projects, err := rawProjectEntries(stored)
+	require.NoError(t, err)
+	require.Len(t, projects, 2)
+	assert.Equal(t, "retain", projects[0]["future_policy"])
+	assert.Equal(t, "widget-renamed", projects[0]["name"])
+	assert.Equal(t, wantReplacementPath, projects[0]["path"])
+	assert.Equal(t, "untouched", projects[1]["future_policy"])
+}
+
+func TestRegisterProjectAppendsWithoutDiscardingUnknownFields(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(func() { viper.Reset() })
+
+	kwtHome := t.TempDir()
+	t.Setenv("KWT_HOME", kwtHome)
+	existingPath := t.TempDir()
+	newPath := t.TempDir()
+	configPath := filepath.Join(kwtHome, "config.toml")
+	contents := fmt.Sprintf(`[[projects]]
+repository = "github.com/example/existing"
+name = "existing"
+path = %q
+last_touched = "2026-08-01T00:00:00Z"
+future_policy = "retain"
+`, existingPath)
+	require.NoError(t, os.WriteFile(configPath, []byte(contents), 0o600))
+
+	require.NoError(t, RegisterProject(models.Project{
+		Repository: "github.com/example/new",
+		Name:       "new",
+		Path:       newPath,
+	}))
+
+	stored, err := readGlobalViper(configPath)
+	require.NoError(t, err)
+	projects, err := rawProjectEntries(stored)
+	require.NoError(t, err)
+	require.Len(t, projects, 2)
+	assert.Equal(t, "retain", projects[0]["future_policy"])
+	assert.Equal(t, "github.com/example/new", projects[1]["repository"])
 }
 
 func TestRegisterProjectMatchesCaseInsensitiveRepositoryIdentity(t *testing.T) {

@@ -39,6 +39,16 @@ func (g *Git) RunCommand(args ...string) (string, error) {
 	return g.run(args...)
 }
 
+// RunCommandWithoutCredentials executes a Git command after removing the
+// named credentials from its environment. Use it for commands that may run
+// hooks or helpers selected by untrusted worktree content or configuration.
+func (g *Git) RunCommandWithoutCredentials(
+	protectedNames []string,
+	args ...string,
+) (string, error) {
+	return g.runWithoutCredentials(protectedNames, args...)
+}
+
 // RunWithContext executes a git command with context support for cancellation and timeout.
 func (g *Git) RunWithContext(ctx context.Context, args ...string) (string, error) {
 	return g.runWithContext(ctx, args...)

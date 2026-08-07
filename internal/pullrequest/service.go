@@ -272,7 +272,9 @@ func (s *Service) sameProjectClone(record Provenance, current Project) bool {
 
 func matchingProvenanceWorkspace(byPath map[string]Workspace, record Provenance) (Workspace, bool) {
 	workspace, ok := byPath[utils.CanonicalPath(record.Workspace.Path)]
-	if !ok || workspace.Branch != record.Workspace.Branch {
+	if !ok || workspace.Branch != record.Workspace.Branch ||
+		(record.Workspace.Generation != "" &&
+			workspace.Generation != record.Workspace.Generation) {
 		return Workspace{}, false
 	}
 	return workspace, true

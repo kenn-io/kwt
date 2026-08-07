@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/google/go-github/v89/github"
@@ -60,6 +62,7 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 	oldStartWorkspaceSession := startPRWorkspaceSession
 	oldAttachWorkspaceSession := attachPRWorkspaceSession
 	oldInspectProjectClone := inspectPRProjectClone
+	oldReadWorkspaceGeneration := readPRWorkspaceGeneration
 	t.Cleanup(func() {
 		loadPRConfig = oldLoad
 		loadPRTargetConfig = oldTargetLoad
@@ -73,6 +76,7 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 		startPRWorkspaceSession = oldStartWorkspaceSession
 		attachPRWorkspaceSession = oldAttachWorkspaceSession
 		inspectPRProjectClone = oldInspectProjectClone
+		readPRWorkspaceGeneration = oldReadWorkspaceGeneration
 	})
 	loadPRConfig = func() (*models.Config, error) { return cfg, nil }
 	loadPRTargetConfig = func(string, bool) (*models.Config, error) { return cfg, nil }
@@ -95,6 +99,16 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 	prStartSession = false
 	validatePRWorkspaceSessionConfig = func(*models.Config) error {
 		return nil
+	}
+}
+
+func stubPRWorkspaceGeneration(t *testing.T, path, generation string) {
+	t.Helper()
+	oldRead := readPRWorkspaceGeneration
+	t.Cleanup(func() { readPRWorkspaceGeneration = oldRead })
+	readPRWorkspaceGeneration = func(gotPath string) (string, error) {
+		assert.Equal(t, path, gotPath)
+		return generation, nil
 	}
 }
 
@@ -733,6 +747,178 @@ func TestRunPRAttachRejectsStaleProvenanceAgainstLiveInventory(t *testing.T) {
 	assert.False(t, attached)
 }
 
+func TestRunPRAttachIgnoresStaleGenerationBeforeCounting(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
+	live := pullrequest.Workspace{
+		Path: "/worktrees/reused", Branch: "pr-32",
+		Repository: "github.com/acme/widget", SessionName: "kwt-workspace-pr-32",
+		Generation: "0123456789abcdef0123456789abcdef",
+	}
+	project := pullrequest.Project{Identity: live.Repository, Path: "/repos/widget"}
+	stale := live
+	stale.Generation = "fedcba9876543210fedcba9876543210"
+	record := pullrequest.Provenance{Project: project, Workspace: live}
+	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
+		context.Background(),
+		func(records map[string]pullrequest.Provenance) error {
+			records["current"] = record
+			records["stale"] = pullrequest.Provenance{Project: project, Workspace: stale}
+			return nil
+		},
+	))
+	withPRCommandDeps(t, testPRConfig(), &fakePRService{})
+	readPRWorkspaceGeneration = func(string) (string, error) {
+		return live.Generation, nil
+	}
+	inspectPRProjectClone = func(
+		_ context.Context,
+		got pullrequest.Provenance,
+	) (pullrequest.Project, []pullrequest.Workspace, error) {
+		assert.Equal(t, record, got)
+		return project, []pullrequest.Workspace{live}, nil
+	}
+	attached := false
+	attachPRWorkspaceSession = func(
+		context.Context,
+		pullrequest.Workspace,
+		*models.Config,
+	) error {
+		attached = true
+		return nil
+	}
+	cmd, _, _ := prTestCommand()
+
+	err := runPRAttach(cmd, []string{live.Path})
+
+	require.NoError(t, err)
+	assert.True(t, attached)
+}
+
+func TestImportedWorkspaceProvenanceRejectsUnreadableLiveGeneration(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
+	workspace := pullrequest.Workspace{
+		Path: "/worktrees/pr-32", Branch: "pr-32",
+		Generation: "0123456789abcdef0123456789abcdef",
+	}
+	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
+		context.Background(),
+		func(records map[string]pullrequest.Provenance) error {
+			records["record"] = pullrequest.Provenance{Workspace: workspace}
+			return nil
+		},
+	))
+	oldRead := readPRWorkspaceGeneration
+	t.Cleanup(func() { readPRWorkspaceGeneration = oldRead })
+	readPRWorkspaceGeneration = func(string) (string, error) {
+		return "", errors.New("generation unavailable")
+	}
+
+	_, err := importedWorkspaceProvenance(context.Background(), workspace.Path)
+
+	assertPRCode(t, err, pullrequest.CodeWorkspaceCreation)
+	assert.Contains(t, err.Error(), "generation")
+}
+
+func TestProtectedWorkspaceOpenMatchesGeneration(t *testing.T) {
+	tests := []struct {
+		name               string
+		recordedGeneration string
+		liveGeneration     string
+		wantProtected      bool
+	}{
+		{
+			name: "matching", recordedGeneration: "0123456789abcdef0123456789abcdef",
+			liveGeneration: "0123456789abcdef0123456789abcdef",
+			wantProtected:  true,
+		},
+		{
+			name: "replacement", recordedGeneration: "fedcba9876543210fedcba9876543210",
+			liveGeneration: "0123456789abcdef0123456789abcdef",
+			wantProtected:  false,
+		},
+		{
+			name:           "legacy",
+			liveGeneration: "0123456789abcdef0123456789abcdef", wantProtected: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("KWT_HOME", t.TempDir())
+			path := "/worktrees/reused"
+			require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
+				context.Background(),
+				func(records map[string]pullrequest.Provenance) error {
+					records["record"] = pullrequest.Provenance{Workspace: pullrequest.Workspace{
+						Path: path, Generation: tt.recordedGeneration,
+					}}
+					return nil
+				},
+			))
+			oldRead := readPRWorkspaceGeneration
+			t.Cleanup(func() { readPRWorkspaceGeneration = oldRead })
+			readCalls := 0
+			readPRWorkspaceGeneration = func(gotPath string) (string, error) {
+				readCalls++
+				assert.Equal(t, path, gotPath)
+				return tt.liveGeneration, nil
+			}
+
+			err := rejectProtectedWorkspaceOpen(context.Background(), path)
+
+			if tt.wantProtected {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+			assert.Equal(t, 1, readCalls)
+		})
+	}
+}
+
+func TestProtectedWorkspaceOpenFailsClosedWhenLiveGenerationIsUnavailable(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
+	path := "/worktrees/protected"
+	recordedGeneration := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
+		context.Background(),
+		func(records map[string]pullrequest.Provenance) error {
+			records["record"] = pullrequest.Provenance{Workspace: pullrequest.Workspace{
+				Path: path, Generation: recordedGeneration,
+			}}
+			return nil
+		},
+	))
+	oldRead := readPRWorkspaceGeneration
+	t.Cleanup(func() { readPRWorkspaceGeneration = oldRead })
+	readPRWorkspaceGeneration = func(string) (string, error) {
+		return "", errors.New("generation unavailable")
+	}
+
+	err := rejectProtectedWorkspaceOpen(context.Background(), path)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "live generation")
+}
+
+func TestProtectedWorkspaceOpenSkipsGenerationReadWithoutProvenance(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
+	oldRead := readPRWorkspaceGeneration
+	t.Cleanup(func() { readPRWorkspaceGeneration = oldRead })
+	readCalls := 0
+	readPRWorkspaceGeneration = func(string) (string, error) {
+		readCalls++
+		return "", errors.New("must not be called")
+	}
+
+	err := rejectProtectedWorkspaceOpen(
+		context.Background(),
+		"/worktrees/ordinary",
+	)
+
+	require.NoError(t, err)
+	assert.Zero(t, readCalls)
+}
+
 func TestInspectPRProjectCloneUsesRegisteredIdentityOverForkOrigin(
 	t *testing.T,
 ) {
@@ -882,6 +1068,26 @@ func TestTransferredProvenanceMatchesLiveWorkspaceAcrossAliases(
 	}, record))
 }
 
+func TestContainsPRWorkspaceRejectsMismatchedGeneration(t *testing.T) {
+	live := pullrequest.Workspace{
+		Path: "/worktrees/reused", Branch: "pr-32",
+		Repository: "github.com/acme/widget", SessionName: "kwt-workspace-pr-32",
+		Generation: "0123456789abcdef0123456789abcdef",
+	}
+	record := pullrequest.Provenance{
+		Project: pullrequest.Project{Identity: live.Repository},
+		Workspace: pullrequest.Workspace{
+			Path: live.Path, Branch: live.Branch,
+			Repository: live.Repository, SessionName: live.SessionName,
+			Generation: "fedcba9876543210fedcba9876543210",
+		},
+	}
+
+	assert.False(t, containsPRWorkspace([]pullrequest.Workspace{live}, record))
+	record.Workspace.Generation = ""
+	assert.True(t, containsPRWorkspace([]pullrequest.Workspace{live}, record))
+}
+
 func TestInspectPRProjectCloneUsesLiveIdentityWithoutRegistration(
 	t *testing.T,
 ) {
@@ -1013,14 +1219,16 @@ func TestLivePRWorkspacesExcludePrunableAndMissingPaths(
 				Branch: "missing",
 			},
 			{
-				Path:   livePath,
-				Branch: "live",
+				Path:       livePath,
+				Branch:     "live",
+				Generation: "0123456789abcdef0123456789abcdef",
 			},
 		},
 	)
 
 	require.Len(t, workspaces, 1)
 	assert.Equal(t, "live", workspaces[0].Branch)
+	assert.Equal(t, "0123456789abcdef0123456789abcdef", workspaces[0].Generation)
 }
 
 func newPRInspectionRepo(t *testing.T) string {
@@ -1273,6 +1481,14 @@ func TestValidatePRProjectNormalizesGitHubIdentityCase(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "github.com/acme/widget", project.Identity)
+}
+
+func TestSamePRPathUsesPlatformPathIdentity(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path identity is case-insensitive")
+	}
+	root := t.TempDir()
+	assert.True(t, samePRPath(root, strings.ToUpper(root)))
 }
 
 func TestValidatePRProjectRejectsEmptyPath(t *testing.T) {

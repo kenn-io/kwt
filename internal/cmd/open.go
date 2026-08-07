@@ -258,7 +258,10 @@ func openSelectedWorktree(
 	startSession bool,
 	stdinInteractive bool,
 ) error {
-	if err := rejectProtectedWorkspaceOpen(commandCtx, entry.Path); err != nil {
+	if err := rejectProtectedWorkspaceOpen(
+		commandCtx,
+		entry.Path,
+	); err != nil {
 		return err
 	}
 	if err := acknowledgeRemoteSourcePath(entry.Path); err != nil {

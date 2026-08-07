@@ -3,6 +3,10 @@
 Run `kwt <command> --help` for command-specific flags. This page summarizes the
 stable command surface.
 
+Kwt requires Git 2.31 or newer. Maintenance inventory relies on
+`git worktree list --expire`, and structural repair uses
+`git worktree repair`.
+
 | Command          | Purpose                                                |
 | ---------------- | ------------------------------------------------------ |
 | `kwt`, `kwt tui` | Open the cross-project and multi-machine dashboard.    |
@@ -17,7 +21,8 @@ stable command surface.
 | `kwt cd`         | Open a shell in a matching worktree.                   |
 | `kwt exec`       | Run a command in a matching worktree.                  |
 | `kwt remove`     | Delete a worktree, optionally its branch.              |
-| `kwt prune`      | Clean up stale Git worktree metadata.                  |
+| `kwt doctor`     | Inspect or repair structural worktree consistency.     |
+| `kwt prune`      | Remove live worktrees by an explicit policy.           |
 | `kwt sync`       | Publish and inspect multi-machine sync state.          |
 | `kwt tmux`       | Manage standalone tmux sessions.                       |
 | `kwt workspace`  | Manage directory workspaces.                           |
@@ -39,6 +44,8 @@ kwt pr import 17 --project github.com/acme/widget \
   --start-session --json
 kwt sync status
 kwt exec fix/parser-race -- go test ./internal/parser
+kwt doctor
+kwt prune --merged --dry-run
 kwt workspace add ~/notes
 kwt workspace list
 kwt workspace list --json
@@ -142,6 +149,174 @@ holding the repository's worktree-mutation lock, so automation cannot delete a
 replacement checkout created at the same path. Ordinary directory changes do
 not alter the generation.
 
+## `kwt doctor`
+
+```sh
+kwt doctor          # inspect without changing anything
+kwt doctor --fix    # apply only confirmed, unambiguous repairs
+kwt doctor --json   # emit exact findings for automation
+kwt doctor --quiet  # print nothing; use the exit status
+```
+
+Doctor reads project registrations, Git worktree metadata, filesystem
+backlinks, the global worktree directory, and live registry paths. The human
+report starts with a summary, lists **Ready to fix** findings before **Needs
+review**, and omits healthy repositories. Long home and temporary paths are
+shortened for display; `--json` keeps exact paths and versioned evidence.
+After `--fix`, the report first lists each completed repair under **Fixed**,
+followed by findings that remain after the rescan. JSON exposes the same
+repairs in `fixed` and counts them in `summary.fixed_findings`. Use `--quiet`
+when only the exit status matters; it cannot be combined with `--json`.
+
+If a registered project path is confirmed absent, doctor searches only its
+bounded local inventory for the same credential-free repository identity:
+
+- one matching main repository produces `project_path_moved` and `--fix`
+  updates the registration to that verified absolute path;
+- one matching main repository that is already registered produces
+  `stale_project_registration` and `--fix` removes only the unchanged duplicate;
+- multiple missing registrations that claim the same matching repository
+  produce `ambiguous_project_relocation` and require you to choose which
+  registration should remain;
+- no match produces `stale_project_registration` and `--fix` removes the
+  unchanged registration;
+- multiple matching clones produce `ambiguous_project_relocation` and require
+  a manual choice; and
+- path-derived, malformed, or otherwise unsafe identities remain
+  `project_unreachable` and are never changed automatically.
+
+Project changes use full-entry compare-and-swap, preserve the name and last
+touched time, and become safe no-ops if the path, target, or global config
+changes concurrently. A relocation is also a no-op if another project becomes
+registered at the target before the config transaction commits. Doctor reloads
+both global config and the registry before its final report, so a successful
+fix can exit healthy while a no-op remains an
+exit-`1` finding. Generation-less registry adoption also rechecks the live Git
+generation while holding the repository mutation lock, so a replacement at the
+same path is never assigned the inspected worktree's generation.
+
+`kwt doctor --fix` repairs only uniquely owned backlinks and confirmed-absent
+Git or registry records. It can adopt a generation-less registry record with
+compare-and-swap after clearing inherited expiration metadata, including when
+the registry path is a symlink alias for the live Git worktree. A nonempty
+registry/Git generation mismatch is a possible replacement conflict and stays manual.
+Because Git can repair multiple backlinks in one operation, doctor
+skips backlink repair for a repository unless every repairable backlink is in
+the validated fix scope. Doctor repairs backlinks before native metadata
+pruning, prunes only when every removable record is in the validated fix scope,
+revalidates under each repository's mutation lock, and rescans before reporting
+the final state. A linked worktree's administrative directory is accepted only
+when a full scan of the repository's worktree metadata finds exactly one
+reverse backlink to that path. Registry entries are not reported or changed
+while their creator still holds the path lock. Tokens abandoned after a creator
+exits are inspected and cleaned only after doctor acquires that same lock.
+Doctor groups registry paths by canonical filesystem identity. Equivalent
+aliases for one live worktree appear under **Duplicate registry paths**, and `--fix`
+atomically collapses the unchanged group to the path spelling recorded by Git.
+Equivalent aliases for a worktree path confirmed absent are removed as one
+unchanged group during the same fix run after absence is rechecked. Aliases with
+different generations, expiration, source-review state, or other policy
+metadata, incompletely inspectable groups, and aliases for an existing path
+that is not a verified Git worktree remain under **Needs review**. It
+normalizes legacy registry and configured project URLs before comparison and
+output. Values that cannot be converted to credential-free identities are
+redacted or omitted; reachable projects fall back to the canonical live origin
+or local identity. Origin-based expiration records are valid when they match
+the verified origin for that worktree, even when the configured project names
+an upstream repository. It never removes a live worktree. A live worktree
+without a valid Git generation is manual until a normal listing from the
+verified repository (`kwt list`) adopts it; rerun `kwt doctor --fix` afterward
+to reconcile a generation-less legacy registry record. Project registration
+repair runs afterward, so Git, registry, and global-config locks are never
+nested.
+
+Exit status is `0` when healthy, `1` when findings remain, and `2` when
+inspection or requested fixes cannot complete.
+
+## `kwt prune`
+
+Prune requires exactly one live-removal policy:
+
+```sh
+kwt prune --expired --dry-run
+kwt prune --expired
+kwt prune --expired --force
+kwt prune --merged --dry-run
+kwt prune --merged
+```
+
+`--expired` evaluates registered expiration times. An expired entry whose path
+is already absent reports `doctor_required` and points to `kwt doctor --fix`;
+expiration pruning no longer silently unregisters it. `--force` is available
+only for expiration policy and never bypasses the generation requirement.
+Ignored build artifacts do not count as dirty for expiration policy and are
+removed with the worktree; use `--dry-run` to preview the decision. Kwt
+rechecks the complete expiration record before removal. If another command
+extends or clears the expiration after inspection, the worktree is preserved
+with `expiration_policy_changed`.
+
+`--merged` inventories linked worktrees from configured projects, the global
+worktree directory, and finalized registry entries, then confirms GitHub
+pull-request evidence before any removal begins. Registry entries still owned
+by a creation token remain doctor-only. Imported worktrees must match their
+complete provenance, including canonical live workspace and main-repository
+paths; an existing
+symlink alias is equivalent to its resolved path. New imported-worktree
+provenance also carries the durable generation, preventing an old record from
+matching a replacement at the same path. Ordinary worktrees must have
+an exact configured upstream repository and branch read from that linked worktree,
+and their current HEAD must exactly match one associated PR head SHA
+with a non-null merged timestamp. GitHub repository redirects are resolved
+before PR lookup and checked against imported provenance aliases. Redirects for
+the upstream source repository are also resolved for PR matching and diagnostic
+head lookup, while the observed upstream remains the lock-time removal
+condition. This recognizes squash and rebase merges without using local
+ancestry. A configured project remains the PR base when its local `origin` is a
+fork; kwt reads the observed origin from each linked worktree separately and
+revalidates it, the local branch, and the upstream under the repository lock.
+If a configured project's repository identity is missing or invalid, the
+candidate reports `doctor_required`; only unconfigured discovery roots may use
+their live origin as the PR base. That fallback also requires every configured
+project root to be inspectable. If one is stale or temporarily unavailable,
+globally and registry-discovered candidates report `doctor_required` before
+GitHub lookup, while candidates from healthy configured projects remain
+eligible. Run `kwt doctor --fix` to repair or remove the stale registration and
+restore unconfigured discovery.
+When global discovery finds a repository that is not configured, each
+worktree's own observed origin becomes its PR base; one worktree's origin is
+never reused for a sibling. An expiration registry record may identify either
+that verified origin or the configured project. A missing or noncanonical
+origin preserves the worktree before provider lookup. Advanced heads, ambiguous matches,
+closed-but-unmerged PRs, dirty worktrees, and missing generations are preserved
+with explicit reasons. There is no merged-policy force mode, and removal
+preserves the local branch. Ignored untracked files count as local changes and
+also preserve the worktree. Removals execute from the resolved main repository,
+so pruning one globally discovered worktree does not strand later candidates.
+Multiple registry paths that resolve to the same worktree are ambiguous and
+report `doctor_required` instead of allowing path-order-dependent removal.
+Git commands run against candidate worktrees without kwt's GitHub or fleet
+credentials in their environment, including during lock-scoped validation and
+removal. This prevents worktree-selected filters, hooks, or filesystem monitors
+from receiving those tokens.
+
+An individual path under the global worktree directory that is no longer a
+usable Git worktree reports `doctor_required`; it does not prevent other
+repositories from being evaluated. An incomplete directory traversal still
+stops inspection with exit status `2`, because kwt cannot know what was missed.
+If Git deregisters a worktree but cannot remove every file, prune completes its
+guarded registry and provenance cleanup, publishes the new fleet state, and
+reports `cleanup_incomplete` with the residual path for manual inspection.
+
+Both policies support `--dry-run` and `--json`. Exit status is `0` when all
+confirmed candidates were handled or no candidate exists, `1` for safety skips,
+provider failures, or incomplete cleanup, and `2` when inspection or command
+usage cannot complete. Bare `kwt prune` is an exit-`2` usage error: run
+`kwt doctor --fix` for the stale-metadata behavior that the bare command used to
+perform. JSON result reports use stdout without duplicating human result
+summaries on stderr. Dry-runs revalidate Git's current inventory under the same
+repository lock as removal and report `locked_worktree` or `main_worktree`
+instead of claiming those paths would be removed.
+
 ## `kwt projects`
 
 `--json` emits an array of the registered project repositories (`{repository,
@@ -204,6 +379,11 @@ identity, creates or repairs that protected blank session when needed, and
 uses `attach-session -E`. This is an interactive exception to the PR JSON
 contract: failures before attachment remain structured, but after a successful
 Unix process replacement tmux owns terminal output and the final exit status.
+Provenance with a durable generation applies only to that exact worktree
+incarnation. If the path is later reused, stale provenance neither protects the
+replacement from ordinary `kwt open` nor authorizes `kwt pr attach` or merged
+pruning. Generation-less legacy provenance continues to match by its verified
+path, branch, and repository identity.
 
 ### Repository identity fallback
 

@@ -162,6 +162,7 @@ func (f *fakeWorkspaceBackend) ImportPullRequest(
 		Repository:  "github.com/acme/widget",
 		Branch:      branch,
 		Path:        "/worktrees/widget/" + branch,
+		Generation:  "0123456789abcdef0123456789abcdef",
 		State:       "ready",
 		SessionName: "kwt-workspace-github-com-acme-widget-" + branch,
 	}
@@ -276,6 +277,21 @@ func TestListMarksExistingImport(t *testing.T) {
 	assert.Equal(t, &workspace, got[0].Workspace)
 }
 
+func TestImportPersistsWorkspaceGenerationInProvenance(t *testing.T) {
+	pr := testPR(61, false)
+	backend := newFakeBackend()
+	backend.workspaces = nil
+	store := newMemoryStore()
+	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
+
+	result, err := service.Import(context.Background(), testProject(), "61")
+
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Workspace.Generation)
+	record := store.records[pr.ID]
+	assert.Equal(t, result.Workspace.Generation, record.Workspace.Generation)
+}
+
 func TestListMatchesCanonicalProvenancePathThroughSymlink(t *testing.T) {
 	pr := testPR(25, false)
 	realBase := t.TempDir()
@@ -321,6 +337,32 @@ func TestListDoesNotMatchProvenanceWhenLiveBranchDiffers(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.False(t, got[0].Imported)
 	assert.Nil(t, got[0].Workspace)
+}
+
+func TestListDoesNotMatchProvenanceWhenLiveGenerationDiffers(t *testing.T) {
+	pr := testPR(62, false)
+	live := Workspace{
+		ID: "ws-62", Repository: testProject().Identity,
+		Branch: "pr-62-feature-widgets", Path: "/worktrees/62", State: "ready",
+		Generation: "0123456789abcdef0123456789abcdef",
+	}
+	recorded := live
+	recorded.Generation = "fedcba9876543210fedcba9876543210"
+	backend := newFakeBackend()
+	backend.workspaces = []Workspace{live}
+	store := newMemoryStore()
+	store.records[pr.ID] = Provenance{
+		PullRequestID: pr.ID, Project: testProject(), Workspace: recorded,
+		HeadSHA: pr.HeadSHA, SourceRepo: pr.Source.Repository.Identity,
+		SourceBranch: pr.Source.Name,
+	}
+	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
+
+	got, err := service.List(context.Background(), testProject(), "open")
+
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.False(t, got[0].Imported)
 }
 
 func TestListDoesNotMarkImportAfterSourceBranchRename(t *testing.T) {

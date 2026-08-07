@@ -36,6 +36,7 @@ nav = [
       { "Overview" = "design/index.md" },
       { "TUI and project registry" = "design/tui-projects.md" },
       { "Multi-machine sync architecture" = "design/multi-machine-sync.md" },
+      { "Worktree maintenance" = "design/worktree-maintenance.md" },
     ] },
   ] },
 ]

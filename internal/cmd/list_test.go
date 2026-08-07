@@ -86,6 +86,26 @@ func TestStaleProvenanceDoesNotLabelReusedWorktreePath(t *testing.T) {
 	}
 }
 
+func TestStaleProvenanceGenerationDoesNotLabelReusedWorktreePath(t *testing.T) {
+	worktrees := []models.Worktree{{
+		Path: "/worktrees/reused", Branch: "pr-32",
+		Repository: "github.com/acme/widget", SessionName: "kwt-workspace-pr-32",
+		Generation: "0123456789abcdef0123456789abcdef",
+	}}
+	annotateProtectedSocketIdentity(worktrees, map[string]pullrequest.Provenance{
+		"pr-32": {
+			Project: pullrequest.Project{Identity: "github.com/acme/widget"},
+			Workspace: pullrequest.Workspace{
+				Path: "/worktrees/reused", Branch: "pr-32",
+				Repository: "github.com/acme/widget", SessionName: "kwt-workspace-pr-32",
+				Generation: "fedcba9876543210fedcba9876543210",
+			},
+		},
+	})
+
+	assert.Empty(t, worktrees[0].TmuxSocketName)
+}
+
 func TestProtectedSocketEnrichmentReportsUnreadableProvenance(t *testing.T) {
 	kwtHome := t.TempDir()
 	t.Setenv("KWT_HOME", kwtHome)

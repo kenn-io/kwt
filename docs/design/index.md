@@ -11,6 +11,7 @@ abstraction belongs in `kwt`.
 
 - [TUI and project registry](tui-projects.md)
 - [Multi-machine sync architecture](multi-machine-sync.md)
+- [Worktree maintenance](worktree-maintenance.md)
 
 Feature specs and implementation plans should be folded into these maintained
 notes once they ship, so draft checklists do not compete with the current

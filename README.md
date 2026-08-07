@@ -85,6 +85,13 @@ kwt exec feature/new-ui -- npm test
 # Delete a worktree
 kwt remove feature/new-ui
 kwt remove -b feature/new-ui
+
+# Diagnose and repair structural worktree metadata
+kwt doctor
+kwt doctor --fix
+
+# Preview clean worktrees whose exact GitHub pull request is merged
+kwt prune --merged --dry-run
 ```
 
 When `-b` creates a branch, `kwt` fetches `origin` and starts from its default
@@ -123,7 +130,10 @@ using `kwt open` to explicitly create and attach its workspace.
 
 Global config lives at `~/.config/kwt/config.toml`, or
 `$KWT_HOME/config.toml` when `KWT_HOME` is set. Repository-local overrides live
-in `.kwt.toml` and are trust-gated before use.
+in `.kwt.toml` and are trust-gated before use. When `KWT_HOME` is set, that same
+directory also holds `registry.json` and `pull-requests.json`, isolating kwt's
+persistent state as a unit. Without it, each store follows its documented
+platform config-directory behavior.
 
 `config.toml` is the source of truth for layouts and agent commands. Workspaces
 launch as a blank single-pane session unless a layout is selected — via
@@ -222,11 +232,11 @@ kwt sync forget <host-id>
 
 When multi-machine sync is enabled, `kwt sync status` publishes this host before
 reading the hub. Successful mutations also publish best-effort: `kwt add`, local
-and global `kwt remove`, and `kwt prune --expired` when it actually removes or
-unregisters an expired worktree. Normal `kwt prune` publishes after every
-successful run. Dry-runs, expired-prune no-ops, and failed removals do not
-publish. Missing hub config, disabled multi-machine sync, or publish failures
-never make the mutation command fail; publish warnings may be written to stderr.
+and global `kwt remove`, and explicit `kwt prune --expired` or `--merged`
+policies when they actually remove a worktree. Doctor inspection and repair,
+dry-runs, prune no-ops, and failed removals do not publish. Missing hub config,
+disabled multi-machine sync, or publish failures never make the mutation command
+fail; publish warnings may be written to stderr.
 
 ### Project Discovery
 
@@ -259,31 +269,32 @@ spaces.
 
 ## Commands
 
-| Command          | Purpose                                   |
-| ---------------- | ----------------------------------------- |
-| `kwt`, `kwt tui` | Cross-project dashboard                   |
-| `kwt add`        | Create a worktree                         |
-| `kwt open`       | Open or establish a workspace session     |
-| `kwt list`       | List worktrees                            |
-| `kwt status`     | Show git status, sync state, and activity |
-| `kwt projects`   | List or register project repositories     |
-| `kwt pr`         | Discover and import pull requests as JSON |
-| `kwt get`        | Print a matching worktree path            |
-| `kwt cd`         | Open a shell in a matching worktree       |
-| `kwt exec`       | Run a command in a matching worktree      |
-| `kwt remove`     | Delete a worktree, optionally its branch  |
-| `kwt prune`      | Clean up stale Git worktree metadata      |
-| `kwt sync`       | Publish and inspect multi-machine status  |
-| `kwt tmux`       | Manage standalone tmux sessions           |
-| `kwt workspace`  | Manage directory workspaces               |
-| `kwt config`     | Read and write config values              |
-| `kwt completion` | Generate shell completion and integration |
+| Command          | Purpose                                     |
+| ---------------- | ------------------------------------------- |
+| `kwt`, `kwt tui` | Cross-project dashboard                     |
+| `kwt add`        | Create a worktree                           |
+| `kwt open`       | Open or establish a workspace session       |
+| `kwt list`       | List worktrees                              |
+| `kwt status`     | Show git status, sync state, and activity   |
+| `kwt projects`   | List or register project repositories       |
+| `kwt pr`         | Discover and import pull requests as JSON   |
+| `kwt get`        | Print a matching worktree path              |
+| `kwt cd`         | Open a shell in a matching worktree         |
+| `kwt exec`       | Run a command in a matching worktree        |
+| `kwt remove`     | Delete a worktree, optionally its branch    |
+| `kwt doctor`     | Inspect or repair structural worktree state |
+| `kwt prune`      | Remove live worktrees by an explicit policy |
+| `kwt sync`       | Publish and inspect multi-machine status    |
+| `kwt tmux`       | Manage standalone tmux sessions             |
+| `kwt workspace`  | Manage directory workspaces                 |
+| `kwt config`     | Read and write config values                |
+| `kwt completion` | Generate shell completion and integration   |
 
 Run `kwt <command> --help` for flags and examples.
 
 ## Requirements
 
-- Git 2.20+
+- Git 2.31+
 - Go 1.26+ to build from source
 - tmux for workspace launch and `kwt tmux`
 

@@ -161,6 +161,7 @@ func annotateProtectedSocketIdentity(
 		branch     string
 		session    string
 		repository string
+		generation string
 	}
 	socketByIdentity := make(map[workspaceIdentity]string, len(records))
 	for _, record := range records {
@@ -180,6 +181,7 @@ func annotateProtectedSocketIdentity(
 			branch:     workspace.Branch,
 			session:    workspace.SessionName,
 			repository: pullrequest.NormalizeRepositoryIdentity(repository),
+			generation: workspace.Generation,
 		}
 		socketByIdentity[key] =
 			tmux.ProtectedWorkspaceSocketName(
@@ -195,8 +197,13 @@ func annotateProtectedSocketIdentity(
 			repository: pullrequest.NormalizeRepositoryIdentity(
 				worktrees[i].Repository,
 			),
+			generation: worktrees[i].Generation,
 		}
 		worktrees[i].TmuxSocketName = socketByIdentity[key]
+		if worktrees[i].TmuxSocketName == "" {
+			key.generation = ""
+			worktrees[i].TmuxSocketName = socketByIdentity[key]
+		}
 	}
 }
 

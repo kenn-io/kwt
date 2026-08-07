@@ -1,15 +1,18 @@
 package discovery
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/url"
@@ -152,6 +155,191 @@ func TestDiscoverGlobalWorktrees_NoWorktrees(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Errorf("Expected no entries, got %d", len(entries))
+	}
+}
+
+func TestFindGlobalWorktreePathsReturnsGitFilesWithoutSnapshotting(t *testing.T) {
+	baseDir := t.TempDir()
+	repoDir := filepath.Join(baseDir, "repo")
+	repo := initRepoAt(t, repoDir, "https://github.com/acme/widget.git")
+	repo.CreateBranch(t, "raw-topic")
+	worktreePath := filepath.Join(baseDir, "raw-topic")
+	repo.CreateWorktree(t, worktreePath, "raw-topic")
+	gitFile, err := os.ReadFile(filepath.Join(worktreePath, ".git"))
+	if err != nil {
+		t.Fatalf("read linked .git file: %v", err)
+	}
+	adminDir := strings.TrimSpace(strings.TrimPrefix(string(gitFile), "gitdir: "))
+	if !filepath.IsAbs(adminDir) {
+		adminDir = filepath.Join(worktreePath, adminDir)
+	}
+	generationPath := filepath.Join(adminDir, "kwt-generation")
+	if _, err := os.Stat(generationPath); !os.IsNotExist(err) {
+		t.Fatalf("generation exists before discovery: %v", err)
+	}
+
+	paths, err := FindGlobalWorktreePaths(baseDir)
+	if err != nil {
+		t.Fatalf("FindGlobalWorktreePaths() error = %v", err)
+	}
+	if !slices.ContainsFunc(paths, func(path string) bool {
+		return utils.PathKey(path) == utils.PathKey(worktreePath)
+	}) {
+		t.Fatalf("FindGlobalWorktreePaths() = %v, want %s", paths, worktreePath)
+	}
+	if _, err := os.Stat(generationPath); !os.IsNotExist(err) {
+		t.Fatalf("generation created by read-only discovery: %v", err)
+	}
+}
+
+func TestFindGlobalWorktreePathsStrictTraversesSymlinkedBaseDirectory(t *testing.T) {
+	realBase := t.TempDir()
+	repoDir := filepath.Join(realBase, "repo")
+	repo := initRepoAt(t, repoDir, "https://github.com/acme/widget.git")
+	repo.CreateBranch(t, "linked-base")
+	worktreePath := filepath.Join(realBase, "linked-base")
+	repo.CreateWorktree(t, worktreePath, "linked-base")
+
+	aliasBase := filepath.Join(t.TempDir(), "worktrees")
+	require.NoError(t, os.Symlink(realBase, aliasBase))
+
+	paths, err := FindGlobalWorktreePathsStrict(aliasBase)
+
+	require.NoError(t, err)
+	require.True(t, slices.ContainsFunc(paths, func(path string) bool {
+		return utils.PathKey(path) == utils.PathKey(worktreePath)
+	}), "FindGlobalWorktreePathsStrict() = %v, want %s", paths, worktreePath)
+}
+
+func TestFindGlobalWorktreePathsStrictRejectsDanglingBaseDirectorySymlink(
+	t *testing.T,
+) {
+	aliasBase := filepath.Join(t.TempDir(), "worktrees")
+	missingTarget := filepath.Join(t.TempDir(), "missing-worktrees")
+	if err := os.Symlink(missingTarget, aliasBase); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("create symlink: %v", err)
+		}
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	paths, err := FindGlobalWorktreePathsStrict(aliasBase)
+
+	require.Nil(t, paths)
+	require.ErrorContains(t, err, "resolve base directory")
+}
+
+func TestFindGlobalWorktreePathsStrictRejectsDanglingGitSymlink(t *testing.T) {
+	baseDir := t.TempDir()
+	candidatePath := filepath.Join(baseDir, "candidate")
+	require.NoError(t, os.Mkdir(candidatePath, 0o755))
+	gitPath := filepath.Join(candidatePath, ".git")
+	missingTarget := filepath.Join(t.TempDir(), "missing-admin")
+	if err := os.Symlink(missingTarget, gitPath); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("create symlink: %v", err)
+		}
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	paths, err := FindGlobalWorktreePathsStrict(baseDir)
+
+	require.Nil(t, paths)
+	require.ErrorContains(t, err, "inspect worktree metadata")
+}
+
+func TestFindGlobalWorktreePathsStrictReturnsTraversalError(t *testing.T) {
+	wantErr := errors.New("permission denied")
+	oldWalk := walkGlobalWorktreePaths
+	t.Cleanup(func() { walkGlobalWorktreePaths = oldWalk })
+	walkGlobalWorktreePaths = func(root string, walkFn filepath.WalkFunc) error {
+		return walkFn(filepath.Join(root, "blocked"), nil, wantErr)
+	}
+
+	paths, err := FindGlobalWorktreePathsStrict(t.TempDir())
+
+	if paths != nil {
+		t.Fatalf("FindGlobalWorktreePathsStrict() paths = %v, want nil", paths)
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("FindGlobalWorktreePathsStrict() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestFindGlobalWorktreePathsStrictReturnsGitStatError(t *testing.T) {
+	baseDir := t.TempDir()
+	candidatePath := filepath.Join(baseDir, "candidate")
+	if err := os.Mkdir(candidatePath, 0o755); err != nil {
+		t.Fatalf("create candidate: %v", err)
+	}
+	wantErr := errors.New("git stat denied")
+	oldStat := statGlobalWorktreeGit
+	t.Cleanup(func() { statGlobalWorktreeGit = oldStat })
+	statGlobalWorktreeGit = func(path string) (os.FileInfo, error) {
+		if path == filepath.Join(candidatePath, ".git") {
+			return nil, wantErr
+		}
+		return os.Stat(path)
+	}
+
+	paths, err := FindGlobalWorktreePathsStrict(baseDir)
+
+	if paths != nil {
+		t.Fatalf("FindGlobalWorktreePathsStrict() paths = %v, want nil", paths)
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("FindGlobalWorktreePathsStrict() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestFindGlobalWorktreePathsStrictReturnsGitReadError(t *testing.T) {
+	baseDir := t.TempDir()
+	candidatePath := filepath.Join(baseDir, "candidate")
+	if err := os.Mkdir(candidatePath, 0o755); err != nil {
+		t.Fatalf("create candidate: %v", err)
+	}
+	gitPath := filepath.Join(candidatePath, ".git")
+	if err := os.WriteFile(gitPath, []byte("gitdir: /repo/.git/worktrees/candidate\n"), 0o644); err != nil {
+		t.Fatalf("write .git file: %v", err)
+	}
+	wantErr := errors.New("git read denied")
+	oldRead := readGlobalWorktreeGit
+	t.Cleanup(func() { readGlobalWorktreeGit = oldRead })
+	readGlobalWorktreeGit = func(path string) ([]byte, error) {
+		if path == gitPath {
+			return nil, wantErr
+		}
+		return os.ReadFile(path)
+	}
+
+	paths, err := FindGlobalWorktreePathsStrict(baseDir)
+
+	if paths != nil {
+		t.Fatalf("FindGlobalWorktreePathsStrict() paths = %v, want nil", paths)
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("FindGlobalWorktreePathsStrict() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestFindGlobalWorktreePathsStrictReturnsMalformedGitFileError(t *testing.T) {
+	baseDir := t.TempDir()
+	candidatePath := filepath.Join(baseDir, "candidate")
+	if err := os.Mkdir(candidatePath, 0o755); err != nil {
+		t.Fatalf("create candidate: %v", err)
+	}
+	gitPath := filepath.Join(candidatePath, ".git")
+	if err := os.WriteFile(gitPath, []byte("not a gitdir\n"), 0o644); err != nil {
+		t.Fatalf("write malformed .git file: %v", err)
+	}
+
+	paths, err := FindGlobalWorktreePathsStrict(baseDir)
+
+	if paths != nil {
+		t.Fatalf("FindGlobalWorktreePathsStrict() paths = %v, want nil", paths)
+	}
+	if err == nil || !strings.Contains(err.Error(), "invalid linked worktree metadata") {
+		t.Fatalf("FindGlobalWorktreePathsStrict() error = %v, want malformed metadata error", err)
 	}
 }
 

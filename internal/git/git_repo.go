@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	gitworktree "go.kenn.io/kit/git/worktree"
+	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
 )
 
@@ -28,6 +30,14 @@ func (g *Git) GetRepositoryPath() (string, error) {
 // called from inside a worktree.
 func (g *Git) GetMainRepositoryPath() (string, error) {
 	return g.getMainRepoRoot()
+}
+
+// GetMainRepositoryPathWithoutCredentials resolves the main repository while
+// removing the named credentials from Git's environment.
+func (g *Git) GetMainRepositoryPathWithoutCredentials(
+	protectedNames []string,
+) (string, error) {
+	return g.getMainRepoRootWithoutCredentials(protectedNames)
 }
 
 // GetRepositoryURL returns the remote origin URL of the repository.
@@ -80,25 +90,95 @@ func (g *Git) GetRecentCommits(path string, limit int) ([]models.CommitInfo, err
 // getMainRepoRoot returns the main repository root directory using git-common-dir.
 // This works correctly from both the main repo and worktrees.
 func (g *Git) getMainRepoRoot() (string, error) {
-	output, err := g.run("rev-parse", "--git-common-dir")
+	return g.getMainRepoRootWithoutCredentials(nil)
+}
+
+func (g *Git) getMainRepoRootWithoutCredentials(
+	protectedNames []string,
+) (string, error) {
+	currentRootOutput, err := g.runWithoutCredentials(
+		protectedNames,
+		"rev-parse", "--show-toplevel",
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to get current worktree root: %w", err)
+	}
+	gitDirOutput, err := g.runWithoutCredentials(
+		protectedNames,
+		"rev-parse", "--absolute-git-dir",
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to get absolute git dir: %w", err)
+	}
+	commonDirOutput, err := g.runWithoutCredentials(
+		protectedNames,
+		"rev-parse", "--git-common-dir",
+	)
 	if err != nil {
 		return "", fmt.Errorf("failed to get git common dir: %w", err)
 	}
-	commonDir := strings.TrimSpace(output)
-
+	commonDir := strings.TrimSpace(commonDirOutput)
 	if !filepath.IsAbs(commonDir) {
 		commonDir = filepath.Join(g.workDir, commonDir)
 	}
-
-	repoRoot := filepath.Dir(filepath.Clean(commonDir))
-
-	// Resolve symlinks to ensure consistent path comparison
-	// (e.g., macOS /var -> /private/var)
-	if resolved, err := filepath.EvalSymlinks(repoRoot); err == nil {
-		repoRoot = resolved
+	commonDir = utils.CanonicalPath(commonDir)
+	gitDir := utils.CanonicalPath(strings.TrimSpace(gitDirOutput))
+	currentRoot := utils.CanonicalPath(strings.TrimSpace(currentRootOutput))
+	if utils.PathKey(gitDir) == utils.PathKey(commonDir) {
+		return currentRoot, nil
+	}
+	if filepath.Base(commonDir) == ".git" {
+		standardRoot := utils.CanonicalPath(filepath.Dir(commonDir))
+		standardGitDir, verifyErr := New(standardRoot).
+			worktreeGitDirWithoutCredentials(standardRoot, protectedNames)
+		if verifyErr == nil &&
+			utils.PathKey(standardGitDir) == utils.PathKey(commonDir) {
+			return standardRoot, nil
+		}
 	}
 
-	return repoRoot, nil
+	output, err := g.runWithoutCredentials(
+		protectedNames,
+		"worktree", "list", "--porcelain",
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to list repository worktrees: %w", err)
+	}
+	entries := gitworktree.ParsePorcelain(output)
+	if len(entries) == 0 {
+		return "", fmt.Errorf("main worktree path is unavailable")
+	}
+	inventoryMain := utils.CanonicalPath(entries[0].Path)
+	if utils.PathKey(inventoryMain) != utils.PathKey(commonDir) {
+		return inventoryMain, nil
+	}
+	coreWorktree, coreErr := g.runWithoutCredentials(
+		protectedNames,
+		"config", "--path", "--get", "core.worktree",
+	)
+	if coreErr == nil && strings.TrimSpace(coreWorktree) != "" {
+		path := strings.TrimSpace(coreWorktree)
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(commonDir, path)
+		}
+		path = utils.CanonicalPath(path)
+		gitDir, verifyErr := New(path).worktreeGitDirWithoutCredentials(
+			path,
+			protectedNames,
+		)
+		if verifyErr != nil || utils.PathKey(gitDir) != utils.PathKey(commonDir) {
+			return "", fmt.Errorf(
+				"configured core.worktree does not name the main worktree for %s",
+				commonDir,
+			)
+		}
+		return path, nil
+	}
+
+	return "", fmt.Errorf(
+		"main worktree path is unavailable for separate Git directory %s",
+		commonDir,
+	)
 }
 
 // getRootDir returns the repository root directory.
