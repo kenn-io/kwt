@@ -24,6 +24,10 @@ type WorkspaceBackend interface {
 	Rollback(context.Context, Workspace) error
 }
 
+type WorkspaceCreationCoordinator interface {
+	AcquireWorkspaceCreation(context.Context, string) (func() error, error)
+}
+
 type Store interface {
 	View(context.Context, func(map[string]Provenance) error) error
 	Update(context.Context, func(map[string]Provenance) error) error
@@ -121,6 +125,29 @@ func (s *Service) Import(ctx context.Context, project Project, selector string) 
 	}
 	pr.Source.IsFork = !EqualRepositoryIdentity(pr.Source.Repository.Identity, pr.Repository.Identity)
 	branch := importBranchName(pr)
+	if coordinator, ok := s.backend.(WorkspaceCreationCoordinator); ok {
+		release, acquireErr := coordinator.AcquireWorkspaceCreation(ctx, branch)
+		if acquireErr != nil {
+			return result, AsError(
+				acquireErr,
+				CodeWorkspaceCreation,
+				"failed to coordinate pull-request workspace creation",
+			)
+		}
+		defer func() {
+			if releaseErr := release(); releaseErr != nil {
+				err = errors.Join(
+					err,
+					NewError(
+						CodeWorkspaceCreation,
+						"failed to release pull-request workspace creation lock",
+						false,
+						releaseErr,
+					),
+				)
+			}
+		}()
+	}
 	var created *Workspace
 	cleanupReason := "workspace created but provenance could not be persisted"
 

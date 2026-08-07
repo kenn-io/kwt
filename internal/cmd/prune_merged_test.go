@@ -30,10 +30,13 @@ const (
 )
 
 type fakePruneMergedRegistry struct {
-	removed bool
-	err     error
-	calls   int
-	entries []*registry.WorktreeEntry
+	removed       bool
+	err           error
+	calls         int
+	entries       []*registry.WorktreeEntry
+	creationBusy  bool
+	creationCalls int
+	entryMatches  func(string, *registry.WorktreeEntry) (bool, error)
 }
 
 func (r *fakePruneMergedRegistry) List() []*registry.WorktreeEntry { return r.entries }
@@ -43,8 +46,28 @@ func (r *fakePruneMergedRegistry) UnregisterIfGeneration(string, string) (bool, 
 	return r.removed, r.err
 }
 
+func (r *fakePruneMergedRegistry) AcquireCreation(string) (func() error, bool, error) {
+	r.creationCalls++
+	if r.creationBusy {
+		return nil, false, nil
+	}
+	return func() error { return nil }, true, nil
+}
+
+func (r *fakePruneMergedRegistry) EntryMatches(
+	path string,
+	expected *registry.WorktreeEntry,
+) (bool, error) {
+	if r.entryMatches == nil {
+		return true, nil
+	}
+	return r.entryMatches(path, expected)
+}
+
 type fakePruneMergedProvenance struct {
 	records       map[string]pullrequest.Provenance
+	viewRecords   func(int) map[string]pullrequest.Provenance
+	viewCalls     int
 	removeResult  bool
 	removeErr     error
 	removedKey    string
@@ -54,8 +77,13 @@ type fakePruneMergedProvenance struct {
 func (s *fakePruneMergedProvenance) View(
 	_ context.Context, fn func(map[string]pullrequest.Provenance) error,
 ) error {
-	records := make(map[string]pullrequest.Provenance, len(s.records))
-	for key, value := range s.records {
+	s.viewCalls++
+	current := s.records
+	if s.viewRecords != nil {
+		current = s.viewRecords(s.viewCalls)
+	}
+	records := make(map[string]pullrequest.Provenance, len(current))
+	for key, value := range current {
 		records[key] = value
 	}
 	return fn(records)
@@ -165,6 +193,88 @@ func TestPruneMergedDryRunMapsRevalidationChanges(t *testing.T) {
 	assert.Equal(t, prunepolicy.DirtyWorktree, report.Outcomes[0].Reason)
 	assert.Equal(t, "https://github.com/acme/widget/pull/17", report.Outcomes[0].Evidence["pr_url"])
 	assert.Empty(t, stderr.String())
+	assert.Zero(t, removed)
+}
+
+func TestPruneMergedDoesNotRemoveWhileCandidateCreationIsActive(t *testing.T) {
+	resetPruneMergedCommand(t)
+	pruneJSON = true
+	candidate := commandMergedCandidate("/worktrees/creating", commandMergedHead)
+	setPruneMergedInventory(candidate)
+	setPruneMergedProvider(providerForCommandCandidates(candidate))
+	reg := &fakePruneMergedRegistry{creationBusy: true}
+	openPruneMergedRegistry = func() (pruneMergedRegistry, error) { return reg, nil }
+	removed := 0
+	removePruneMergedWorktree = func(pruneMergedCandidate) error {
+		removed++
+		return nil
+	}
+	cmd, stdout, _ := fleetTestCommand()
+
+	err := runPrune(cmd, nil)
+
+	assertExitCode(t, err, 1)
+	assert.Contains(t, stdout.String(), "creation")
+	assert.Equal(t, 1, reg.creationCalls)
+	assert.Zero(t, removed)
+}
+
+func TestPruneMergedDoesNotRemoveWhenRegistryOwnershipAppearsAfterSnapshot(
+	t *testing.T,
+) {
+	resetPruneMergedCommand(t)
+	pruneJSON = true
+	candidate := commandMergedCandidate("/worktrees/newly-registered", commandMergedHead)
+	setPruneMergedInventory(candidate)
+	setPruneMergedProvider(providerForCommandCandidates(candidate))
+	reg := &fakePruneMergedRegistry{
+		entryMatches: func(string, *registry.WorktreeEntry) (bool, error) {
+			return false, nil
+		},
+	}
+	openPruneMergedRegistry = func() (pruneMergedRegistry, error) { return reg, nil }
+	removed := 0
+	removePruneMergedWorktree = func(pruneMergedCandidate) error {
+		removed++
+		return nil
+	}
+	cmd, stdout, _ := fleetTestCommand()
+
+	err := runPrune(cmd, nil)
+
+	assertExitCode(t, err, 1)
+	assert.Contains(t, stdout.String(), "ownership")
+	assert.Zero(t, removed)
+}
+
+func TestPruneMergedDoesNotRemoveWhenProvenanceAppearsAfterSnapshot(t *testing.T) {
+	resetPruneMergedCommand(t)
+	pruneJSON = true
+	candidate := commandMergedCandidate("/worktrees/newly-imported", commandMergedHead)
+	record := commandMergedProvenance(candidate)
+	setPruneMergedInventory(candidate)
+	setPruneMergedProvider(providerForCommandCandidates(candidate))
+	store := &fakePruneMergedProvenance{
+		viewRecords: func(call int) map[string]pullrequest.Provenance {
+			if call == 1 {
+				return nil
+			}
+			return map[string]pullrequest.Provenance{record.PullRequestID: record}
+		},
+	}
+	openPruneMergedProvenanceStore = func() pruneMergedProvenanceStore { return store }
+	removed := 0
+	removePruneMergedWorktree = func(pruneMergedCandidate) error {
+		removed++
+		return nil
+	}
+	cmd, stdout, _ := fleetTestCommand()
+
+	err := runPrune(cmd, nil)
+
+	assertExitCode(t, err, 1)
+	assert.Contains(t, stdout.String(), "ownership")
+	assert.Equal(t, 2, store.viewCalls)
 	assert.Zero(t, removed)
 }
 
@@ -433,7 +543,10 @@ func TestPruneMergedCompletesBookkeepingAfterGitDeregistersWithResidualFiles(t *
 	setPruneMergedProvider(providerForCommandCandidates(candidate))
 	reg := &fakePruneMergedRegistry{removed: true}
 	openPruneMergedRegistry = func() (pruneMergedRegistry, error) { return reg, nil }
-	store := &fakePruneMergedProvenance{removeResult: true}
+	store := &fakePruneMergedProvenance{
+		records:      map[string]pullrequest.Provenance{record.PullRequestID: record},
+		removeResult: true,
+	}
 	openPruneMergedProvenanceStore = func() pruneMergedProvenanceStore { return store }
 	removePruneMergedWorktree = func(pruneMergedCandidate) error {
 		return completedWorktreeRemovalWarning{message: "worktree removed, but files remain"}

@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/kwt/internal/credentials"
 	gitadapter "go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/pullrequest"
+	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/tmux"
 	urlutil "go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
@@ -715,7 +716,13 @@ func defaultNewPRService(
 	g := gitadapter.New(project.Path)
 	manager := worktree.New(g, cfg)
 	backend := pullrequest.NewGitBackend(
-		g, manager, project, cfg.Fleet.TokenEnv,
+		g,
+		manager,
+		project,
+		func() (pullrequest.WorktreeCreationGuard, error) {
+			return registry.New()
+		},
+		cfg.Fleet.TokenEnv,
 	)
 	return pullrequest.NewService(
 		provider,

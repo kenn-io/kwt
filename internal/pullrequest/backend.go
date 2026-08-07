@@ -19,22 +19,59 @@ import (
 var createMergeRequestWorktree = managedworktree.CreateWorktreeFromMergeRequest
 
 type GitBackend struct {
-	git            *gitadapter.Git
-	manager        *worktree.Manager
-	project        Project
-	gitEnvironment []string
+	git               *gitadapter.Git
+	manager           *worktree.Manager
+	project           Project
+	openCreationGuard func() (WorktreeCreationGuard, error)
+	gitEnvironment    []string
+}
+
+type WorktreeCreationGuard interface {
+	AcquireCreation(string) (func() error, bool, error)
 }
 
 func NewGitBackend(
 	g *gitadapter.Git,
 	manager *worktree.Manager,
 	project Project,
+	openCreationGuard func() (WorktreeCreationGuard, error),
 	fleetTokenEnv string,
 ) *GitBackend {
 	return &GitBackend{
 		git: g, manager: manager, project: project,
-		gitEnvironment: SafeGitEnvironment(os.Environ(), fleetTokenEnv),
+		openCreationGuard: openCreationGuard,
+		gitEnvironment:    SafeGitEnvironment(os.Environ(), fleetTokenEnv),
 	}
+}
+
+func (b *GitBackend) AcquireWorkspaceCreation(
+	ctx context.Context,
+	branch string,
+) (func() error, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if b.openCreationGuard == nil {
+		return func() error { return nil }, nil
+	}
+	creationGuard, err := b.openCreationGuard()
+	if err != nil {
+		return nil, fmt.Errorf("open pull-request workspace creation state: %w", err)
+	}
+	path, err := b.manager.PreparePathForRepository(
+		"", branch, b.project.Identity,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("prepare pull-request workspace path: %w", err)
+	}
+	release, acquired, err := creationGuard.AcquireCreation(path)
+	if err != nil {
+		return nil, fmt.Errorf("lock pull-request workspace creation: %w", err)
+	}
+	if !acquired {
+		return nil, fmt.Errorf("pull-request workspace creation is already in progress for %s", path)
+	}
+	return release, nil
 }
 
 // SafeGitEnvironment retains ordinary Git authentication context while

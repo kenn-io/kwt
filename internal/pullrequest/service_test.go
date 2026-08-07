@@ -133,6 +133,33 @@ type fakeWorkspaceBackend struct {
 	importedPR         PullRequest
 }
 
+type guardedWorkspaceBackend struct {
+	*fakeWorkspaceBackend
+	guardCalls         int
+	guardActive        bool
+	rollbackUnderGuard bool
+}
+
+func (b *guardedWorkspaceBackend) Rollback(
+	ctx context.Context,
+	workspace Workspace,
+) error {
+	b.rollbackUnderGuard = b.guardActive
+	return b.fakeWorkspaceBackend.Rollback(ctx, workspace)
+}
+
+func (b *guardedWorkspaceBackend) AcquireWorkspaceCreation(
+	_ context.Context,
+	_ string,
+) (func() error, error) {
+	b.guardCalls++
+	b.guardActive = true
+	return func() error {
+		b.guardActive = false
+		return nil
+	}, nil
+}
+
 func newFakeBackend() *fakeWorkspaceBackend {
 	return &fakeWorkspaceBackend{}
 }
@@ -191,6 +218,27 @@ func (f *fakeWorkspaceBackend) Rollback(ctx context.Context, workspace Workspace
 type memoryStore struct {
 	mu      sync.Mutex
 	records map[string]Provenance
+}
+
+type guardObservingStore struct {
+	*memoryStore
+	guardActive         func() bool
+	committedUnderGuard bool
+}
+
+func (s *guardObservingStore) Update(
+	_ context.Context,
+	fn func(map[string]Provenance) error,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	copy := cloneRecords(s.records)
+	if err := fn(copy); err != nil {
+		return err
+	}
+	s.committedUnderGuard = s.guardActive()
+	s.records = copy
+	return nil
 }
 
 type commitFailStore struct {
@@ -290,6 +338,36 @@ func TestImportPersistsWorkspaceGenerationInProvenance(t *testing.T) {
 	require.NotEmpty(t, result.Workspace.Generation)
 	record := store.records[pr.ID]
 	assert.Equal(t, result.Workspace.Generation, record.Workspace.Generation)
+}
+
+func TestImportHoldsWorkspaceCreationGuardThroughProvenanceCommit(t *testing.T) {
+	pr := testPR(62, false)
+	backend := &guardedWorkspaceBackend{fakeWorkspaceBackend: newFakeBackend()}
+	store := &guardObservingStore{
+		memoryStore: newMemoryStore(),
+		guardActive: func() bool { return backend.guardActive },
+	}
+	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
+
+	result, err := service.Import(context.Background(), testProject(), "62")
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, result.Workspace.Path)
+	assert.Equal(t, 1, backend.guardCalls)
+	assert.True(t, store.committedUnderGuard)
+}
+
+func TestImportHoldsWorkspaceCreationGuardThroughRollback(t *testing.T) {
+	pr := testPR(63, false)
+	backend := &guardedWorkspaceBackend{fakeWorkspaceBackend: newFakeBackend()}
+	store := &commitFailStore{memoryStore: newMemoryStore()}
+	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
+
+	_, err := service.Import(context.Background(), testProject(), "63")
+
+	assertErrorCode(t, err, CodeWorkspaceCreation)
+	assert.Equal(t, 1, backend.guardCalls)
+	assert.True(t, backend.rollbackUnderGuard)
 }
 
 func TestListMatchesCanonicalProvenancePathThroughSymlink(t *testing.T) {

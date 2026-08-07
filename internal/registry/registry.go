@@ -355,13 +355,18 @@ func (r *Registry) RemoveIfMatchAfter(
 }
 
 // EntryMatches reports whether path still has the complete observed registry
-// entry after refreshing from disk under the registry lock.
+// entry after refreshing from disk under the registry lock. A nil expected
+// entry matches only while the path remains unregistered.
 func (r *Registry) EntryMatches(path string, expected *WorktreeEntry) (bool, error) {
 	matched := false
 	err := r.mutateChecked(func(entries map[string]*WorktreeEntry) (bool, error) {
 		keys := matchingRegistryKeys(entries, path)
-		matched = expected != nil && len(keys) == 1 &&
-			sameWorktreeEntry(entries[keys[0]], expected)
+		if expected == nil {
+			matched = len(keys) == 0
+		} else {
+			matched = len(keys) == 1 &&
+				sameWorktreeEntry(entries[keys[0]], expected)
+		}
 		return false, nil
 	})
 	return matched, err

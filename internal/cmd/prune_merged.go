@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -22,6 +23,8 @@ import (
 
 type pruneMergedRegistry interface {
 	List() []*registry.WorktreeEntry
+	AcquireCreation(string) (func() error, bool, error)
+	EntryMatches(string, *registry.WorktreeEntry) (bool, error)
 	UnregisterIfGeneration(string, string) (bool, error)
 }
 
@@ -36,6 +39,7 @@ type pruneMergedCandidate struct {
 	ExpectedGitDir   string
 	ProvenanceKey    string
 	RegistryExpected bool
+	RegistryEntry    *registry.WorktreeEntry
 	InitialOutcome   *prunepolicy.Outcome
 	ProtectedNames   []string
 }
@@ -113,7 +117,9 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 			continue
 		}
 		if pruneDryRun {
-			if err := validatePruneMergedWorktree(candidate); err != nil {
+			if err := withPruneMergedOwnershipGuard(ctx, reg, store, candidate, func() error {
+				return validatePruneMergedWorktree(candidate)
+			}); err != nil {
 				providerEvidence := outcome.Evidence
 				outcome = pruneOutcomeForError(candidate.Policy.Path, candidate.Policy.Branch, err)
 				outcome.Evidence = providerEvidence
@@ -128,7 +134,9 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 			outcomes[index] = outcome
 			continue
 		}
-		removeErr := removePruneMergedWorktree(candidate)
+		removeErr := withPruneMergedOwnershipGuard(ctx, reg, store, candidate, func() error {
+			return removePruneMergedWorktree(candidate)
+		})
 		if removeErr != nil && !git.WorktreeWasRemoved(removeErr) {
 			providerEvidence := outcome.Evidence
 			outcome = pruneOutcomeForError(candidate.Policy.Path, candidate.Policy.Branch, removeErr)
@@ -229,6 +237,77 @@ func defaultValidatePruneMergedWorktree(candidate pruneMergedCandidate) error {
 		candidate.Policy.Path,
 		pruneMergedRemovalConditions(candidate),
 	)
+}
+
+func withPruneMergedOwnershipGuard(
+	ctx context.Context,
+	reg pruneMergedRegistry,
+	store pruneMergedProvenanceStore,
+	candidate pruneMergedCandidate,
+	operation func() error,
+) (resultErr error) {
+	release, acquired, err := reg.AcquireCreation(candidate.Policy.Path)
+	if err != nil {
+		return fmt.Errorf("lock worktree ownership: %w", err)
+	}
+	if !acquired {
+		return fmt.Errorf("worktree creation is in progress for %s", candidate.Policy.Path)
+	}
+	defer func() {
+		if err := release(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("release worktree ownership lock: %w", err))
+		}
+	}()
+
+	matches, err := reg.EntryMatches(candidate.Policy.Path, candidate.RegistryEntry)
+	if err != nil {
+		return fmt.Errorf("revalidate worktree registry ownership: %w", err)
+	}
+	if !matches {
+		return fmt.Errorf("worktree ownership changed after inspection for %s", candidate.Policy.Path)
+	}
+	provenanceMatches, err := pruneMergedProvenanceMatches(ctx, store, candidate)
+	if err != nil {
+		return fmt.Errorf("revalidate pull-request provenance ownership: %w", err)
+	}
+	if !provenanceMatches {
+		return fmt.Errorf("worktree ownership changed after inspection for %s", candidate.Policy.Path)
+	}
+	return operation()
+}
+
+func pruneMergedProvenanceMatches(
+	ctx context.Context,
+	store pruneMergedProvenanceStore,
+	candidate pruneMergedCandidate,
+) (bool, error) {
+	pathMatches := 0
+	expectedMatches := false
+	err := store.View(ctx, func(records map[string]pullrequest.Provenance) error {
+		for key, record := range records {
+			if !samePRPath(record.Workspace.Path, candidate.Policy.Path) ||
+				!provenanceGenerationMatches(
+					record.Workspace.Generation,
+					candidate.Policy.Generation,
+				) {
+				continue
+			}
+			pathMatches++
+			if candidate.Policy.Provenance != nil &&
+				key == candidate.ProvenanceKey &&
+				reflect.DeepEqual(record, *candidate.Policy.Provenance) {
+				expectedMatches = true
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	if candidate.Policy.Provenance == nil {
+		return pathMatches == 0, nil
+	}
+	return pathMatches == 1 && expectedMatches, nil
 }
 
 func pruneMergedRemovalConditions(candidate pruneMergedCandidate) git.WorktreeRemovalConditions {
@@ -639,6 +718,8 @@ func attachMergedRegistrySnapshot(
 		return
 	}
 	entry := matches[0]
+	copy := *entry
+	candidate.RegistryEntry = &copy
 	if entry.Generation != candidate.Policy.Generation && candidate.InitialOutcome == nil {
 		candidate.InitialOutcome = initialMergedOutcome(candidate.Policy, prunepolicy.DoctorRequired, "registry generation does not match the Git worktree")
 	}

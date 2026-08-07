@@ -81,6 +81,22 @@ func TestNewUsesKWT_HOME(t *testing.T) {
 	assert.DirExists(t, kwtHome)
 }
 
+func TestEntryMatchesNilOnlyWhenPathIsUnregistered(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
+	reg, err := New()
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "worktree")
+
+	matched, err := reg.EntryMatches(path, nil)
+	require.NoError(t, err)
+	assert.True(t, matched)
+
+	require.NoError(t, reg.Register(&WorktreeEntry{Path: path}))
+	matched, err = reg.EntryMatches(path, nil)
+	require.NoError(t, err)
+	assert.False(t, matched)
+}
+
 func TestNewWithFreshKwtHomeDoesNotImportPlatformRegistry(t *testing.T) {
 	root := t.TempDir()
 	platformConfigHome := filepath.Join(root, "platform-config")

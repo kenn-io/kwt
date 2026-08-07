@@ -49,8 +49,45 @@ func newBackendRepo(t *testing.T) (string, *GitBackend) {
 		}},
 	}
 	return repo, NewGitBackend(
-		g, worktree.New(g, cfg), testProject(), cfg.Fleet.TokenEnv,
+		g, worktree.New(g, cfg), testProject(), nil, cfg.Fleet.TokenEnv,
 	)
+}
+
+type recordingCreationGuard struct {
+	path   string
+	active bool
+}
+
+func (g *recordingCreationGuard) AcquireCreation(
+	path string,
+) (func() error, bool, error) {
+	g.path = path
+	g.active = true
+	return func() error {
+		g.active = false
+		return nil
+	}, true, nil
+}
+
+func TestGitBackendCoordinatesCreationForResolvedWorkspacePath(t *testing.T) {
+	_, backend := newBackendRepo(t)
+	guard := &recordingCreationGuard{}
+	backend.openCreationGuard = func() (WorktreeCreationGuard, error) {
+		return guard, nil
+	}
+	activeDuringOperation := false
+
+	release, err := backend.AcquireWorkspaceCreation(
+		context.Background(),
+		"pr-17-feature-widgets",
+	)
+
+	require.NoError(t, err)
+	activeDuringOperation = guard.active
+	assert.True(t, activeDuringOperation)
+	assert.Contains(t, filepath.ToSlash(guard.path), "github.com/acme/widget/pr-17-feature-widgets")
+	require.NoError(t, release())
+	assert.False(t, guard.active)
 }
 
 func configureTestPushTracking(
