@@ -7,6 +7,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.8
 	charm.land/lipgloss/v2 v2.0.5
 	github.com/bmatcuk/doublestar/v4 v4.10.0
+	github.com/danielgtaylor/huma/v2 v2.38.0
 	github.com/gofrs/flock v0.13.0
 	github.com/google/go-github/v90 v90.0.0
 	github.com/ktr0731/go-fuzzyfinder v0.9.0
@@ -39,7 +40,7 @@ require (
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/nsf/termbox-go v1.1.1 // indirect
-	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
+	github.com/pelletier/go-toml/v2 v2.3.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
