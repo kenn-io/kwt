@@ -67,6 +67,7 @@ func evaluateMergedCandidate(
 	if !ok || strings.TrimSpace(candidate.SourceBranch) == "" {
 		return mergedOutcome(candidate, SourceRepositoryUnavailable, "configured upstream does not identify a source repository and branch")
 	}
+	observedProjectRepository := candidate.ProjectRepository
 	observedSourceRepository := candidate.SourceRepository
 	resolvedBase, err := provider.ResolveRepository(ctx, requestedBase)
 	if err != nil {
@@ -92,6 +93,7 @@ func evaluateMergedCandidate(
 			provider,
 			candidate,
 			base,
+			observedProjectRepository,
 			observedSourceRepository,
 		)
 	}
@@ -122,12 +124,13 @@ func evaluateImportedMerged(
 	provider MergedProvider,
 	candidate MergedCandidate,
 	base pullrequest.Repository,
+	observedProjectRepository string,
 	observedSourceRepository string,
 ) Outcome {
 	record := *candidate.Provenance
 	if !strings.EqualFold(record.Provider, "github") || record.Number <= 0 ||
 		!provenancePullRequestIDMatches(record) ||
-		!provenanceRepositoryMatches(record, candidate.ProjectRepository) ||
+		!provenanceRepositoryMatches(record, observedProjectRepository) ||
 		!provenanceRepositoryMatches(record, record.Project.Identity) ||
 		!provenanceRepositoryMatches(record, record.Workspace.Repository) ||
 		strings.TrimSpace(candidate.MainRepositoryPath) == "" ||

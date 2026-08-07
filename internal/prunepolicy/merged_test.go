@@ -233,6 +233,37 @@ func TestEvaluateMergedResolvesTransferredRepositoryBeforeProvenanceValidation(t
 	assert.Equal(t, 1, provider.getCalls)
 }
 
+func TestEvaluateMergedAcceptsLegacyProvenanceAfterRepositoryTransfer(t *testing.T) {
+	const legacyRepository = "github.com/legacy/widget"
+	candidate := importedMergedCandidate()
+	candidate.ProjectRepository = legacyRepository
+	candidate.LiveRepository = legacyRepository
+	candidate.Provenance.PullRequestID = pullrequest.OpaqueID(legacyRepository, 17)
+	candidate.Provenance.Repository = legacyRepository
+	candidate.Provenance.RepositoryAliases = nil
+	candidate.Provenance.Project.Identity = legacyRepository
+	candidate.Provenance.Workspace.Repository = legacyRepository
+	provider := providerForImported(exactMergedPR(forkRepository))
+	provider.resolve = func(requested pullrequest.Repository) (pullrequest.Repository, error) {
+		switch requested.Identity {
+		case legacyRepository:
+			return repository(baseRepository), nil
+		case forkRepository:
+			return repository(forkRepository), nil
+		default:
+			return pullrequest.Repository{}, fmt.Errorf(
+				"unexpected repository resolution: %s", requested.Identity,
+			)
+		}
+	}
+
+	outcomes := EvaluateMerged(context.Background(), provider, []MergedCandidate{candidate})
+
+	require.Len(t, outcomes, 1)
+	assert.Equal(t, EligibleMerged, outcomes[0].Reason)
+	assert.Equal(t, 1, provider.getCalls)
+}
+
 func TestEvaluateMergedAcceptsSymlinkEquivalentImportedWorkspacePath(t *testing.T) {
 	realPath := filepath.Join(t.TempDir(), "workspace")
 	require.NoError(t, os.Mkdir(realPath, 0o755))

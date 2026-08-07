@@ -185,6 +185,7 @@ func (i *Inspector) Inspect(ctx context.Context) (Report, error) {
 			continue
 		}
 		if active {
+			inventoryComplete = false
 			continue
 		}
 		exists, statErr := i.PathExists(entry.Path)

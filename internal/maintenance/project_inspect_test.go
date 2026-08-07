@@ -412,6 +412,36 @@ func TestInspectorDoesNotInventoryRegistryEntryOwnedByCreation(t *testing.T) {
 	assert.True(t, report.Summary.Healthy)
 }
 
+func TestInspectorDefersMissingProjectRepairDuringActiveCreation(t *testing.T) {
+	registration := projectRegistration(
+		"github.com/acme/widget", "~/old/widget", "/old/widget",
+	)
+	entry := &registry.WorktreeEntry{
+		Path: "/repos/creating", Repository: "github.com/acme/widget",
+		CreationToken: "creator",
+	}
+	inspector := projectRepairInspector(
+		[]config.ProjectRegistration{registration},
+		[]*registry.WorktreeEntry{entry},
+		nil,
+		nil,
+		map[string]bool{registration.Effective.Path: false, entry.Path: true},
+		nil,
+		nil,
+	)
+	inspector.InspectRepository = func(path string) (RepositorySnapshot, error) {
+		return RepositorySnapshot{}, fmt.Errorf("active creation path inspected: %s", path)
+	}
+	inspector.CreationActive = func(string) (bool, error) { return true, nil }
+
+	report, err := inspector.Inspect(context.Background())
+
+	require.NoError(t, err)
+	assert.Contains(t, findingCodes(report), ProjectUnreachable)
+	assert.NotContains(t, findingCodes(report), ProjectPathMoved)
+	assert.NotContains(t, findingCodes(report), StaleProjectRegistration)
+}
+
 func TestInspectorIncludesAbandonedCreationRegistryEntries(t *testing.T) {
 	t.Run("missing path", func(t *testing.T) {
 		entry := &registry.WorktreeEntry{
