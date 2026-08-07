@@ -211,6 +211,24 @@ func TestFindGlobalWorktreePathsStrictTraversesSymlinkedBaseDirectory(t *testing
 	}), "FindGlobalWorktreePathsStrict() = %v, want %s", paths, worktreePath)
 }
 
+func TestFindGlobalWorktreePathsStrictIncludesRepositoryUnderModulesDirectory(
+	t *testing.T,
+) {
+	baseDir := t.TempDir()
+	repoDir := filepath.Join(t.TempDir(), "modules", "widget")
+	repo := initRepoAt(t, repoDir, "https://github.com/acme/widget.git")
+	repo.CreateBranch(t, "topic")
+	worktreePath := filepath.Join(baseDir, "topic")
+	repo.CreateWorktree(t, worktreePath, "topic")
+
+	paths, err := FindGlobalWorktreePathsStrict(baseDir)
+
+	require.NoError(t, err)
+	require.True(t, slices.ContainsFunc(paths, func(path string) bool {
+		return utils.PathKey(path) == utils.PathKey(worktreePath)
+	}), "FindGlobalWorktreePathsStrict() = %v, want %s", paths, worktreePath)
+}
+
 func TestFindGlobalWorktreePathsStrictRejectsDanglingBaseDirectorySymlink(
 	t *testing.T,
 ) {
