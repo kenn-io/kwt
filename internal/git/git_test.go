@@ -1328,6 +1328,53 @@ func TestWorktreeGitDirRejectsDuplicateAdministrativeBacklinks(t *testing.T) {
 	require.ErrorContains(t, err, "multiple administrative directories")
 }
 
+func TestWorktreeGitDirRejectsIncompleteAdministrativeInventory(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*testing.T, string)
+	}{
+		{
+			name: "missing gitdir file",
+			setup: func(t *testing.T, path string) {
+				require.NoError(t, os.Mkdir(path, 0o700))
+			},
+		},
+		{
+			name: "malformed gitdir file",
+			setup: func(t *testing.T, path string) {
+				require.NoError(t, os.Mkdir(path, 0o700))
+				require.NoError(t, os.WriteFile(
+					filepath.Join(path, "gitdir"),
+					[]byte("not-a-worktree-backlink\n"),
+					0o600,
+				))
+			},
+		},
+		{
+			name: "unexpected non-directory entry",
+			setup: func(t *testing.T, path string) {
+				require.NoError(t, os.WriteFile(path, []byte("unexpected\n"), 0o600))
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := NewTestRepository(t)
+			g := New(repo.Path)
+			repo.CreateBranch(t, "verified-worktree")
+			worktreePath := filepath.Join(t.TempDir(), "verified-worktree")
+			repo.CreateWorktree(t, worktreePath, "verified-worktree")
+			commonDir, err := g.worktreeCommonDir(nil)
+			require.NoError(t, err)
+			tt.setup(t, filepath.Join(commonDir, "worktrees", "incomplete-entry"))
+
+			_, err = g.worktreeGitDir(worktreePath)
+
+			require.ErrorContains(t, err, "incomplete administrative inventory")
+		})
+	}
+}
+
 func TestWorktreeGenerationSupportsSeparateGitDirectory(t *testing.T) {
 	base := t.TempDir()
 	worktreePath := filepath.Join(base, "worktree")

@@ -36,6 +36,7 @@ type fakePruneMergedRegistry struct {
 	entries       []*registry.WorktreeEntry
 	creationBusy  bool
 	creationCalls int
+	releaseErr    error
 	entryMatches  func(string, *registry.WorktreeEntry) (bool, error)
 }
 
@@ -51,7 +52,7 @@ func (r *fakePruneMergedRegistry) AcquireCreation(string) (func() error, bool, e
 	if r.creationBusy {
 		return nil, false, nil
 	}
-	return func() error { return nil }, true, nil
+	return func() error { return r.releaseErr }, true, nil
 }
 
 func (r *fakePruneMergedRegistry) EntryMatches(
@@ -276,6 +277,34 @@ func TestPruneMergedDoesNotRemoveWhenProvenanceAppearsAfterSnapshot(t *testing.T
 	assert.Contains(t, stdout.String(), "ownership")
 	assert.Equal(t, 2, store.viewCalls)
 	assert.Zero(t, removed)
+}
+
+func TestPruneMergedCleansOwnershipAfterRemovalWhenGuardReleaseFails(t *testing.T) {
+	resetPruneMergedCommand(t)
+	pruneJSON = true
+	candidate := commandMergedCandidate("/worktrees/removed-before-unlock", commandMergedHead)
+	candidate.RegistryExpected = true
+	setPruneMergedInventory(candidate)
+	setPruneMergedProvider(providerForCommandCandidates(candidate))
+	reg := &fakePruneMergedRegistry{
+		removed: true, releaseErr: errors.New("unlock failed"),
+	}
+	openPruneMergedRegistry = func() (pruneMergedRegistry, error) { return reg, nil }
+	publications := 0
+	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) { publications++ }
+	cmd, stdout, _ := fleetTestCommand()
+
+	err := runPrune(cmd, nil)
+
+	assertExitCode(t, err, 1)
+	var report prunepolicy.Report
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
+	require.Len(t, report.Outcomes, 1)
+	assert.Equal(t, prunepolicy.CleanupIncomplete, report.Outcomes[0].Reason)
+	assert.Equal(t, "true", report.Outcomes[0].Evidence["worktree_removed"])
+	assert.Contains(t, report.Outcomes[0].Evidence["cleanup_error"], "unlock failed")
+	assert.Equal(t, 1, reg.calls)
+	assert.Equal(t, 1, publications)
 }
 
 func TestPruneMergedRemovesWorktreePreservesBranchAndPublishesOnce(t *testing.T) {

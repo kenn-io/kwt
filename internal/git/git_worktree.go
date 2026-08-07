@@ -1702,9 +1702,20 @@ func (g *Git) worktreeGitDirWithoutCredentials(
 					gitDirInfo.IsDir() {
 					if utils.PathKey(gitDir) == utils.PathKey(commonDir) {
 						directCommonClaim = true
-					} else if !worktreeAdminDirMatchesPath(gitDir, commonDir, dotGitPath) {
-						pointsOutsideCommon = utils.PathKey(filepath.Dir(gitDir)) !=
-							utils.PathKey(filepath.Join(commonDir, "worktrees"))
+					} else {
+						matchesPath, matchErr := worktreeAdminDirMatchesPath(
+							gitDir, commonDir, dotGitPath,
+						)
+						if matchErr != nil {
+							return "", fmt.Errorf(
+								"resolve worktree Git directory: incomplete administrative inventory: %w",
+								matchErr,
+							)
+						}
+						if !matchesPath {
+							pointsOutsideCommon = utils.PathKey(filepath.Dir(gitDir)) !=
+								utils.PathKey(filepath.Join(commonDir, "worktrees"))
+						}
 					}
 				}
 			}
@@ -1724,10 +1735,22 @@ func (g *Git) worktreeGitDirWithoutCredentials(
 	matches := make([]string, 0, 1)
 	for _, entry := range entries {
 		if !entry.IsDir() {
-			continue
+			return "", fmt.Errorf(
+				"resolve worktree Git directory: incomplete administrative inventory: unexpected entry %s",
+				filepath.Join(commonDir, "worktrees", entry.Name()),
+			)
 		}
 		adminDir := filepath.Join(commonDir, "worktrees", entry.Name())
-		if worktreeAdminDirMatchesPath(adminDir, commonDir, dotGitPath) {
+		matchesPath, matchErr := worktreeAdminDirMatchesPath(
+			adminDir, commonDir, dotGitPath,
+		)
+		if matchErr != nil {
+			return "", fmt.Errorf(
+				"resolve worktree Git directory: incomplete administrative inventory: %w",
+				matchErr,
+			)
+		}
+		if matchesPath {
 			matches = append(matches, adminDir)
 		}
 	}
@@ -1756,22 +1779,31 @@ func worktreeAdminDirMatchesPath(
 	adminDir string,
 	commonDir string,
 	dotGitPath string,
-) bool {
+) (bool, error) {
 	if utils.PathKey(filepath.Dir(adminDir)) !=
 		utils.PathKey(filepath.Join(commonDir, "worktrees")) {
-		return false
+		return false, nil
 	}
-	gitDirFile, err := os.ReadFile(filepath.Join(adminDir, "gitdir"))
+	gitDirPath := filepath.Join(adminDir, "gitdir")
+	gitDirFile, err := os.ReadFile(gitDirPath)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("read administrative backlink %s: %w", gitDirPath, err)
 	}
 	registeredDotGit := strings.TrimSpace(string(gitDirFile))
+	if registeredDotGit == "" {
+		return false, fmt.Errorf("administrative backlink %s is empty", gitDirPath)
+	}
 	if !filepath.IsAbs(registeredDotGit) {
 		registeredDotGit = filepath.Join(adminDir, registeredDotGit)
 	}
-	return filepath.Base(registeredDotGit) == ".git" &&
-		comparableWorktreePath(filepath.Dir(registeredDotGit)) ==
-			comparableWorktreePath(filepath.Dir(dotGitPath))
+	if filepath.Base(registeredDotGit) != ".git" {
+		return false, fmt.Errorf(
+			"administrative backlink %s does not identify a worktree .git file",
+			gitDirPath,
+		)
+	}
+	return comparableWorktreePath(filepath.Dir(registeredDotGit)) ==
+		comparableWorktreePath(filepath.Dir(dotGitPath)), nil
 }
 
 func comparableWorktreePath(path string) string {

@@ -134,10 +134,13 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 			outcomes[index] = outcome
 			continue
 		}
+		worktreeRemoved := false
 		removeErr := withPruneMergedOwnershipGuard(ctx, reg, store, candidate, func() error {
-			return removePruneMergedWorktree(candidate)
+			err := removePruneMergedWorktree(candidate)
+			worktreeRemoved = err == nil || git.WorktreeWasRemoved(err)
+			return err
 		})
-		if removeErr != nil && !git.WorktreeWasRemoved(removeErr) {
+		if removeErr != nil && !worktreeRemoved {
 			providerEvidence := outcome.Evidence
 			outcome = pruneOutcomeForError(candidate.Policy.Path, candidate.Policy.Branch, removeErr)
 			outcome.Evidence = providerEvidence
