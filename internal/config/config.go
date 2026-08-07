@@ -113,8 +113,8 @@ func getLocalConfigPath() string {
 //   - If interactive is false (non-TTY), unknown files are skipped with a stderr warning.
 //   - On user rejection, the file is skipped (command continues, global config only).
 //   - Trust store write failures are non-fatal (merge proceeds with a stderr warning).
-//   - fleet.* keys are always ignored: sync settings are global-only because they
-//     control token sources and the hub endpoint.
+//   - fleet.* and daemon.* keys are always ignored because they control
+//     machine-level credentials, endpoints, and process authority.
 //
 // For repository_settings, merging is done by the `repository` field as the key.
 func mergeLocalConfig(store *TrustStore, prompter trustPrompter, interactive bool) error {
@@ -195,6 +195,8 @@ func mergeLocalConfig(store *TrustStore, prompter trustPrompter, interactive boo
 			// which hub they are sent to; accepting them from a repo-local
 			// file would let a repository exfiltrate arbitrary secrets.
 			fmt.Fprintf(os.Stderr, "kwt: ignoring %q in %s: sync settings are global-only\n", key, absPath)
+		case key == "daemon" || strings.HasPrefix(key, "daemon."):
+			fmt.Fprintf(os.Stderr, "kwt: ignoring %q in %s: daemon settings are global-only\n", key, absPath)
 		default:
 			viper.Set(key, localViper.Get(key))
 		}
@@ -524,7 +526,8 @@ func LoadForTarget(repoRoot string, interactive bool) (*models.Config, error) {
 					case key == "repository_settings":
 						mergeRepositorySettingsInto(target, local)
 					case key == "projects" || key == "workspaces" || strings.HasPrefix(key, "workspaces."),
-						key == "fleet" || strings.HasPrefix(key, "fleet."):
+						key == "fleet" || strings.HasPrefix(key, "fleet."),
+						key == "daemon" || strings.HasPrefix(key, "daemon."):
 						continue
 					default:
 						target.Set(key, local.Get(key))

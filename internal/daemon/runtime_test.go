@@ -112,6 +112,7 @@ func TestInspectReturnsAProofVerifiedRuntime(t *testing.T) {
 		State:         StateReady,
 		PID:           rec.PID,
 		Version:       rec.Version,
+		Revision:      "abc",
 		Home:          home,
 		Endpoint:      ep.Address,
 		SchemaMajor:   APISchemaMajor,
@@ -139,4 +140,42 @@ func TestInspectReturnsAProofVerifiedRuntime(t *testing.T) {
 	assert.Equal(t, RuntimeReady, observation.State)
 	assert.Equal(t, "abc", observation.Record.Metadata[metadataRevision])
 	require.NotNil(t, observation.Client)
+}
+
+func TestValidateRuntimeStatusRejectsBuildIdentityMismatch(t *testing.T) {
+	home := t.TempDir()
+	rec := kitdaemon.NewRuntimeRecord(
+		ServiceName,
+		"v1.2.3",
+		kitdaemon.Endpoint{
+			Network: kitdaemon.NetworkTCP,
+			Address: "127.0.0.1:43210",
+		},
+	)
+	rec.Metadata = validMetadata(home, "secret")
+	metadata, err := parseRuntimeMetadata(rec, home)
+	require.NoError(t, err)
+	status := Status{
+		Service:       ServiceName,
+		State:         StateReady,
+		Home:          home,
+		Endpoint:      rec.Endpoint().Address,
+		PID:           rec.PID,
+		Version:       rec.Version,
+		Revision:      metadata.revision,
+		SchemaMajor:   APISchemaMajor,
+		SchemaVersion: APISchemaVersion,
+		Capabilities:  []string{CapabilityShutdown, CapabilityStatus},
+	}
+
+	for name, mutate := range map[string]func(*Status){
+		"version":  func(value *Status) { value.Version = "v9.9.9" },
+		"revision": func(value *Status) { value.Revision = "different" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			mismatched := status
+			mutate(&mismatched)
+			require.Error(t, validateRuntimeStatus(rec, metadata, mismatched))
+		})
+	}
 }

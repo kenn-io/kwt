@@ -37,3 +37,19 @@ func TestRotatingLogRotatesAnOversizedExistingFileOnOpen(t *testing.T) {
 	require.NoError(t, log.Close())
 	assert.FileExists(t, path+".1")
 }
+
+func TestRotatingLogRejectsSymlinkedActivePath(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.log")
+	require.NoError(t, os.WriteFile(target, []byte("preserve"), 0o600))
+	path := filepath.Join(dir, "daemon.log")
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	_, err := openRotatingLog(path, 16, 3)
+	require.Error(t, err)
+	body, readErr := os.ReadFile(target)
+	require.NoError(t, readErr)
+	assert.Equal(t, "preserve", string(body))
+}

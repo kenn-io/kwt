@@ -232,6 +232,9 @@ func validateRuntimeStatus(
 		status.PID != rec.PID || status.Endpoint != rec.Endpoint().Address {
 		return errors.New("daemon status does not match its runtime record")
 	}
+	if status.Version != rec.Version || status.Revision != metadata.revision {
+		return errors.New("daemon build identity does not match its runtime record")
+	}
 	if status.SchemaMajor <= 0 || status.SchemaMajor != metadata.schemaMajor ||
 		status.SchemaVersion == "" || status.SchemaVersion != metadata.schemaVersion {
 		return errors.New("daemon schema does not match its runtime record")

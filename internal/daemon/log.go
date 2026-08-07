@@ -1,10 +1,13 @@
 package daemon
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"go.kenn.io/kit/safefileio"
 )
 
 const (
@@ -37,6 +40,25 @@ func openRotatingLog(path string, maxSize int64, backups int) (*rotatingLog, err
 	if maxSize <= 0 || backups <= 0 {
 		return nil, fmt.Errorf("invalid daemon log limits")
 	}
+	dir := filepath.Dir(path)
+	if filepath.Dir(dir) == dir {
+		return nil, fmt.Errorf("daemon log directory must not be a filesystem root")
+	}
+	// The private, current-user-owned parent makes the validation/open gap
+	// accessible only to the operating-system account that is already the
+	// daemon trust boundary. Created files inherit its Windows DACL.
+	if err := safefileio.EnsurePrivateDir(dir); err != nil {
+		return nil, fmt.Errorf("secure daemon log directory: %w", err)
+	}
+	for index := 0; index <= backups; index++ {
+		candidate := path
+		if index > 0 {
+			candidate += fmt.Sprintf(".%d", index)
+		}
+		if err := validateExistingLogPath(candidate); err != nil {
+			return nil, err
+		}
+	}
 	log := &rotatingLog{path: path, maxSize: maxSize, backups: backups}
 	if info, err := os.Stat(path); err == nil && info.Size() >= maxSize {
 		if err := log.rotateFiles(); err != nil {
@@ -56,6 +78,10 @@ func (l *rotatingLog) open() error {
 	if err != nil {
 		return err
 	}
+	if err := safefileio.ValidateCurrentUserFile(file); err != nil {
+		_ = file.Close()
+		return err
+	}
 	if err := file.Chmod(0o600); err != nil {
 		_ = file.Close()
 		return err
@@ -66,6 +92,20 @@ func (l *rotatingLog) open() error {
 		return err
 	}
 	l.file, l.size = file, info.Size()
+	return nil
+}
+
+func validateExistingLogPath(path string) error {
+	file, err := safefileio.OpenCurrentUserFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("validate daemon log %s: %w", path, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close daemon log %s after validation: %w", path, err)
+	}
 	return nil
 }
 

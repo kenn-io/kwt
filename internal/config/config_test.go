@@ -658,6 +658,37 @@ listen_addr = "0.0.0.0:9999"
 			t.Errorf("non-fleet local settings should still merge")
 		}
 	})
+
+	t.Run("IgnoresDaemonSettings", func(t *testing.T) {
+		viper.Reset()
+		t.Cleanup(viper.Reset)
+		applyGlobalDefaults(viper.GetViper())
+		globalGrace := viper.GetDuration("daemon.replacement_grace")
+
+		tmpDir := t.TempDir()
+		localConfig := []byte(`[daemon]
+idle_timeout = "-1s"
+auto_restart = "sometimes"
+replacement_grace = "0s"
+`)
+		require.NoError(t, os.WriteFile(
+			filepath.Join(tmpDir, ".kwt.toml"),
+			localConfig,
+			0o600,
+		))
+		changeDir(t, tmpDir)
+
+		require.NoError(t, mergeLocalConfig(
+			&TrustStore{},
+			trustingPrompter(),
+			true,
+		))
+		cfg, err := Load()
+		require.NoError(t, err)
+		assert.Equal(t, 2*time.Hour, cfg.Daemon.IdleTimeout)
+		assert.Equal(t, "newer", cfg.Daemon.AutoRestart)
+		assert.Equal(t, globalGrace, cfg.Daemon.ReplacementGrace)
+	})
 }
 
 func TestMergeLocalConfigRepositorySettings(t *testing.T) {
@@ -1846,7 +1877,7 @@ func TestLoadForTargetMergesTrustedRepositorySettings(t *testing.T) {
 	target := t.TempDir()
 	localPath := filepath.Join(target, ".kwt.toml")
 	targetWorktrees := filepath.Join(target, "target-worktrees")
-	local := []byte("[worktree]\nbasedir = '" + targetWorktrees + "'\n[fleet]\ntoken_env = 'ATTACKER_TOKEN'\n[[repository_settings]]\nrepository = '" + target + "'\nsetup_commands = ['echo trusted']\n")
+	local := []byte("[worktree]\nbasedir = '" + targetWorktrees + "'\n[fleet]\ntoken_env = 'ATTACKER_TOKEN'\n[daemon]\nidle_timeout = '-1s'\nauto_restart = 'sometimes'\nreplacement_grace = '0s'\n[[repository_settings]]\nrepository = '" + target + "'\nsetup_commands = ['echo trusted']\n")
 	require.NoError(t, os.WriteFile(localPath, local, 0o600))
 	absPath, err := normalizeConfigPath(localPath)
 	require.NoError(t, err)
@@ -1858,6 +1889,9 @@ func TestLoadForTargetMergesTrustedRepositorySettings(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, targetWorktrees, cfg.Worktree.BaseDir)
 	assert.Equal(t, "GLOBAL_FLEET_TOKEN", cfg.Fleet.TokenEnv)
+	assert.Equal(t, 2*time.Hour, cfg.Daemon.IdleTimeout)
+	assert.Equal(t, "newer", cfg.Daemon.AutoRestart)
+	assert.Equal(t, 5*time.Minute, cfg.Daemon.ReplacementGrace)
 	require.Len(t, cfg.RepositorySettings, 1)
 	assert.Equal(t, []string{"echo trusted"}, cfg.RepositorySettings[0].SetupCommands)
 }

@@ -141,12 +141,27 @@ func renderDaemonStatus(
 	jsonOutput bool,
 ) error {
 	if jsonOutput {
-		if observation.State == kwtdaemon.RuntimeAbsent {
+		switch observation.State {
+		case kwtdaemon.RuntimeAbsent:
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
 				State string `json:"state"`
 			}{State: "stopped"})
+		case kwtdaemon.RuntimeUnresponsive:
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
+				State    string `json:"state"`
+				PID      int    `json:"pid"`
+				Version  string `json:"version"`
+				Endpoint string `json:"endpoint"`
+			}{
+				State:    "unresponsive",
+				PID:      observation.Record.PID,
+				Version:  observation.Record.Version,
+				Endpoint: observation.Record.Endpoint().Address,
+			})
 		}
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(observation.Status)
+		status := observation.Status
+		status.State = kwtdaemon.State(daemonStateName(observation))
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(status)
 	}
 	state := daemonStateName(observation)
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "state: %s\n", state); err != nil {
@@ -154,6 +169,16 @@ func renderDaemonStatus(
 	}
 	if observation.State == kwtdaemon.RuntimeAbsent {
 		return nil
+	}
+	if observation.State == kwtdaemon.RuntimeUnresponsive {
+		_, err := fmt.Fprintf(
+			cmd.OutOrStdout(),
+			"pid: %d\nversion: %s\nendpoint: %s\n",
+			observation.Record.PID,
+			observation.Record.Version,
+			observation.Record.Endpoint().Address,
+		)
+		return err
 	}
 	status := observation.Status
 	_, err := fmt.Fprintf(
@@ -193,21 +218,21 @@ func renderDaemonStatus(
 }
 
 func daemonStateName(observation kwtdaemon.Observation) string {
-	if observation.Status.State != "" {
-		return string(observation.Status.State)
-	}
 	switch observation.State {
 	case kwtdaemon.RuntimeAbsent:
 		return "stopped"
-	case kwtdaemon.RuntimeReady:
-		return "ready"
 	case kwtdaemon.RuntimeDraining:
 		return "draining"
 	case kwtdaemon.RuntimeIncompatible:
 		return "incompatible"
 	case kwtdaemon.RuntimeUnresponsive:
 		return "unresponsive"
-	default:
-		return "unknown"
 	}
+	if observation.Status.State != "" {
+		return string(observation.Status.State)
+	}
+	if observation.State == kwtdaemon.RuntimeReady {
+		return "ready"
+	}
+	return "unknown"
 }
