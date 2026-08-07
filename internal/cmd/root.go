@@ -158,39 +158,49 @@ func requireConfigInitialization() error {
 	return nil
 }
 
-// getVersionString returns a formatted version string using build info
-func getVersionString() string {
+type buildInfo struct {
+	Version  string
+	Revision string
+	Date     string
+	Display  string
+}
+
+func currentBuildInfo() buildInfo {
+	buildVersion, buildRevision, buildDate := version, commit, date
 	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date)
-	}
-
-	// Extract version information from build info
-	buildVersion := version
-	buildCommit := commit
-	buildDate := date
-
-	// Try to get version from module
-	if info.Main.Version != "" && info.Main.Version != "(devel)" {
-		buildVersion = info.Main.Version
-	}
-
-	// Try to get commit and date from VCS settings
-	for _, setting := range info.Settings {
-		switch setting.Key {
-		case "vcs.revision":
-			if setting.Value != "" {
-				buildCommit = setting.Value
-				if len(buildCommit) > 7 {
-					buildCommit = buildCommit[:7]
+	if ok {
+		if info.Main.Version != "" && info.Main.Version != "(devel)" {
+			buildVersion = info.Main.Version
+		}
+		for _, setting := range info.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				if setting.Value != "" {
+					buildRevision = setting.Value
 				}
-			}
-		case "vcs.time":
-			if setting.Value != "" {
-				buildDate = setting.Value
+			case "vcs.time":
+				if setting.Value != "" {
+					buildDate = setting.Value
+				}
 			}
 		}
 	}
-
-	return fmt.Sprintf("%s (commit: %s, built: %s)", buildVersion, buildCommit, buildDate)
+	displayRevision := buildRevision
+	if len(displayRevision) > 7 {
+		displayRevision = displayRevision[:7]
+	}
+	return buildInfo{
+		Version:  buildVersion,
+		Revision: buildRevision,
+		Date:     buildDate,
+		Display: fmt.Sprintf(
+			"%s (commit: %s, built: %s)",
+			buildVersion,
+			displayRevision,
+			buildDate,
+		),
+	}
 }
+
+// getVersionString returns a formatted version string using build info.
+func getVersionString() string { return currentBuildInfo().Display }

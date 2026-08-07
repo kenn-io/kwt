@@ -22,45 +22,39 @@ var versionCmd = &cobra.Command{
 }
 
 func showVersion() {
+	build := currentBuildInfo()
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		// Fallback to compile-time variables
-		fmt.Printf("kwt version %s\n", version)
-		fmt.Printf("  commit: %s\n", commit)
-		fmt.Printf("  built: %s\n", date)
+		fmt.Printf("kwt version %s\n", build.Version)
+		fmt.Printf("  commit: %s\n", build.Revision)
+		fmt.Printf("  built: %s\n", build.Date)
 		fmt.Printf("  go: %s\n", runtime.Version())
 		fmt.Printf("  os/arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 		return
 	}
 
 	// Use build info from runtime
-	fmt.Printf("kwt version %s\n", getVersion(info))
+	fmt.Printf("kwt version %s\n", build.Version)
 
-	// Show VCS information if available
-	vcsRevision := ""
-	vcsTime := ""
 	vcsModified := false
 
 	for _, setting := range info.Settings {
 		switch setting.Key {
-		case "vcs.revision":
-			vcsRevision = setting.Value
-		case "vcs.time":
-			vcsTime = setting.Value
 		case "vcs.modified":
 			vcsModified = setting.Value == "true"
 		}
 	}
 
-	if vcsRevision != "" {
-		fmt.Printf("  commit: %s\n", vcsRevision)
+	if build.Revision != "" {
+		fmt.Printf("  commit: %s\n", build.Revision)
 		if vcsModified {
 			fmt.Printf("  modified: true\n")
 		}
 	}
 
-	if vcsTime != "" {
-		fmt.Printf("  built: %s\n", vcsTime)
+	if build.Date != "" {
+		fmt.Printf("  built: %s\n", build.Date)
 	}
 
 	fmt.Printf("  go: %s\n", info.GoVersion)
@@ -73,29 +67,4 @@ func showVersion() {
 			fmt.Printf("  module version: %s\n", info.Main.Version)
 		}
 	}
-}
-
-func getVersion(info *debug.BuildInfo) string {
-	// If we have a module version, use it
-	if info.Main.Version != "" && info.Main.Version != "(devel)" {
-		return info.Main.Version
-	}
-
-	// Otherwise fall back to compile-time version
-	if version != "dev" {
-		return version
-	}
-
-	// If still no version, try to extract from VCS
-	for _, setting := range info.Settings {
-		if setting.Key == "vcs.revision" && setting.Value != "" {
-			// Return first 7 characters of commit hash
-			if len(setting.Value) > 7 {
-				return setting.Value[:7]
-			}
-			return setting.Value
-		}
-	}
-
-	return "dev"
 }
