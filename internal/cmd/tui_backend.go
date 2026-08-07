@@ -376,19 +376,14 @@ func (b *tuiBackend) workspaceRows(sessions []string) []dashboard.Row {
 		return nil
 	}
 	rows := make([]dashboard.Row, 0, len(b.cfg.Workspaces))
-	for _, workspace := range b.cfg.Workspaces {
-		sessionName := tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path)
-		sessionLive := false
-		// Match by path hash so a renamed workspace still finds (and later
-		// attaches to) its live session created under the old name.
-		if live, ok := tmux.MatchDirWorkspaceSession(sessions, workspace.Path); ok {
-			sessionName = live
-			sessionLive = true
-		}
+	for _, record := range directoryWorkspaceRecords(b.cfg.Workspaces, sessions) {
 		rows = append(rows, dashboard.Row{
-			Workspace:   &dashboard.WorkspaceInfo{Name: workspace.Name, Path: workspace.Path},
-			SessionName: sessionName,
-			SessionLive: sessionLive,
+			Workspace: &dashboard.WorkspaceInfo{
+				Name: record.Name,
+				Path: record.Path,
+			},
+			SessionName: record.SessionName,
+			SessionLive: record.SessionLive,
 		})
 	}
 	return rows

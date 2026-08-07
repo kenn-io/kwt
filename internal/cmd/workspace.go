@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 var (
 	workspaceAddName string
+	workspaceJSON    bool
 
 	registerWorkspace     = config.RegisterWorkspace
 	unregisterWorkspace   = config.UnregisterWorkspace
@@ -56,6 +58,7 @@ var workspaceRemoveCmd = &cobra.Command{
 
 func init() {
 	workspaceAddCmd.Flags().StringVar(&workspaceAddName, "name", "", "workspace name (defaults to the directory base name)")
+	workspaceListCmd.Flags().BoolVar(&workspaceJSON, "json", false, "Output in JSON format")
 	workspaceCmd.AddCommand(workspaceAddCmd, workspaceListCmd, workspaceRemoveCmd)
 	rootCmd.AddCommand(workspaceCmd)
 }
@@ -85,6 +88,11 @@ func runWorkspaceList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 	if len(cfg.Workspaces) == 0 {
+		if workspaceJSON {
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(
+				[]directoryWorkspaceRecord{},
+			)
+		}
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no workspaces registered")
 		return nil
 	}
@@ -92,13 +100,17 @@ func runWorkspaceList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to list tmux sessions: %w", err)
 	}
+	records := directoryWorkspaceRecords(cfg.Workspaces, sessions)
+	if workspaceJSON {
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(records)
+	}
 	t := table.New().SetOutput(cmd.OutOrStdout()).Headers("NAME", "PATH", "SESSION")
-	for _, workspace := range cfg.Workspaces {
+	for _, record := range records {
 		state := "stopped"
-		if _, ok := tmux.MatchDirWorkspaceSession(sessions, workspace.Path); ok {
+		if record.SessionLive {
 			state = "live"
 		}
-		t.Row(workspace.Name, workspace.Path, state)
+		t.Row(record.Name, record.Path, state)
 	}
 	return t.Println()
 }

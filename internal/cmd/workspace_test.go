@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -96,6 +97,79 @@ func TestWorkspaceListShowsLiveState(t *testing.T) {
 	assert.Contains(t, out, "live")
 	assert.Contains(t, out, "scratch")
 	assert.Contains(t, out, "stopped")
+}
+
+func TestWorkspaceListJSONReportsCanonicalAndEffectiveSessions(t *testing.T) {
+	resetWorkspaceCommandDeps(t)
+	workspaceJSON = true
+	t.Cleanup(func() { workspaceJSON = false })
+	workspaces := []models.Workspace{
+		{Name: "renamed", Path: "/Users/me/notes"},
+		{Name: "scratch", Path: "/Users/me/scratch"},
+	}
+	loadWorkspaceConfig = func() (*models.Config, error) {
+		return &models.Config{Workspaces: workspaces}, nil
+	}
+	oldLiveName := tmux.DirWorkspaceSessionName("old-name", workspaces[0].Path)
+	listWorkspaceSessions = func() ([]string, error) {
+		return []string{oldLiveName}, nil
+	}
+
+	cmd, stdout, _ := fleetTestCommand()
+	require.NoError(t, runWorkspaceList(cmd, nil))
+
+	var got []directoryWorkspaceRecord
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &got))
+	require.Len(t, got, 2)
+	assert.Equal(t, directoryWorkspaceRecord{
+		Name:        "renamed",
+		Path:        "/Users/me/notes",
+		SessionName: oldLiveName,
+		SessionLive: true,
+	}, got[0])
+	assert.Equal(t, directoryWorkspaceRecord{
+		Name: "scratch",
+		Path: "/Users/me/scratch",
+		SessionName: tmux.DirWorkspaceSessionName(
+			"scratch",
+			"/Users/me/scratch",
+		),
+		SessionLive: false,
+	}, got[1])
+}
+
+func TestWorkspaceListJSONEmptyRegistryEmitsArray(t *testing.T) {
+	resetWorkspaceCommandDeps(t)
+	workspaceJSON = true
+	t.Cleanup(func() { workspaceJSON = false })
+	loadWorkspaceConfig = func() (*models.Config, error) {
+		return &models.Config{}, nil
+	}
+
+	cmd, stdout, _ := fleetTestCommand()
+	require.NoError(t, runWorkspaceList(cmd, nil))
+
+	assert.Equal(t, "[]\n", stdout.String())
+	assert.NotContains(t, stdout.String(), "no workspaces registered")
+}
+
+func TestFindRegisteredDirectoryWorkspaceUsesCanonicalPath(t *testing.T) {
+	workspaces := []models.Workspace{
+		{Name: "notes", Path: "/Users/me/workspaces/notes"},
+	}
+
+	got, ok := findRegisteredDirectoryWorkspace(
+		workspaces,
+		"/Users/me/workspaces/./notes/",
+	)
+	require.True(t, ok)
+	assert.Equal(t, workspaces[0], got)
+
+	_, ok = findRegisteredDirectoryWorkspace(
+		workspaces,
+		"/Users/me/workspaces/scratch",
+	)
+	assert.False(t, ok)
 }
 
 func TestWorkspaceRemoveReportsLiveSession(t *testing.T) {
