@@ -173,17 +173,18 @@ func currentBuildInfo() buildInfo {
 	buildVersion, buildRevision, buildDate := version, commit, date
 	info, ok := debug.ReadBuildInfo()
 	if ok {
-		if info.Main.Version != "" && info.Main.Version != "(devel)" {
+		if buildVersion == "dev" &&
+			info.Main.Version != "" && info.Main.Version != "(devel)" {
 			buildVersion = info.Main.Version
 		}
 		for _, setting := range info.Settings {
 			switch setting.Key {
 			case "vcs.revision":
-				if setting.Value != "" {
+				if buildRevision == "none" && setting.Value != "" {
 					buildRevision = setting.Value
 				}
 			case "vcs.time":
-				if setting.Value != "" {
+				if buildDate == "unknown" && setting.Value != "" {
 					buildDate = setting.Value
 				}
 			}
