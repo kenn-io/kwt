@@ -61,6 +61,11 @@ kwt open /path/to/worktree
 # Establish that exact workspace session for another tmux client
 kwt open /path/to/worktree --start-session
 
+# Register, inventory, and open a plain directory workspace
+kwt workspace add ~/notes
+kwt workspace list --json
+kwt open ~/notes --start-session
+
 # Inspect worktrees and git status
 kwt list
 kwt status

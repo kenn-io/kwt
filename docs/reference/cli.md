@@ -8,7 +8,7 @@ stable command surface.
 | `kwt`, `kwt tui` | Open the cross-project and multi-machine dashboard.    |
 | `kwt add`        | Create a worktree and optionally launch its workspace. |
 | `kwt branches`   | List branches available for a new worktree.            |
-| `kwt open`       | Open or establish a worktree workspace session.        |
+| `kwt open`       | Open or establish a workspace session.                 |
 | `kwt list`       | List worktrees.                                        |
 | `kwt status`     | Show Git status, sync state, and activity.             |
 | `kwt projects`   | List registered project repositories.                  |
@@ -41,6 +41,8 @@ kwt sync status
 kwt exec fix/parser-race -- go test ./internal/parser
 kwt workspace add ~/notes
 kwt workspace list
+kwt workspace list --json
+kwt open ~/notes --start-session
 kwt config get layouts.default
 kwt config set --local layouts.default stack
 ```
@@ -73,8 +75,10 @@ acknowledgement that opts in to its layout and pane commands.
 ## `kwt open`
 
 With no argument, `kwt open` fuzzy-picks a worktree. A pattern narrows the
-cross-project list and opens the sole match directly. Kwt creates or repairs
-the canonical tmux workspace with its resolved layout before attaching.
+cross-project list and opens the sole match directly. An exact registered
+directory workspace path resolves before Git worktree discovery. Kwt creates
+or repairs the canonical tmux workspace with its resolved layout before
+attaching.
 
 An exact worktree-root path is resolved directly from Git before pattern
 matching, including registered primary checkouts and linked worktrees outside
@@ -88,13 +92,28 @@ An ordinary open from inside tmux switches the current client instead.
 Protected attachment always remains external because it targets a separate
 workspace-specific socket.
 
-`kwt open <exact-worktree-path> --start-session` performs the same layout and
+`kwt open <exact-workspace-path> --start-session` performs the same layout and
 session bootstrap without attaching a client. Use it before an external
-ordinary tmux client attaches to a session that may not exist yet. The exact
-path is resolved directly from Git rather than the global worktree base, which
-keeps this automation mode noninteractive and supports linked worktrees stored
+ordinary tmux client attaches to a session that may not exist yet. Registered
+directory paths resolve from the workspace registry; worktree paths resolve
+directly from Git rather than the global worktree base. This keeps automation
+noninteractive and supports both plain directories and linked worktrees stored
 outside that base.
 Protected pull-request imports remain restricted to `kwt pr attach`.
+
+## `kwt workspace`
+
+`workspace add [path]` registers a plain directory. The `workspace remove`
+command accepts its name and unregisters it without deleting the directory or
+killing a live tmux session. `workspace list` reports registered directories
+and session state.
+
+`workspace list --json` emits an array of objects with `name`, canonical
+absolute `path`, effective `session_name`, and boolean `session_live`. An empty
+registry emits `[]` with no table prose. When a workspace was renamed while its
+session remained live, `session_name` reports that matching live session so
+clients can attach to it; otherwise it reports the canonical name kwt will use
+when establishing the session.
 
 ## `kwt list`
 

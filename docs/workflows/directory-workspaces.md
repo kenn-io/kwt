@@ -10,6 +10,7 @@ configured layouts, and show them in the dashboard next to worktrees.
 kwt workspace add ~/notes
 kwt workspace add ~/scratch/protos --name protos
 kwt workspace list
+kwt workspace list --json
 kwt workspace remove protos
 ```
 
@@ -47,6 +48,21 @@ default in the directory's `.kwt.toml`:
 [layouts]
 default = "stack"
 ```
+
+Open a registered workspace by its exact path to attach normally, or establish
+the same layout and session without attaching for another client:
+
+```sh
+kwt open ~/notes
+kwt open ~/notes --start-session
+```
+
+For inventory clients, `kwt workspace list --json` returns `name`, canonical
+absolute `path`, effective `session_name`, and `session_live` for each entry.
+It returns `[]` when nothing is registered. If a workspace is renamed while a
+matching session is still live, the effective session name remains the live
+name until that session exits; otherwise it is the canonical name kwt will use
+for the next launch.
 
 ## Scope
 
