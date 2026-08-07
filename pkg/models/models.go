@@ -40,8 +40,16 @@ type CdConfig struct {
 	LaunchShell bool `mapstructure:"launch_shell"` // Whether to launch a new shell on cd
 }
 
+// DaemonConfig controls the local kwt service lifecycle.
+type DaemonConfig struct {
+	IdleTimeout      time.Duration `mapstructure:"idle_timeout" toml:"idle_timeout"`
+	AutoRestart      string        `mapstructure:"auto_restart" toml:"auto_restart"`
+	ReplacementGrace time.Duration `mapstructure:"replacement_grace" toml:"replacement_grace"`
+}
+
 // Config represents the application configuration.
 type Config struct {
+	Daemon             DaemonConfig        `mapstructure:"daemon" toml:"daemon"`
 	Worktree           WorktreeConfig      `mapstructure:"worktree"`                     // Worktree-related configuration
 	Fleet              FleetConfig         `mapstructure:"fleet" toml:"fleet"`           // Multi-machine sync configuration
 	Cd                 CdConfig            `mapstructure:"cd"`                           // Cd command configuration

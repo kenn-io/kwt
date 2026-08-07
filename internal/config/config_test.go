@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -2105,4 +2106,49 @@ func TestLoadExpandsWorkspacePaths(t *testing.T) {
 	require.Len(t, cfg.Workspaces, 1)
 	assert.Equal(t, "notes", cfg.Workspaces[0].Name)
 	assert.Equal(t, dir, cfg.Workspaces[0].Path)
+}
+
+func TestLoadDaemonDefaults(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	applyGlobalDefaults(viper.GetViper())
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 2*time.Hour, cfg.Daemon.IdleTimeout)
+	assert.Equal(t, "newer", cfg.Daemon.AutoRestart)
+	assert.Equal(t, 5*time.Minute, cfg.Daemon.ReplacementGrace)
+}
+
+func TestLoadRejectsInvalidDaemonConfig(t *testing.T) {
+	for name, body := range map[string]string{
+		"negative idle":     "[daemon]\nidle_timeout = \"-1s\"",
+		"unknown policy":    "[daemon]\nauto_restart = \"sometimes\"",
+		"nonpositive grace": "[daemon]\nreplacement_grace = \"0s\"",
+	} {
+		t.Run(name, func(t *testing.T) {
+			viper.Reset()
+			t.Cleanup(viper.Reset)
+			viper.SetConfigType("toml")
+			applyGlobalDefaults(viper.GetViper())
+			require.NoError(t, viper.ReadConfig(strings.NewReader(body)))
+			_, err := Load()
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestCanonicalHomeResolvesRelativeAndSymlinkedKwtHome(t *testing.T) {
+	realHome := t.TempDir()
+	parent := t.TempDir()
+	link := filepath.Join(parent, "kwt-home")
+	require.NoError(t, os.Symlink(realHome, link))
+	changeDir(t, parent)
+	t.Setenv("KWT_HOME", "kwt-home")
+
+	home, err := CanonicalHome()
+	require.NoError(t, err)
+	canonicalRealHome, err := filepath.EvalSymlinks(realHome)
+	require.NoError(t, err)
+	assert.Equal(t, canonicalRealHome, home)
 }
