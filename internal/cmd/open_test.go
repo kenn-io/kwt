@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/pullrequest"
 	"go.kenn.io/kwt/internal/registry"
@@ -19,21 +22,36 @@ import (
 )
 
 type recordingOpenWorkspaceRunner struct {
-	ensured  bool
-	attached bool
+	ensured          bool
+	attached         bool
+	sessionName      string
+	workingDirectory string
+	layout           models.Layout
+	insideTmux       bool
 }
 
 func (r *recordingOpenWorkspaceRunner) Ensure(
-	context.Context, string, string, models.Layout,
+	_ context.Context, sessionName, workingDirectory string, layout models.Layout,
 ) error {
 	r.ensured = true
+	r.sessionName = sessionName
+	r.workingDirectory = workingDirectory
+	r.layout = layout
 	return nil
 }
 
 func (r *recordingOpenWorkspaceRunner) EnsureAndAttach(
-	context.Context, string, string, models.Layout, bool,
+	_ context.Context,
+	sessionName string,
+	workingDirectory string,
+	layout models.Layout,
+	insideTmux bool,
 ) error {
 	r.attached = true
+	r.sessionName = sessionName
+	r.workingDirectory = workingDirectory
+	r.layout = layout
+	r.insideTmux = insideTmux
 	return nil
 }
 
@@ -95,6 +113,219 @@ func TestOpenStartSessionFlagGroups(t *testing.T) {
 	selectLayout.Changed = false
 	layout.Changed = true
 	require.NoError(t, openCmd.ValidateFlagGroups())
+}
+
+func TestOpenSelectedDirectoryWorkspaceEnsuresOrAttaches(t *testing.T) {
+	tests := []struct {
+		name         string
+		startSession bool
+	}{
+		{name: "attach", startSession: false},
+		{name: "start only", startSession: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetWorkspaceCommandDeps(t)
+			workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
+			listWorkspaceSessions = func() ([]string, error) { return nil, nil }
+			runner := &recordingOpenWorkspaceRunner{}
+			originalRunner := newOpenWorkspaceRunner
+			originalLayout := openLayout
+			originalSelectLayout := openSelectLayout
+			newOpenWorkspaceRunner = func([]string) openWorkspaceRunner {
+				return runner
+			}
+			openLayout = tmux.BlankLayoutName
+			openSelectLayout = false
+			t.Cleanup(func() {
+				newOpenWorkspaceRunner = originalRunner
+				openLayout = originalLayout
+				openSelectLayout = originalSelectLayout
+			})
+
+			err := openSelectedDirectoryWorkspace(
+				context.Background(),
+				&CommandContext{Config: &models.Config{}},
+				workspace,
+				func([]models.Layout) (models.Layout, error) {
+					return models.Layout{}, nil
+				},
+				tt.startSession,
+				false,
+			)
+
+			require.NoError(t, err)
+			assert.Equal(t, workspace.Path, runner.workingDirectory)
+			assert.Equal(
+				t,
+				tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
+				runner.sessionName,
+			)
+			assert.Equal(t, tt.startSession, runner.ensured)
+			assert.Equal(t, !tt.startSession, runner.attached)
+		})
+	}
+}
+
+func TestOpenSelectedDirectoryWorkspaceUsesRenamedLiveSession(t *testing.T) {
+	resetWorkspaceCommandDeps(t)
+	workspace := models.Workspace{Name: "renamed", Path: t.TempDir()}
+	liveName := tmux.DirWorkspaceSessionName("old-name", workspace.Path)
+	listWorkspaceSessions = func() ([]string, error) {
+		return []string{liveName}, nil
+	}
+	runner := &recordingOpenWorkspaceRunner{}
+	originalRunner := newOpenWorkspaceRunner
+	originalLayout := openLayout
+	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	openLayout = tmux.BlankLayoutName
+	t.Cleanup(func() {
+		newOpenWorkspaceRunner = originalRunner
+		openLayout = originalLayout
+	})
+
+	err := openSelectedDirectoryWorkspace(
+		context.Background(),
+		&CommandContext{Config: &models.Config{}},
+		workspace,
+		nil,
+		true,
+		false,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, liveName, runner.sessionName)
+}
+
+func TestOpenSelectedDirectoryWorkspaceUsesDirectoryLayoutDefault(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("KWT_HOME", filepath.Join(home, ".config", "kwt"))
+	resetWorkspaceCommandDeps(t)
+	workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
+	localTOML := []byte("[layouts]\ndefault = \"focus\"\n")
+	localConfigPath := filepath.Join(workspace.Path, ".kwt.toml")
+	require.NoError(t, os.WriteFile(localConfigPath, localTOML, 0o644))
+	resolvedConfigPath, err := filepath.EvalSymlinks(localConfigPath)
+	require.NoError(t, err)
+	sum := sha256.Sum256(localTOML)
+	trustStore, err := config.LoadTrustStore(
+		filepath.Join(home, ".config", "kwt", "trusted_configs.json"),
+	)
+	require.NoError(t, err)
+	require.NoError(t, trustStore.Add(resolvedConfigPath, hex.EncodeToString(sum[:])))
+	listWorkspaceSessions = func() ([]string, error) { return nil, nil }
+	runner := &recordingOpenWorkspaceRunner{}
+	originalRunner := newOpenWorkspaceRunner
+	originalLayout := openLayout
+	originalSelectLayout := openSelectLayout
+	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	openLayout = ""
+	openSelectLayout = false
+	t.Cleanup(func() {
+		newOpenWorkspaceRunner = originalRunner
+		openLayout = originalLayout
+		openSelectLayout = originalSelectLayout
+	})
+
+	err = openSelectedDirectoryWorkspace(
+		context.Background(),
+		&CommandContext{Config: &models.Config{
+			Layouts: models.LayoutsConfig{Presets: []models.Layout{{
+				Name: "focus", Panes: []string{""},
+			}}},
+		}},
+		workspace,
+		nil,
+		true,
+		false,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "focus", runner.layout.Name)
+}
+
+func TestRunOpenWithContextChoosesRegisteredDirectory(t *testing.T) {
+	for _, startSession := range []bool{false, true} {
+		t.Run(map[bool]string{false: "attach", true: "start only"}[startSession], func(t *testing.T) {
+			resetWorkspaceCommandDeps(t)
+			workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
+			listWorkspaceSessions = func() ([]string, error) { return nil, nil }
+			runner := &recordingOpenWorkspaceRunner{}
+			originalRunner := newOpenWorkspaceRunner
+			originalLayout := openLayout
+			originalSelectLayout := openSelectLayout
+			originalStartSession := openStartSession
+			newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+			openLayout = tmux.BlankLayoutName
+			openSelectLayout = false
+			openStartSession = startSession
+			t.Cleanup(func() {
+				newOpenWorkspaceRunner = originalRunner
+				openLayout = originalLayout
+				openSelectLayout = originalSelectLayout
+				openStartSession = originalStartSession
+			})
+
+			cmd, _, _ := fleetTestCommand()
+			cmd.SetContext(context.Background())
+			err := runOpenWithContext(
+				cmd,
+				[]string{workspace.Path},
+				&CommandContext{Config: &models.Config{
+					Workspaces: []models.Workspace{workspace},
+				}},
+			)
+
+			require.NoError(t, err)
+			assert.Equal(t, workspace.Path, runner.workingDirectory)
+			assert.Equal(t, startSession, runner.ensured)
+			assert.Equal(t, !startSession, runner.attached)
+		})
+	}
+}
+
+func TestOpenStartSessionRequiresExactWorkspacePath(t *testing.T) {
+	originalStartSession := openStartSession
+	openStartSession = true
+	t.Cleanup(func() { openStartSession = originalStartSession })
+	cmd, _, _ := fleetTestCommand()
+	cmd.SetContext(context.Background())
+
+	err := runOpenWithContext(
+		cmd,
+		nil,
+		&CommandContext{Config: &models.Config{}},
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exact workspace path")
+}
+
+func TestRunOpenWithContextRejectsUnregisteredNonGitDirectory(t *testing.T) {
+	originalLayout := openLayout
+	originalStartSession := openStartSession
+	openLayout = tmux.BlankLayoutName
+	openStartSession = false
+	t.Cleanup(func() {
+		openLayout = originalLayout
+		openStartSession = originalStartSession
+	})
+	cmd, _, _ := fleetTestCommand()
+	cmd.SetContext(context.Background())
+	path := t.TempDir()
+
+	err := runOpenWithContext(
+		cmd,
+		[]string{path},
+		&CommandContext{Config: &models.Config{
+			Worktree: models.WorktreeConfig{BaseDir: t.TempDir()},
+		}},
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not resolve worktree")
 }
 
 func TestResolveOpenWorktreeAcceptsExactPrimaryPathOutsideGlobalBase(

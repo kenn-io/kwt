@@ -39,13 +39,12 @@ type openWorkspaceRunner interface {
 
 var openCmd = &cobra.Command{
 	Use:   "open [pattern]",
-	Short: "Open a worktree workspace from any repository",
+	Short: "Open a worktree or registered directory workspace",
 	Long: `Fuzzy-pick a worktree across all repositories in the configured base
 directory and attach to its tmux workspace, creating the workspace with the
 resolved layout if it does not yet exist. A pattern filters the worktree list.
-An exact worktree path resolves directly even when it is outside the configured
-base directory. Add --start-session to create or repair the workspace without
-attaching.`,
+An exact worktree path or registered directory workspace path resolves directly.
+Add --start-session to create or repair the workspace without attaching.`,
 	Example: `  # Pick a worktree and open its workspace
   kwt open
 
@@ -54,6 +53,9 @@ attaching.`,
 
   # Ensure an exact worktree workspace exists without attaching
   kwt open /path/to/worktree --start-session
+
+  # Open a registered directory workspace
+  kwt open /path/to/directory-workspace
 
   # Force a specific layout
   kwt open --layout focus
@@ -77,7 +79,7 @@ func init() {
 		&openStartSession,
 		"start-session",
 		false,
-		"ensure an exact worktree's workspace exists without attaching",
+		"ensure an exact workspace exists without attaching",
 	)
 	openCmd.MarkFlagsMutuallyExclusive("layout", "select-layout")
 	openCmd.MarkFlagsMutuallyExclusive("start-session", "select-layout")
@@ -85,47 +87,70 @@ func init() {
 
 func runOpen(cmd *cobra.Command, args []string) error {
 	return ExecuteWithContext(false, func(ctx *CommandContext) error {
-		if err := tmux.ValidateLayouts(ctx.Config.Layouts, ctx.Config.Agents); err != nil {
-			return err
-		}
-		if openStartSession && len(args) != 1 {
-			return fmt.Errorf("--start-session requires an exact worktree path")
-		}
+		return runOpenWithContext(cmd, args, ctx)
+	})(cmd, args)
+}
 
-		entry, requestedPath, err := resolveOpenWorktree(
-			ctx,
-			args,
-			openStartSession,
-		)
+func runOpenWithContext(
+	cmd *cobra.Command,
+	args []string,
+	ctx *CommandContext,
+) error {
+	if err := tmux.ValidateLayouts(ctx.Config.Layouts, ctx.Config.Agents); err != nil {
+		return err
+	}
+	if openStartSession && len(args) != 1 {
+		return fmt.Errorf("--start-session requires an exact workspace path")
+	}
+	finder := ctx.GetGlobalFinder()
+	selectLayout := func(layouts []models.Layout) (models.Layout, error) {
+		selected, err := finder.SelectLayout(layouts)
 		if err != nil {
-			return err
+			return models.Layout{}, err
 		}
-		if entry == nil {
-			return nil
-		}
-		if entry.RepositoryInfo == nil {
-			return fmt.Errorf(
-				"could not resolve worktree %s",
-				requestedPath,
+		return *selected, nil
+	}
+	if len(args) == 1 {
+		if workspace, ok := findRegisteredDirectoryWorkspace(
+			ctx.Config.Workspaces,
+			args[0],
+		); ok {
+			return openSelectedDirectoryWorkspace(
+				cmd.Context(),
+				ctx,
+				workspace,
+				selectLayout,
+				openStartSession,
+				config.StdinInteractive(),
 			)
 		}
-		finder := ctx.GetGlobalFinder()
+	}
 
-		return openSelectedWorktree(
-			cmd.Context(),
-			ctx,
-			entry,
-			func(ls []models.Layout) (models.Layout, error) {
-				sel, err := finder.SelectLayout(ls)
-				if err != nil {
-					return models.Layout{}, err
-				}
-				return *sel, nil
-			},
-			openStartSession,
-			config.StdinInteractive(),
+	entry, requestedPath, err := resolveOpenWorktree(
+		ctx,
+		args,
+		openStartSession,
+	)
+	if err != nil {
+		return err
+	}
+	if entry == nil {
+		return nil
+	}
+	if entry.RepositoryInfo == nil {
+		return fmt.Errorf(
+			"could not resolve worktree %s",
+			requestedPath,
 		)
-	})(cmd, args)
+	}
+	return openSelectedWorktree(
+		cmd.Context(),
+		ctx,
+		entry,
+		selectLayout,
+		openStartSession,
+		config.StdinInteractive(),
+	)
 }
 
 func resolveOpenWorktree(
@@ -283,6 +308,95 @@ func openSelectedWorktree(
 	return runner.EnsureAndAttach(
 		commandCtx, session, entry.Path, layout, os.Getenv("TMUX") != "",
 	)
+}
+
+func openSelectedDirectoryWorkspace(
+	commandCtx context.Context,
+	ctx *CommandContext,
+	workspace models.Workspace,
+	selectLayout func([]models.Layout) (models.Layout, error),
+	startSession bool,
+	stdinInteractive bool,
+) error {
+	if err := rejectProtectedWorkspaceOpen(
+		commandCtx,
+		workspace.Path,
+	); err != nil {
+		return err
+	}
+	if err := acknowledgeRemoteSourcePath(workspace.Path); err != nil {
+		return err
+	}
+	sessions, err := listWorkspaceSessions()
+	if err != nil {
+		return fmt.Errorf("failed to list tmux sessions: %w", err)
+	}
+	records := directoryWorkspaceRecords(
+		[]models.Workspace{workspace},
+		sessions,
+	)
+	if len(records) != 1 {
+		return fmt.Errorf("could not resolve directory workspace %s", workspace.Path)
+	}
+	layout, err := resolveDirectoryWorkspaceLayout(
+		ctx.Config,
+		workspace,
+		openLayout,
+		openSelectLayout,
+		selectLayout,
+		stdinInteractive && !startSession,
+	)
+	if err != nil {
+		return err
+	}
+	runner := newOpenWorkspaceRunner(credentials.ProtectedNames(ctx.Config))
+	if startSession {
+		return runner.Ensure(
+			commandCtx,
+			records[0].SessionName,
+			workspace.Path,
+			layout,
+		)
+	}
+	return runner.EnsureAndAttach(
+		commandCtx,
+		records[0].SessionName,
+		workspace.Path,
+		layout,
+		os.Getenv("TMUX") != "",
+	)
+}
+
+func resolveDirectoryWorkspaceLayout(
+	cfg *models.Config,
+	workspace models.Workspace,
+	layoutName string,
+	selectLayout bool,
+	chooseLayout func([]models.Layout) (models.Layout, error),
+	interactive bool,
+) (models.Layout, error) {
+	targetDefault := ""
+	if shouldLoadTargetDefault(layoutName, selectLayout) {
+		var err error
+		targetDefault, err = config.LoadRepoLayoutDefault(
+			workspace.Path,
+			interactive,
+		)
+		if err != nil {
+			return models.Layout{}, err
+		}
+	}
+	layout, err := tmux.ResolveLayout(
+		cfg.Layouts,
+		layoutName,
+		selectLayout,
+		targetDefault,
+		chooseLayout,
+	)
+	if err != nil {
+		return models.Layout{}, err
+	}
+	return tmux.ResolvePaneCommands(layout, cfg.Agents)
 }
 
 // shouldLoadTargetDefault reports whether kwt open must consult the target

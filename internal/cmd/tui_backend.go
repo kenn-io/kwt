@@ -1514,19 +1514,27 @@ func rowPaneRoot(row dashboard.Row) string {
 }
 
 func (b *tuiBackend) resolveLayout(row dashboard.Row, layoutName string, interactive bool) (models.Layout, error) {
+	if row.Workspace != nil {
+		return resolveDirectoryWorkspaceLayout(
+			b.cfg,
+			models.Workspace{
+				Name: row.Workspace.Name,
+				Path: row.Workspace.Path,
+			},
+			layoutName,
+			false,
+			nil,
+			interactive,
+		)
+	}
 	var layout models.Layout
 	var err error
 	if layoutName != "" {
 		layout, err = tmux.ResolveLayout(b.cfg.Layouts, layoutName, false, "", nil)
 	} else {
-		var layoutRoot string
-		if row.Workspace != nil {
-			layoutRoot = row.Workspace.Path
-		} else {
-			layoutRoot, err = b.repositoryRootForRow(row)
-			if err != nil {
-				return models.Layout{}, err
-			}
+		layoutRoot, rootErr := b.repositoryRootForRow(row)
+		if rootErr != nil {
+			return models.Layout{}, rootErr
 		}
 		var targetDefault string
 		targetDefault, err = config.LoadRepoLayoutDefault(layoutRoot, interactive)
