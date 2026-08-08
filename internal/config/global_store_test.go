@@ -157,6 +157,30 @@ func TestGlobalConfigStoreEnsurePreservesDanglingSymlink(t *testing.T) {
 	assert.Equal(t, contents, string(stored))
 }
 
+func TestGlobalConfigStoreEnsurePreservesDanglingSymlinkChain(t *testing.T) {
+	dir := t.TempDir()
+	linkPath := filepath.Join(dir, "config.toml")
+	intermediatePath := filepath.Join(dir, "current.toml")
+	targetPath := filepath.Join(dir, "managed", "config.toml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(targetPath), 0o755))
+	require.NoError(t, os.Symlink(filepath.Join("managed", "config.toml"), intermediatePath))
+	require.NoError(t, os.Symlink("current.toml", linkPath))
+	contents := "[ui]\nicons = true\n"
+
+	created, err := (globalConfigStore{path: linkPath}).ensure(contents)
+
+	require.NoError(t, err)
+	assert.True(t, created)
+	for _, path := range []string{linkPath, intermediatePath} {
+		info, statErr := os.Lstat(path)
+		require.NoError(t, statErr)
+		assert.NotZero(t, info.Mode()&os.ModeSymlink)
+	}
+	stored, err := os.ReadFile(targetPath)
+	require.NoError(t, err)
+	assert.Equal(t, contents, string(stored))
+}
+
 func TestGlobalConfigStorePreservesConfigSymlink(t *testing.T) {
 	for _, tt := range []struct {
 		name       string

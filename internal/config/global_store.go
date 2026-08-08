@@ -102,36 +102,32 @@ func writeGlobalViperAtomically(path string, current *viper.Viper) (err error) {
 }
 
 func globalConfigWriteTarget(path string) (string, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return path, nil
+	targetPath := filepath.Clean(path)
+	seen := make(map[string]struct{})
+	for {
+		if _, ok := seen[targetPath]; ok {
+			return "", fmt.Errorf("resolve global config symlink: cycle at %s", targetPath)
 		}
-		return "", fmt.Errorf("inspect global config path: %w", err)
+		seen[targetPath] = struct{}{}
+		info, err := os.Lstat(targetPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return targetPath, nil
+			}
+			return "", fmt.Errorf("inspect global config path: %w", err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return targetPath, nil
+		}
+		linkTarget, err := os.Readlink(targetPath)
+		if err != nil {
+			return "", fmt.Errorf("read global config symlink: %w", err)
+		}
+		if !filepath.IsAbs(linkTarget) {
+			linkTarget = filepath.Join(filepath.Dir(targetPath), linkTarget)
+		}
+		targetPath = filepath.Clean(linkTarget)
 	}
-	if info.Mode()&os.ModeSymlink == 0 {
-		return path, nil
-	}
-	linkTarget, err := os.Readlink(path)
-	if err != nil {
-		return "", fmt.Errorf("read global config symlink: %w", err)
-	}
-	if !filepath.IsAbs(linkTarget) {
-		linkTarget = filepath.Join(filepath.Dir(path), linkTarget)
-	}
-	linkTarget = filepath.Clean(linkTarget)
-	resolved, err := filepath.EvalSymlinks(linkTarget)
-	if err == nil {
-		return resolved, nil
-	}
-	if !os.IsNotExist(err) {
-		return "", fmt.Errorf("resolve global config symlink: %w", err)
-	}
-	resolvedParent, parentErr := filepath.EvalSymlinks(filepath.Dir(linkTarget))
-	if parentErr != nil {
-		return "", fmt.Errorf("resolve global config symlink target directory: %w", parentErr)
-	}
-	return filepath.Join(resolvedParent, filepath.Base(linkTarget)), nil
 }
 
 func writeGlobalConfigAtomically(
