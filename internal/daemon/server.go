@@ -82,6 +82,7 @@ func NewServer(opts ServerOptions) http.Handler {
 func secureLocalHandler(next http.Handler, opts ServerOptions) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Host != opts.ExpectedHost {
+			w.Header().Set("Connection", "close")
 			writeProblem(w, Problem{
 				Type:   "https://kwt.dev/problems/invalid-request",
 				Title:  http.StatusText(http.StatusBadRequest),
@@ -92,6 +93,7 @@ func secureLocalHandler(next http.Handler, opts ServerOptions) http.Handler {
 			return
 		}
 		if r.Header.Get("Origin") != "" {
+			w.Header().Set("Connection", "close")
 			writeProblem(w, Problem{
 				Type:   "https://kwt.dev/problems/permission-denied",
 				Title:  http.StatusText(http.StatusForbidden),
@@ -111,6 +113,7 @@ func secureLocalHandler(next http.Handler, opts ServerOptions) http.Handler {
 			[]byte(authorizations[0]),
 			[]byte(expectedAuthorization),
 		) != 1 {
+			w.Header().Set("Connection", "close")
 			writeProblem(w, Problem{
 				Type:   "https://kwt.dev/problems/permission-denied",
 				Title:  http.StatusText(http.StatusUnauthorized),

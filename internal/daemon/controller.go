@@ -23,18 +23,19 @@ const (
 )
 
 type ControllerOptions struct {
-	Home            string
-	Build           Build
-	Config          models.DaemonConfig
-	Executable      string
-	Environment     []string
-	Progress        io.Writer
-	AllowEphemeral  bool
-	Inspect         func(context.Context) (Observation, error)
-	Launch          func(context.Context) error
-	RequestShutdown func(context.Context, Observation, string) error
-	PollInterval    time.Duration
-	StartTimeout    time.Duration
+	Home             string
+	Build            Build
+	Config           models.DaemonConfig
+	Executable       string
+	Environment      []string
+	Progress         io.Writer
+	AllowEphemeral   bool
+	Inspect          func(context.Context) (Observation, error)
+	Launch           func(context.Context) error
+	RequestShutdown  func(context.Context, Observation, string) error
+	PollInterval     time.Duration
+	StartTimeout     time.Duration
+	CleanupAllowance time.Duration
 }
 
 type Controller struct {
@@ -53,6 +54,9 @@ func NewController(options ControllerOptions) *Controller {
 	}
 	if options.StartTimeout <= 0 {
 		options.StartTimeout = 5 * time.Second
+	}
+	if options.CleanupAllowance <= 0 {
+		options.CleanupAllowance = 5 * time.Second
 	}
 	controller := &Controller{options: options}
 	if controller.options.Inspect == nil {
@@ -125,6 +129,15 @@ func (c *Controller) Restart(ctx context.Context) (Observation, error) {
 	case RuntimeAbsent:
 		return c.startLocked(ctx)
 	case RuntimeReady:
+		if olderVersion(c.options.Build.Version, observation.Status.Version) {
+			return Observation{}, service.NewError(
+				service.Unsupported,
+				"an older kwt cannot restart a newer daemon",
+				false,
+				nil,
+				nil,
+			)
+		}
 		if err := c.options.RequestShutdown(ctx, observation, "restart"); err != nil {
 			return Observation{}, err
 		}
@@ -206,11 +219,11 @@ func (c *Controller) launchAndWait(ctx context.Context) (Observation, error) {
 }
 
 func (c *Controller) waitForAbsent(ctx context.Context) error {
-	timeout := c.options.Config.ReplacementGrace + 5*time.Second
-	waitCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	waitDeadline := time.Now().Add(
+		c.options.Config.ReplacementGrace + c.options.CleanupAllowance,
+	)
 	for {
-		observation, err := c.options.Inspect(waitCtx)
+		observation, err := c.options.Inspect(ctx)
 		if err != nil {
 			return err
 		}
@@ -219,8 +232,15 @@ func (c *Controller) waitForAbsent(ctx context.Context) error {
 		}
 		if observation.State == RuntimeDraining {
 			c.reportDrain(observation)
+			if observation.Status.DrainDeadline != nil {
+				waitDeadline = observation.Status.DrainDeadline.Add(
+					c.options.CleanupAllowance,
+				)
+			}
 		}
+		waitCtx, cancel := context.WithDeadline(ctx, waitDeadline)
 		if err := c.waitPoll(waitCtx); err != nil {
+			cancel()
 			return service.NewError(
 				service.Busy,
 				"kwt daemon did not stop before the replacement deadline",
@@ -229,6 +249,7 @@ func (c *Controller) waitForAbsent(ctx context.Context) error {
 				err,
 			)
 		}
+		cancel()
 	}
 }
 
@@ -339,6 +360,12 @@ func decideReplacement(client, running, policy string) replacementDecision {
 		return replaceDaemon
 	}
 	return reuseDaemon
+}
+
+func olderVersion(client, running string) bool {
+	clientVersion, clientOK := comparableVersion(client)
+	runningVersion, runningOK := comparableVersion(running)
+	return clientOK && runningOK && semver.Compare(clientVersion, runningVersion) < 0
 }
 
 func environmentWithCanonicalHome(environment []string, home string) []string {

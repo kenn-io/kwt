@@ -1,7 +1,11 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -16,9 +20,43 @@ func TestHTTPServerBoundsUnauthenticatedRequests(t *testing.T) {
 	server := newHTTPServer(http.NotFoundHandler())
 
 	assert.Positive(t, server.ReadHeaderTimeout)
+	assert.Positive(t, server.ReadTimeout)
 	assert.Positive(t, server.IdleTimeout)
 	assert.Positive(t, server.MaxHeaderBytes)
 	assert.LessOrEqual(t, server.MaxHeaderBytes, 64<<10)
+}
+
+func TestHTTPServerClosesUnauthenticatedStalledBody(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	handler := NewServer(ServerOptions{
+		Token:        "secret",
+		ExpectedHost: listener.Addr().String(),
+	})
+	server := newHTTPServer(handler)
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	_, err = fmt.Fprintf(
+		conn,
+		"POST /api/v1/daemon/shutdown HTTP/1.1\r\nHost: %s\r\nContent-Length: 1024\r\n\r\n",
+		listener.Addr().String(),
+	)
+	require.NoError(t, err)
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(httpReadTimeout+time.Second)))
+	response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnauthorized, response.StatusCode)
+	_, err = io.Copy(io.Discard, response.Body)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+
+	buffer := make([]byte, 1)
+	_, err = conn.Read(buffer)
+	assert.ErrorIs(t, err, io.EOF)
 }
 
 func waitForRuntime(t *testing.T, home string) Observation {

@@ -187,6 +187,20 @@ func TestDaemonSubprocessNewestCompatibleBinaryWins(t *testing.T) {
 	assert.Equal(t, upgraded.PID, stillNew.PID)
 }
 
+func TestDaemonSubprocessOlderBinaryCannotRestartNewerDaemon(t *testing.T) {
+	oldBinary, newBinary := buildDaemonTestBinaries(t)
+	home := newDaemonTestHome(t, validDaemonConfig)
+	registerDaemonCleanup(t, newBinary, home)
+	requireCommandSuccess(t, newBinary, home, "daemon", "start")
+	before := daemonStatus(t, newBinary, home)
+
+	_, _, err := runDaemonCommand(t, oldBinary, home, "daemon", "restart")
+	require.Error(t, err)
+	after := daemonStatus(t, newBinary, home)
+	assert.Equal(t, before.PID, after.PID)
+	assert.Equal(t, before.Version, after.Version)
+}
+
 func TestDaemonSubprocessIdleExitDoesNotNeedAClientProbe(t *testing.T) {
 	oldBinary, newBinary := buildDaemonTestBinaries(t)
 	home := newDaemonTestHome(t, `[daemon]

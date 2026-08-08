@@ -179,12 +179,42 @@ func TestControllerStopAbsentIsIdempotent(t *testing.T) {
 	require.NoError(t, NewController(options).Stop(context.Background()))
 }
 
+func TestControllerStopUsesRunningDaemonDrainDeadline(t *testing.T) {
+	options := testControllerOptions(t)
+	options.Config.ReplacementGrace = time.Millisecond
+	options.CleanupAllowance = time.Millisecond
+	deadline := time.Now().Add(50 * time.Millisecond)
+	draining := Observation{State: RuntimeDraining, Status: Status{
+		State:         StateDraining,
+		DrainDeadline: &deadline,
+	}}
+	options.Inspect = scriptedInspector(
+		t,
+		Observation{State: RuntimeReady},
+		draining,
+		draining,
+		draining,
+		draining,
+		draining,
+		Observation{State: RuntimeAbsent},
+	)
+	options.RequestShutdown = func(
+		_ context.Context,
+		_ Observation,
+		_ string,
+	) error {
+		return nil
+	}
+
+	require.NoError(t, NewController(options).Stop(context.Background()))
+}
+
 func TestControllerRestartStopsThenStartsInvokingBinary(t *testing.T) {
 	options := testControllerOptions(t)
 	ready := Observation{State: RuntimeReady, Status: Status{Version: "v1.2.0"}}
 	options.Inspect = scriptedInspector(
 		t,
-		Observation{State: RuntimeReady, Status: Status{Version: "v1.3.0"}},
+		Observation{State: RuntimeReady, Status: Status{Version: "v1.2.0"}},
 		Observation{State: RuntimeAbsent},
 		Observation{State: RuntimeAbsent},
 		ready,
@@ -203,4 +233,25 @@ func TestControllerRestartStopsThenStartsInvokingBinary(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"restart"}, reasons)
 	assert.Equal(t, "v1.2.0", got.Status.Version)
+}
+
+func TestControllerRestartRefusesToDowngradeNewerDaemon(t *testing.T) {
+	options := testControllerOptions(t)
+	options.Inspect = scriptedInspector(t, Observation{
+		State:  RuntimeReady,
+		Status: Status{Version: "v1.3.0"},
+	})
+	shutdown := false
+	options.RequestShutdown = func(
+		_ context.Context,
+		_ Observation,
+		_ string,
+	) error {
+		shutdown = true
+		return nil
+	}
+
+	_, err := NewController(options).Restart(context.Background())
+	require.Error(t, err)
+	assert.False(t, shutdown)
 }
