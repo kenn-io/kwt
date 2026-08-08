@@ -391,8 +391,13 @@ func TestManagerAdd(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("KWT_HOME", t.TempDir())
 			mockG := &mockGit{}
 			m := New(mockG, tt.config)
+			state := &mockRemoteSourceState{}
+			m.openRemoteSourceState = func() (remoteSourceState, error) {
+				return state, nil
+			}
 
 			_, err := m.Add(tt.branch, tt.customPath, tt.createBranch)
 			if (err != nil) != tt.wantErr {
@@ -409,6 +414,9 @@ func TestManagerAdd(t *testing.T) {
 				if len(mockG.worktrees) != 1 {
 					t.Errorf("Expected 1 worktree, got %d", len(mockG.worktrees))
 				}
+				reg, err := registry.New()
+				require.NoError(t, err)
+				assert.Empty(t, reg.List())
 			}
 		})
 	}
