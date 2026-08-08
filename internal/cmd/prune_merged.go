@@ -25,7 +25,7 @@ type pruneMergedRegistry interface {
 	List() []*registry.WorktreeEntry
 	AcquireCreation(string) (func() error, bool, error)
 	EntryMatches(string, *registry.WorktreeEntry) (bool, error)
-	UnregisterIfGeneration(string, string) (bool, error)
+	RemoveIfMatchAfter(string, *registry.WorktreeEntry, func() error) (bool, error)
 }
 
 type pruneMergedProvenanceStore interface {
@@ -135,11 +135,37 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 			continue
 		}
 		worktreeRemoved := false
+		var residualWarning error
 		removeErr := withPruneMergedOwnershipGuard(ctx, reg, store, candidate, func() error {
-			err := removePruneMergedWorktree(candidate)
-			worktreeRemoved = err == nil || git.WorktreeWasRemoved(err)
+			removed, err := removePruneMergedWorktree(
+				candidate,
+				func(remove func() error) (bool, error) {
+					return reg.RemoveIfMatchAfter(
+						candidate.Policy.Path,
+						candidate.RegistryEntry,
+						func() error {
+							err := remove()
+							if git.WorktreeWasRemoved(err) {
+								residualWarning = err
+								return nil
+							}
+							return err
+						},
+					)
+				},
+			)
+			worktreeRemoved = removed
+			if err == nil && !removed {
+				return fmt.Errorf(
+					"worktree ownership changed after inspection for %s",
+					candidate.Policy.Path,
+				)
+			}
 			return err
 		})
+		if removeErr == nil && residualWarning != nil {
+			removeErr = residualWarning
+		}
 		if removeErr != nil && !worktreeRemoved {
 			providerEvidence := outcome.Evidence
 			outcome = pruneOutcomeForError(candidate.Policy.Path, candidate.Policy.Branch, removeErr)
@@ -151,19 +177,9 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 			continue
 		}
 		removedWorktrees++
-		cleanupProblems := make([]string, 0, 3)
+		cleanupProblems := make([]string, 0, 2)
 		if removeErr != nil {
 			cleanupProblems = append(cleanupProblems, removeErr.Error())
-		}
-		if candidate.RegistryExpected {
-			removed, cleanupErr := reg.UnregisterIfGeneration(
-				candidate.Policy.Path, candidate.Policy.Generation,
-			)
-			if cleanupErr != nil {
-				cleanupProblems = append(cleanupProblems, "registry: "+cleanupErr.Error())
-			} else if !removed {
-				cleanupProblems = append(cleanupProblems, "registry record changed")
-			}
 		}
 		if candidate.Policy.Provenance != nil {
 			removed, cleanupErr := store.RemoveIfMatch(
@@ -227,11 +243,15 @@ func mergedPruneExecutionError(cmd *cobra.Command, message string) error {
 	return writeMaintenanceError(cmd, "prune", "inspection_failed", message, 2, pruneJSON)
 }
 
-func defaultRemovePruneMergedWorktree(candidate pruneMergedCandidate) error {
-	return git.New(candidate.RepositoryRoot).RemoveWorktreeChecked(
+func defaultRemovePruneMergedWorktree(
+	candidate pruneMergedCandidate,
+	claim func(func() error) (bool, error),
+) (bool, error) {
+	return git.New(candidate.RepositoryRoot).RemoveWorktreeCheckedAfterClaim(
 		candidate.Policy.Path,
 		false,
 		pruneMergedRemovalConditions(candidate),
+		claim,
 	)
 }
 

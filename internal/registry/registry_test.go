@@ -1022,6 +1022,24 @@ func TestRegistryRemoveIfMatchAfterDoesNotRunRemovalForChangedExpiration(t *test
 	assert.True(t, future.Equal(*current.ExpiresAt))
 }
 
+func TestRegistryRemoveIfMatchAfterClaimsAbsentEntryDuringRemoval(t *testing.T) {
+	r := &Registry{
+		entries: make(map[string]*WorktreeEntry),
+		path:    filepath.Join(t.TempDir(), "registry.json"),
+	}
+	path := filepath.Join(t.TempDir(), "unregistered-worktree")
+	removalCalled := false
+
+	removed, err := r.RemoveIfMatchAfter(path, nil, func() error {
+		removalCalled = true
+		return nil
+	})
+
+	require.NoError(t, err)
+	assert.True(t, removed)
+	assert.True(t, removalCalled)
+}
+
 func TestRegistryLegacyCleanupPreservesProvisionalCreation(t *testing.T) {
 	r := &Registry{
 		entries: make(map[string]*WorktreeEntry),

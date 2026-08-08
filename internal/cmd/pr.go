@@ -323,13 +323,12 @@ func rejectProtectedWorkspaceOpen(
 	ctx context.Context,
 	workspacePath string,
 ) error {
-	path := utils.CanonicalPath(workspacePath)
 	var recordedGenerations []string
 	err := pullrequest.NewFileStore(prStorePath()).View(
 		ctx,
 		func(records map[string]pullrequest.Provenance) error {
 			for _, record := range records {
-				if utils.CanonicalPath(record.Workspace.Path) == path {
+				if samePRPath(record.Workspace.Path, workspacePath) {
 					recordedGenerations = append(
 						recordedGenerations,
 						record.Workspace.Generation,

@@ -900,6 +900,36 @@ func TestProtectedWorkspaceOpenFailsClosedWhenLiveGenerationIsUnavailable(t *tes
 	assert.Contains(t, err.Error(), "live generation")
 }
 
+func TestProtectedWorkspaceOpenUsesPlatformPathIdentity(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path identity is case-insensitive")
+	}
+	t.Setenv("KWT_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "protected-workspace")
+	recordedPath := strings.ToUpper(path)
+	generation := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
+		context.Background(),
+		func(records map[string]pullrequest.Provenance) error {
+			records["record"] = pullrequest.Provenance{Workspace: pullrequest.Workspace{
+				Path: recordedPath, Generation: generation,
+			}}
+			return nil
+		},
+	))
+	oldRead := readPRWorkspaceGeneration
+	t.Cleanup(func() { readPRWorkspaceGeneration = oldRead })
+	readPRWorkspaceGeneration = func(gotPath string) (string, error) {
+		assert.Equal(t, path, gotPath)
+		return generation, nil
+	}
+
+	err := rejectProtectedWorkspaceOpen(context.Background(), path)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "protected pull-request workspace")
+}
+
 func TestProtectedWorkspaceOpenSkipsGenerationReadWithoutProvenance(t *testing.T) {
 	t.Setenv("KWT_HOME", t.TempDir())
 	oldRead := readPRWorkspaceGeneration

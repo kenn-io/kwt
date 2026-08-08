@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,11 +41,38 @@ type fakePruneMergedRegistry struct {
 	entryMatches  func(string, *registry.WorktreeEntry) (bool, error)
 }
 
+type observedPruneMergedRegistry struct {
+	*registry.Registry
+	checked chan struct{}
+	once    sync.Once
+}
+
+func (r *observedPruneMergedRegistry) EntryMatches(
+	path string,
+	expected *registry.WorktreeEntry,
+) (bool, error) {
+	matched, err := r.Registry.EntryMatches(path, expected)
+	if err == nil && matched {
+		r.once.Do(func() { close(r.checked) })
+	}
+	return matched, err
+}
+
 func (r *fakePruneMergedRegistry) List() []*registry.WorktreeEntry { return r.entries }
 
-func (r *fakePruneMergedRegistry) UnregisterIfGeneration(string, string) (bool, error) {
+func (r *fakePruneMergedRegistry) RemoveIfMatchAfter(
+	_ string,
+	_ *registry.WorktreeEntry,
+	removal func() error,
+) (bool, error) {
 	r.calls++
-	return r.removed, r.err
+	if r.err != nil || !r.removed {
+		return false, r.err
+	}
+	if err := removal(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (r *fakePruneMergedRegistry) AcquireCreation(string) (func() error, bool, error) {
@@ -63,6 +91,17 @@ func (r *fakePruneMergedRegistry) EntryMatches(
 		return true, nil
 	}
 	return r.entryMatches(path, expected)
+}
+
+func fakePruneMergedRemoval(
+	remove func(pruneMergedCandidate) error,
+) func(pruneMergedCandidate, func(func() error) (bool, error)) (bool, error) {
+	return func(
+		candidate pruneMergedCandidate,
+		claim func(func() error) (bool, error),
+	) (bool, error) {
+		return claim(func() error { return remove(candidate) })
+	}
 }
 
 type fakePruneMergedProvenance struct {
@@ -152,7 +191,9 @@ func TestPruneMergedDryRunAndJSONDoNotMutateOrPublish(t *testing.T) {
 		return nil
 	}
 	removed := 0
-	removePruneMergedWorktree = func(pruneMergedCandidate) error { removed++; return nil }
+	removePruneMergedWorktree = fakePruneMergedRemoval(
+		func(pruneMergedCandidate) error { removed++; return nil },
+	)
 	publications := 0
 	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) { publications++ }
 	cmd, stdout, stderr := fleetTestCommand()
@@ -182,7 +223,9 @@ func TestPruneMergedDryRunMapsRevalidationChanges(t *testing.T) {
 		return &git.ConditionError{Reason: git.ReasonDirty, Path: got.Policy.Path}
 	}
 	removed := 0
-	removePruneMergedWorktree = func(pruneMergedCandidate) error { removed++; return nil }
+	removePruneMergedWorktree = fakePruneMergedRemoval(
+		func(pruneMergedCandidate) error { removed++; return nil },
+	)
 	cmd, stdout, stderr := fleetTestCommand()
 
 	err := runPrune(cmd, nil)
@@ -206,10 +249,10 @@ func TestPruneMergedDoesNotRemoveWhileCandidateCreationIsActive(t *testing.T) {
 	reg := &fakePruneMergedRegistry{creationBusy: true}
 	openPruneMergedRegistry = func() (pruneMergedRegistry, error) { return reg, nil }
 	removed := 0
-	removePruneMergedWorktree = func(pruneMergedCandidate) error {
+	removePruneMergedWorktree = fakePruneMergedRemoval(func(pruneMergedCandidate) error {
 		removed++
 		return nil
-	}
+	})
 	cmd, stdout, _ := fleetTestCommand()
 
 	err := runPrune(cmd, nil)
@@ -235,10 +278,10 @@ func TestPruneMergedDoesNotRemoveWhenRegistryOwnershipAppearsAfterSnapshot(
 	}
 	openPruneMergedRegistry = func() (pruneMergedRegistry, error) { return reg, nil }
 	removed := 0
-	removePruneMergedWorktree = func(pruneMergedCandidate) error {
+	removePruneMergedWorktree = fakePruneMergedRemoval(func(pruneMergedCandidate) error {
 		removed++
 		return nil
-	}
+	})
 	cmd, stdout, _ := fleetTestCommand()
 
 	err := runPrune(cmd, nil)
@@ -246,6 +289,76 @@ func TestPruneMergedDoesNotRemoveWhenRegistryOwnershipAppearsAfterSnapshot(
 	assertExitCode(t, err, 1)
 	assert.Contains(t, stdout.String(), "ownership")
 	assert.Zero(t, removed)
+}
+
+func TestPruneMergedDoesNotRemoveWhenExpirationAppearsBeforeGitLock(t *testing.T) {
+	resetPruneMergedCommand(t)
+	t.Setenv("KWT_HOME", t.TempDir())
+	pruneJSON = true
+	repositoryRoot := newTUITestRepo(t)
+	runTUITestGit(t, repositoryRoot, "remote", "add", "origin", "https://github.com/acme/widget.git")
+	runTUITestGit(t, repositoryRoot, "remote", "add", "source", "https://github.com/octocat/widget.git")
+	branch := "feature/concurrent-expiration"
+	worktreePath := filepath.Join(t.TempDir(), "concurrent-expiration")
+	runTUITestGit(t, repositoryRoot, "branch", branch)
+	runTUITestGit(t, repositoryRoot, "config", "branch."+branch+".remote", "source")
+	runTUITestGit(t, repositoryRoot, "config", "branch."+branch+".merge", "refs/heads/topic")
+	runTUITestGit(t, repositoryRoot, "worktree", "add", worktreePath, branch)
+	g := git.New(repositoryRoot)
+	generation, err := g.WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	head := strings.TrimSpace(runTUITestGitOutput(t, worktreePath, "rev-parse", "HEAD"))
+	candidate := commandMergedCandidate(worktreePath, head)
+	candidate.RepositoryRoot = repositoryRoot
+	candidate.Policy.Branch = branch
+	candidate.Policy.Generation = generation
+	setPruneMergedInventory(candidate)
+	setPruneMergedProvider(providerForCommandCandidates(candidate))
+	removePruneMergedWorktree = defaultRemovePruneMergedWorktree
+	realRegistry, err := registry.New()
+	require.NoError(t, err)
+	registryChecked := make(chan struct{})
+	observedRegistry := &observedPruneMergedRegistry{
+		Registry: realRegistry,
+		checked:  registryChecked,
+	}
+	openPruneMergedRegistry = func() (pruneMergedRegistry, error) {
+		return observedRegistry, nil
+	}
+	gitLocked := make(chan struct{})
+	expirationDone := make(chan error, 1)
+	go func() {
+		expirationDone <- g.WithWorktreeGeneration(worktreePath, generation, func() error {
+			close(gitLocked)
+			<-registryChecked
+			expiresAt := time.Now().Add(time.Hour)
+			updated, updateErr := realRegistry.SetExpirationIfGeneration(
+				worktreePath,
+				generation,
+				commandBaseRepo,
+				branch,
+				&expiresAt,
+			)
+			if updateErr != nil {
+				return updateErr
+			}
+			if !updated {
+				return errors.New("expiration registration was not updated")
+			}
+			return nil
+		})
+	}()
+	<-gitLocked
+	cmd, stdout, _ := fleetTestCommand()
+
+	err = runPrune(cmd, nil)
+
+	require.NoError(t, <-expirationDone)
+	assertExitCode(t, err, 1)
+	assert.Contains(t, stdout.String(), "ownership")
+	assert.DirExists(t, worktreePath)
+	_, registered := realRegistry.Get(worktreePath)
+	assert.True(t, registered)
 }
 
 func TestPruneMergedDoesNotRemoveWhenProvenanceAppearsAfterSnapshot(t *testing.T) {
@@ -265,10 +378,10 @@ func TestPruneMergedDoesNotRemoveWhenProvenanceAppearsAfterSnapshot(t *testing.T
 	}
 	openPruneMergedProvenanceStore = func() pruneMergedProvenanceStore { return store }
 	removed := 0
-	removePruneMergedWorktree = func(pruneMergedCandidate) error {
+	removePruneMergedWorktree = fakePruneMergedRemoval(func(pruneMergedCandidate) error {
 		removed++
 		return nil
-	}
+	})
 	cmd, stdout, _ := fleetTestCommand()
 
 	err := runPrune(cmd, nil)
@@ -433,9 +546,9 @@ func TestPruneMergedMapsRemovalPreconditionChanges(t *testing.T) {
 			candidate := commandMergedCandidate("/worktrees/"+tc.name, commandMergedHead)
 			setPruneMergedInventory(candidate)
 			setPruneMergedProvider(providerForCommandCandidates(candidate))
-			removePruneMergedWorktree = func(candidate pruneMergedCandidate) error {
+			removePruneMergedWorktree = fakePruneMergedRemoval(func(candidate pruneMergedCandidate) error {
 				return &git.ConditionError{Reason: tc.gitReason, Path: candidate.Policy.Path}
-			}
+			})
 			publications := 0
 			publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) { publications++ }
 			cmd, stdout, _ := fleetTestCommand()
@@ -577,9 +690,9 @@ func TestPruneMergedCompletesBookkeepingAfterGitDeregistersWithResidualFiles(t *
 		removeResult: true,
 	}
 	openPruneMergedProvenanceStore = func() pruneMergedProvenanceStore { return store }
-	removePruneMergedWorktree = func(pruneMergedCandidate) error {
+	removePruneMergedWorktree = fakePruneMergedRemoval(func(pruneMergedCandidate) error {
 		return completedWorktreeRemovalWarning{message: "worktree removed, but files remain"}
-	}
+	})
 	publications := 0
 	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) { publications++ }
 	cmd, stdout, _ := fleetTestCommand()
@@ -608,10 +721,10 @@ func TestPruneMergedContinuesAfterPartialProviderFailure(t *testing.T) {
 	}
 	setPruneMergedProvider(provider)
 	var removed []string
-	removePruneMergedWorktree = func(candidate pruneMergedCandidate) error {
+	removePruneMergedWorktree = fakePruneMergedRemoval(func(candidate pruneMergedCandidate) error {
 		removed = append(removed, candidate.Policy.Path)
 		return nil
-	}
+	})
 	publications := 0
 	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) { publications++ }
 	cmd, stdout, _ := fleetTestCommand()
@@ -1326,7 +1439,15 @@ func TestPruneMergedInventoryStripsCredentialsFromWorktreeGitProcesses(t *testin
 	assert.Equal(t, "unset|unset", string(probeContents))
 	require.NoError(t, os.WriteFile(probeOutput, []byte("not-invoked"), 0o600))
 
-	require.NoError(t, defaultRemovePruneMergedWorktree(candidates[0]))
+	removed, err := defaultRemovePruneMergedWorktree(
+		candidates[0],
+		func(remove func() error) (bool, error) {
+			err := remove()
+			return err == nil || git.WorktreeWasRemoved(err), err
+		},
+	)
+	require.NoError(t, err)
+	assert.True(t, removed)
 	probeContents, err = os.ReadFile(probeOutput)
 	require.NoError(t, err)
 	assert.Equal(t, "unset|unset", string(probeContents))
@@ -1392,7 +1513,9 @@ func resetPruneMergedCommand(t *testing.T) {
 	openPruneMergedProvenanceStore = func() pruneMergedProvenanceStore {
 		return &fakePruneMergedProvenance{removeResult: true}
 	}
-	removePruneMergedWorktree = func(pruneMergedCandidate) error { return nil }
+	removePruneMergedWorktree = fakePruneMergedRemoval(
+		func(pruneMergedCandidate) error { return nil },
+	)
 }
 
 func resetPruneMergedDeps(t *testing.T) {

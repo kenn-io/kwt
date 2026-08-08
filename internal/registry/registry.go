@@ -329,9 +329,9 @@ func (r *Registry) CompareAndSwapAliases(
 	return replaced, err
 }
 
-// RemoveIfMatchAfter runs removal and deletes a registry entry while the
-// complete observed policy record remains unchanged under the registry lock.
-// The registry entry is retained when removal fails.
+// RemoveIfMatchAfter runs removal while the complete observed registry state
+// remains unchanged under the registry lock. A nil expected value claims an
+// absent entry; a matching entry is deleted only after removal succeeds.
 func (r *Registry) RemoveIfMatchAfter(
 	path string,
 	expected *WorktreeEntry,
@@ -340,8 +340,17 @@ func (r *Registry) RemoveIfMatchAfter(
 	removed := false
 	err := r.mutateChecked(func(entries map[string]*WorktreeEntry) (bool, error) {
 		keys := matchingRegistryKeys(entries, path)
-		if expected == nil || len(keys) != 1 ||
-			!sameWorktreeEntry(entries[keys[0]], expected) {
+		if expected == nil {
+			if len(keys) != 0 {
+				return false, nil
+			}
+			if err := removal(); err != nil {
+				return false, err
+			}
+			removed = true
+			return false, nil
+		}
+		if len(keys) != 1 || !sameWorktreeEntry(entries[keys[0]], expected) {
 			return false, nil
 		}
 		if err := removal(); err != nil {
