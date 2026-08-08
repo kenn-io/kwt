@@ -208,7 +208,11 @@ func runHost(
 
 	runtimePath, err := store.Write(record)
 	if err != nil {
-		shutdownErr := shutdownHTTPServer(httpServer, opts.Config.ReplacementGrace)
+		shutdownErr := shutdownHTTPServer(
+			httpServer,
+			time.Now().Add(opts.Config.ReplacementGrace),
+			DrainReleased,
+		)
 		_ = listener.Close()
 		return errors.Join(err, shutdownErr)
 	}
@@ -244,10 +248,10 @@ func runHost(
 		}
 	}
 
-	gate.BeginDrain(opts.Now().Add(opts.Config.ReplacementGrace))
+	drain := gate.BeginDrain(opts.Now().Add(opts.Config.ReplacementGrace))
 	logLifecycle(logger, "draining", status.Status(opts.Now()), runErr)
-	_ = gate.WaitForDrain(context.Background(), opts.Now())
-	shutdownErr := shutdownHTTPServer(httpServer, opts.Config.ReplacementGrace)
+	drainResult := gate.WaitForDrain(context.Background(), opts.Now())
+	shutdownErr := shutdownHTTPServer(httpServer, drain.DrainDeadline, drainResult)
 	_ = listener.Close()
 	removeErr := removeOwnedRuntime(runtimePath, store, record.PID)
 	logLifecycle(logger, "stopped", status.Status(opts.Now()), errors.Join(runErr, shutdownErr, removeErr))
@@ -300,10 +304,24 @@ func boundedError(err error) string {
 	return message[:maximum]
 }
 
-func shutdownHTTPServer(server *http.Server, timeout time.Duration) error {
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
+func shutdownHTTPServer(
+	server *http.Server,
+	deadline time.Time,
+	drainResult DrainResult,
+) error {
+	if drainResult != DrainReleased {
+		return closeHTTPServer(server)
+	}
+	shutdownCtx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return errors.Join(err, closeHTTPServer(server))
+	}
+	return nil
+}
+
+func closeHTTPServer(server *http.Server) error {
+	if err := server.Close(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil

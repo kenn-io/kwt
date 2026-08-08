@@ -59,6 +59,64 @@ func TestHTTPServerClosesUnauthenticatedStalledBody(t *testing.T) {
 	assert.ErrorIs(t, err, io.EOF)
 }
 
+func TestShutdownHTTPServerHonorsAbsoluteDrainDeadline(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		drain      DrainResult
+		deadline   time.Duration
+		maximumRun time.Duration
+	}{
+		{
+			name:       "released reservations use remaining deadline",
+			drain:      DrainReleased,
+			deadline:   50 * time.Millisecond,
+			maximumRun: time.Second,
+		},
+		{
+			name:       "expired drain forces immediate close",
+			drain:      DrainDeadline,
+			deadline:   time.Second,
+			maximumRun: 500 * time.Millisecond,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			started := make(chan struct{})
+			canceled := make(chan struct{})
+			server := newHTTPServer(http.HandlerFunc(func(
+				_ http.ResponseWriter,
+				request *http.Request,
+			) {
+				close(started)
+				<-request.Context().Done()
+				close(canceled)
+			}))
+			serveDone := make(chan error, 1)
+			go func() { serveDone <- server.Serve(listener) }()
+			t.Cleanup(func() { _ = server.Close() })
+			client := &http.Client{Transport: &http.Transport{Proxy: nil}}
+			requestDone := make(chan error, 1)
+			go func() {
+				_, err := client.Get("http://" + listener.Addr().String())
+				requestDone <- err
+			}()
+			<-started
+
+			before := time.Now()
+			_ = shutdownHTTPServer(server, before.Add(test.deadline), test.drain)
+			assert.Less(t, time.Since(before), test.maximumRun)
+			select {
+			case <-canceled:
+			case <-time.After(time.Second):
+				require.FailNow(t, "active handler was not canceled")
+			}
+			<-requestDone
+			<-serveDone
+		})
+	}
+}
+
 func waitForRuntime(t *testing.T, home string) Observation {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
