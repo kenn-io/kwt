@@ -105,16 +105,28 @@ func Inspect(
 		if rec.Service != ServiceName || rec.Metadata[metadataHome] != home {
 			continue
 		}
-		if !kitdaemon.ProcessAlive(rec.PID) || kitdaemon.CompareProcessIdentity(
-			rec.PID,
-			rec.ProcessIdentity,
-		) == kitdaemon.ProcessIdentityMismatch {
+		if !kitdaemon.ProcessAlive(rec.PID) {
 			if err := removeStaleRecord(store, rec); err != nil {
 				return Observation{}, err
 			}
 			continue
 		}
-		candidate := inspectLiveRecord(ctx, rec, home)
+		var candidate Observation
+		switch kitdaemon.CompareProcessIdentity(rec.PID, rec.ProcessIdentity) {
+		case kitdaemon.ProcessIdentityMismatch:
+			if err := removeStaleRecord(store, rec); err != nil {
+				return Observation{}, err
+			}
+			continue
+		case kitdaemon.ProcessIdentityMatch:
+			candidate = inspectLiveRecord(ctx, rec, home)
+		default:
+			candidate = Observation{
+				State:  RuntimeUnresponsive,
+				Record: rec,
+				Err:    errors.New("daemon process identity cannot be verified"),
+			}
+		}
 		if found != nil {
 			return Observation{}, service.NewError(
 				service.Conflict,

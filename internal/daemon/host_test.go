@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"net/http"
 	"path/filepath"
 	"testing"
 	"time"
@@ -10,6 +11,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/pkg/models"
 )
+
+func TestHTTPServerBoundsUnauthenticatedRequests(t *testing.T) {
+	server := newHTTPServer(http.NotFoundHandler())
+
+	assert.Positive(t, server.ReadHeaderTimeout)
+	assert.Positive(t, server.IdleTimeout)
+	assert.Positive(t, server.MaxHeaderBytes)
+	assert.LessOrEqual(t, server.MaxHeaderBytes, 64<<10)
+}
 
 func waitForRuntime(t *testing.T, home string) Observation {
 	t.Helper()

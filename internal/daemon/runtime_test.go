@@ -142,6 +142,52 @@ func TestInspectReturnsAProofVerifiedRuntime(t *testing.T) {
 	require.NotNil(t, observation.Client)
 }
 
+func TestInspectPreservesUnknownProcessIdentityAsUnresponsive(t *testing.T) {
+	home := t.TempDir()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	ep := kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: listener.Addr().String()}
+	rec := kitdaemon.NewRuntimeRecord(ServiceName, "v1", ep)
+	rec.ProcessIdentity = ""
+	rec.Metadata = validMetadata(home, "secret")
+	proof, err := kitdaemon.NewProof([]byte("secret"))
+	require.NoError(t, err)
+	ping, err := proof.NewPingHandler(rec)
+	require.NoError(t, err)
+	status := Status{
+		Service:       ServiceName,
+		State:         StateReady,
+		PID:           rec.PID,
+		Version:       rec.Version,
+		Revision:      "abc",
+		Home:          home,
+		Endpoint:      ep.Address,
+		SchemaMajor:   APISchemaMajor,
+		SchemaVersion: APISchemaVersion,
+		Capabilities:  []string{CapabilityShutdown, CapabilityStatus},
+	}
+	handler := NewServer(ServerOptions{
+		Token:        "secret",
+		ExpectedHost: ep.Address,
+		Status:       fixedRuntimeStatus{status: status},
+		Ping:         ping,
+		Shutdown: func(context.Context, ShutdownRequest) (Status, error) {
+			return status, nil
+		},
+	})
+	server := &http.Server{Handler: handler}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+	store := RuntimeStore(home)
+	path, err := store.Write(rec)
+	require.NoError(t, err)
+
+	observation, err := Inspect(context.Background(), store, home)
+	require.NoError(t, err)
+	assert.Equal(t, RuntimeUnresponsive, observation.State)
+	assert.FileExists(t, path)
+}
+
 func TestValidateRuntimeStatusRejectsBuildIdentityMismatch(t *testing.T) {
 	home := t.TempDir()
 	rec := kitdaemon.NewRuntimeRecord(

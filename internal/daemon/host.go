@@ -17,6 +17,12 @@ import (
 	"go.kenn.io/kwt/service"
 )
 
+const (
+	httpReadHeaderTimeout = 5 * time.Second
+	httpIdleTimeout       = 30 * time.Second
+	httpMaxHeaderBytes    = 16 << 10
+)
+
 type ServeOptions struct {
 	Home              string
 	Build             Build
@@ -189,7 +195,7 @@ func runHost(
 		Touch:        gate.Touch,
 		Now:          opts.Now,
 	})
-	httpServer := &http.Server{Handler: handler}
+	httpServer := newHTTPServer(handler)
 	serverDone := make(chan error, 1)
 	go func() {
 		serveErr := httpServer.Serve(listener)
@@ -245,6 +251,15 @@ func runHost(
 	removeErr := removeOwnedRuntime(runtimePath, store, record.PID)
 	logLifecycle(logger, "stopped", status.Status(opts.Now()), errors.Join(runErr, shutdownErr, removeErr))
 	return errors.Join(runErr, shutdownErr, removeErr)
+}
+
+func newHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: httpReadHeaderTimeout,
+		IdleTimeout:       httpIdleTimeout,
+		MaxHeaderBytes:    httpMaxHeaderBytes,
+	}
 }
 
 func hostLogger(opts ServeOptions) (*rotatingLog, *slog.Logger, error) {
