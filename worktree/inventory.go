@@ -103,9 +103,10 @@ type Diagnostic struct {
 }
 
 type Snapshot struct {
-	Projects   []models.Project   `json:"projects"`
-	Entries    []Entry            `json:"entries"`
-	Workspaces []models.Workspace `json:"workspaces"`
+	Projects      []models.Project   `json:"projects"`
+	Entries       []Entry            `json:"entries"`
+	LaunchEntries []Entry            `json:"launch_entries,omitempty"`
+	Workspaces    []models.Workspace `json:"workspaces"`
 }
 
 type Result struct {

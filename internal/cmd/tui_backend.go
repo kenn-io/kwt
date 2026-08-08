@@ -219,8 +219,14 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 	}
 	b.cfg.Projects = append([]models.Project(nil), result.Snapshot.Projects...)
 	b.cfg.Workspaces = append([]models.Workspace(nil), result.Snapshot.Workspaces...)
-	b.registerLaunchProject(entries)
-	b.registerLaunchWorkspace(entries)
+	if result.Freshness == publicworktree.Fresh {
+		launchEntries := make([]*discovery.GlobalWorktreeEntry, 0, len(result.Snapshot.LaunchEntries))
+		for _, entry := range result.Snapshot.LaunchEntries {
+			launchEntries = append(launchEntries, dashboardInventoryEntry(entry))
+		}
+		b.registerLaunchProject(launchEntries)
+		b.registerLaunchWorkspace(launchEntries)
+	}
 
 	var statusByPath map[string]*models.WorktreeStatus
 	if includeStatuses {

@@ -15,7 +15,10 @@ func TestFileCacheRoundTripsSnapshot(t *testing.T) {
 	cache, diagnostic, err := NewFileCache(home)
 	require.NoError(t, err)
 	assert.Nil(t, diagnostic)
-	want := Result{ObservedAt: time.Unix(7, 0).UTC(), Snapshot: Snapshot{Entries: []Entry{{Path: "/repo", Branch: "main"}}}}
+	want := Result{ObservedAt: time.Unix(7, 0).UTC(), Snapshot: Snapshot{
+		Entries:       []Entry{{Path: "/repo", Branch: "main"}},
+		LaunchEntries: []Entry{{Path: "/repo", Branch: "main"}},
+	}}
 	require.NoError(t, cache.Store(want))
 	want.Snapshot.Entries[0].Branch = "updated"
 	require.NoError(t, cache.Store(want))

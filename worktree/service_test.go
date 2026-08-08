@@ -13,9 +13,10 @@ import (
 )
 
 type testCache struct {
-	mu     sync.Mutex
-	result Result
-	ok     bool
+	mu       sync.Mutex
+	result   Result
+	ok       bool
+	storeErr error
 }
 
 func (c *testCache) Current() (Result, bool) {
@@ -27,6 +28,9 @@ func (c *testCache) Current() (Result, bool) {
 func (c *testCache) Store(result Result) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.storeErr != nil {
+		return c.storeErr
+	}
 	c.result, c.ok = result, true
 	return nil
 }
@@ -118,4 +122,22 @@ func TestServiceFailedRefreshKeepsLastKnownGood(t *testing.T) {
 	cached, ok := cache.Current()
 	require.True(t, ok)
 	assert.Equal(t, "/old", cached.Snapshot.Entries[0].Path)
+}
+
+func TestServiceFreshDashboardSurvivesCacheWriteFailure(t *testing.T) {
+	cacheErr := errors.New("cache is read-only")
+	service := NewInventoryService(ServiceOptions{
+		Source: &testSource{result: Result{Snapshot: Snapshot{Entries: []Entry{{Path: "/new"}}}}},
+		Cache:  &testCache{storeErr: cacheErr},
+		Now:    func() time.Time { return time.Unix(10, 0) },
+	})
+
+	result, err := service.Query(context.Background(), Request{View: ViewDashboard, RequireCurrent: true})
+
+	require.NoError(t, err)
+	assert.Equal(t, Fresh, result.Freshness)
+	require.Len(t, result.Snapshot.Entries, 1)
+	assert.Equal(t, "/new", result.Snapshot.Entries[0].Path)
+	require.NotNil(t, result.RefreshError)
+	assert.Contains(t, result.RefreshError.Message, cacheErr.Error())
 }

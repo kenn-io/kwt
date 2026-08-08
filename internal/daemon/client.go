@@ -49,7 +49,7 @@ func NewVerifiedClient(
 		token:    token,
 		http: ep.HTTPClient(kitdaemon.HTTPClientOptions{
 			Timeout:               30 * time.Second,
-			ResponseHeaderTimeout: 2 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
 		}),
 	}, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -55,7 +56,8 @@ func (s *currentSource) Load(ctx context.Context, request Request) (Result, erro
 	case ViewRepository:
 		result, err = s.loadRepository(ctx, request, snapshot.Config)
 	case ViewDashboard:
-		result.Snapshot.Entries, err = s.loadDashboard(ctx, request, snapshot.Config)
+		result.Snapshot.Entries, result.Snapshot.LaunchEntries, err =
+			s.loadDashboard(ctx, request, snapshot.Config)
 	}
 	if err != nil {
 		return Result{}, err
@@ -109,14 +111,22 @@ func (s *currentSource) loadRepository(
 		}, Notes: publicNotes(resolved.Notes)}, loadErr
 	}
 
-	g := git.New(request.WorkingDirectory)
-	worktrees, listErr := g.ListWorktrees()
-	if listErr != nil {
+	isRepository, err := hasGitMarker(request.WorkingDirectory)
+	if err != nil {
+		return Result{}, err
+	}
+	if !isRepository {
 		entries, loadErr := s.loadGlobal(resolved.Config)
 		return Result{Snapshot: Snapshot{
 			Projects: CanonicalProjects(resolved.Config.Projects), Entries: entries,
 			Workspaces: append([]models.Workspace(nil), resolved.Config.Workspaces...),
 		}, Notes: publicNotes(resolved.Notes)}, loadErr
+	}
+
+	g := git.New(request.WorkingDirectory)
+	worktrees, listErr := g.ListWorktrees()
+	if listErr != nil {
+		return Result{}, listErr
 	}
 	info, infoErr := internalworktree.RepositoryInfoWithProjects(g, resolved.Config.Projects)
 	if infoErr != nil {
@@ -135,6 +145,24 @@ func (s *currentSource) loadRepository(
 	}, Notes: publicNotes(resolved.Notes)}, nil
 }
 
+func hasGitMarker(path string) (bool, error) {
+	current := filepath.Clean(path)
+	for {
+		_, err := os.Lstat(filepath.Join(current, ".git"))
+		switch {
+		case err == nil:
+			return true, nil
+		case !errors.Is(err, os.ErrNotExist):
+			return false, fmt.Errorf("inspect repository marker: %w", err)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false, nil
+		}
+		current = parent
+	}
+}
+
 func (s *currentSource) loadGlobal(cfg *models.Config) ([]Entry, error) {
 	entries, err := discovery.DiscoverGlobalWorktrees(cfg.Worktree.BaseDir, cfg.Projects)
 	if err != nil {
@@ -147,32 +175,34 @@ func (s *currentSource) loadDashboard(
 	ctx context.Context,
 	request Request,
 	cfg *models.Config,
-) ([]Entry, error) {
+) ([]Entry, []Entry, error) {
 	entries, err := s.loadGlobal(cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, project := range cfg.Projects {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		projectEntries, loadErr := entriesForRepository(project.Path, cfg.Projects)
 		if loadErr != nil {
 			if git.IsIncompleteInventory(loadErr) {
-				return nil, loadErr
+				return nil, nil, loadErr
 			}
 			continue
 		}
 		entries = mergeEntries(entries, projectEntries)
 	}
+	var launchEntries []Entry
 	if request.LaunchDirectory != "" {
-		launchEntries, loadErr := entriesForRepository(request.LaunchDirectory, cfg.Projects)
+		var loadErr error
+		launchEntries, loadErr = entriesForRepository(request.LaunchDirectory, cfg.Projects)
 		if loadErr != nil && git.IsIncompleteInventory(loadErr) {
-			return nil, loadErr
+			return nil, nil, loadErr
 		}
 		entries = mergeEntries(entries, launchEntries)
 	}
-	return entries, nil
+	return entries, launchEntries, nil
 }
 
 func entriesForRepository(path string, projects []models.Project) ([]Entry, error) {

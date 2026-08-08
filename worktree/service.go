@@ -70,11 +70,11 @@ func (s *Service) Query(ctx context.Context, request Request) (Result, error) {
 		result.RefreshError = nil
 		if request.View == ViewDashboard {
 			if storeErr := s.cache.Store(result); storeErr != nil {
-				return Result{}, storeErr
+				result.RefreshError = &Diagnostic{At: s.now(), Message: boundedDiagnostic(storeErr)}
 			}
 		}
 		s.mu.Lock()
-		s.last = nil
+		s.last = cloneDiagnostic(result.RefreshError)
 		s.mu.Unlock()
 		return cloneResult(result), nil
 	})
@@ -92,6 +92,7 @@ func cloneResult(result Result) Result {
 	copy := result
 	copy.Snapshot.Projects = cloneSlice(result.Snapshot.Projects)
 	copy.Snapshot.Entries = cloneSlice(result.Snapshot.Entries)
+	copy.Snapshot.LaunchEntries = cloneSlice(result.Snapshot.LaunchEntries)
 	copy.Snapshot.Workspaces = cloneSlice(result.Snapshot.Workspaces)
 	copy.Notes = cloneSlice(result.Notes)
 	copy.RefreshError = cloneDiagnostic(result.RefreshError)

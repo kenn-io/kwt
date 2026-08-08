@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	kitdaemon "go.kenn.io/kit/daemon"
 	"go.kenn.io/kwt/service"
+	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 func runtimeRecordForServer(
@@ -116,4 +117,29 @@ func TestVerifiedClientUsesBearerAfterSuccessfulProof(t *testing.T) {
 	status, err := client.Status(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, APISchemaMajor, status.SchemaMajor)
+}
+
+func TestVerifiedClientAllowsInventoryDiscoveryBeforeHeaders(t *testing.T) {
+	token := "test-secret"
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	rec := runtimeRecordForServer(t, server, token)
+	proof, err := kitdaemon.NewProof([]byte(token))
+	require.NoError(t, err)
+	ping, err := proof.NewPingHandler(rec)
+	require.NoError(t, err)
+	mux.Handle("/api/ping", ping)
+	mux.HandleFunc("/api/v1/inventory", func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(2100 * time.Millisecond)
+		_ = json.NewEncoder(w).Encode(map[string]any{"freshness": "fresh"})
+	})
+
+	client, err := NewVerifiedClient(context.Background(), rec, token)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = client.Inventory(ctx, publicworktree.Request{View: publicworktree.ViewDashboard})
+
+	require.NoError(t, err)
 }
