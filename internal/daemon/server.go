@@ -134,7 +134,7 @@ func secureLocalHandler(next http.Handler, opts ServerOptions) http.Handler {
 		now := opts.Now()
 		status := opts.Status.Status(now)
 		shutdownPath := r.URL.Path == "/api/v1/daemon/shutdown"
-		if opts.Touch != nil && !(shutdownPath && status.State == StateDraining) {
+		if opts.Touch != nil && (!shutdownPath || status.State != StateDraining) {
 			opts.Touch(now)
 		}
 		if status.State == StateDraining &&

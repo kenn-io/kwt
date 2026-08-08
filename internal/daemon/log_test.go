@@ -15,7 +15,7 @@ func TestRotatingLogIsPrivateAndRetainsThreeBackups(t *testing.T) {
 	log, err := openRotatingLog(path, 16, 3)
 	require.NoError(t, err)
 	for value := range 6 {
-		_, err = log.Write([]byte(fmt.Sprintf("entry-%02d\n", value)))
+		_, err = fmt.Fprintf(log, "entry-%02d\n", value)
 		require.NoError(t, err)
 	}
 	require.NoError(t, log.Close())
