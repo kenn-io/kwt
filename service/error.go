@@ -74,3 +74,9 @@ func AsError(err error) *Error {
 	}
 	return NewError(Internal, "internal failure", false, nil, err)
 }
+
+// IsCode reports whether err contains a service error with the given code.
+func IsCode(err error, code Code) bool {
+	var typed *Error
+	return errors.As(err, &typed) && typed.Code == code
+}

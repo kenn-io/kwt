@@ -11,6 +11,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"go.kenn.io/kwt/service"
+	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 type StatusProvider interface {
@@ -28,12 +29,22 @@ type ServerOptions struct {
 	Touch        func(time.Time)
 	Now          func() time.Time
 	MaxBodyBytes int64
+	Inventory    publicworktree.Inventory
+	Gate         *Gate
 }
 
 type emptyInput struct{}
 type statusOutput struct{ Body Status }
 type shutdownInput struct{ Body ShutdownRequest }
 type shutdownOutput struct{ Body ShutdownResponse }
+type inventoryInput struct{ Body publicworktree.Request }
+type inventoryOutput struct{ Body publicworktree.Result }
+type configApprovalInput struct{ Body publicworktree.ConfigApproval }
+type configApprovalOutput struct {
+	Body struct {
+		Status string `json:"status"`
+	}
+}
 
 func NewServer(opts ServerOptions) http.Handler {
 	if opts.Now == nil {
@@ -58,6 +69,41 @@ func NewServer(opts ServerOptions) http.Handler {
 			return &statusOutput{Body: opts.Status.Status(opts.Now())}, nil
 		},
 	)
+	if opts.Inventory != nil {
+		huma.Register(
+			api,
+			huma.Operation{Method: http.MethodPost, Path: "/api/v1/inventory", OperationID: "worktree-inventory"},
+			func(ctx context.Context, input *inventoryInput) (*inventoryOutput, error) {
+				release, err := reserveInventoryWork(opts)
+				if err != nil {
+					return nil, problemFromError(err)
+				}
+				defer release()
+				result, err := opts.Inventory.Query(ctx, input.Body)
+				if err != nil {
+					return nil, problemFromError(err)
+				}
+				return &inventoryOutput{Body: result}, nil
+			},
+		)
+		huma.Register(
+			api,
+			huma.Operation{Method: http.MethodPost, Path: "/api/v1/config/trust", OperationID: "repository-config-trust"},
+			func(ctx context.Context, input *configApprovalInput) (*configApprovalOutput, error) {
+				release, err := reserveInventoryWork(opts)
+				if err != nil {
+					return nil, problemFromError(err)
+				}
+				defer release()
+				if err := opts.Inventory.ApproveConfig(ctx, input.Body); err != nil {
+					return nil, problemFromError(err)
+				}
+				output := &configApprovalOutput{}
+				output.Body.Status = "approved"
+				return output, nil
+			},
+		)
+	}
 	huma.Register(
 		api,
 		huma.Operation{
@@ -77,6 +123,13 @@ func NewServer(opts ServerOptions) http.Handler {
 		mux.Handle("/api/ping", opts.Ping)
 	}
 	return secureLocalHandler(mux, opts)
+}
+
+func reserveInventoryWork(opts ServerOptions) (func(), error) {
+	if opts.Gate == nil {
+		return func() {}, nil
+	}
+	return opts.Gate.Reserve(ReservationWork, opts.Now())
 }
 
 func secureLocalHandler(next http.Handler, opts ServerOptions) http.Handler {
@@ -213,6 +266,7 @@ func problemFromError(err error) *Problem {
 		Detail:    typed.Message,
 		Code:      string(typed.Code),
 		Retryable: typed.Retryable,
+		Details:   allowedProblemDetails(typed.Details),
 	}
 	if deadline, ok := typed.Details["drain_deadline"].(time.Time); ok {
 		problem.DrainDeadline = &deadline
@@ -221,6 +275,26 @@ func problemFromError(err error) *Problem {
 		problem.DrainDeadline = deadline
 	}
 	return problem
+}
+
+func allowedProblemDetails(details map[string]any) map[string]any {
+	if len(details) == 0 {
+		return nil
+	}
+	allowed := map[string]bool{
+		"kind": true, "path": true, "digest": true, "size": true,
+		"preview": true, "truncated": true, "drain_deadline": true,
+	}
+	result := make(map[string]any)
+	for key, value := range details {
+		if allowed[key] {
+			result[key] = value
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func init() {

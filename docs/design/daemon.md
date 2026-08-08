@@ -2,8 +2,8 @@
 
 Kwt runs at most one writable local service daemon for each canonical kwt
 home. The daemon is a host for kwt domain services; it is not the multi-machine
-sync hub. The foundation release does not route existing worktree, TUI, or SSH
-operations through it.
+sync hub. It owns worktree inventory reads; worktree mutations, status
+collection, tmux attachment, and SSH lifecycle move in later slices.
 
 The process binds an automatically selected IPv4 loopback port and publishes
 an owner-only runtime record under `<kwt-home>/runtime`. Clients verify the
@@ -22,8 +22,27 @@ newer daemon. Draining rejects new operations with a retryable typed response
 that carries the deadline. Active work and leases may finish until
 `daemon.replacement_grace`; the default is five minutes.
 
-The foundation API exposes authenticated status and graceful shutdown under
-`/api/v1`, proof-capable liveness at `/api/ping`, and credential-free OpenAPI at
-`/openapi.json`. Domain APIs and automatic daemon startup arrive with their
-individual migrations; an operation never has simultaneous direct and HTTP
-execution paths.
+The API exposes authenticated status, graceful shutdown, worktree inventory,
+and repository-config approval under `/api/v1`, proof-capable liveness at
+`/api/ping`, and credential-free OpenAPI at `/openapi.json`. Inventory clients
+require the `worktree.inventory.v1` capability. An operation never has
+simultaneous direct and HTTP execution paths.
+
+`kwt projects` and `kwt list` auto-start or reuse the daemon and require a
+current inventory result. They fail instead of falling back to cached or direct
+filesystem data. The TUI may paint immediately from the derived last-known-good
+cache at `<kwt-home>/cache/inventory-v1.json`, then requests one current
+snapshot. The cache is never mutation authority. Git status and fetch remain
+in the foreground client so their credential environment is unchanged.
+
+Repository-local configuration is resolved per request. Unknown content
+produces a digest-bound interaction requirement. Approval reopens and hashes
+the file before persisting trust; rejection and noninteractive ignore are
+request-local. Noninteractive commands preserve the historical global-only
+fallback and warning.
+
+For remote use, including Ghosthub, the remote shell invokes the remote `kwt`
+CLI and that CLI talks only to its same-machine loopback daemon. The daemon is
+never exposed as a remote service. A monitoring read may start or replace a
+daemon after a kwt upgrade; the later SSH lease migration must retain the
+documented replacement-grace behavior for active sessions.

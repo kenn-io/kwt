@@ -16,13 +16,15 @@ import (
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
+	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 var (
-	projectsJSON       bool
-	projectsAddJSON    bool
-	loadProjectsConfig = config.Load
-	registerProject    = config.RegisterProject
+	projectsJSON           bool
+	projectsAddJSON        bool
+	loadProjectsConfig     = config.Load
+	registerProject        = config.RegisterProject
+	queryProjectsInventory = queryCLIInventory
 )
 
 var projectsCmd = &cobra.Command{
@@ -69,12 +71,16 @@ func init() {
 }
 
 func runProjects(cmd *cobra.Command, args []string) error {
-	cfg, err := loadProjectsConfig()
+	result, err := queryProjectsInventory(
+		cmd.Context(),
+		publicworktree.Request{View: publicworktree.ViewProjects, RequireCurrent: true},
+		false,
+		cmd.ErrOrStderr(),
+	)
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return err
 	}
-
-	projects := canonicalizeProjectIdentities(cfg.Projects)
+	projects := result.Snapshot.Projects
 
 	if projectsJSON {
 		encoder := json.NewEncoder(cmd.OutOrStdout())
@@ -291,33 +297,6 @@ func projectCommandJSONRequested() bool {
 		}
 	}
 	return requested
-}
-
-// canonicalizeProjectIdentities returns accessible registered projects with
-// Repository values resolved through the canonical identity bar, so projects
-// output (JSON and table) emits the same identities kwt list --json reports.
-func canonicalizeProjectIdentities(projects []models.Project) []models.Project {
-	out := make([]models.Project, 0, len(projects))
-	for _, project := range projects {
-		if strings.TrimSpace(project.Path) == "" {
-			continue
-		}
-		repositoryGit := worktree.NewCachedIdentityGit(git.New(project.Path))
-		mainPath, err := repositoryGit.GetMainRepositoryPath()
-		if err != nil || !samePath(mainPath, project.Path) {
-			continue
-		}
-		info, err := worktree.RepositoryInfoWithProjects(
-			repositoryGit,
-			[]models.Project{project},
-		)
-		if err != nil {
-			continue
-		}
-		project.Repository = info.FullPath
-		out = append(out, project)
-	}
-	return out
 }
 
 // publishableProjectRepository resolves the repository identity projects

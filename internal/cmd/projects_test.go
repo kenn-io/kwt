@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +17,7 @@ import (
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
+	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 func withProjectsConfig(t *testing.T, projects []models.Project) {
@@ -23,6 +26,18 @@ func withProjectsConfig(t *testing.T, projects []models.Project) {
 	t.Cleanup(func() { loadProjectsConfig = origLoad })
 	loadProjectsConfig = func() (*models.Config, error) {
 		return &models.Config{Projects: projects}, nil
+	}
+	origQuery := queryProjectsInventory
+	t.Cleanup(func() { queryProjectsInventory = origQuery })
+	queryProjectsInventory = func(
+		context.Context,
+		publicworktree.Request,
+		bool,
+		io.Writer,
+	) (publicworktree.Result, error) {
+		return publicworktree.Result{Snapshot: publicworktree.Snapshot{
+			Projects: publicworktree.CanonicalProjects(projects),
+		}}, nil
 	}
 }
 
@@ -95,15 +110,15 @@ func TestRunProjectsRendersTable(t *testing.T) {
 }
 
 func TestRunProjectsReturnsConfigLoadError(t *testing.T) {
-	origLoad := loadProjectsConfig
-	t.Cleanup(func() { loadProjectsConfig = origLoad })
-	loadProjectsConfig = func() (*models.Config, error) {
-		return nil, errors.New("config unavailable")
+	origQuery := queryProjectsInventory
+	t.Cleanup(func() { queryProjectsInventory = origQuery })
+	queryProjectsInventory = func(context.Context, publicworktree.Request, bool, io.Writer) (publicworktree.Result, error) {
+		return publicworktree.Result{}, errors.New("config unavailable")
 	}
 
 	err := runProjects(projectsCmd, nil)
 
-	require.EqualError(t, err, "failed to load config: config unavailable")
+	require.EqualError(t, err, "config unavailable")
 }
 
 // TestRunProjectsJSONCanonicalizesLegacyAbsolutePathIdentity pins the fix for

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 
@@ -45,6 +46,8 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	}
 
 	backend := newTUIBackend(cfg)
+	backend.queryInventory = queryCLIInventory
+	backend.stderr = os.Stderr
 	model := dashboard.NewModel(backend, cfg.Worktree.BaseDir).
 		WithInitialAnchor(launchAnchorPath(backend.launchDir))
 	final, err := tea.NewProgram(model).Run()

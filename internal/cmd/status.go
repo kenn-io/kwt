@@ -10,6 +10,7 @@ import (
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/status"
+	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/ui"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
@@ -221,7 +222,7 @@ func collectWorktreeStatuses(ctx context.Context, cfg *models.Config, printer *u
 		// Local worktrees all belong to the repository containing cwd. Enrich
 		// them before collection so registered identity precedence and the
 		// canonical local fallback match the global status surface.
-		enrichWorktreeIdentity(g, cfg.Projects, localWorktrees)
+		enrichStatusWorktreeIdentity(g, cfg.Projects, localWorktrees)
 		for i := range localWorktrees {
 			worktrees = append(worktrees, &localWorktrees[i])
 		}
@@ -233,6 +234,25 @@ func collectWorktreeStatuses(ctx context.Context, cfg *models.Config, printer *u
 		BaseDir:        cfg.Worktree.BaseDir,
 	})
 	return collector.CollectAll(ctx, worktrees)
+}
+
+func enrichStatusWorktreeIdentity(
+	g worktree.RepoIdentityGit,
+	projects []models.Project,
+	worktrees []models.Worktree,
+) {
+	info, err := worktree.RepositoryInfoWithProjects(g, projects)
+	if err != nil {
+		return
+	}
+	for index := range worktrees {
+		worktrees[index].Repository = info.FullPath
+		worktrees[index].SessionName = tmux.WorkspaceSessionName(
+			info,
+			worktrees[index].Branch,
+			worktrees[index].Path,
+		)
+	}
 }
 
 func applyFiltersAndSort(statuses []*models.WorktreeStatus) []*models.WorktreeStatus {

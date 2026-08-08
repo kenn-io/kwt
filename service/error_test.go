@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -27,4 +28,10 @@ func TestAsErrorNormalizesUnexpectedFailures(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, service.Internal, got.Code)
 	assert.False(t, got.Retryable)
+}
+
+func TestIsCodeMatchesWrappedTypedErrors(t *testing.T) {
+	err := fmt.Errorf("request failed: %w", service.NewError(service.Busy, "busy", true, nil, nil))
+	assert.True(t, service.IsCode(err, service.Busy))
+	assert.False(t, service.IsCode(err, service.Conflict))
 }

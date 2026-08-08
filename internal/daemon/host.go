@@ -15,6 +15,7 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
+	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 const (
@@ -33,6 +34,7 @@ type ServeOptions struct {
 	IdleCheckInterval time.Duration
 	Stdout            io.Writer
 	Stderr            io.Writer
+	Inventory         publicworktree.Inventory
 }
 
 type hostStatus struct {
@@ -158,6 +160,21 @@ func runHost(
 
 	startedAt := opts.Now()
 	gate := NewGate(startedAt)
+	inventory := opts.Inventory
+	var cacheDiagnostic *publicworktree.Diagnostic
+	if inventory == nil {
+		cache, diagnostic, cacheErr := publicworktree.NewFileCache(opts.Home)
+		if cacheErr != nil {
+			_ = listener.Close()
+			return cacheErr
+		}
+		cacheDiagnostic = diagnostic
+		inventory = publicworktree.NewInventoryService(publicworktree.ServiceOptions{
+			Source: publicworktree.NewSource(publicworktree.SourceOptions{Home: opts.Home}),
+			Cache:  cache,
+			Now:    opts.Now,
+		})
+	}
 	status := &hostStatus{
 		base: Status{
 			Service:       ServiceName,
@@ -172,10 +189,14 @@ func runHost(
 			Capabilities: []string{
 				CapabilityShutdown,
 				CapabilityStatus,
+				CapabilityInventory,
 			},
 			StartedAt: startedAt,
 		},
 		gate: gate,
+	}
+	if cacheDiagnostic != nil {
+		status.lastError = &Failure{At: cacheDiagnostic.At, Message: cacheDiagnostic.Message}
 	}
 	shutdownRequested := make(chan string, 1)
 	shutdown := func(_ context.Context, request ShutdownRequest) (Status, error) {
@@ -195,6 +216,8 @@ func runHost(
 		Ping:         ping,
 		Touch:        gate.Touch,
 		Now:          opts.Now,
+		Inventory:    inventory,
+		Gate:         gate,
 	})
 	httpServer := newHTTPServer(handler)
 	serverDone := make(chan error, 1)

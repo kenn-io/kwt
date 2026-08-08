@@ -739,7 +739,13 @@ type GlobalSnapshot struct {
 // LoadGlobalSnapshot re-reads global configuration without merging a
 // repository-local .kwt.toml file.
 func LoadGlobalSnapshot() (*GlobalSnapshot, error) {
-	configPath := filepath.Join(getConfigDir(), configName+"."+configType)
+	return LoadGlobalSnapshotAt(getConfigDir())
+}
+
+// LoadGlobalSnapshotAt re-reads global configuration from an explicit kwt
+// home. Daemon requests use it to avoid process-global environment state.
+func LoadGlobalSnapshotAt(home string) (*GlobalSnapshot, error) {
+	configPath := filepath.Join(home, configName+"."+configType)
 	globalViper, err := readGlobalViper(configPath)
 	if err != nil {
 		return nil, err

@@ -71,6 +71,15 @@ the recorded endpoint before sending the bearer. The server accepts only its
 exact loopback Host, rejects browser Origin requests, bounds bodies and
 diagnostics, and never logs credentials or request bodies.
 
+Inventory repository paths are carried only in authenticated request bodies,
+not URL paths. The owner-only inventory cache contains derived discovery data;
+it is disposable and never authorizes a mutation. Repository-local config is
+never implicitly trusted: interactive approval is bound to a content digest
+that the daemon revalidates, while rejection and noninteractive skipping apply
+only to that request. A remote client reaches inventory by invoking the remote
+machine's kwt CLI over its existing shell boundary; the loopback daemon itself
+is not remotely reachable.
+
 PID liveness alone does not authorize cleanup or replacement. Kwt also checks
 the recorded process creation identity. A dead PID or exact creation mismatch
 makes a runtime record stale; an identity that cannot be read, a timed-out

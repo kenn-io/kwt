@@ -3,11 +3,12 @@ package daemon
 import "time"
 
 const (
-	ServiceName        = "kwt"
-	APISchemaMajor     = 1
-	APISchemaVersion   = "1.0.0"
-	CapabilityStatus   = "daemon.status"
-	CapabilityShutdown = "daemon.shutdown"
+	ServiceName         = "kwt"
+	APISchemaMajor      = 1
+	APISchemaVersion    = "1.1.0"
+	CapabilityStatus    = "daemon.status"
+	CapabilityShutdown  = "daemon.shutdown"
+	CapabilityInventory = "worktree.inventory.v1"
 )
 
 type State string
@@ -52,11 +53,12 @@ type ShutdownResponse struct {
 }
 
 type Problem struct {
-	Type          string     `json:"type"`
-	Title         string     `json:"title"`
-	Status        int        `json:"status"`
-	Detail        string     `json:"detail"`
-	Code          string     `json:"code"`
-	Retryable     bool       `json:"retryable"`
-	DrainDeadline *time.Time `json:"drain_deadline,omitempty"`
+	Type          string         `json:"type"`
+	Title         string         `json:"title"`
+	Status        int            `json:"status"`
+	Detail        string         `json:"detail"`
+	Code          string         `json:"code"`
+	Retryable     bool           `json:"retryable"`
+	DrainDeadline *time.Time     `json:"drain_deadline,omitempty"`
+	Details       map[string]any `json:"details,omitempty"`
 }

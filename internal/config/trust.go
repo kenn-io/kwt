@@ -227,14 +227,28 @@ func (p *stdioPrompter) PromptTrust(absPath string, content []byte) (bool, error
 		truncated = true
 	}
 
+	return p.PromptTrustPreview(
+		absPath,
+		len(content),
+		sanitizeForTerminal(string(preview)),
+		truncated,
+	)
+}
+
+func (p *stdioPrompter) PromptTrustPreview(
+	absPath string,
+	size int,
+	preview string,
+	truncated bool,
+) (bool, error) {
 	var b strings.Builder
 	b.WriteString("\nkwt: untrusted local config detected:\n")
 	fmt.Fprintf(&b, "  path: %s\n", sanitizeForTerminal(absPath))
-	fmt.Fprintf(&b, "  size: %d bytes\n\n", len(content))
+	fmt.Fprintf(&b, "  size: %d bytes\n\n", size)
 	b.WriteString("--- file contents ---\n")
-	b.WriteString(strings.TrimRight(sanitizeForTerminal(string(preview)), "\n"))
+	b.WriteString(strings.TrimRight(preview, "\n"))
 	if truncated {
-		fmt.Fprintf(&b, "\n... (truncated, showing first %d of %d bytes)", promptPreviewLimit, len(content))
+		fmt.Fprintf(&b, "\n... (truncated, showing first %d of %d bytes)", promptPreviewLimit, size)
 	}
 	b.WriteString("\n--------------------\n\n")
 	b.WriteString("Trust this file and load it? [y/N]: ")
@@ -248,6 +262,17 @@ func (p *stdioPrompter) PromptTrust(absPath string, content []byte) (bool, error
 	}
 	response = strings.ToLower(strings.TrimSpace(response))
 	return response == "y" || response == "yes", nil
+}
+
+// PromptTrustRequirement renders a daemon-provided, already bounded and
+// sanitized trust requirement using the ordinary foreground prompt.
+func PromptTrustRequirement(requirement TrustRequiredError) (bool, error) {
+	return newStdioPrompter().PromptTrustPreview(
+		requirement.Path,
+		requirement.Size,
+		requirement.Preview,
+		requirement.Truncated,
+	)
 }
 
 // sanitizeForTerminal replaces terminal control characters with a visible

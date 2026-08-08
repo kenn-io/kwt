@@ -62,9 +62,12 @@ kwt daemon stop
 kwt serve
 ```
 
-The daemon foundation does not yet route worktree, TUI, or SSH operations
-through the service. Each domain moves as a complete later migration without a
-simultaneous direct fallback.
+`kwt projects`, `kwt list`, and TUI inventory auto-start or reuse a compatible
+local daemon. CLI inventory requires a current refresh and fails if one cannot
+complete; it never prints cached data. The TUI may paint from the daemon's
+last-known-good cache while requesting one current snapshot. Worktree
+mutations, Git status collection, tmux attachment, and SSH remain on their
+existing paths until their complete service migrations.
 
 When `kwt add -b` creates a branch, it fetches `origin` and starts from its
 default branch. If that remote base is unavailable, it falls back to local
@@ -135,6 +138,11 @@ clients can attach to it; otherwise it reports the canonical name kwt will use
 when establishing the session.
 
 ## `kwt list`
+
+The command obtains inventory from the same-machine daemon, including when a
+remote shell invokes kwt. Its human output and machine-readable schema are
+unchanged; freshness metadata stays in the daemon API envelope and is not
+added to the top-level JSON array.
 
 `--json` emits an array of objects with `path`, `branch`, `commit_hash`, `is_main`,
 `created_at` (worktree directory mtime), `generation` (the durable identity for
@@ -332,6 +340,10 @@ repository lock as removal and report `locked_worktree` or `main_worktree`
 instead of claiming those paths would be removed.
 
 ## `kwt projects`
+
+The list action obtains a current inventory snapshot from the same-machine
+daemon. `projects add` remains a direct foreground mutation until the worktree
+mutation service migrates.
 
 `--json` emits an array of the registered project repositories (`{repository,
 name, path, last_touched}`), so external automation can discover main-repo

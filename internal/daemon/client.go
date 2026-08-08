@@ -12,6 +12,7 @@ import (
 
 	kitdaemon "go.kenn.io/kit/daemon"
 	"go.kenn.io/kwt/service"
+	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 type Client struct {
@@ -47,10 +48,20 @@ func NewVerifiedClient(
 		endpoint: ep,
 		token:    token,
 		http: ep.HTTPClient(kitdaemon.HTTPClientOptions{
-			Timeout:               5 * time.Second,
+			Timeout:               30 * time.Second,
 			ResponseHeaderTimeout: 2 * time.Second,
 		}),
 	}, nil
+}
+
+func (c *Client) Inventory(ctx context.Context, request publicworktree.Request) (publicworktree.Result, error) {
+	var result publicworktree.Result
+	err := c.do(ctx, http.MethodPost, "/api/v1/inventory", request, &result)
+	return result, err
+}
+
+func (c *Client) ApproveConfig(ctx context.Context, approval publicworktree.ConfigApproval) error {
+	return c.do(ctx, http.MethodPost, "/api/v1/config/trust", approval, nil)
 }
 
 func newClient(ep kitdaemon.Endpoint, token string, client *http.Client) *Client {
@@ -157,9 +168,12 @@ func decodeProblem(status int, body io.Reader) error {
 			nil,
 		)
 	}
-	var details map[string]any
+	details := problem.Details
 	if problem.DrainDeadline != nil {
-		details = map[string]any{"drain_deadline": *problem.DrainDeadline}
+		if details == nil {
+			details = make(map[string]any)
+		}
+		details["drain_deadline"] = *problem.DrainDeadline
 	}
 	message := problem.Detail
 	if message == "" {
