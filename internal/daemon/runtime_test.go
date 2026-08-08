@@ -225,3 +225,32 @@ func TestValidateRuntimeStatusRejectsBuildIdentityMismatch(t *testing.T) {
 		})
 	}
 }
+
+func TestClassifyRuntimeStatusAllowsOnlyReadyAsReady(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		state     State
+		want      RuntimeState
+		wantError bool
+	}{
+		{name: "ready", state: StateReady, want: RuntimeReady},
+		{name: "draining", state: StateDraining, want: RuntimeDraining},
+		{name: "starting", state: StateStarting, want: RuntimeStarting},
+		{name: "failed", state: StateFailed, want: RuntimeFailed},
+		{name: "empty", state: "", want: RuntimeUnresponsive, wantError: true},
+		{name: "future", state: "future", want: RuntimeUnresponsive, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := classifyRuntimeStatus(Status{
+				SchemaMajor: APISchemaMajor,
+				State:       test.state,
+			})
+			assert.Equal(t, test.want, got)
+			if test.wantError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}

@@ -71,6 +71,7 @@ func TestControllerStartsAbsentDaemonAndWaitsForReady(t *testing.T) {
 	options.Inspect = scriptedInspector(
 		t,
 		Observation{State: RuntimeAbsent},
+		Observation{State: RuntimeStarting},
 		ready,
 	)
 	launches := 0
@@ -82,6 +83,41 @@ func TestControllerStartsAbsentDaemonAndWaitsForReady(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ready.Status.Version, got.Status.Version)
 	assert.Equal(t, 1, launches)
+}
+
+func TestControllerLaunchFailsWhenDaemonReportsFailed(t *testing.T) {
+	options := testControllerOptions(t)
+	options.Inspect = scriptedInspector(
+		t,
+		Observation{State: RuntimeAbsent},
+		Observation{State: RuntimeFailed},
+	)
+	options.Launch = func(context.Context) error { return nil }
+
+	_, err := NewController(options).Start(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed state")
+}
+
+func TestControllerWaitsForExistingStartingDaemon(t *testing.T) {
+	options := testControllerOptions(t)
+	ready := Observation{State: RuntimeReady, Status: Status{Version: "v1.2.0"}}
+	options.Inspect = scriptedInspector(
+		t,
+		Observation{State: RuntimeStarting},
+		Observation{State: RuntimeStarting},
+		ready,
+	)
+	launched := false
+	options.Launch = func(context.Context) error {
+		launched = true
+		return nil
+	}
+
+	got, err := NewController(options).Start(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, ready, got)
+	assert.False(t, launched)
 }
 
 func TestControllerReusesCompatibleNewerDaemon(t *testing.T) {
@@ -179,6 +215,34 @@ func TestControllerStopAbsentIsIdempotent(t *testing.T) {
 	require.NoError(t, NewController(options).Stop(context.Background()))
 }
 
+func TestControllerStopRequestsShutdownForNonReadyOwner(t *testing.T) {
+	for name, state := range map[string]RuntimeState{
+		"starting": RuntimeStarting,
+		"failed":   RuntimeFailed,
+	} {
+		t.Run(name, func(t *testing.T) {
+			options := testControllerOptions(t)
+			options.Inspect = scriptedInspector(
+				t,
+				Observation{State: state},
+				Observation{State: RuntimeAbsent},
+			)
+			shutdown := false
+			options.RequestShutdown = func(
+				_ context.Context,
+				_ Observation,
+				_ string,
+			) error {
+				shutdown = true
+				return nil
+			}
+
+			require.NoError(t, NewController(options).Stop(context.Background()))
+			assert.True(t, shutdown)
+		})
+	}
+}
+
 func TestControllerStopUsesRunningDaemonDrainDeadline(t *testing.T) {
 	options := testControllerOptions(t)
 	options.Config.ReplacementGrace = time.Millisecond
@@ -235,6 +299,33 @@ func TestControllerRestartStopsThenStartsInvokingBinary(t *testing.T) {
 	assert.Equal(t, "v1.2.0", got.Status.Version)
 }
 
+func TestControllerRestartRecoversFailedDaemon(t *testing.T) {
+	options := testControllerOptions(t)
+	ready := Observation{State: RuntimeReady, Status: Status{Version: "v1.2.0"}}
+	options.Inspect = scriptedInspector(
+		t,
+		Observation{State: RuntimeFailed, Status: Status{Version: "v1.2.0"}},
+		Observation{State: RuntimeAbsent},
+		Observation{State: RuntimeAbsent},
+		ready,
+	)
+	shutdown := false
+	options.RequestShutdown = func(
+		_ context.Context,
+		_ Observation,
+		_ string,
+	) error {
+		shutdown = true
+		return nil
+	}
+	options.Launch = func(context.Context) error { return nil }
+
+	got, err := NewController(options).Restart(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, ready, got)
+	assert.True(t, shutdown)
+}
+
 func TestControllerRestartRefusesToDowngradeNewerDaemon(t *testing.T) {
 	options := testControllerOptions(t)
 	options.Inspect = scriptedInspector(t, Observation{
@@ -254,4 +345,34 @@ func TestControllerRestartRefusesToDowngradeNewerDaemon(t *testing.T) {
 	_, err := NewController(options).Restart(context.Background())
 	require.Error(t, err)
 	assert.False(t, shutdown)
+}
+
+func TestControllerOlderVersionCannotReplaceDrainingNewerDaemon(t *testing.T) {
+	for name, act := range map[string]func(*Controller) error{
+		"start": func(controller *Controller) error {
+			_, err := controller.Start(context.Background())
+			return err
+		},
+		"restart": func(controller *Controller) error {
+			_, err := controller.Restart(context.Background())
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			options := testControllerOptions(t)
+			options.Inspect = scriptedInspector(t, Observation{
+				State:  RuntimeDraining,
+				Status: Status{Version: "v1.3.0"},
+			})
+			launched := false
+			options.Launch = func(context.Context) error {
+				launched = true
+				return nil
+			}
+
+			err := act(NewController(options))
+			require.Error(t, err)
+			assert.False(t, launched)
+		})
+	}
 }

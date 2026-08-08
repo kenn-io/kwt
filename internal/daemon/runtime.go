@@ -36,6 +36,8 @@ type RuntimeState uint8
 const (
 	RuntimeAbsent RuntimeState = iota
 	RuntimeReady
+	RuntimeStarting
+	RuntimeFailed
 	RuntimeDraining
 	RuntimeIncompatible
 	RuntimeUnresponsive
@@ -175,14 +177,29 @@ func inspectLiveRecord(
 	}
 	observation.Client = client
 	observation.Status = status
-	if status.SchemaMajor != APISchemaMajor {
-		observation.State = RuntimeIncompatible
-	} else if status.State == StateDraining {
-		observation.State = RuntimeDraining
-	} else {
-		observation.State = RuntimeReady
-	}
+	observation.State, observation.Err = classifyRuntimeStatus(status)
 	return observation
+}
+
+func classifyRuntimeStatus(status Status) (RuntimeState, error) {
+	if status.SchemaMajor != APISchemaMajor {
+		return RuntimeIncompatible, nil
+	}
+	switch status.State {
+	case StateReady:
+		return RuntimeReady, nil
+	case StateStarting:
+		return RuntimeStarting, nil
+	case StateFailed:
+		return RuntimeFailed, nil
+	case StateDraining:
+		return RuntimeDraining, nil
+	default:
+		return RuntimeUnresponsive, fmt.Errorf(
+			"daemon reported unknown state %q",
+			status.State,
+		)
+	}
 }
 
 func parseRuntimeMetadata(

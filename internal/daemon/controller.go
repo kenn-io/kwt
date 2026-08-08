@@ -100,7 +100,7 @@ func (c *Controller) Stop(ctx context.Context) error {
 	switch observation.State {
 	case RuntimeAbsent:
 		return nil
-	case RuntimeReady:
+	case RuntimeReady, RuntimeStarting, RuntimeFailed:
 		if err := c.options.RequestShutdown(ctx, observation, "stop"); err != nil {
 			return err
 		}
@@ -128,20 +128,17 @@ func (c *Controller) Restart(ctx context.Context) (Observation, error) {
 	switch observation.State {
 	case RuntimeAbsent:
 		return c.startLocked(ctx)
-	case RuntimeReady:
+	case RuntimeReady, RuntimeStarting, RuntimeFailed:
 		if olderVersion(c.options.Build.Version, observation.Status.Version) {
-			return Observation{}, service.NewError(
-				service.Unsupported,
-				"an older kwt cannot restart a newer daemon",
-				false,
-				nil,
-				nil,
-			)
+			return Observation{}, daemonDowngradeError()
 		}
 		if err := c.options.RequestShutdown(ctx, observation, "restart"); err != nil {
 			return Observation{}, err
 		}
 	case RuntimeDraining:
+		if olderVersion(c.options.Build.Version, observation.Status.Version) {
+			return Observation{}, daemonDowngradeError()
+		}
 		c.reportDrain(observation)
 	case RuntimeIncompatible:
 		return Observation{}, c.incompatibleError(observation)
@@ -177,7 +174,14 @@ func (c *Controller) startLocked(ctx context.Context) (Observation, error) {
 			return Observation{}, err
 		}
 		return c.launchAndWait(ctx)
+	case RuntimeStarting:
+		return c.waitForReady(ctx)
+	case RuntimeFailed:
+		return Observation{}, c.failedError(observation)
 	case RuntimeDraining:
+		if olderVersion(c.options.Build.Version, observation.Status.Version) {
+			return Observation{}, daemonDowngradeError()
+		}
 		c.reportDrain(observation)
 		if err := c.waitForAbsent(ctx); err != nil {
 			return Observation{}, err
@@ -198,15 +202,28 @@ func (c *Controller) launchAndWait(ctx context.Context) (Observation, error) {
 	if err := c.options.Launch(startupCtx); err != nil {
 		return Observation{}, err
 	}
+	return c.waitUntilReady(startupCtx)
+}
+
+func (c *Controller) waitForReady(ctx context.Context) (Observation, error) {
+	startupCtx, cancel := context.WithTimeout(ctx, c.options.StartTimeout)
+	defer cancel()
+	return c.waitUntilReady(startupCtx)
+}
+
+func (c *Controller) waitUntilReady(ctx context.Context) (Observation, error) {
 	for {
-		observation, err := c.options.Inspect(startupCtx)
+		observation, err := c.options.Inspect(ctx)
 		if err != nil {
 			return Observation{}, err
 		}
-		if observation.State == RuntimeReady {
+		switch observation.State {
+		case RuntimeReady:
 			return observation, nil
+		case RuntimeFailed:
+			return Observation{}, c.failedError(observation)
 		}
-		if err := c.waitPoll(startupCtx); err != nil {
+		if err := c.waitPoll(ctx); err != nil {
 			return Observation{}, service.NewError(
 				service.Busy,
 				"kwt daemon did not become ready",
@@ -294,6 +311,30 @@ func (c *Controller) unresponsiveError(observation Observation) error {
 		true,
 		nil,
 		observation.Err,
+	)
+}
+
+func (c *Controller) failedError(observation Observation) error {
+	var cause error
+	if observation.Status.LastError != nil {
+		cause = errors.New(observation.Status.LastError.Message)
+	}
+	return service.NewError(
+		service.Conflict,
+		"the running kwt daemon is in a failed state",
+		true,
+		nil,
+		cause,
+	)
+}
+
+func daemonDowngradeError() error {
+	return service.NewError(
+		service.Unsupported,
+		"an older kwt cannot replace a newer daemon",
+		false,
+		nil,
+		nil,
 	)
 }
 
