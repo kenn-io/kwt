@@ -20,9 +20,11 @@
 ### Task 1: Isolate `TestManagerAdd` from the default registry
 
 **Files:**
+
 - Modify: `internal/worktree/worktree_test.go:345-415`
 
 **Interfaces:**
+
 - Consumes: `mockRemoteSourceState`, `Manager.openRemoteSourceState`, and `registry.New` already defined in the package.
 - Produces: A `TestManagerAdd` regression test that exercises all existing cases without persisting registry entries.
 
