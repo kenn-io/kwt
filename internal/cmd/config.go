@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/kwt/internal/config"
@@ -97,8 +98,7 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		typedValue = false
 	default:
 		// Try to convert to integer
-		var intVal int
-		if _, err := fmt.Sscanf(value, "%d", &intVal); err == nil {
+		if intVal, err := strconv.Atoi(value); err == nil {
 			typedValue = intVal
 		}
 	}
