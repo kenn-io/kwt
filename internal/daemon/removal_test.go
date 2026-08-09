@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	kitdaemon "go.kenn.io/kit/daemon"
 	kwt "go.kenn.io/kwt"
+	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/service"
 )
 
@@ -71,6 +72,7 @@ func TestRemovalClientPreservesPartialResultOnError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.Internal))
+	assert.True(t, git.WorktreeWasRemoved(err))
 	assert.True(t, result.WorktreeRemoved)
 	assert.True(t, result.RegistryUnregistered)
 	assert.Equal(t, "topic", result.Branch)

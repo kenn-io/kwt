@@ -23,6 +23,22 @@ type Client struct {
 	mutationHTTP  *http.Client
 }
 
+type worktreeRemovedError struct {
+	err error
+}
+
+func (e *worktreeRemovedError) Error() string {
+	return e.err.Error()
+}
+
+func (e *worktreeRemovedError) Unwrap() error {
+	return e.err
+}
+
+func (e *worktreeRemovedError) WorktreeRemoved() bool {
+	return true
+}
+
 var ErrResponseTooLarge = errors.New("kwt daemon response is too large")
 
 const (
@@ -110,6 +126,9 @@ func (c *Client) RemoveWorktree(
 	)
 	if err != nil {
 		result = removalResultFromError(err)
+		if result.WorktreeRemoved {
+			err = &worktreeRemovedError{err: err}
+		}
 	}
 	return result, err
 }
