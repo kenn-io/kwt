@@ -75,6 +75,22 @@ func TestResolveWorkingDirectoryIgnoresUntrustedForOneRequest(t *testing.T) {
 	assert.ErrorAs(t, err, &required)
 }
 
+func TestResolveWorkingDirectoryIgnoresUnavailableTrustStore(t *testing.T) {
+	home, repo, localPath := requestConfigFixture(t)
+	require.NoError(t, os.Mkdir(filepath.Join(home, trustStoreFilename), 0o700))
+
+	result, err := ResolveWorkingDirectory(ResolveRequest{
+		Home: home, WorkingDirectory: repo, UntrustedPolicy: IgnoreUntrusted,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, DefaultNamingTemplate, result.Config.Naming.Template)
+	require.Len(t, result.Notes, 2)
+	assert.Equal(t, "trust_store_unavailable", result.Notes[0].Code)
+	assert.Equal(t, "untrusted_config_skipped", result.Notes[1].Code)
+	assert.Equal(t, localPath, result.Notes[1].Path)
+}
+
 func TestResolveWorkingDirectorySkipsUnsafeLocalConfig(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -175,6 +175,14 @@ func detailInt(details map[string]any, key string) int {
 
 func writeConfigNotes(stderr io.Writer, notes []publicworktree.Note, interactive, declined bool) {
 	for _, note := range notes {
+		if note.Code == "trust_store_unavailable" {
+			_, _ = fmt.Fprintf(
+				stderr,
+				"kwt: failed to load trust store %s (continuing empty)\n",
+				note.Path,
+			)
+			continue
+		}
 		if note.Code == "unsafe_config_skipped" {
 			_, _ = fmt.Fprintf(stderr, "kwt: skipping unsafe local config %s\n", note.Path)
 			continue

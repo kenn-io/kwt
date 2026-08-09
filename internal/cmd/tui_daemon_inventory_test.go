@@ -126,3 +126,34 @@ func TestTUIBackendRegistersOnlyCurrentLaunchInventory(t *testing.T) {
 	assert.Equal(t, "github.com/acme/launch", registered[0].Repository)
 	assert.Equal(t, "/launch", registered[0].Path)
 }
+
+func TestTUIBackendCurrentInventoryIncludesNewLaunchWorkspace(t *testing.T) {
+	backend := newTUIBackendWithLaunchDir(&models.Config{
+		Worktree: models.WorktreeConfig{BaseDir: t.TempDir()},
+	}, "/launch")
+	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error) {
+		return map[string]*models.WorktreeStatus{}, nil
+	}
+	backend.registerProject = nil
+	backend.registerWorkspace = func(workspace models.Workspace) (models.Workspace, error) {
+		workspace.Name = "launch"
+		return workspace, nil
+	}
+	backend.queryInventory = func(
+		context.Context,
+		publicworktree.Request,
+		bool,
+		io.Writer,
+	) (publicworktree.Result, error) {
+		return publicworktree.Result{Freshness: publicworktree.Fresh}, nil
+	}
+
+	rows, _, err := backend.List(context.Background())
+
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.NotNil(t, rows[0].Workspace)
+	assert.Equal(t, "launch", rows[0].Workspace.Name)
+	assert.Equal(t, "/launch", rows[0].Workspace.Path)
+}

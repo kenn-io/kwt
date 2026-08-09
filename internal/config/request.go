@@ -102,8 +102,19 @@ func ResolveWorkingDirectory(request ResolveRequest) (*ResolveResult, error) {
 		return nil, fmt.Errorf("read repository config %s: %w", path, err)
 	}
 	digest := computeSHA256(data)
-	store, err := LoadTrustStore(filepath.Join(home, trustStoreFilename))
+	trustStorePath := filepath.Join(home, trustStoreFilename)
+	store, err := LoadTrustStore(trustStorePath)
 	if err != nil {
+		if request.UntrustedPolicy == IgnoreUntrusted {
+			config, loadErr := configFromViper(target, false, false)
+			return &ResolveResult{
+				Config: config,
+				Notes: []ConfigNote{
+					{Code: "trust_store_unavailable", Path: trustStorePath},
+					{Code: "untrusted_config_skipped", Path: path},
+				},
+			}, loadErr
+		}
 		return nil, err
 	}
 	if !store.IsTrusted(path, digest) {

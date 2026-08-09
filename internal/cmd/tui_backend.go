@@ -218,6 +218,7 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 		return nil, nil, err
 	}
 	var statusByPath map[string]*models.WorktreeStatus
+	renderWorkspaces := result.Snapshot.Workspaces
 	if includeStatuses {
 		statusByPath, err = b.collectStatuses(ctx, b.cfg.Worktree.BaseDir, entries)
 		if err != nil {
@@ -233,6 +234,7 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 		}
 		b.registerLaunchProject(launchEntries)
 		b.registerLaunchWorkspace(launchEntries)
+		renderWorkspaces = append([]models.Workspace(nil), b.cfg.Workspaces...)
 	}
 	liveSessions := make(map[string]bool, len(sessions))
 	for _, session := range sessions {
@@ -246,7 +248,7 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 		}
 		rows = append(rows, buildTUIRow(entry, status, liveSessions))
 	}
-	rows = append(rows, workspaceRows(result.Snapshot.Workspaces, sessions)...)
+	rows = append(rows, workspaceRows(renderWorkspaces, sessions)...)
 	return rows, nil, nil
 }
 

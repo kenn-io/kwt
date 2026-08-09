@@ -254,12 +254,21 @@ func (m Model) filteredRows() []Row {
 
 func (m Model) applyFastRows(msg fastRowsMsg) (Model, tea.Cmd) {
 	pendingRefresh := m.pendingRefresh
+	initialAnchor := m.anchorPath
+	hadRows := len(m.rows) > 0
 	m.pendingRefresh = false
 	next, _ := m.applyRows(rowsMsg{
 		rows:     carryEnrichment(msg.rows, m.rows),
 		warnings: msg.warnings,
 		err:      msg.err,
 	})
+	if !hadRows && initialAnchor != "" {
+		_, exact := identityRowIndex(next.rows, initialAnchor)
+		_, contained := containingRowIndex(next.rows, initialAnchor)
+		if !exact && !contained {
+			next.anchorPath = initialAnchor
+		}
+	}
 	next.inventoryCurrent = false
 	next = next.cancelFleetMerge()
 	next.fleetPending = false

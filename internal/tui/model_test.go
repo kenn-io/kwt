@@ -243,6 +243,20 @@ func TestCachedRowsBlockMutationsUntilCurrentRowsArrive(t *testing.T) {
 	assert.Equal(t, confirmUnregister, current.confirm.kind)
 }
 
+func TestCachedRowsPreserveUnresolvedInitialAnchor(t *testing.T) {
+	model := NewModel(&fakeBackend{}, "/worktrees")
+	model.anchorPath = "/launch"
+	cached := Row{Workspace: &WorkspaceInfo{Name: "cached", Path: "/cached"}}
+	current := Row{Workspace: &WorkspaceInfo{Name: "launch", Path: "/launch"}}
+
+	model, _ = updateModel(t, model, fastRowsMsg{rows: []Row{cached}})
+	assert.Equal(t, "/launch", model.anchorPath)
+
+	model, _ = updateModel(t, model, rowsMsg{rows: []Row{current}})
+	assert.Empty(t, model.anchorPath)
+	assert.Equal(t, "/launch", rowPath(model.selectedRow()))
+}
+
 func TestModelRowsMessageSortsRendersAndUsesAltScreen(t *testing.T) {
 	model := NewModel(&fakeBackend{}, "/worktrees")
 	model, _ = updateModel(t, model, rowsMsg{rows: []Row{
