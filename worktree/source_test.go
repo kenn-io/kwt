@@ -5,12 +5,86 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/pkg/models"
 )
+
+func TestScanRepositoriesBoundsConcurrencyAndPreservesOrder(t *testing.T) {
+	paths := make([]string, maxDashboardRepositoryScans+4)
+	for index := range paths {
+		paths[index] = string(rune('a' + index))
+	}
+	release := make(chan struct{})
+	var active atomic.Int32
+	var maximum atomic.Int32
+	type scanOutcome struct {
+		results []repositoryScanResult
+		err     error
+	}
+	done := make(chan scanOutcome, 1)
+	go func() {
+		results, err := scanRepositories(context.Background(), paths, func(
+			_ context.Context,
+			path string,
+		) ([]Entry, error) {
+			current := active.Add(1)
+			defer active.Add(-1)
+			for {
+				observed := maximum.Load()
+				if current <= observed || maximum.CompareAndSwap(observed, current) {
+					break
+				}
+			}
+			<-release
+			return []Entry{{Path: path}}, nil
+		})
+		done <- scanOutcome{results: results, err: err}
+	}()
+	require.Eventually(t, func() bool {
+		return active.Load() == maxDashboardRepositoryScans
+	}, time.Second, time.Millisecond)
+	assert.LessOrEqual(t, maximum.Load(), int32(maxDashboardRepositoryScans))
+	close(release)
+	outcome := <-done
+	require.NoError(t, outcome.err)
+	results := outcome.results
+	require.Len(t, results, len(paths))
+	for index, result := range results {
+		require.NoError(t, result.err)
+		require.Len(t, result.entries, 1)
+		assert.Equal(t, paths[index], result.entries[0].Path)
+	}
+}
+
+func TestScanRepositoriesPropagatesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := scanRepositories(ctx, []string{"repository"}, func(
+			ctx context.Context,
+			_ string,
+		) ([]Entry, error) {
+			close(started)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		})
+		done <- err
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("repository scan did not stop after cancellation")
+	}
+}
 
 func testExpansion(t *testing.T) ExpansionContext {
 	t.Helper()

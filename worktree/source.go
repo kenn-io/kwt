@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/discovery"
@@ -19,6 +20,13 @@ import (
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
+
+const maxDashboardRepositoryScans = 8
+
+type repositoryScanResult struct {
+	entries []Entry
+	err     error
+}
 
 type SourceOptions struct {
 	Home string
@@ -130,7 +138,7 @@ func (s *currentSource) loadRepository(
 		}, Notes: publicNotes(resolved.Notes)}, loadErr
 	}
 
-	g := git.New(request.WorkingDirectory)
+	g := git.NewWithContext(ctx, request.WorkingDirectory)
 	worktrees, listErr := g.ListWorktrees()
 	if listErr != nil {
 		return Result{}, listErr
@@ -187,23 +195,32 @@ func (s *currentSource) loadDashboard(
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, project := range cfg.Projects {
-		if err := ctx.Err(); err != nil {
-			return nil, nil, err
-		}
-		projectEntries, loadErr := entriesForRepository(project.Path, cfg.Projects)
-		if loadErr != nil {
-			if git.IsIncompleteInventory(loadErr) {
-				return nil, nil, loadErr
+	paths := make([]string, len(cfg.Projects))
+	for index, project := range cfg.Projects {
+		paths[index] = project.Path
+	}
+	projectResults, err := scanRepositories(ctx, paths, func(
+		ctx context.Context,
+		path string,
+	) ([]Entry, error) {
+		return entriesForRepository(ctx, path, cfg.Projects)
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, result := range projectResults {
+		if result.err != nil {
+			if git.IsIncompleteInventory(result.err) {
+				return nil, nil, result.err
 			}
 			continue
 		}
-		entries = mergeEntries(entries, projectEntries)
+		entries = mergeEntries(entries, result.entries)
 	}
 	var launchEntries []Entry
 	if request.LaunchDirectory != "" {
 		var loadErr error
-		launchEntries, loadErr = entriesForRepository(request.LaunchDirectory, cfg.Projects)
+		launchEntries, loadErr = entriesForRepository(ctx, request.LaunchDirectory, cfg.Projects)
 		if loadErr != nil && git.IsIncompleteInventory(loadErr) {
 			return nil, nil, loadErr
 		}
@@ -212,11 +229,50 @@ func (s *currentSource) loadDashboard(
 	return entries, launchEntries, nil
 }
 
-func entriesForRepository(path string, projects []models.Project) ([]Entry, error) {
+func scanRepositories(
+	ctx context.Context,
+	paths []string,
+	scan func(context.Context, string) ([]Entry, error),
+) ([]repositoryScanResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	results := make([]repositoryScanResult, len(paths))
+	jobs := make(chan int, len(paths))
+	for index := range paths {
+		jobs <- index
+	}
+	close(jobs)
+	workerCount := min(len(paths), maxDashboardRepositoryScans)
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				results[index].entries, results[index].err = scan(ctx, paths[index])
+			}
+		}()
+	}
+	workers.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+func entriesForRepository(
+	ctx context.Context,
+	path string,
+	projects []models.Project,
+) ([]Entry, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, nil
 	}
-	g := git.New(path)
+	g := git.NewWithContext(ctx, path)
 	worktrees, err := g.ListWorktrees()
 	if err != nil {
 		return nil, err

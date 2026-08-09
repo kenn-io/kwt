@@ -1,6 +1,7 @@
 package git
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,15 @@ import (
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
 )
+
+func TestGitOperationsUseInstanceContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := NewWithContext(ctx, t.TempDir()).RunCommand("version")
+
+	assert.ErrorIs(t, err, context.Canceled)
+}
 
 // TestRepository creates a test git repository
 type TestRepository struct {

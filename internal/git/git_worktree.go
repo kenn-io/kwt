@@ -1955,7 +1955,18 @@ func (g *Git) withWorktreeMutationLock(
 		filepath.Join(commonDir, worktreeMutationLockName),
 		flock.SetPermissions(0600),
 	)
-	if err := lock.Lock(); err != nil {
+	if g.ctx != nil {
+		locked, lockErr := lock.TryLockContext(g.ctx, 10*time.Millisecond)
+		if lockErr != nil {
+			return fmt.Errorf("lock worktree mutations: %w", lockErr)
+		}
+		if !locked {
+			if err := g.ctx.Err(); err != nil {
+				return fmt.Errorf("lock worktree mutations: %w", err)
+			}
+			return errors.New("lock worktree mutations: lock was not acquired")
+		}
+	} else if err := lock.Lock(); err != nil {
 		return fmt.Errorf("lock worktree mutations: %w", err)
 	}
 	defer func() { _ = lock.Unlock() }()

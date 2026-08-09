@@ -15,6 +15,7 @@ import (
 // Git provides Git command operations.
 type Git struct {
 	workDir string
+	ctx     context.Context
 }
 
 // New creates a new Git instance.
@@ -22,6 +23,11 @@ func New(workDir string) *Git {
 	return &Git{
 		workDir: workDir,
 	}
+}
+
+// NewWithContext creates a Git instance whose operations stop when ctx is canceled.
+func NewWithContext(ctx context.Context, workDir string) *Git {
+	return &Git{workDir: workDir, ctx: ctx}
 }
 
 // NewFromCwd creates a new Git instance using the current working directory.
@@ -56,7 +62,7 @@ func (g *Git) RunWithContext(ctx context.Context, args ...string) (string, error
 
 // run executes a git command.
 func (g *Git) run(args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	cmd := g.command(args...)
 	if g.workDir != "" {
 		cmd.Dir = g.workDir
 	}
@@ -66,6 +72,9 @@ func (g *Git) run(args ...string) (string, error) {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		if g.ctx != nil && g.ctx.Err() != nil {
+			return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), g.ctx.Err())
+		}
 		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), stderr.String())
 	}
 
@@ -78,7 +87,7 @@ func (g *Git) runWithoutCredentials(
 	protectedNames []string,
 	args ...string,
 ) (string, error) {
-	cmd := exec.Command("git", args...)
+	cmd := g.command(args...)
 	if g.workDir != "" {
 		cmd.Dir = g.workDir
 	}
@@ -88,9 +97,19 @@ func (g *Git) runWithoutCredentials(
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if g.ctx != nil && g.ctx.Err() != nil {
+			return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), g.ctx.Err())
+		}
 		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), stderr.String())
 	}
 	return stdout.String(), nil
+}
+
+func (g *Git) command(args ...string) *exec.Cmd {
+	if g.ctx != nil {
+		return exec.CommandContext(g.ctx, "git", args...)
+	}
+	return exec.Command("git", args...)
 }
 
 // runWithContext executes a git command with context support.

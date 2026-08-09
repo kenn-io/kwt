@@ -174,9 +174,10 @@ func runHost(
 			serviceCache = cache
 		}
 		inventory = publicworktree.NewInventoryService(publicworktree.ServiceOptions{
-			Source: publicworktree.NewSource(publicworktree.SourceOptions{Home: opts.Home}),
-			Cache:  serviceCache,
-			Now:    opts.Now,
+			Source:  publicworktree.NewSource(publicworktree.SourceOptions{Home: opts.Home}),
+			Cache:   serviceCache,
+			Now:     opts.Now,
+			Context: ctx,
 		})
 	}
 	status := &hostStatus{

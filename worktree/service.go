@@ -10,15 +10,19 @@ import (
 )
 
 type ServiceOptions struct {
-	Source Source
-	Cache  Cache
-	Now    func() time.Time
+	Source         Source
+	Cache          Cache
+	Now            func() time.Time
+	Context        context.Context
+	RefreshTimeout time.Duration
 }
 
 type Service struct {
 	source              Source
 	cache               Cache
 	now                 func() time.Time
+	context             context.Context
+	refreshTimeout      time.Duration
 	group               singleflight.Group
 	publishMu           sync.Mutex
 	mu                  sync.RWMutex
@@ -31,7 +35,16 @@ func NewInventoryService(options ServiceOptions) *Service {
 	if options.Now == nil {
 		options.Now = time.Now
 	}
-	return &Service{source: options.Source, cache: options.Cache, now: options.Now}
+	if options.Context == nil {
+		options.Context = context.Background()
+	}
+	if options.RefreshTimeout <= 0 {
+		options.RefreshTimeout = 30 * time.Second
+	}
+	return &Service{
+		source: options.Source, cache: options.Cache, now: options.Now,
+		context: options.Context, refreshTimeout: options.RefreshTimeout,
+	}
 }
 
 func (s *Service) Query(ctx context.Context, request Request) (Result, error) {
@@ -49,7 +62,9 @@ func (s *Service) Query(ctx context.Context, request Request) (Result, error) {
 		}
 	}
 	encoded, _ := json.Marshal(request)
-	value, err, _ := s.group.Do(string(encoded), func() (any, error) {
+	result := s.group.DoChan(string(encoded), func() (any, error) {
+		refreshContext, cancel := context.WithTimeout(s.context, s.refreshTimeout)
+		defer cancel()
 		var generation uint64
 		if request.View == ViewDashboard {
 			s.mu.Lock()
@@ -63,7 +78,7 @@ func (s *Service) Query(ctx context.Context, request Request) (Result, error) {
 				s.mu.Unlock()
 			}()
 		}
-		result, loadErr := s.source.Load(ctx, request)
+		result, loadErr := s.source.Load(refreshContext, request)
 		if loadErr != nil {
 			if request.View == ViewDashboard {
 				s.setDashboardDiagnostic(generation, &Diagnostic{
@@ -80,10 +95,15 @@ func (s *Service) Query(ctx context.Context, request Request) (Result, error) {
 		}
 		return cloneResult(result), nil
 	})
-	if err != nil {
-		return Result{}, err
+	select {
+	case <-ctx.Done():
+		return Result{}, ctx.Err()
+	case outcome := <-result:
+		if outcome.Err != nil {
+			return Result{}, outcome.Err
+		}
+		return cloneResult(outcome.Val.(Result)), nil
 	}
-	return cloneResult(value.(Result)), nil
 }
 
 func (s *Service) publishDashboard(generation uint64, result Result) *Diagnostic {

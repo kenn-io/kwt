@@ -118,6 +118,74 @@ func TestServiceCurrentRefreshIsSingleFlight(t *testing.T) {
 	assert.Equal(t, int32(1), source.calls.Load())
 }
 
+func TestServiceCallerCancellationDoesNotCancelSharedRefresh(t *testing.T) {
+	source := &testSource{
+		started: make(chan struct{}), release: make(chan struct{}),
+		result: Result{Snapshot: Snapshot{Entries: []Entry{{Path: "/fresh"}}}},
+	}
+	service := NewInventoryService(ServiceOptions{Source: source, Cache: &testCache{}})
+	firstContext, cancelFirst := context.WithCancel(context.Background())
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := service.Query(firstContext, Request{View: ViewDashboard, RequireCurrent: true})
+		firstDone <- err
+	}()
+	<-source.started
+	secondEntered := make(chan struct{})
+	secondDone := make(chan error, 1)
+	go func() {
+		close(secondEntered)
+		_, err := service.Query(context.Background(), Request{View: ViewDashboard, RequireCurrent: true})
+		secondDone <- err
+	}()
+	<-secondEntered
+	cancelFirst()
+	require.ErrorIs(t, <-firstDone, context.Canceled)
+	close(source.release)
+
+	require.NoError(t, <-secondDone)
+	assert.Equal(t, int32(1), source.calls.Load())
+}
+
+func TestServiceCanceledWaiterReturnsBeforeSharedRefreshFinishes(t *testing.T) {
+	source := &testSource{
+		started: make(chan struct{}), release: make(chan struct{}),
+		result: Result{Snapshot: Snapshot{Entries: []Entry{{Path: "/fresh"}}}},
+	}
+	service := NewInventoryService(ServiceOptions{Source: source, Cache: &testCache{}})
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := service.Query(context.Background(), Request{View: ViewDashboard, RequireCurrent: true})
+		firstDone <- err
+	}()
+	<-source.started
+	waiterContext, cancelWaiter := context.WithCancel(context.Background())
+	waiterEntered := make(chan struct{})
+	waiterDone := make(chan error, 1)
+	go func() {
+		close(waiterEntered)
+		_, err := service.Query(waiterContext, Request{View: ViewDashboard, RequireCurrent: true})
+		waiterDone <- err
+	}()
+	<-waiterEntered
+	cancelWaiter()
+
+	var waiterErr error
+	returnedBeforeRefresh := false
+	select {
+	case waiterErr = <-waiterDone:
+		returnedBeforeRefresh = true
+	case <-time.After(time.Second):
+	}
+	close(source.release)
+	require.NoError(t, <-firstDone)
+	if !returnedBeforeRefresh {
+		waiterErr = <-waiterDone
+	}
+	assert.True(t, returnedBeforeRefresh)
+	require.ErrorIs(t, waiterErr, context.Canceled)
+}
+
 func TestServiceFailedRefreshKeepsLastKnownGood(t *testing.T) {
 	cache := &testCache{ok: true, result: Result{Snapshot: Snapshot{Entries: []Entry{{Path: "/old"}}}}}
 	service := NewInventoryService(ServiceOptions{
