@@ -36,7 +36,11 @@ func withProjectsConfig(t *testing.T, projects []models.Project) {
 		io.Writer,
 	) (publicworktree.Result, error) {
 		return publicworktree.Result{Snapshot: publicworktree.Snapshot{
-			Projects: publicworktree.CanonicalProjects(projects),
+			Projects: func() []models.Project {
+				canonical, err := publicworktree.CanonicalProjects(context.Background(), projects)
+				require.NoError(t, err)
+				return canonical
+			}(),
 		}}, nil
 	}
 }

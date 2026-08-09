@@ -2,6 +2,7 @@
 package discovery
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -47,32 +48,47 @@ var (
 // identity wins over a fork origin; see worktree.RepositoryInfoWithProjects);
 // pass nil when no registry is available.
 func DiscoverGlobalWorktrees(baseDir string, projects []models.Project) ([]*GlobalWorktreeEntry, error) {
-	candidates, err := findGlobalWorktreeCandidates(baseDir, false)
+	return DiscoverGlobalWorktreesContext(context.Background(), baseDir, projects)
+}
+
+// DiscoverGlobalWorktreesContext finds all worktrees while allowing callers
+// to stop filesystem traversal, lock waits, and Git subprocesses.
+func DiscoverGlobalWorktreesContext(
+	ctx context.Context,
+	baseDir string,
+	projects []models.Project,
+) ([]*GlobalWorktreeEntry, error) {
+	candidates, err := findGlobalWorktreeCandidates(ctx, baseDir, false)
 	if err != nil {
 		return nil, err
 	}
 
-	snapshots, err := snapshotCandidateWorktrees(candidates)
+	snapshots, err := snapshotCandidateWorktrees(ctx, candidates)
 	if err != nil {
 		return nil, err
 	}
 	return extractWorktreeCandidates(
+		ctx,
 		candidates,
 		projects,
-		func(path string, projects []models.Project) (*GlobalWorktreeEntry, error) {
+		func(
+			ctx context.Context,
+			path string,
+			projects []models.Project,
+		) (*GlobalWorktreeEntry, error) {
 			snapshot, ok := snapshots[utils.PathKey(path)]
 			if !ok {
 				return nil, fmt.Errorf("worktree disappeared during discovery")
 			}
-			return extractWorktreeInfoFromSnapshot(path, projects, snapshot)
+			return extractWorktreeInfoFromSnapshot(ctx, path, projects, snapshot)
 		},
-	), nil
+	)
 }
 
 // FindGlobalWorktreePaths returns filesystem worktree candidates without
 // snapshotting repositories or initializing durable generations.
 func FindGlobalWorktreePaths(baseDir string) ([]string, error) {
-	candidates, err := findGlobalWorktreeCandidates(baseDir, false)
+	candidates, err := findGlobalWorktreeCandidates(context.Background(), baseDir, false)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +102,7 @@ func FindGlobalWorktreePaths(baseDir string) ([]string, error) {
 // FindGlobalWorktreePathsStrict returns filesystem worktree candidates only
 // when the complete configured tree can be traversed and inspected.
 func FindGlobalWorktreePathsStrict(baseDir string) ([]string, error) {
-	candidates, err := findGlobalWorktreeCandidates(baseDir, true)
+	candidates, err := findGlobalWorktreeCandidates(context.Background(), baseDir, true)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +113,14 @@ func FindGlobalWorktreePathsStrict(baseDir string) ([]string, error) {
 	return paths, nil
 }
 
-func findGlobalWorktreeCandidates(baseDir string, strict bool) ([]worktreeCandidate, error) {
+func findGlobalWorktreeCandidates(
+	ctx context.Context,
+	baseDir string,
+	strict bool,
+) ([]worktreeCandidate, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if baseDir == "" {
 		return nil, fmt.Errorf("base directory not configured")
 	}
@@ -135,6 +158,9 @@ func findGlobalWorktreeCandidates(baseDir string, strict bool) ([]worktreeCandid
 	var candidates []worktreeCandidate
 
 	err = walkGlobalWorktreePaths(baseDir, func(path string, info os.FileInfo, err error) error {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
 		if err != nil {
 			if strict {
 				return err
@@ -244,12 +270,16 @@ func DiscoverWorktree(path string, projects []models.Project) (*GlobalWorktreeEn
 }
 
 func extractWorktreeCandidates(
+	ctx context.Context,
 	candidates []worktreeCandidate,
 	projects []models.Project,
-	extract func(string, []models.Project) (*GlobalWorktreeEntry, error),
-) []*GlobalWorktreeEntry {
+	extract func(context.Context, string, []models.Project) (*GlobalWorktreeEntry, error),
+) ([]*GlobalWorktreeEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(candidates) == 0 {
-		return []*GlobalWorktreeEntry{}
+		return []*GlobalWorktreeEntry{}, nil
 	}
 
 	const maxWorkers = 16
@@ -262,7 +292,10 @@ func extractWorktreeCandidates(
 		go func() {
 			defer workers.Done()
 			for index := range jobs {
-				entry, err := extract(candidates[index].path, projects)
+				if ctx.Err() != nil {
+					return
+				}
+				entry, err := extract(ctx, candidates[index].path, projects)
 				if err != nil {
 					continue
 				}
@@ -271,11 +304,19 @@ func extractWorktreeCandidates(
 			}
 		}()
 	}
+sendCandidates:
 	for index := range candidates {
-		jobs <- index
+		select {
+		case <-ctx.Done():
+			break sendCandidates
+		case jobs <- index:
+		}
 	}
 	close(jobs)
 	workers.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	entries := make([]*GlobalWorktreeEntry, 0, len(results))
 	for _, entry := range results {
@@ -283,19 +324,26 @@ func extractWorktreeCandidates(
 			entries = append(entries, entry)
 		}
 	}
-	return entries
+	return entries, nil
 }
 
 func snapshotCandidateWorktrees(
+	ctx context.Context,
 	candidates []worktreeCandidate,
 ) (map[string]models.Worktree, error) {
 	repositories := make(map[string]string)
 	for _, candidate := range candidates {
-		mainRoot, err := git.New(candidate.path).GetMainRepositoryPath()
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		mainRoot, err := git.NewWithContext(ctx, candidate.path).GetMainRepositoryPath()
 		if err != nil {
 			continue
 		}
 		repositories[utils.PathKey(mainRoot)] = mainRoot
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	snapshots := make(map[string]models.Worktree)
@@ -314,7 +362,10 @@ func snapshotCandidateWorktrees(
 		go func() {
 			defer workers.Done()
 			for repositoryRoot := range jobs {
-				worktrees, err := git.New(repositoryRoot).ListWorktrees()
+				if ctx.Err() != nil {
+					return
+				}
+				worktrees, err := git.NewWithContext(ctx, repositoryRoot).ListWorktrees()
 				if err != nil {
 					snapshotsMu.Lock()
 					snapshotErrors = append(
@@ -336,11 +387,19 @@ func snapshotCandidateWorktrees(
 			}
 		}()
 	}
+sendRepositories:
 	for _, repositoryRoot := range repositories {
-		jobs <- repositoryRoot
+		select {
+		case <-ctx.Done():
+			break sendRepositories
+		case jobs <- repositoryRoot:
+		}
 	}
 	close(jobs)
 	workers.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	return snapshots, errors.Join(snapshotErrors...)
 }
@@ -363,17 +422,18 @@ func extractWorktreeInfo(worktreePath string, projects []models.Project) (*Globa
 	if snapshot == nil {
 		return nil, fmt.Errorf("worktree disappeared during discovery")
 	}
-	return extractWorktreeInfoFromSnapshot(worktreePath, projects, *snapshot)
+	return extractWorktreeInfoFromSnapshot(context.Background(), worktreePath, projects, *snapshot)
 }
 
 func extractWorktreeInfoFromSnapshot(
+	ctx context.Context,
 	worktreePath string,
 	projects []models.Project,
 	snapshot models.Worktree,
 ) (*GlobalWorktreeEntry, error) {
 	// The cached wrapper keeps the entry's recorded remote URL and the
 	// resolver's own reads to one subprocess per call kind.
-	g := worktree.NewCachedIdentityGit(git.New(worktreePath))
+	g := worktree.NewCachedIdentityGit(git.NewWithContext(ctx, worktreePath))
 	repoURL := ""
 	if gotURL, err := g.GetRepositoryURL(); err == nil {
 		repoURL = gotURL

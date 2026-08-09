@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,7 +13,42 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 )
+
+func TestCanonicalProjectsStopsWhenContextIsCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := CanonicalProjects(ctx, []models.Project{{Path: t.TempDir()}})
+
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestSourceClassifiesInventoryFailuresWithActionableMessage(t *testing.T) {
+	home := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home, "config.toml"),
+		[]byte("[[projects]\n"),
+		0o600,
+	))
+
+	_, err := NewSource(SourceOptions{Home: home}).Load(context.Background(), Request{
+		View: ViewProjects, Expansion: testExpansion(t), UntrustedConfig: IgnoreUntrustedConfig,
+	})
+
+	var typed *service.Error
+	require.ErrorAs(t, err, &typed)
+	assert.NotEqual(t, "internal failure", typed.Message)
+	assert.Contains(t, typed.Message, "config")
+	assert.LessOrEqual(t, len(typed.Message), 512)
+}
+
+func TestBoundedDiagnosticRemovesControlCharacters(t *testing.T) {
+	got := boundedDiagnostic(errors.New("unsafe\nmessage\twith\rcontrols"))
+
+	assert.Equal(t, "unsafe message with controls", got)
+}
 
 func TestScanRepositoriesBoundsConcurrencyAndPreservesOrder(t *testing.T) {
 	paths := make([]string, maxDashboardRepositoryScans+4)

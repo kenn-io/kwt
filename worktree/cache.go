@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"go.kenn.io/kit/safefileio"
 )
@@ -100,9 +103,20 @@ func (c *FileCache) Store(result Result) error {
 }
 
 func boundedDiagnostic(err error) string {
-	message := err.Error()
-	if len(message) > 512 {
-		return message[:512]
+	const maximumBytes = 512
+	var result strings.Builder
+	for _, character := range err.Error() {
+		if unicode.IsControl(character) {
+			character = ' '
+		}
+		if result.Len()+utf8.RuneLen(character) > maximumBytes {
+			break
+		}
+		result.WriteRune(character)
+	}
+	message := strings.TrimSpace(result.String())
+	if message == "" {
+		return "inventory operation failed"
 	}
 	return message
 }

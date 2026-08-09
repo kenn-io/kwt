@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -12,6 +14,46 @@ import (
 	"go.kenn.io/kwt/service"
 	publicworktree "go.kenn.io/kwt/worktree"
 )
+
+func TestInventoryClientPreservesActionableSourceFailure(t *testing.T) {
+	home := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home, "config.toml"),
+		[]byte("[[projects]\n"),
+		0o600,
+	))
+	provider := &testStatusProvider{status: Status{State: StateReady}}
+	server := httptest.NewUnstartedServer(nil)
+	server.Config.Handler = NewServer(ServerOptions{
+		Token: "secret", ExpectedHost: server.Listener.Addr().String(), Status: provider,
+		Shutdown: func(context.Context, ShutdownRequest) (Status, error) {
+			return provider.status, nil
+		},
+		Inventory: publicworktree.NewInventoryService(publicworktree.ServiceOptions{
+			Source: publicworktree.NewSource(publicworktree.SourceOptions{Home: home}),
+		}),
+		Gate: NewGate(time.Now()),
+	})
+	server.Start()
+	defer server.Close()
+	endpoint, err := kitdaemon.ParseEndpoint(
+		server.URL[len("http://"):],
+		kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback},
+	)
+	require.NoError(t, err)
+	client := newClient(endpoint, "secret", server.Client())
+	expansion, err := publicworktree.CaptureExpansionContext()
+	require.NoError(t, err)
+
+	_, err = client.Inventory(context.Background(), publicworktree.Request{
+		View: publicworktree.ViewProjects, Expansion: expansion,
+		UntrustedConfig: publicworktree.IgnoreUntrustedConfig,
+	})
+
+	typed := service.AsError(err)
+	assert.NotEqual(t, "internal failure", typed.Message)
+	assert.Contains(t, typed.Message, "config")
+}
 
 type fakeInventory struct {
 	result   publicworktree.Result

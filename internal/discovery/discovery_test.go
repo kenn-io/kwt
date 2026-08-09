@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/tmux"
@@ -20,6 +22,48 @@ import (
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 )
+
+func TestDiscoverGlobalWorktreesContextCancelsBlockedRepositorySnapshot(t *testing.T) {
+	repo := NewTestRepository(t)
+	lock := flock.New(filepath.Join(repo.Path, ".git", "kwt-worktree.lock"))
+	require.NoError(t, lock.Lock())
+	t.Cleanup(func() { _ = lock.Unlock() })
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := DiscoverGlobalWorktreesContext(ctx, repo.Path, nil)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(2 * time.Second):
+		t.Fatal("global discovery did not stop after its context expired")
+	}
+}
+
+func TestDiscoverGlobalWorktreesContextStopsFilesystemTraversal(t *testing.T) {
+	baseDirectory := t.TempDir()
+	info, err := os.Stat(baseDirectory)
+	require.NoError(t, err)
+	originalWalk := walkGlobalWorktreePaths
+	t.Cleanup(func() { walkGlobalWorktreePaths = originalWalk })
+	ctx, cancel := context.WithCancel(context.Background())
+	walkGlobalWorktreePaths = func(
+		root string,
+		visit filepath.WalkFunc,
+	) error {
+		cancel()
+		return visit(root, info, nil)
+	}
+
+	_, err = DiscoverGlobalWorktreesContext(ctx, baseDirectory, nil)
+
+	require.ErrorIs(t, err, context.Canceled)
+}
 
 // TestRepository creates a test git repository (copy from git package for testing)
 type TestRepository struct {
@@ -715,18 +759,28 @@ func TestExtractWorktreeCandidatesRunsConcurrentlyAndPreservesOrder(t *testing.T
 	}
 	started := make(chan string, len(candidates))
 	release := make(chan struct{})
-	done := make(chan []*GlobalWorktreeEntry, 1)
+	type extractionResult struct {
+		entries []*GlobalWorktreeEntry
+		err     error
+	}
+	done := make(chan extractionResult, 1)
 
 	go func() {
-		done <- extractWorktreeCandidates(
+		entries, err := extractWorktreeCandidates(
+			context.Background(),
 			candidates,
 			nil,
-			func(path string, _ []models.Project) (*GlobalWorktreeEntry, error) {
+			func(
+				_ context.Context,
+				path string,
+				_ []models.Project,
+			) (*GlobalWorktreeEntry, error) {
 				started <- path
 				<-release
 				return &GlobalWorktreeEntry{Path: path}, nil
 			},
 		)
+		done <- extractionResult{entries: entries, err: err}
 	}()
 
 	for range candidates {
@@ -738,7 +792,11 @@ func TestExtractWorktreeCandidatesRunsConcurrentlyAndPreservesOrder(t *testing.T
 	}
 	close(release)
 
-	entries := <-done
+	result := <-done
+	if result.err != nil {
+		t.Fatalf("Unexpected error: %v", result.err)
+	}
+	entries := result.entries
 	if len(entries) != 2 {
 		t.Fatalf("Expected 2 entries, got %d", len(entries))
 	}

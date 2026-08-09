@@ -40,7 +40,10 @@ func NewSource(options SourceOptions) Source {
 	return &currentSource{home: options.Home}
 }
 
-func (s *currentSource) Load(ctx context.Context, request Request) (Result, error) {
+func (s *currentSource) Load(ctx context.Context, request Request) (result Result, err error) {
+	defer func() {
+		err = classifyInventoryError(err)
+	}()
 	if err := request.validate(); err != nil {
 		return Result{}, service.NewError(service.InvalidRequest, err.Error(), false, nil, err)
 	}
@@ -52,23 +55,27 @@ func (s *currentSource) Load(ctx context.Context, request Request) (Result, erro
 	if err != nil {
 		return Result{}, err
 	}
-	result := Result{Snapshot: Snapshot{
+	result = Result{Snapshot: Snapshot{
 		Workspaces: append([]models.Workspace(nil), snapshot.Config.Workspaces...),
 	}}
 
 	switch request.View {
 	case ViewProjects:
-		result.Snapshot.Projects = CanonicalProjects(snapshot.Config.Projects)
-		return result, nil
+		result.Snapshot.Projects, err = CanonicalProjects(ctx, snapshot.Config.Projects)
+		return result, err
 	case ViewGlobal:
-		result.Snapshot.Projects = CanonicalProjects(snapshot.Config.Projects)
-		result.Snapshot.Entries, err = s.loadGlobal(snapshot.Config)
+		result.Snapshot.Projects, err = CanonicalProjects(ctx, snapshot.Config.Projects)
+		if err == nil {
+			result.Snapshot.Entries, err = s.loadGlobal(ctx, snapshot.Config)
+		}
 	case ViewRepository:
 		result, err = s.loadRepository(ctx, request, snapshot.Config, expansion.expandPath)
 	case ViewDashboard:
-		result.Snapshot.Projects = CanonicalProjects(snapshot.Config.Projects)
-		result.Snapshot.Entries, result.Snapshot.LaunchEntries, err =
-			s.loadDashboard(ctx, request, snapshot.Config)
+		result.Snapshot.Projects, err = CanonicalProjects(ctx, snapshot.Config.Projects)
+		if err == nil {
+			result.Snapshot.Entries, result.Snapshot.LaunchEntries, err =
+				s.loadDashboard(ctx, request, snapshot.Config)
+		}
 	}
 	if err != nil {
 		return Result{}, err
@@ -79,6 +86,29 @@ func (s *currentSource) Load(ctx context.Context, request Request) (Result, erro
 		}
 	}
 	return result, nil
+}
+
+func classifyInventoryError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var typed *service.Error
+	if errors.As(err, &typed) {
+		return err
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return service.NewError(
+			service.Busy, "inventory refresh timed out", true, nil, err,
+		)
+	}
+	if errors.Is(err, context.Canceled) {
+		return service.NewError(
+			service.Busy, "inventory refresh canceled", true, nil, err,
+		)
+	}
+	return service.NewError(
+		service.Internal, boundedDiagnostic(err), false, nil, err,
+	)
 }
 
 func (s *currentSource) ApproveConfig(_ context.Context, approval ConfigApproval) error {
@@ -119,9 +149,13 @@ func (s *currentSource) loadRepository(
 		return Result{}, err
 	}
 	if request.ForceGlobal {
-		entries, loadErr := s.loadGlobal(resolved.Config)
+		entries, loadErr := s.loadGlobal(ctx, resolved.Config)
+		projects, projectsErr := CanonicalProjects(ctx, resolved.Config.Projects)
+		if loadErr == nil {
+			loadErr = projectsErr
+		}
 		return Result{Snapshot: Snapshot{
-			Projects: CanonicalProjects(resolved.Config.Projects), Entries: entries,
+			Projects: projects, Entries: entries,
 			Workspaces: append([]models.Workspace(nil), resolved.Config.Workspaces...),
 		}, Notes: publicNotes(resolved.Notes)}, loadErr
 	}
@@ -131,9 +165,13 @@ func (s *currentSource) loadRepository(
 		return Result{}, err
 	}
 	if !isRepository {
-		entries, loadErr := s.loadGlobal(resolved.Config)
+		entries, loadErr := s.loadGlobal(ctx, resolved.Config)
+		projects, projectsErr := CanonicalProjects(ctx, resolved.Config.Projects)
+		if loadErr == nil {
+			loadErr = projectsErr
+		}
 		return Result{Snapshot: Snapshot{
-			Projects: CanonicalProjects(resolved.Config.Projects), Entries: entries,
+			Projects: projects, Entries: entries,
 			Workspaces: append([]models.Workspace(nil), resolved.Config.Workspaces...),
 		}, Notes: publicNotes(resolved.Notes)}, loadErr
 	}
@@ -154,8 +192,12 @@ func (s *currentSource) loadRepository(
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
+	projects, err := CanonicalProjects(ctx, resolved.Config.Projects)
+	if err != nil {
+		return Result{}, err
+	}
 	return Result{Snapshot: Snapshot{
-		Projects: CanonicalProjects(resolved.Config.Projects), Entries: entries,
+		Projects: projects, Entries: entries,
 		Workspaces: append([]models.Workspace(nil), resolved.Config.Workspaces...),
 	}, Notes: publicNotes(resolved.Notes)}, nil
 }
@@ -178,8 +220,8 @@ func hasGitMarker(path string) (bool, error) {
 	}
 }
 
-func (s *currentSource) loadGlobal(cfg *models.Config) ([]Entry, error) {
-	entries, err := discovery.DiscoverGlobalWorktrees(cfg.Worktree.BaseDir, cfg.Projects)
+func (s *currentSource) loadGlobal(ctx context.Context, cfg *models.Config) ([]Entry, error) {
+	entries, err := discovery.DiscoverGlobalWorktreesContext(ctx, cfg.Worktree.BaseDir, cfg.Projects)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover worktrees: %w", err)
 	}
@@ -191,7 +233,7 @@ func (s *currentSource) loadDashboard(
 	request Request,
 	cfg *models.Config,
 ) ([]Entry, []Entry, error) {
-	entries, err := s.loadGlobal(cfg)
+	entries, err := s.loadGlobal(ctx, cfg)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -330,13 +372,19 @@ func modelEntry(worktree models.Worktree, repositoryURL string, info *repository
 
 // CanonicalProjects returns accessible registrations with their resolved
 // repository identities. It never mutates the supplied registry slice.
-func CanonicalProjects(projects []models.Project) []models.Project {
+func CanonicalProjects(
+	ctx context.Context,
+	projects []models.Project,
+) ([]models.Project, error) {
 	result := make([]models.Project, 0, len(projects))
 	for _, project := range projects {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if strings.TrimSpace(project.Path) == "" {
 			continue
 		}
-		g := internalworktree.NewCachedIdentityGit(git.New(project.Path))
+		g := internalworktree.NewCachedIdentityGit(git.NewWithContext(ctx, project.Path))
 		mainPath, err := g.GetMainRepositoryPath()
 		if err != nil || utils.PathKey(mainPath) != utils.PathKey(project.Path) {
 			continue
@@ -348,7 +396,10 @@ func CanonicalProjects(projects []models.Project) []models.Project {
 		project.Repository = info.FullPath
 		result = append(result, project)
 	}
-	return result
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func mergeEntries(existing, incoming []Entry) []Entry {
