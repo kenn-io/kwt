@@ -84,12 +84,28 @@ func queryDaemonInventory(
 			return publicworktree.Result{}, err
 		}
 		result, err := observation.Client.Inventory(ctx, request)
-		if !service.IsCode(err, service.Busy) {
+		deadline, draining := inventoryDrainDeadline(err)
+		if !draining {
 			return result, err
 		}
-		if err := waitInventoryRetry(ctx, observation.Status.DrainDeadline); err != nil {
+		if err := waitInventoryRetry(ctx, deadline); err != nil {
 			return publicworktree.Result{}, err
 		}
+	}
+}
+
+func inventoryDrainDeadline(err error) (*time.Time, bool) {
+	var typed *service.Error
+	if !errors.As(err, &typed) || typed.Code != service.Busy {
+		return nil, false
+	}
+	switch deadline := typed.Details["drain_deadline"].(type) {
+	case time.Time:
+		return &deadline, true
+	case *time.Time:
+		return deadline, deadline != nil
+	default:
+		return nil, false
 	}
 }
 

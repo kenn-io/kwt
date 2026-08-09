@@ -3,12 +3,48 @@ package cmd
 import (
 	"bytes"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/service"
 	publicworktree "go.kenn.io/kwt/worktree"
 )
+
+func TestInventoryDrainDeadlineRequiresDeadlineBearingBusyError(t *testing.T) {
+	deadline := time.Now().Add(time.Minute)
+	tests := []struct {
+		name string
+		err  error
+		want *time.Time
+	}{
+		{
+			name: "inventory refresh timeout",
+			err:  service.NewError(service.Busy, "inventory refresh timed out", true, nil, nil),
+		},
+		{
+			name: "daemon drain",
+			err: service.NewError(service.Busy, "daemon is draining", true, map[string]any{
+				"drain_deadline": deadline,
+			}, nil),
+			want: &deadline,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := inventoryDrainDeadline(tt.err)
+			if tt.want == nil {
+				assert.False(t, ok)
+				assert.Nil(t, got)
+				return
+			}
+			require.True(t, ok)
+			require.NotNil(t, got)
+			assert.Equal(t, *tt.want, *got)
+		})
+	}
+}
 
 func TestWriteConfigNotesPreservesNoninteractiveWarning(t *testing.T) {
 	var stderr bytes.Buffer
