@@ -62,6 +62,7 @@ func TestRunListRequestsCurrentInventoryAndPreservesJSONShape(t *testing.T) {
 	assert.Equal(t, publicworktree.ViewRepository, gotRequest.View)
 	assert.True(t, gotRequest.RequireCurrent)
 	assert.False(t, gotRequest.ForceGlobal)
+	assert.True(t, gotRequest.IncludeProtectedSockets)
 	assert.JSONEq(t, `[{
       "path": "`+repository+`",
       "branch": "main",

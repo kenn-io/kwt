@@ -70,6 +70,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		publicworktree.Request{
 			View: publicworktree.ViewRepository, WorkingDirectory: workingDirectory,
 			ForceGlobal: listGlobal, RequireCurrent: true,
+			IncludeProtectedSockets: listJSON,
 		},
 		config.StdinInteractive(),
 		cmd.ErrOrStderr(),

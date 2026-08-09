@@ -54,6 +54,27 @@ func TestSourcePropagatesRepositoryInventoryErrors(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestSourceReadsProvenanceOnlyWhenRequested(t *testing.T) {
+	home := t.TempDir()
+	baseDirectory := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
+		"[worktree]\nbasedir = '"+baseDirectory+"'\n",
+	), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "pull-requests.json"), []byte("{"), 0o600))
+	source := NewSource(SourceOptions{Home: home})
+
+	_, err := source.Load(context.Background(), Request{
+		View: ViewDashboard, UntrustedConfig: IgnoreUntrustedConfig,
+	})
+	require.NoError(t, err)
+
+	_, err = source.Load(context.Background(), Request{
+		View: ViewDashboard, UntrustedConfig: IgnoreUntrustedConfig,
+		IncludeProtectedSockets: true,
+	})
+	require.ErrorContains(t, err, "failed to read pull-request provenance")
+}
+
 func TestSourceSeparatesLaunchInventoryFromDashboardEntries(t *testing.T) {
 	launchDirectory := t.TempDir()
 	for _, args := range [][]string{

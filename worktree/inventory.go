@@ -35,12 +35,13 @@ const (
 )
 
 type Request struct {
-	View             View                  `json:"view"`
-	WorkingDirectory string                `json:"working_directory,omitempty"`
-	LaunchDirectory  string                `json:"launch_directory,omitempty"`
-	ForceGlobal      bool                  `json:"force_global,omitempty"`
-	RequireCurrent   bool                  `json:"require_current,omitempty"`
-	UntrustedConfig  UntrustedConfigPolicy `json:"untrusted_config"`
+	View                    View                  `json:"view"`
+	WorkingDirectory        string                `json:"working_directory,omitempty"`
+	LaunchDirectory         string                `json:"launch_directory,omitempty"`
+	ForceGlobal             bool                  `json:"force_global,omitempty"`
+	RequireCurrent          bool                  `json:"require_current,omitempty"`
+	IncludeProtectedSockets bool                  `json:"include_protected_sockets,omitempty"`
+	UntrustedConfig         UntrustedConfigPolicy `json:"untrusted_config"`
 }
 
 func (r Request) validate() error {

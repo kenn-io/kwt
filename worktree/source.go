@@ -62,8 +62,10 @@ func (s *currentSource) Load(ctx context.Context, request Request) (Result, erro
 	if err != nil {
 		return Result{}, err
 	}
-	if err := s.annotateProtectedSockets(ctx, result.Snapshot.Entries); err != nil {
-		return Result{}, err
+	if request.IncludeProtectedSockets {
+		if err := s.annotateProtectedSockets(ctx, result.Snapshot.Entries); err != nil {
+			return Result{}, err
+		}
 	}
 	return result, nil
 }
