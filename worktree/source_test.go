@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/pkg/models"
@@ -228,6 +229,35 @@ func TestSourceRecognizesRepositoryThroughSymlinkedSubdirectory(t *testing.T) {
 	assert.Equal(t, canonicalRepository, result.Snapshot.Entries[0].Path)
 }
 
+func TestSourceRepositoryInventoryIgnoresInheritedGitRouting(t *testing.T) {
+	createRepository := func(path string) {
+		t.Helper()
+		for _, args := range [][]string{
+			{"init", "-b", "main", path},
+			{"-C", path, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial"},
+		} {
+			command := exec.Command("git", args...)
+			require.NoError(t, command.Run())
+		}
+	}
+	target := filepath.Join(t.TempDir(), "target")
+	redirected := filepath.Join(t.TempDir(), "redirected")
+	createRepository(target)
+	createRepository(redirected)
+	t.Setenv("GIT_DIR", filepath.Join(redirected, ".git"))
+
+	result, err := NewSource(SourceOptions{Home: t.TempDir()}).Load(context.Background(), Request{
+		View: ViewRepository, WorkingDirectory: target,
+		UntrustedConfig: IgnoreUntrustedConfig, Expansion: testExpansion(t),
+	})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Snapshot.Entries)
+	canonicalTarget, err := filepath.EvalSymlinks(target)
+	require.NoError(t, err)
+	assert.Equal(t, canonicalTarget, result.Snapshot.Entries[0].Path)
+}
+
 func TestSourceReadsProvenanceOnlyWhenRequested(t *testing.T) {
 	home := t.TempDir()
 	baseDirectory := t.TempDir()
@@ -274,4 +304,29 @@ func TestSourceSeparatesLaunchInventoryFromDashboardEntries(t *testing.T) {
 		assert.Equal(t, canonicalLaunchDirectory, entry.Path)
 		assert.Equal(t, "github.com/acme/launch", entry.Repository.FullPath)
 	}
+}
+
+func TestDashboardLaunchInventoryPropagatesRefreshDeadline(t *testing.T) {
+	launchDirectory := filepath.Join(t.TempDir(), "launch")
+	for _, args := range [][]string{
+		{"init", "-b", "main", launchDirectory},
+		{"-C", launchDirectory, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial"},
+	} {
+		command := exec.Command("git", args...)
+		require.NoError(t, command.Run())
+	}
+	lock := flock.New(
+		filepath.Join(launchDirectory, ".git", "kwt-worktree.lock"),
+		flock.SetPermissions(0o600),
+	)
+	require.NoError(t, lock.Lock())
+	t.Cleanup(func() { _ = lock.Unlock() })
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, _, err := (&currentSource{}).loadDashboard(ctx, Request{
+		LaunchDirectory: launchDirectory,
+	}, &models.Config{Worktree: models.WorktreeConfig{BaseDir: t.TempDir()}})
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }

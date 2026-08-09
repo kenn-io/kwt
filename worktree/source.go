@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/pullrequest"
@@ -59,20 +60,21 @@ func (s *currentSource) Load(ctx context.Context, request Request) (result Resul
 		Config:     snapshot.Config,
 		Workspaces: append([]models.Workspace(nil), snapshot.Config.Workspaces...),
 	}}
+	protectedNames := credentials.ProtectedNames(snapshot.Config)
 
 	switch request.View {
 	case ViewProjects:
-		result.Snapshot.Projects, err = CanonicalProjects(ctx, snapshot.Config.Projects)
+		result.Snapshot.Projects, err = CanonicalProjects(ctx, snapshot.Config.Projects, protectedNames...)
 		return result, err
 	case ViewGlobal:
-		result.Snapshot.Projects, err = CanonicalProjects(ctx, snapshot.Config.Projects)
+		result.Snapshot.Projects, err = CanonicalProjects(ctx, snapshot.Config.Projects, protectedNames...)
 		if err == nil {
 			result.Snapshot.Entries, err = s.loadGlobal(ctx, snapshot.Config)
 		}
 	case ViewRepository:
 		result, err = s.loadRepository(ctx, request, snapshot.Config, expansion.expandPath)
 	case ViewDashboard:
-		result.Snapshot.Projects, err = CanonicalProjects(ctx, snapshot.Config.Projects)
+		result.Snapshot.Projects, err = CanonicalProjects(ctx, snapshot.Config.Projects, protectedNames...)
 		if err == nil {
 			result.Snapshot.Entries, result.Snapshot.LaunchEntries, err =
 				s.loadDashboard(ctx, request, snapshot.Config)
@@ -151,7 +153,11 @@ func (s *currentSource) loadRepository(
 	}
 	if request.ForceGlobal {
 		entries, loadErr := s.loadGlobal(ctx, resolved.Config)
-		projects, projectsErr := CanonicalProjects(ctx, resolved.Config.Projects)
+		projects, projectsErr := CanonicalProjects(
+			ctx,
+			resolved.Config.Projects,
+			credentials.ProtectedNames(resolved.Config)...,
+		)
 		if loadErr == nil {
 			loadErr = projectsErr
 		}
@@ -171,7 +177,11 @@ func (s *currentSource) loadRepository(
 	}
 	if !isRepository {
 		entries, loadErr := s.loadGlobal(ctx, resolved.Config)
-		projects, projectsErr := CanonicalProjects(ctx, resolved.Config.Projects)
+		projects, projectsErr := CanonicalProjects(
+			ctx,
+			resolved.Config.Projects,
+			credentials.ProtectedNames(resolved.Config)...,
+		)
 		if loadErr == nil {
 			loadErr = projectsErr
 		}
@@ -181,7 +191,8 @@ func (s *currentSource) loadRepository(
 		}, Notes: publicNotes(resolved.Notes)}, loadErr
 	}
 
-	g := git.NewWithContext(ctx, workingDirectory)
+	protectedNames := credentials.ProtectedNames(resolved.Config)
+	g := git.NewForInventory(ctx, workingDirectory, protectedNames)
 	worktrees, listErr := g.ListWorktrees()
 	if listErr != nil {
 		return Result{}, listErr
@@ -197,7 +208,7 @@ func (s *currentSource) loadRepository(
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	projects, err := CanonicalProjects(ctx, resolved.Config.Projects)
+	projects, err := CanonicalProjects(ctx, resolved.Config.Projects, protectedNames...)
 	if err != nil {
 		return Result{}, err
 	}
@@ -226,7 +237,12 @@ func hasGitMarker(path string) (bool, error) {
 }
 
 func (s *currentSource) loadGlobal(ctx context.Context, cfg *models.Config) ([]Entry, error) {
-	entries, err := discovery.DiscoverGlobalWorktreesContext(ctx, cfg.Worktree.BaseDir, cfg.Projects)
+	entries, err := discovery.DiscoverGlobalWorktreesContext(
+		ctx,
+		cfg.Worktree.BaseDir,
+		cfg.Projects,
+		credentials.ProtectedNames(cfg)...,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover worktrees: %w", err)
 	}
@@ -238,6 +254,7 @@ func (s *currentSource) loadDashboard(
 	request Request,
 	cfg *models.Config,
 ) ([]Entry, []Entry, error) {
+	protectedNames := credentials.ProtectedNames(cfg)
 	entries, err := s.loadGlobal(ctx, cfg)
 	if err != nil {
 		return nil, nil, err
@@ -250,7 +267,7 @@ func (s *currentSource) loadDashboard(
 		ctx context.Context,
 		path string,
 	) ([]Entry, error) {
-		return entriesForRepository(ctx, path, cfg.Projects)
+		return entriesForRepository(ctx, path, cfg.Projects, protectedNames)
 	})
 	if err != nil {
 		return nil, nil, err
@@ -267,11 +284,24 @@ func (s *currentSource) loadDashboard(
 	var launchEntries []Entry
 	if request.LaunchDirectory != "" {
 		var loadErr error
-		launchEntries, loadErr = entriesForRepository(ctx, request.LaunchDirectory, cfg.Projects)
-		if loadErr != nil && git.IsIncompleteInventory(loadErr) {
-			return nil, nil, loadErr
+		launchEntries, loadErr = entriesForRepository(
+			ctx,
+			request.LaunchDirectory,
+			cfg.Projects,
+			protectedNames,
+		)
+		if loadErr != nil {
+			if errors.Is(loadErr, context.Canceled) || errors.Is(loadErr, context.DeadlineExceeded) {
+				return nil, nil, loadErr
+			}
+			if git.IsIncompleteInventory(loadErr) {
+				return nil, nil, loadErr
+			}
 		}
 		entries = mergeEntries(entries, launchEntries)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
 	}
 	return entries, launchEntries, nil
 }
@@ -315,11 +345,12 @@ func entriesForRepository(
 	ctx context.Context,
 	path string,
 	projects []models.Project,
+	protectedNames []string,
 ) ([]Entry, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, nil
 	}
-	g := git.NewWithContext(ctx, path)
+	g := git.NewForInventory(ctx, path, protectedNames)
 	worktrees, err := g.ListWorktrees()
 	if err != nil {
 		return nil, err
@@ -380,6 +411,7 @@ func modelEntry(worktree models.Worktree, repositoryURL string, info *repository
 func CanonicalProjects(
 	ctx context.Context,
 	projects []models.Project,
+	protectedNames ...string,
 ) ([]models.Project, error) {
 	result := make([]models.Project, 0, len(projects))
 	for _, project := range projects {
@@ -389,7 +421,9 @@ func CanonicalProjects(
 		if strings.TrimSpace(project.Path) == "" {
 			continue
 		}
-		g := internalworktree.NewCachedIdentityGit(git.NewWithContext(ctx, project.Path))
+		g := internalworktree.NewCachedIdentityGit(
+			git.NewForInventory(ctx, project.Path, protectedNames),
+		)
 		mainPath, err := g.GetMainRepositoryPath()
 		if err != nil || utils.PathKey(mainPath) != utils.PathKey(project.Path) {
 			continue

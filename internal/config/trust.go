@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofrs/flock"
 	"golang.org/x/term"
 )
 
@@ -89,12 +90,38 @@ func (s *TrustStore) IsTrusted(absPath, sha256 string) bool {
 	return false
 }
 
-// Add registers (absPath, sha256) as trusted and persists to disk with atomic rename.
+// Add registers (absPath, sha256) as trusted and persists to disk with a
+// lock-scoped reload and atomic rename.
 // Refuses to write if the trust store path is a symlink (anti-tampering).
 // If s.path is empty, the store is in-memory only and Add just updates entries.
 func (s *TrustStore) Add(absPath, sha256 string) error {
+	if s.path == "" {
+		s.add(absPath, sha256, time.Now().UTC())
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+		return fmt.Errorf("create trust store dir: %w", err)
+	}
+	lock := flock.New(s.path+".lock", flock.SetPermissions(0o600))
+	if err := lock.Lock(); err != nil {
+		return fmt.Errorf("lock trust store: %w", err)
+	}
+	defer func() { _ = lock.Unlock() }()
+
+	current, err := LoadTrustStore(s.path)
+	if err != nil {
+		return err
+	}
+	current.add(absPath, sha256, time.Now().UTC())
+	if err := current.save(); err != nil {
+		return err
+	}
+	s.entries = current.entries
+	return nil
+}
+
+func (s *TrustStore) add(absPath, sha256 string, now time.Time) {
 	// Update or insert entry (dedupe by path; sha256 may differ).
-	now := time.Now().UTC()
 	replaced := false
 	for i := range s.entries {
 		if s.entries[i].Path == absPath {
@@ -111,11 +138,6 @@ func (s *TrustStore) Add(absPath, sha256 string) error {
 			TrustedAt: now,
 		})
 	}
-
-	if s.path == "" {
-		return nil
-	}
-	return s.save()
 }
 
 // save serializes entries and writes them atomically.

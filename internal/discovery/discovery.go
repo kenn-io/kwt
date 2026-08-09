@@ -57,13 +57,14 @@ func DiscoverGlobalWorktreesContext(
 	ctx context.Context,
 	baseDir string,
 	projects []models.Project,
+	protectedNames ...string,
 ) ([]*GlobalWorktreeEntry, error) {
 	candidates, err := findGlobalWorktreeCandidates(ctx, baseDir, false)
 	if err != nil {
 		return nil, err
 	}
 
-	snapshots, err := snapshotCandidateWorktrees(ctx, candidates)
+	snapshots, err := snapshotCandidateWorktrees(ctx, candidates, protectedNames)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +81,13 @@ func DiscoverGlobalWorktreesContext(
 			if !ok {
 				return nil, fmt.Errorf("worktree disappeared during discovery")
 			}
-			return extractWorktreeInfoFromSnapshot(ctx, path, projects, snapshot)
+			return extractWorktreeInfoFromSnapshot(
+				ctx,
+				path,
+				projects,
+				snapshot,
+				protectedNames...,
+			)
 		},
 	)
 }
@@ -330,13 +337,18 @@ sendCandidates:
 func snapshotCandidateWorktrees(
 	ctx context.Context,
 	candidates []worktreeCandidate,
+	protectedNames []string,
 ) (map[string]models.Worktree, error) {
 	repositories := make(map[string]string)
 	for _, candidate := range candidates {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		mainRoot, err := git.NewWithContext(ctx, candidate.path).GetMainRepositoryPath()
+		mainRoot, err := git.NewForInventory(
+			ctx,
+			candidate.path,
+			protectedNames,
+		).GetMainRepositoryPath()
 		if err != nil {
 			continue
 		}
@@ -365,7 +377,11 @@ func snapshotCandidateWorktrees(
 				if ctx.Err() != nil {
 					return
 				}
-				worktrees, err := git.NewWithContext(ctx, repositoryRoot).ListWorktrees()
+				worktrees, err := git.NewForInventory(
+					ctx,
+					repositoryRoot,
+					protectedNames,
+				).ListWorktrees()
 				if err != nil {
 					snapshotsMu.Lock()
 					snapshotErrors = append(
@@ -430,10 +446,13 @@ func extractWorktreeInfoFromSnapshot(
 	worktreePath string,
 	projects []models.Project,
 	snapshot models.Worktree,
+	protectedNames ...string,
 ) (*GlobalWorktreeEntry, error) {
 	// The cached wrapper keeps the entry's recorded remote URL and the
 	// resolver's own reads to one subprocess per call kind.
-	g := worktree.NewCachedIdentityGit(git.NewWithContext(ctx, worktreePath))
+	g := worktree.NewCachedIdentityGit(
+		git.NewForInventory(ctx, worktreePath, protectedNames),
+	)
 	repoURL := ""
 	if gotURL, err := g.GetRepositoryURL(); err == nil {
 		repoURL = gotURL

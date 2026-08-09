@@ -14,8 +14,9 @@ import (
 
 // Git provides Git command operations.
 type Git struct {
-	workDir string
-	ctx     context.Context
+	workDir     string
+	ctx         context.Context
+	environment []string
 }
 
 // New creates a new Git instance.
@@ -28,6 +29,37 @@ func New(workDir string) *Git {
 // NewWithContext creates a Git instance whose operations stop when ctx is canceled.
 func NewWithContext(ctx context.Context, workDir string) *Git {
 	return &Git{workDir: workDir, ctx: ctx}
+}
+
+// NewForInventory creates a Git instance isolated from repository-routing
+// variables and credentials inherited by a long-lived daemon.
+func NewForInventory(
+	ctx context.Context,
+	workDir string,
+	protectedNames []string,
+) *Git {
+	return &Git{
+		workDir: workDir,
+		ctx:     ctx,
+		environment: inventoryEnvironment(
+			os.Environ(),
+			protectedNames,
+		),
+	}
+}
+
+func inventoryEnvironment(env, protectedNames []string) []string {
+	names := append(credentials.ProtectedNames(nil), protectedNames...)
+	filtered := credentials.StripEnvironment(env, names)
+	result := make([]string, 0, len(filtered)+1)
+	for _, entry := range filtered {
+		name, _, ok := strings.Cut(entry, "=")
+		if ok && strings.HasPrefix(strings.ToUpper(name), "GIT_") {
+			continue
+		}
+		result = append(result, entry)
+	}
+	return append(result, "GIT_TERMINAL_PROMPT=0")
 }
 
 // NewFromCwd creates a new Git instance using the current working directory.
@@ -91,7 +123,11 @@ func (g *Git) runWithoutCredentials(
 	if g.workDir != "" {
 		cmd.Dir = g.workDir
 	}
-	cmd.Env = credentials.StripEnvironment(os.Environ(), protectedNames)
+	environment := os.Environ()
+	if g.environment != nil {
+		environment = g.environment
+	}
+	cmd.Env = credentials.StripEnvironment(environment, protectedNames)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -106,15 +142,24 @@ func (g *Git) runWithoutCredentials(
 }
 
 func (g *Git) command(args ...string) *exec.Cmd {
+	var cmd *exec.Cmd
 	if g.ctx != nil {
-		return exec.CommandContext(g.ctx, "git", args...)
+		cmd = exec.CommandContext(g.ctx, "git", args...)
+	} else {
+		cmd = exec.Command("git", args...)
 	}
-	return exec.Command("git", args...)
+	if g.environment != nil {
+		cmd.Env = append([]string(nil), g.environment...)
+	}
+	return cmd
 }
 
 // runWithContext executes a git command with context support.
 func (g *Git) runWithContext(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
+	if g.environment != nil {
+		cmd.Env = append([]string(nil), g.environment...)
+	}
 	if g.workDir != "" {
 		cmd.Dir = g.workDir
 	}

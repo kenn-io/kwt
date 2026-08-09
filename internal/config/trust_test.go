@@ -207,6 +207,36 @@ func TestTrustStore_Add_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestTrustStore_Add_MergesStaleLoadedSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "trusted_configs.json")
+	first, err := LoadTrustStore(path)
+	if err != nil {
+		t.Fatalf("load first store: %v", err)
+	}
+	second, err := LoadTrustStore(path)
+	if err != nil {
+		t.Fatalf("load second store: %v", err)
+	}
+
+	if err := first.Add("/abs/first", "sha-first"); err != nil {
+		t.Fatalf("add first trust: %v", err)
+	}
+	if err := second.Add("/abs/second", "sha-second"); err != nil {
+		t.Fatalf("add second trust: %v", err)
+	}
+
+	reloaded, err := LoadTrustStore(path)
+	if err != nil {
+		t.Fatalf("reload store: %v", err)
+	}
+	if !reloaded.IsTrusted("/abs/first", "sha-first") {
+		t.Error("first approval was lost by the stale writer")
+	}
+	if !reloaded.IsTrusted("/abs/second", "sha-second") {
+		t.Error("second approval was not persisted")
+	}
+}
+
 func TestTrustStore_Add_DedupeUpdatesHash(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "trusted_configs.json")
 	s, _ := LoadTrustStore(path)
