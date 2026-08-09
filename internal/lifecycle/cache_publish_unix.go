@@ -1,6 +1,6 @@
 //go:build !windows
 
-package kwt
+package lifecycle
 
 import "os"
 

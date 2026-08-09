@@ -1,4 +1,4 @@
-package kwt
+package lifecycle
 
 import (
 	"os"
