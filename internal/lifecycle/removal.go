@@ -47,8 +47,8 @@ func NewRemovalService(options RemovalServiceOptions) Remover {
 func (s *removalService) Remove(
 	ctx context.Context,
 	request RemovalRequest,
-) (RemovalResult, error) {
-	result := RemovalResult{Path: request.Path}
+) (result RemovalResult, resultErr error) {
+	result = RemovalResult{Path: request.Path}
 	if !filepath.IsAbs(request.RepositoryPath) {
 		return result, removalInvalid("repository path must be absolute")
 	}
@@ -62,14 +62,41 @@ func (s *removalService) Remove(
 		return result, classifyRemovalError(err, result)
 	}
 
+	reg, err := registry.NewAt(s.home)
+	if err != nil {
+		return result, classifyRemovalError(err, result)
+	}
+	release, acquired, err := reg.AcquireCreation(request.Path)
+	if err != nil {
+		return result, classifyRemovalError(err, result)
+	}
+	if !acquired {
+		return result, service.NewError(
+			service.Conflict,
+			fmt.Sprintf("worktree creation is in progress for %s", request.Path),
+			true,
+			map[string]any{"path": request.Path, "reason": "creation_in_progress"},
+			nil,
+		)
+	}
+	defer func() {
+		if err := release(); err != nil {
+			releaseErr := classifyRemovalError(
+				fmt.Errorf("release worktree creation lock: %w", err),
+				result,
+			)
+			if resultErr == nil {
+				resultErr = releaseErr
+			} else {
+				resultErr = errors.Join(resultErr, releaseErr)
+			}
+		}
+	}()
+
 	repository := git.NewForInventory(ctx, request.RepositoryPath, nil)
 	root, err := repository.GetMainRepositoryPath()
 	if err != nil {
 		return result, classifyRemovalError(fmt.Errorf("resolve main repository: %w", err), result)
-	}
-	reg, err := registry.NewAt(s.home)
-	if err != nil {
-		return result, classifyRemovalError(err, result)
 	}
 	record, registered := reg.Get(request.Path)
 	var mutationErr error

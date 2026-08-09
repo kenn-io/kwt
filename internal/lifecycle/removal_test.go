@@ -65,6 +65,43 @@ func TestRemovalServiceRejectsChangedGeneration(t *testing.T) {
 	assert.DirExists(t, worktreePath)
 }
 
+func TestRemovalServiceRejectsActiveCreation(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "creating")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	home := t.TempDir()
+	reg, err := registry.NewAt(home)
+	require.NoError(t, err)
+	require.NoError(t, reg.Register(&registry.WorktreeEntry{
+		Repository: "example/widget", Branch: "creating", Path: worktreePath,
+		Generation: generation, CreationToken: "creating",
+	}))
+	release, acquired, err := reg.AcquireCreation(worktreePath)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	t.Cleanup(func() { require.NoError(t, release()) })
+
+	result, err := NewRemovalService(RemovalServiceOptions{Home: home}).Remove(
+		context.Background(),
+		RemovalRequest{
+			RepositoryPath: repositoryPath,
+			Path:           worktreePath, ExpectedGeneration: generation,
+		},
+	)
+
+	require.Error(t, err)
+	var typed *service.Error
+	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, service.Conflict, typed.Code)
+	assert.True(t, typed.Retryable)
+	assert.False(t, result.WorktreeRemoved)
+	assert.DirExists(t, worktreePath)
+	reloaded, reloadErr := registry.NewAt(home)
+	require.NoError(t, reloadErr)
+	_, registered := reloaded.Get(worktreePath)
+	assert.True(t, registered)
+}
+
 func TestRemovalServiceIgnoresDaemonRepositoryRoutingEnvironment(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "routed-remove")
 	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
