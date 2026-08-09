@@ -130,6 +130,47 @@ path = "$KWT_TEST_PROJECT"
 	assert.Equal(t, secondRepository, secondProjects[0].Path)
 }
 
+func TestProjectsRemoveIsVisibleToDaemonInventory(t *testing.T) {
+	binary, cleanupBinary := buildDaemonTestBinaries(t)
+	repository := filepath.Join(t.TempDir(), "widget")
+	require.NoError(t, exec.Command("git", "init", repository).Run())
+	repository, err := filepath.EvalSymlinks(repository)
+	require.NoError(t, err)
+	home := newDaemonTestHome(t, validDaemonConfig+`
+[[projects]]
+repository = "github.com/acme/widget"
+name = "widget"
+path = "`+filepath.ToSlash(repository)+`"
+`)
+	registerDaemonCleanup(t, cleanupBinary, home)
+	directory := t.TempDir()
+
+	before, stderr, err := runInventoryCommand(
+		t, binary, home, directory, "projects", "--json",
+	)
+	require.NoError(t, err, "stderr=%s", stderr)
+	var projects []models.Project
+	require.NoError(t, json.Unmarshal(before, &projects))
+	require.Len(t, projects, 1)
+
+	removed, stderr, err := runInventoryCommand(
+		t, binary, home, directory,
+		"projects", "remove", repository, "--json",
+	)
+	require.NoError(t, err, "stderr=%s", stderr)
+	var response struct {
+		Status string `json:"status"`
+	}
+	require.NoError(t, json.Unmarshal(removed, &response))
+	assert.Equal(t, "unregistered", response.Status)
+
+	after, stderr, err := runInventoryCommand(
+		t, binary, home, directory, "projects", "--json",
+	)
+	require.NoError(t, err, "stderr=%s", stderr)
+	assert.Equal(t, "[]\n", string(after))
+}
+
 func TestInventorySubprocessDaemonFailuresNeverUseSSHExit255(t *testing.T) {
 	binary, _ := buildDaemonTestBinaries(t)
 	fixture := buildDaemonFixture(t)

@@ -904,6 +904,43 @@ func CompareAndSwapProject(
 	return changed, nil
 }
 
+// UnregisterProject removes the one global project registration matching path.
+// It never removes repository or worktree data. A false result with a non-empty
+// project means the registration changed after it was read and was preserved.
+func UnregisterProject(path string) (models.Project, bool, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return models.Project{}, false, fmt.Errorf("project path required")
+	}
+	normalized, err := normalizeProjectPath(path)
+	if err != nil {
+		return models.Project{}, false, err
+	}
+	snapshot, err := LoadGlobalSnapshot()
+	if err != nil {
+		return models.Project{}, false, err
+	}
+	var match *ProjectRegistration
+	for index := range snapshot.Projects {
+		registration := &snapshot.Projects[index]
+		if !sameProjectPath(registration.Effective.Path, normalized) {
+			continue
+		}
+		if match != nil {
+			return models.Project{}, false, fmt.Errorf(
+				"multiple project registrations match %s",
+				normalized,
+			)
+		}
+		match = registration
+	}
+	if match == nil {
+		return models.Project{}, false, nil
+	}
+	changed, err := CompareAndSwapProject(*match, nil)
+	return match.Persisted, changed, err
+}
+
 func rawProjectEntries(source *viper.Viper) ([]map[string]any, error) {
 	var projects []map[string]any
 	if err := source.UnmarshalKey("projects", &projects); err != nil {

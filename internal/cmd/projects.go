@@ -22,8 +22,10 @@ import (
 var (
 	projectsJSON           bool
 	projectsAddJSON        bool
+	projectsRemoveJSON     bool
 	loadProjectsConfig     = config.Load
 	registerProject        = config.RegisterProject
+	unregisterProject      = config.UnregisterProject
 	queryProjectsInventory = queryCLIInventory
 )
 
@@ -41,9 +43,13 @@ that external automation can consume without parsing the config file.`,
 	// initialization failures through Cobra.
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		if err := requireConfigInitialization(); err != nil {
+			code := "registration_failed"
+			if cmd == projectsRemoveCmd {
+				code = "unregistration_failed"
+			}
 			return writeProjectCommandError(
 				cmd,
-				"registration_failed",
+				code,
 				fmt.Sprintf("failed to initialize configuration: %v", err),
 				1,
 			)
@@ -60,11 +66,19 @@ var projectsAddCmd = &cobra.Command{
 	RunE:  runProjectsAdd,
 }
 
+var projectsRemoveCmd = &cobra.Command{
+	Use:   "remove <path>",
+	Short: "Unregister a project without deleting its repository",
+	Args:  projectsExactArgs(1),
+	RunE:  runProjectsRemove,
+}
+
 func init() {
 	rootCmd.AddCommand(projectsCmd)
 	projectsCmd.Flags().BoolVar(&projectsJSON, "json", false, "Output in JSON format")
 	projectsAddCmd.Flags().BoolVar(&projectsAddJSON, "json", false, "Output a machine-readable result")
-	projectsCmd.AddCommand(projectsAddCmd)
+	projectsRemoveCmd.Flags().BoolVar(&projectsRemoveJSON, "json", false, "Output a machine-readable result")
+	projectsCmd.AddCommand(projectsAddCmd, projectsRemoveCmd)
 	projectsCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		return writeProjectCommandError(cmd, "invalid_repository", err.Error(), 2)
 	})
@@ -100,7 +114,7 @@ func runProjects(cmd *cobra.Command, args []string) error {
 	return t.Println()
 }
 
-type projectAddResult struct {
+type projectMutationResult struct {
 	Status  string         `json:"status"`
 	Project models.Project `json:"project"`
 }
@@ -190,7 +204,7 @@ func runProjectsAdd(cmd *cobra.Command, args []string) error {
 	if projectsAddJSON {
 		encoder := json.NewEncoder(cmd.OutOrStdout())
 		encoder.SetIndent("", "  ")
-		return encoder.Encode(projectAddResult{
+		return encoder.Encode(projectMutationResult{
 			Status:  "registered",
 			Project: project,
 		})
@@ -198,6 +212,51 @@ func runProjectsAdd(cmd *cobra.Command, args []string) error {
 	_, err = fmt.Fprintf(
 		cmd.OutOrStdout(),
 		"registered project %s at %s\n",
+		project.Name,
+		project.Path,
+	)
+	return err
+}
+
+func runProjectsRemove(cmd *cobra.Command, args []string) error {
+	project, changed, err := unregisterProject(args[0])
+	if err != nil {
+		return writeProjectCommandError(
+			cmd,
+			"unregistration_failed",
+			fmt.Sprintf("failed to unregister project: %v", err),
+			1,
+		)
+	}
+	if !changed && project.Path == "" {
+		return writeProjectCommandError(
+			cmd,
+			"project_not_found",
+			fmt.Sprintf("no project is registered at %s", args[0]),
+			2,
+		)
+	}
+	if !changed {
+		return writeProjectCommandErrorWithRetry(
+			cmd,
+			"registration_changed",
+			"the project registration changed before it could be removed",
+			1,
+			true,
+		)
+	}
+
+	if projectsRemoveJSON {
+		encoder := json.NewEncoder(cmd.OutOrStdout())
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(projectMutationResult{
+			Status:  "unregistered",
+			Project: project,
+		})
+	}
+	_, err = fmt.Fprintf(
+		cmd.OutOrStdout(),
+		"unregistered project %s at %s\n",
 		project.Name,
 		project.Path,
 	)
@@ -256,10 +315,22 @@ func writeProjectCommandError(
 	message string,
 	exitCode int,
 ) error {
+	return writeProjectCommandErrorWithRetry(
+		cmd, code, message, exitCode, false,
+	)
+}
+
+func writeProjectCommandErrorWithRetry(
+	cmd *cobra.Command,
+	code string,
+	message string,
+	exitCode int,
+	retryable bool,
+) error {
 	body := projectCommandErrorBody{
 		Code:      code,
 		Message:   message,
-		Retryable: false,
+		Retryable: retryable,
 	}
 	cmd.Root().SilenceUsage = true
 	cmd.Root().SilenceErrors = true
@@ -273,7 +344,7 @@ func writeProjectCommandError(
 }
 
 func projectCommandJSONRequested() bool {
-	if projectsJSON || projectsAddJSON {
+	if projectsJSON || projectsAddJSON || projectsRemoveJSON {
 		return true
 	}
 	// pflag stops at the first parse error, so a later --json never reaches

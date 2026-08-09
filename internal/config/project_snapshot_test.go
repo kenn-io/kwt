@@ -260,6 +260,36 @@ future_policy = "observed"
 	assert.Equal(t, concurrent, string(stored))
 }
 
+func TestUnregisterProjectRemovesOnlyTheMatchingRegistration(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("KWT_HOME", configHome)
+	configPath := filepath.Join(configHome, "config.toml")
+	removed := models.Project{
+		Repository:  "github.com/acme/widget",
+		Name:        "widget",
+		Path:        filepath.Join(t.TempDir(), "missing-widget"),
+		LastTouched: "before",
+	}
+	kept := models.Project{
+		Repository:  "github.com/acme/other",
+		Name:        "other",
+		Path:        filepath.Join(t.TempDir(), "other"),
+		LastTouched: "kept",
+	}
+	writePersistedProjects(t, configPath, []models.Project{removed, kept})
+
+	got, changed, err := UnregisterProject(removed.Path)
+
+	require.NoError(t, err)
+	assert.True(t, changed)
+	assert.Equal(t, removed, got)
+	stored, err := readGlobalViper(configPath)
+	require.NoError(t, err)
+	var projects []models.Project
+	require.NoError(t, stored.UnmarshalKey("projects", &projects))
+	assert.Equal(t, []models.Project{kept}, projects)
+}
+
 func writePersistedProjects(t *testing.T, path string, projects []models.Project) {
 	t.Helper()
 	current := viper.New()

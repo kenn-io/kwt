@@ -246,6 +246,8 @@ refreshes that project entry, so future dashboard launches can see its
 worktrees even when they are outside `worktree.basedir`.
 Noninteractive clients can register an existing checkout explicitly with
 `kwt projects add /absolute/repository/path --json`.
+They can unregister it without deleting repository or worktree data with
+`kwt projects remove /absolute/repository/path --json`.
 
 ### Repository Setup
 
@@ -276,7 +278,7 @@ spaces.
 | `kwt open`       | Open or establish a workspace session       |
 | `kwt list`       | List worktrees                              |
 | `kwt status`     | Show git status, sync state, and activity   |
-| `kwt projects`   | List or register project repositories       |
+| `kwt projects`   | List, register, or unregister projects      |
 | `kwt pr`         | Discover and import pull requests as JSON   |
 | `kwt get`        | Print a matching worktree path              |
 | `kwt cd`         | Open a shell in a matching worktree         |

@@ -342,8 +342,8 @@ instead of claiming those paths would be removed.
 ## `kwt projects`
 
 The list action obtains a current inventory snapshot from the same-machine
-daemon. `projects add` remains a direct foreground mutation until the worktree
-mutation service migrates.
+daemon. `projects add` and `projects remove` remain direct foreground mutations
+until project mutations migrate to the daemon.
 
 `--json` emits an array of the registered project repositories (`{repository,
 name, path, last_touched}`), so external automation can discover main-repo
@@ -362,6 +362,12 @@ the dashboard. A linked-worktree path resolves to its main repository before
 registration, and repeating the command updates the existing entry rather than
 adding a duplicate.
 
+`kwt projects remove <path>` unregisters exactly one project by its configured
+path. The path may name a checkout that no longer exists. Unregistration only
+removes discovery metadata: it never deletes the repository, its worktrees, or
+tmux sessions. A concurrent change to the matched registration is preserved
+and reported as retryable instead of being overwritten.
+
 With `--json`, success returns:
 
 ```json
@@ -377,7 +383,9 @@ With `--json`, success returns:
 ```
 
 Failures return a stable error envelope on stdout. `invalid_repository` exits
-2; `registration_failed` exits 1. Both are non-retryable:
+2; `registration_failed` exits 1. Project removal additionally reports
+`project_not_found` with exit 2, `unregistration_failed` with exit 1, or the
+retryable `registration_changed` with exit 1:
 
 ```json
 {

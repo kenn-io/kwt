@@ -93,6 +93,8 @@ registers or refreshes that repository so future dashboard launches can find its
 worktrees from anywhere.
 Automation and graphical clients can perform the same explicit registration
 without opening the dashboard by running `kwt projects add <path> --json`.
+They can unregister that metadata with `kwt projects remove <path> --json`;
+the command never deletes repository, worktree, or tmux-session data.
 
 Project entries are discovery metadata, not worktree-creation policy:
 
