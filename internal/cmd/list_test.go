@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"testing"
@@ -63,8 +64,10 @@ func TestRunListRequestsCurrentInventoryAndPreservesJSONShape(t *testing.T) {
 	assert.True(t, gotRequest.RequireCurrent)
 	assert.False(t, gotRequest.ForceGlobal)
 	assert.True(t, gotRequest.IncludeProtectedSockets)
+	encodedRepository, err := json.Marshal(repository)
+	require.NoError(t, err)
 	assert.JSONEq(t, `[{
-      "path": "`+repository+`",
+	  "path": `+string(encodedRepository)+`,
       "branch": "main",
       "commit_hash": "",
       "is_main": false,

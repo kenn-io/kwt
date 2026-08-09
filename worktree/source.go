@@ -44,18 +44,20 @@ func (s *currentSource) Load(ctx context.Context, request Request) (Result, erro
 		return Result{}, err
 	}
 	result := Result{Snapshot: Snapshot{
-		Projects:   CanonicalProjects(snapshot.Config.Projects),
 		Workspaces: append([]models.Workspace(nil), snapshot.Config.Workspaces...),
 	}}
 
 	switch request.View {
 	case ViewProjects:
+		result.Snapshot.Projects = CanonicalProjects(snapshot.Config.Projects)
 		return result, nil
 	case ViewGlobal:
+		result.Snapshot.Projects = CanonicalProjects(snapshot.Config.Projects)
 		result.Snapshot.Entries, err = s.loadGlobal(snapshot.Config)
 	case ViewRepository:
 		result, err = s.loadRepository(ctx, request, snapshot.Config)
 	case ViewDashboard:
+		result.Snapshot.Projects = CanonicalProjects(snapshot.Config.Projects)
 		result.Snapshot.Entries, result.Snapshot.LaunchEntries, err =
 			s.loadDashboard(ctx, request, snapshot.Config)
 	}

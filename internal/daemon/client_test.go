@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,4 +143,72 @@ func TestVerifiedClientAllowsInventoryDiscoveryBeforeHeaders(t *testing.T) {
 	_, err = client.Inventory(ctx, publicworktree.Request{View: publicworktree.ViewDashboard})
 
 	require.NoError(t, err)
+}
+
+func TestVerifiedClientBoundsControlPlaneResponseWait(t *testing.T) {
+	token := "test-secret"
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	rec := runtimeRecordForServer(t, server, token)
+	proof, err := kitdaemon.NewProof([]byte(token))
+	require.NoError(t, err)
+	ping, err := proof.NewPingHandler(rec)
+	require.NoError(t, err)
+	mux.Handle("/api/ping", ping)
+	mux.HandleFunc("/api/v1/status", func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(2500 * time.Millisecond)
+		_ = json.NewEncoder(w).Encode(Status{State: StateReady})
+	})
+
+	client, err := NewVerifiedClient(context.Background(), rec, token)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	_, err = client.Status(ctx)
+
+	require.Error(t, err)
+	var typed *service.Error
+	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, service.TransportFailure, typed.Code)
+}
+
+func TestClientAllowsInventoryResponseLargerThanControlPlaneLimit(t *testing.T) {
+	largePath := strings.Repeat("x", 2<<20)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(publicworktree.Result{
+			Notes: []publicworktree.Note{{Code: "large", Path: largePath}},
+		}))
+	}))
+	defer server.Close()
+
+	client := clientForUnverifiedServer(t, server, "secret")
+	result, err := client.Inventory(context.Background(), publicworktree.Request{
+		View: publicworktree.ViewDashboard,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Notes, 1)
+	assert.Equal(t, largePath, result.Notes[0].Path)
+}
+
+func TestClientReportsEndpointSpecificResponseLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("response exceeds limit"))
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+
+	err := client.doWith(
+		context.Background(),
+		client.inventoryHTTP,
+		8,
+		http.MethodGet,
+		"/api/v1/inventory",
+		nil,
+		nil,
+	)
+
+	require.ErrorIs(t, err, ErrResponseTooLarge)
+	assert.ErrorContains(t, err, "/api/v1/inventory exceeds 8 bytes")
 }
