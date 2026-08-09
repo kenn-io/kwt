@@ -35,7 +35,7 @@ func NewInventoryService(options ServiceOptions) *Service {
 }
 
 func (s *Service) Query(ctx context.Context, request Request) (Result, error) {
-	if request.View == ViewDashboard && !request.RequireCurrent {
+	if request.View == ViewDashboard && !request.RequireCurrent && s.cache != nil {
 		if cached, ok := s.cache.Current(); ok {
 			s.mu.RLock()
 			if s.active > 0 {
@@ -93,8 +93,10 @@ func (s *Service) publishDashboard(generation uint64, result Result) *Diagnostic
 		return nil
 	}
 	var diagnostic *Diagnostic
-	if err := s.cache.Store(result); err != nil {
-		diagnostic = &Diagnostic{At: s.now(), Message: boundedDiagnostic(err)}
+	if s.cache != nil {
+		if err := s.cache.Store(result); err != nil {
+			diagnostic = &Diagnostic{At: s.now(), Message: boundedDiagnostic(err)}
+		}
 	}
 	s.mu.Lock()
 	if generation == s.dashboardGeneration {

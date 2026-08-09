@@ -164,14 +164,18 @@ func runHost(
 	var cacheDiagnostic *publicworktree.Diagnostic
 	if inventory == nil {
 		cache, diagnostic, cacheErr := publicworktree.NewFileCache(opts.Home)
+		var serviceCache publicworktree.Cache
 		if cacheErr != nil {
-			_ = listener.Close()
-			return cacheErr
+			cacheDiagnostic = &publicworktree.Diagnostic{
+				At: opts.Now(), Message: boundedError(cacheErr),
+			}
+		} else {
+			cacheDiagnostic = diagnostic
+			serviceCache = cache
 		}
-		cacheDiagnostic = diagnostic
 		inventory = publicworktree.NewInventoryService(publicworktree.ServiceOptions{
 			Source: publicworktree.NewSource(publicworktree.SourceOptions{Home: opts.Home}),
-			Cache:  cache,
+			Cache:  serviceCache,
 			Now:    opts.Now,
 		})
 	}

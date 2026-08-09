@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kwt/pkg/models"
 )
 
 func runInventoryCommand(
@@ -91,6 +92,42 @@ func TestInventorySubprocessPreservesGhosthubJSONAndTrustBehavior(t *testing.T) 
 	stdout, stderr, err = runInventoryCommand(t, binary, home, repository, "projects", "--json")
 	require.NoError(t, err, "stderr=%s", stderr)
 	assert.Equal(t, "[]\n", string(stdout))
+}
+
+func TestInventorySubprocessExpandsGlobalPathsForEachClient(t *testing.T) {
+	binary, cleanupBinary := buildDaemonTestBinaries(t)
+	home := newDaemonTestHome(t, validDaemonConfig+`
+[[projects]]
+repository = "github.com/acme/selected"
+name = "selected"
+path = "$KWT_TEST_PROJECT"
+`)
+	registerDaemonCleanup(t, cleanupBinary, home)
+	firstRepository := filepath.Join(t.TempDir(), "first")
+	secondRepository := filepath.Join(t.TempDir(), "second")
+	for _, repository := range []string{firstRepository, secondRepository} {
+		require.NoError(t, exec.Command("git", "init", repository).Run())
+	}
+	firstRepository, err := filepath.EvalSymlinks(firstRepository)
+	require.NoError(t, err)
+	secondRepository, err = filepath.EvalSymlinks(secondRepository)
+	require.NoError(t, err)
+	directory := t.TempDir()
+
+	t.Setenv("KWT_TEST_PROJECT", firstRepository)
+	first, stderr, err := runInventoryCommand(t, binary, home, directory, "projects", "--json")
+	require.NoError(t, err, "stderr=%s", stderr)
+	t.Setenv("KWT_TEST_PROJECT", secondRepository)
+	second, stderr, err := runInventoryCommand(t, binary, home, directory, "projects", "--json")
+	require.NoError(t, err, "stderr=%s", stderr)
+
+	var firstProjects, secondProjects []models.Project
+	require.NoError(t, json.Unmarshal(first, &firstProjects))
+	require.NoError(t, json.Unmarshal(second, &secondProjects))
+	require.Len(t, firstProjects, 1)
+	require.Len(t, secondProjects, 1)
+	assert.Equal(t, firstRepository, firstProjects[0].Path)
+	assert.Equal(t, secondRepository, secondProjects[0].Path)
 }
 
 func TestInventorySubprocessDaemonFailuresNeverUseSSHExit255(t *testing.T) {

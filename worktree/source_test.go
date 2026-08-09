@@ -12,6 +12,13 @@ import (
 	"go.kenn.io/kwt/pkg/models"
 )
 
+func testExpansion(t *testing.T) ExpansionContext {
+	t.Helper()
+	expansion, err := CaptureExpansionContext()
+	require.NoError(t, err)
+	return expansion
+}
+
 func TestSourceProjectsFiltersInaccessibleRegistrations(t *testing.T) {
 	home := t.TempDir()
 	repository := filepath.Join(t.TempDir(), "repo")
@@ -24,7 +31,7 @@ func TestSourceProjectsFiltersInaccessibleRegistrations(t *testing.T) {
 	), 0o600))
 
 	result, err := NewSource(SourceOptions{Home: home}).Load(context.Background(), Request{
-		View: ViewProjects, UntrustedConfig: IgnoreUntrustedConfig,
+		View: ViewProjects, Expansion: testExpansion(t), UntrustedConfig: IgnoreUntrustedConfig,
 	})
 
 	require.NoError(t, err)
@@ -34,9 +41,18 @@ func TestSourceProjectsFiltersInaccessibleRegistrations(t *testing.T) {
 
 func TestSourceRejectsRelativeRepositoryDirectory(t *testing.T) {
 	_, err := NewSource(SourceOptions{Home: t.TempDir()}).Load(context.Background(), Request{
-		View: ViewRepository, WorkingDirectory: "relative", UntrustedConfig: IgnoreUntrustedConfig,
+		View: ViewRepository, WorkingDirectory: "relative", Expansion: testExpansion(t),
+		UntrustedConfig: IgnoreUntrustedConfig,
 	})
 	assert.ErrorContains(t, err, "must be absolute")
+}
+
+func TestSourceRejectsMissingPathExpansionContext(t *testing.T) {
+	_, err := NewSource(SourceOptions{Home: t.TempDir()}).Load(context.Background(), Request{
+		View: ViewProjects, UntrustedConfig: IgnoreUntrustedConfig,
+	})
+
+	assert.ErrorContains(t, err, "path-expansion working directory must be absolute")
 }
 
 func TestSourcePropagatesRepositoryInventoryErrors(t *testing.T) {
@@ -49,6 +65,7 @@ func TestSourcePropagatesRepositoryInventoryErrors(t *testing.T) {
 
 	_, err := NewSource(SourceOptions{Home: t.TempDir()}).Load(context.Background(), Request{
 		View: ViewRepository, WorkingDirectory: workingDirectory, UntrustedConfig: IgnoreUntrustedConfig,
+		Expansion: testExpansion(t),
 	})
 
 	require.Error(t, err)
@@ -64,12 +81,12 @@ func TestSourceReadsProvenanceOnlyWhenRequested(t *testing.T) {
 	source := NewSource(SourceOptions{Home: home})
 
 	_, err := source.Load(context.Background(), Request{
-		View: ViewDashboard, UntrustedConfig: IgnoreUntrustedConfig,
+		View: ViewDashboard, Expansion: testExpansion(t), UntrustedConfig: IgnoreUntrustedConfig,
 	})
 	require.NoError(t, err)
 
 	_, err = source.Load(context.Background(), Request{
-		View: ViewDashboard, UntrustedConfig: IgnoreUntrustedConfig,
+		View: ViewDashboard, Expansion: testExpansion(t), UntrustedConfig: IgnoreUntrustedConfig,
 		IncludeProtectedSockets: true,
 	})
 	require.ErrorContains(t, err, "failed to read pull-request provenance")

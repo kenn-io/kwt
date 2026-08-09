@@ -4,7 +4,10 @@ package worktree
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
 	"go.kenn.io/kwt/pkg/models"
@@ -38,10 +41,102 @@ type Request struct {
 	View                    View                  `json:"view"`
 	WorkingDirectory        string                `json:"working_directory,omitempty"`
 	LaunchDirectory         string                `json:"launch_directory,omitempty"`
+	Expansion               ExpansionContext      `json:"expansion"`
 	ForceGlobal             bool                  `json:"force_global,omitempty"`
 	RequireCurrent          bool                  `json:"require_current,omitempty"`
 	IncludeProtectedSockets bool                  `json:"include_protected_sockets,omitempty"`
 	UntrustedConfig         UntrustedConfigPolicy `json:"untrusted_config"`
+}
+
+// ExpansionContext carries the invoking client's path-expansion inputs across
+// the daemon boundary. The authenticated daemon uses it only for this request.
+type ExpansionContext struct {
+	WorkingDirectory string            `json:"working_directory"`
+	HomeDirectory    string            `json:"home_directory"`
+	Environment      map[string]string `json:"environment,omitempty"`
+}
+
+func CaptureExpansionContext() (ExpansionContext, error) {
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		return ExpansionContext{}, fmt.Errorf("get path-expansion working directory: %w", err)
+	}
+	workingDirectory, err = filepath.Abs(workingDirectory)
+	if err != nil {
+		return ExpansionContext{}, fmt.Errorf("resolve path-expansion working directory: %w", err)
+	}
+	homeDirectory, err := os.UserHomeDir()
+	if err != nil {
+		return ExpansionContext{}, fmt.Errorf("get path-expansion home directory: %w", err)
+	}
+	environment := make(map[string]string)
+	for _, assignment := range os.Environ() {
+		name, value, ok := strings.Cut(assignment, "=")
+		if !ok || !validEnvironmentName(name) {
+			continue
+		}
+		environment[normalizedEnvironmentName(name)] = value
+	}
+	return ExpansionContext{
+		WorkingDirectory: workingDirectory,
+		HomeDirectory:    homeDirectory,
+		Environment:      environment,
+	}, nil
+}
+
+func (c ExpansionContext) validate() error {
+	if !filepath.IsAbs(c.WorkingDirectory) {
+		return fmt.Errorf("path-expansion working directory must be absolute")
+	}
+	if !filepath.IsAbs(c.HomeDirectory) {
+		return fmt.Errorf("path-expansion home directory must be absolute")
+	}
+	for name := range c.Environment {
+		if !validEnvironmentName(name) {
+			return fmt.Errorf("invalid path-expansion environment name %q", name)
+		}
+	}
+	return nil
+}
+
+func (c ExpansionContext) expandPath(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	path = os.Expand(path, func(name string) string {
+		return c.Environment[normalizedEnvironmentName(name)]
+	})
+	if path == "~" {
+		path = c.HomeDirectory
+	} else if strings.HasPrefix(path, "~/") {
+		path = filepath.Join(c.HomeDirectory, path[2:])
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(c.WorkingDirectory, path)
+	}
+	return path, nil
+}
+
+func validEnvironmentName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for index, character := range name {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			character == '_' || (index > 0 && character >= '0' && character <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func normalizedEnvironmentName(name string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToUpper(name)
+	}
+	return name
 }
 
 func (r Request) validate() error {
@@ -70,7 +165,7 @@ func (r Request) validate() error {
 	default:
 		return fmt.Errorf("unknown inventory view %q", r.View)
 	}
-	return nil
+	return r.Expansion.validate()
 }
 
 type Repository struct {

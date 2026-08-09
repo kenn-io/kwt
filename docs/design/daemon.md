@@ -32,8 +32,15 @@ simultaneous direct and HTTP execution paths.
 current inventory result. They fail instead of falling back to cached or direct
 filesystem data. The TUI may paint immediately from the derived last-known-good
 cache at `<kwt-home>/cache/inventory-v1.json`, then requests one current
-snapshot. The cache is never mutation authority. Git status and fetch remain
-in the foreground client so their credential environment is unchanged.
+snapshot. Failure to initialize or publish the disposable cache is diagnostic;
+current inventory remains available without it. The cache is never mutation
+authority. Git status and fetch remain in the foreground client so their
+credential environment is unchanged.
+
+Each inventory request carries the invoking client's working directory, home
+directory, and sanitized environment map for path expansion. The daemon does
+not use its startup environment or working directory to interpret global path
+configuration, so a reused daemon preserves foreground CLI semantics.
 
 Repository-local configuration is resolved per request. Unknown content
 produces a digest-bound interaction requirement. Approval reopens and hashes

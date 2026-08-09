@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/pkg/models"
+	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 func TestHTTPServerBoundsUnauthenticatedRequests(t *testing.T) {
@@ -168,6 +170,51 @@ func TestServePublishesReadyRuntimeAndRemovesItOnShutdown(t *testing.T) {
 	require.NoError(t, <-done)
 	assert.Empty(t, runtimeFiles(t, home))
 	cancel()
+}
+
+func TestServeContinuesWithoutDisposableInventoryCache(t *testing.T) {
+	home := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(home, "cache"), []byte("blocked"), 0o600))
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, ServeOptions{
+			Home:  home,
+			Build: Build{Version: "v1.0.0", Revision: "abc"},
+			Config: models.DaemonConfig{
+				IdleTimeout:      time.Hour,
+				AutoRestart:      "newer",
+				ReplacementGrace: time.Second,
+			},
+			Foreground: true,
+		})
+	}()
+	select {
+	case err := <-done:
+		require.FailNow(t, "daemon stopped for a disposable cache failure", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	observation := waitForRuntime(t, home)
+	result, err := observation.Client.Inventory(context.Background(), publicworktree.Request{
+		View: publicworktree.ViewProjects, UntrustedConfig: publicworktree.IgnoreUntrustedConfig,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, publicworktree.Fresh, result.Freshness)
+	result, err = observation.Client.Inventory(context.Background(), publicworktree.Request{
+		View: publicworktree.ViewDashboard, UntrustedConfig: publicworktree.IgnoreUntrustedConfig,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, publicworktree.Fresh, result.Freshness)
+	status, err := observation.Client.Status(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, status.LastError)
+	assert.Contains(t, status.LastError.Message, "inventory cache")
+
+	_, err = observation.Client.Shutdown(context.Background(), "stop")
+	require.NoError(t, err)
+	require.NoError(t, <-done)
 }
 
 func TestServeRefusesASecondWritableOwner(t *testing.T) {

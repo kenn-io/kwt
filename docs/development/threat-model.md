@@ -76,9 +76,12 @@ not URL paths. The owner-only inventory cache contains derived discovery data;
 it is disposable and never authorizes a mutation. Repository-local config is
 never implicitly trusted: interactive approval is bound to a content digest
 that the daemon revalidates, while rejection and noninteractive skipping apply
-only to that request. A remote client reaches inventory by invoking the remote
-machine's kwt CLI over its existing shell boundary; the loopback daemon itself
-is not remotely reachable.
+only to that request. Authenticated inventory requests also carry the client's
+path-expansion context, including its environment. This transient context is
+used only to interpret trusted global paths and is neither logged nor persisted.
+A remote client reaches inventory by invoking the remote machine's kwt CLI over
+its existing shell boundary; the loopback daemon itself is not remotely
+reachable.
 
 PID liveness alone does not authorize cleanup or replacement. Kwt also checks
 the recorded process creation identity. A dead PID or exact creation mismatch

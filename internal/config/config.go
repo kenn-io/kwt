@@ -750,6 +750,15 @@ func LoadGlobalSnapshot() (*GlobalSnapshot, error) {
 // LoadGlobalSnapshotAt re-reads global configuration from an explicit kwt
 // home. Daemon requests use it to avoid process-global environment state.
 func LoadGlobalSnapshotAt(home string) (*GlobalSnapshot, error) {
+	return LoadGlobalSnapshotAtWithExpansion(home, utils.ExpandPath)
+}
+
+// LoadGlobalSnapshotAtWithExpansion re-reads global configuration while using
+// the invoking client's path semantics instead of process-global daemon state.
+func LoadGlobalSnapshotAtWithExpansion(
+	home string,
+	expandPath func(string) (string, error),
+) (*GlobalSnapshot, error) {
 	configPath := filepath.Join(home, configName+"."+configType)
 	globalViper, err := readGlobalViper(configPath)
 	if err != nil {
@@ -768,7 +777,7 @@ func LoadGlobalSnapshotAt(home string) (*GlobalSnapshot, error) {
 	effective.Projects = slices.Clone(persisted.Projects)
 	effective.Workspaces = slices.Clone(persisted.Workspaces)
 	effective.RepositorySettings = slices.Clone(persisted.RepositorySettings)
-	if err := expandConfigPaths(&effective); err != nil {
+	if err := expandConfigPathsWith(&effective, expandPath); err != nil {
 		return nil, err
 	}
 
@@ -885,21 +894,31 @@ func cloneStringMap(source map[string]any) map[string]any {
 
 // expandConfigPaths expands all path fields in the configuration.
 func expandConfigPaths(cfg *models.Config) error {
-	expandedPath, err := utils.ExpandPath(cfg.Worktree.BaseDir)
+	return expandConfigPathsWith(cfg, utils.ExpandPath)
+}
+
+func expandConfigPathsWith(
+	cfg *models.Config,
+	expandPath func(string) (string, error),
+) error {
+	if expandPath == nil {
+		expandPath = utils.ExpandPath
+	}
+	expandedPath, err := expandPath(cfg.Worktree.BaseDir)
 	if err != nil {
 		return fmt.Errorf("failed to expand worktree base dir: %w", err)
 	}
 	cfg.Worktree.BaseDir = expandedPath
 
 	if cfg.Fleet.TokenFile != "" {
-		expandedPath, err = utils.ExpandPath(cfg.Fleet.TokenFile)
+		expandedPath, err = expandPath(cfg.Fleet.TokenFile)
 		if err != nil {
 			return fmt.Errorf("failed to expand fleet token file: %w", err)
 		}
 		cfg.Fleet.TokenFile = expandedPath
 	}
 	if cfg.Fleet.Hub.StorePath != "" {
-		expandedPath, err = utils.ExpandPath(cfg.Fleet.Hub.StorePath)
+		expandedPath, err = expandPath(cfg.Fleet.Hub.StorePath)
 		if err != nil {
 			return fmt.Errorf("failed to expand fleet hub store path: %w", err)
 		}
@@ -911,7 +930,7 @@ func expandConfigPaths(cfg *models.Config) error {
 		// Skip path expansion for glob patterns — ExpandPath would prepend
 		// the CWD to relative globs like "**/owner/repo", breaking matching.
 		if !strings.ContainsAny(repo, "*?[") {
-			expandedPath, err = utils.ExpandPath(repo)
+			expandedPath, err = expandPath(repo)
 			if err != nil {
 				return fmt.Errorf("failed to expand repository setting path: %w", err)
 			}
@@ -925,7 +944,7 @@ func expandConfigPaths(cfg *models.Config) error {
 		// BaseDir is a destination path (not compared against git-derived paths),
 		// so symlink resolution is not needed here.
 		if baseDir := cfg.RepositorySettings[i].BaseDir; baseDir != "" {
-			expanded, err := utils.ExpandPath(baseDir)
+			expanded, err := expandPath(baseDir)
 			if err != nil {
 				return fmt.Errorf("failed to expand repository basedir: %w", err)
 			}
@@ -937,7 +956,7 @@ func expandConfigPaths(cfg *models.Config) error {
 		if path == "" {
 			continue
 		}
-		expandedPath, err = utils.ExpandPath(path)
+		expandedPath, err = expandPath(path)
 		if err != nil {
 			return fmt.Errorf("failed to expand project path: %w", err)
 		}
@@ -951,7 +970,7 @@ func expandConfigPaths(cfg *models.Config) error {
 		if path == "" {
 			continue
 		}
-		expandedPath, err = utils.ExpandPath(path)
+		expandedPath, err = expandPath(path)
 		if err != nil {
 			return fmt.Errorf("failed to expand workspace path: %w", err)
 		}

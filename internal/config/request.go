@@ -28,6 +28,7 @@ type ResolveRequest struct {
 	Home             string
 	WorkingDirectory string
 	UntrustedPolicy  UntrustedPolicy
+	ExpandPath       func(string) (string, error)
 }
 
 type ConfigNote struct {
@@ -79,7 +80,7 @@ func ResolveWorkingDirectory(request ResolveRequest) (*ResolveResult, error) {
 	path := filepath.Join(workingDirectory, localConfigName+"."+configType)
 	if _, err := os.Lstat(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			config, loadErr := configFromViper(target, false, false)
+			config, loadErr := configFromViper(target, false, false, request.ExpandPath)
 			return &ResolveResult{Config: config}, loadErr
 		}
 		return nil, fmt.Errorf("stat repository config %s: %w", path, err)
@@ -88,7 +89,7 @@ func ResolveWorkingDirectory(request ResolveRequest) (*ResolveResult, error) {
 	normalizedPath, err := normalizeTargetConfigPath(path)
 	if err != nil {
 		if errors.Is(err, errUnsafeRepositoryConfig) {
-			config, loadErr := configFromViper(target, false, false)
+			config, loadErr := configFromViper(target, false, false, request.ExpandPath)
 			return &ResolveResult{
 				Config: config,
 				Notes:  []ConfigNote{{Code: "unsafe_config_skipped", Path: path}},
@@ -106,7 +107,7 @@ func ResolveWorkingDirectory(request ResolveRequest) (*ResolveResult, error) {
 	store, err := LoadTrustStore(trustStorePath)
 	if err != nil {
 		if request.UntrustedPolicy == IgnoreUntrusted {
-			config, loadErr := configFromViper(target, false, false)
+			config, loadErr := configFromViper(target, false, false, request.ExpandPath)
 			return &ResolveResult{
 				Config: config,
 				Notes: []ConfigNote{
@@ -119,7 +120,7 @@ func ResolveWorkingDirectory(request ResolveRequest) (*ResolveResult, error) {
 	}
 	if !store.IsTrusted(path, digest) {
 		if request.UntrustedPolicy == IgnoreUntrusted {
-			config, loadErr := configFromViper(target, false, false)
+			config, loadErr := configFromViper(target, false, false, request.ExpandPath)
 			return &ResolveResult{
 				Config: config,
 				Notes:  []ConfigNote{{Code: "untrusted_config_skipped", Path: path}},
@@ -150,7 +151,7 @@ func ResolveWorkingDirectory(request ResolveRequest) (*ResolveResult, error) {
 	localTemplate := local.IsSet("naming.template")
 	localSanitize := local.IsSet("naming.sanitize_chars")
 	mergeRequestLocal(target, local)
-	config, err := configFromViper(target, localTemplate, localSanitize)
+	config, err := configFromViper(target, localTemplate, localSanitize, request.ExpandPath)
 	return &ResolveResult{Config: config}, err
 }
 
@@ -210,7 +211,11 @@ func mergeRequestLocal(target, local *viper.Viper) {
 	}
 }
 
-func configFromViper(target *viper.Viper, localTemplate, localSanitize bool) (*models.Config, error) {
+func configFromViper(
+	target *viper.Viper,
+	localTemplate, localSanitize bool,
+	expandPath func(string) (string, error),
+) (*models.Config, error) {
 	var config models.Config
 	if err := target.Unmarshal(&config); err != nil {
 		return nil, fmt.Errorf("unmarshal request config: %w", err)
@@ -218,7 +223,7 @@ func configFromViper(target *viper.Viper, localTemplate, localSanitize bool) (*m
 	if err := validateDaemonConfig(config.Daemon); err != nil {
 		return nil, err
 	}
-	if err := expandConfigPaths(&config); err != nil {
+	if err := expandConfigPathsWith(&config, expandPath); err != nil {
 		return nil, err
 	}
 	config.Naming.TemplateRepositoryLocal = localTemplate

@@ -69,8 +69,13 @@ func NewVerifiedClient(
 }
 
 func (c *Client) Inventory(ctx context.Context, request publicworktree.Request) (publicworktree.Result, error) {
+	expansion, err := publicworktree.CaptureExpansionContext()
+	if err != nil {
+		return publicworktree.Result{}, err
+	}
+	request.Expansion = expansion
 	var result publicworktree.Result
-	err := c.doWith(
+	err = c.doWith(
 		ctx,
 		c.inventoryHTTP,
 		inventoryResponseLimit,

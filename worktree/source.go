@@ -39,7 +39,8 @@ func (s *currentSource) Load(ctx context.Context, request Request) (Result, erro
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	snapshot, err := config.LoadGlobalSnapshotAt(s.home)
+	expansion := request.Expansion
+	snapshot, err := config.LoadGlobalSnapshotAtWithExpansion(s.home, expansion.expandPath)
 	if err != nil {
 		return Result{}, err
 	}
@@ -55,7 +56,7 @@ func (s *currentSource) Load(ctx context.Context, request Request) (Result, erro
 		result.Snapshot.Projects = CanonicalProjects(snapshot.Config.Projects)
 		result.Snapshot.Entries, err = s.loadGlobal(snapshot.Config)
 	case ViewRepository:
-		result, err = s.loadRepository(ctx, request, snapshot.Config)
+		result, err = s.loadRepository(ctx, request, snapshot.Config, expansion.expandPath)
 	case ViewDashboard:
 		result.Snapshot.Projects = CanonicalProjects(snapshot.Config.Projects)
 		result.Snapshot.Entries, result.Snapshot.LaunchEntries, err =
@@ -82,6 +83,7 @@ func (s *currentSource) loadRepository(
 	ctx context.Context,
 	request Request,
 	global *models.Config,
+	expandPath func(string) (string, error),
 ) (Result, error) {
 	policy := config.RequireInteraction
 	if request.UntrustedConfig == IgnoreUntrustedConfig {
@@ -89,6 +91,7 @@ func (s *currentSource) loadRepository(
 	}
 	resolved, err := config.ResolveWorkingDirectory(config.ResolveRequest{
 		Home: s.home, WorkingDirectory: request.WorkingDirectory, UntrustedPolicy: policy,
+		ExpandPath: expandPath,
 	})
 	if err != nil {
 		var trust *config.TrustRequiredError

@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 type testStatusProvider struct{ status Status }
@@ -92,6 +93,40 @@ func TestServerRejectsBrowserOriginAndOversizedBodies(t *testing.T) {
 	var problem Problem
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&problem))
 	assert.Equal(t, "invalid_request", problem.Code)
+}
+
+func TestServerDefaultBodyLimitAccommodatesClientExpansionContext(t *testing.T) {
+	provider := &testStatusProvider{status: Status{State: StateReady}}
+	handler := NewServer(ServerOptions{
+		Token:        "secret",
+		ExpectedHost: "127.0.0.1:43210",
+		Status:       provider,
+		Inventory:    &fakeInventory{},
+		Gate:         NewGate(time.Now()),
+	})
+	body, err := json.Marshal(publicworktree.Request{
+		View: publicworktree.ViewProjects,
+		Expansion: publicworktree.ExpansionContext{
+			WorkingDirectory: "/workspace",
+			HomeDirectory:    "/home/user",
+			Environment:      map[string]string{"LARGE_PATH_CONTEXT": strings.Repeat("x", 100<<10)},
+		},
+		UntrustedConfig: publicworktree.IgnoreUntrustedConfig,
+	})
+	require.NoError(t, err)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1:43210/api/v1/inventory",
+		strings.NewReader(string(body)),
+	)
+	request.Host = "127.0.0.1:43210"
+	request.Header.Set("Authorization", "Bearer secret")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
 }
 
 func TestServerPublishesOpenAPIWithoutAuthentication(t *testing.T) {

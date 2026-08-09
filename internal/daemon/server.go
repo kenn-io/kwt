@@ -46,12 +46,14 @@ type configApprovalOutput struct {
 	}
 }
 
+const defaultMaxBodyBytes = 1 << 20
+
 func NewServer(opts ServerOptions) http.Handler {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
 	if opts.MaxBodyBytes <= 0 {
-		opts.MaxBodyBytes = 64 << 10
+		opts.MaxBodyBytes = defaultMaxBodyBytes
 	}
 	mux := http.NewServeMux()
 	config := huma.DefaultConfig("kwt daemon API", APISchemaVersion)
