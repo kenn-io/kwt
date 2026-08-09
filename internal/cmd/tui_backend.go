@@ -67,7 +67,7 @@ func newTUIBackend(cfg *models.Config) *tuiBackend {
 func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBackend {
 	protectedNames := credentials.ProtectedNames(cfg)
 	tmuxCmd := tmux.NewTmuxCommandWithStripNames("", protectedNames)
-	return &tuiBackend{
+	backend := &tuiBackend{
 		cfg:            cfg,
 		tmux:           tmuxCmd,
 		protectedNames: protectedNames,
@@ -90,10 +90,13 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 		registerWorkspace:       config.RegisterWorkspace,
 		unregisterWorkspace:     config.UnregisterWorkspace,
 		readFleetState:          readTUIFleetState,
-		loadTargetConfig:        config.LoadForTarget,
 		acknowledgeRemoteSource: acknowledgeRemoteSourcePath,
 		now:                     time.Now,
 	}
+	backend.loadTargetConfig = func(repoRoot string, interactive bool) (*models.Config, error) {
+		return config.LoadForTargetFrom(backend.cfg, repoRoot, interactive)
+	}
+	return backend
 }
 
 func (b *tuiBackend) ListFast(ctx context.Context) ([]dashboard.Row, []string, error) {

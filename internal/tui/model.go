@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -183,7 +184,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case fastRowsMsg:
 		return m.applyFastRows(msg)
 	case rowsMsg:
-		return m.applyRows(msg)
+		return m.applyRows(msg, true)
 	case fleetRowsMsg:
 		return m.applyFleetRows(msg)
 	case actionDoneMsg:
@@ -261,7 +262,7 @@ func (m Model) applyFastRows(msg fastRowsMsg) (Model, tea.Cmd) {
 		rows:     carryEnrichment(msg.rows, m.rows),
 		warnings: msg.warnings,
 		err:      msg.err,
-	})
+	}, false)
 	if !hadRows && initialAnchor != "" {
 		_, exact := identityRowIndex(next.rows, initialAnchor)
 		_, contained := containingRowIndex(next.rows, initialAnchor)
@@ -399,12 +400,18 @@ func entryCommit(row Row) string {
 	return row.Entry.CommitHash
 }
 
-func (m Model) applyRows(msg rowsMsg) (Model, tea.Cmd) {
+func (m Model) applyRows(msg rowsMsg, refreshLayouts bool) (Model, tea.Cmd) {
 	m.fetching = false
 	if msg.err != nil {
 		m.err = msg.err
 		m.stickyError = false
 		return m.startPendingRefresh()
+	}
+	if refreshLayouts {
+		m.layouts = m.backend.LayoutNames()
+		if m.selectedLayout != "" && !slices.Contains(m.layouts, m.selectedLayout) {
+			m.selectedLayout = ""
+		}
 	}
 	m.warnings = msg.warnings
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 	worktreetemplate "go.kenn.io/kwt/internal/template"
 	repositoryurl "go.kenn.io/kwt/internal/url"
@@ -468,8 +469,35 @@ func LoadRepoLayoutDefault(repoRoot string, interactive bool) (string, error) {
 // repository's trust-gated local configuration. It never consults the
 // caller's working directory and does not prompt when interactive is false.
 func LoadForTarget(repoRoot string, interactive bool) (*models.Config, error) {
+	return loadForTarget(viper.AllSettings(), repoRoot, interactive)
+}
+
+// LoadForTargetFrom returns the provided effective configuration merged with
+// the selected repository's trust-gated local configuration. Long-lived
+// clients use it after refreshing global configuration outside the process-
+// global Viper instance.
+func LoadForTargetFrom(
+	base *models.Config,
+	repoRoot string,
+	interactive bool,
+) (*models.Config, error) {
+	if base == nil {
+		return nil, fmt.Errorf("base configuration is required")
+	}
+	settings := make(map[string]any)
+	if err := mapstructure.Decode(base, &settings); err != nil {
+		return nil, fmt.Errorf("encode base config: %w", err)
+	}
+	return loadForTarget(settings, repoRoot, interactive)
+}
+
+func loadForTarget(
+	settings map[string]any,
+	repoRoot string,
+	interactive bool,
+) (*models.Config, error) {
 	target := viper.New()
-	if err := target.MergeConfigMap(viper.AllSettings()); err != nil {
+	if err := target.MergeConfigMap(settings); err != nil {
 		return nil, fmt.Errorf("copy global config: %w", err)
 	}
 	repositoryLocalTemplate := false

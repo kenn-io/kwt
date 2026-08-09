@@ -200,6 +200,34 @@ func TestSourcePropagatesRepositoryInventoryErrors(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestSourceRecognizesRepositoryThroughSymlinkedSubdirectory(t *testing.T) {
+	repository := filepath.Join(t.TempDir(), "repository")
+	for _, args := range [][]string{
+		{"init", "-b", "main", repository},
+		{"-C", repository, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial"},
+	} {
+		command := exec.Command("git", args...)
+		require.NoError(t, command.Run())
+	}
+	subdirectory := filepath.Join(repository, "nested", "directory")
+	require.NoError(t, os.MkdirAll(subdirectory, 0o755))
+	linkedDirectory := filepath.Join(t.TempDir(), "linked-directory")
+	if err := os.Symlink(subdirectory, linkedDirectory); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	result, err := NewSource(SourceOptions{Home: t.TempDir()}).Load(context.Background(), Request{
+		View: ViewRepository, WorkingDirectory: linkedDirectory,
+		UntrustedConfig: IgnoreUntrustedConfig, Expansion: testExpansion(t),
+	})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Snapshot.Entries)
+	canonicalRepository, err := filepath.EvalSymlinks(repository)
+	require.NoError(t, err)
+	assert.Equal(t, canonicalRepository, result.Snapshot.Entries[0].Path)
+}
+
 func TestSourceReadsProvenanceOnlyWhenRequested(t *testing.T) {
 	home := t.TempDir()
 	baseDirectory := t.TempDir()

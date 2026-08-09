@@ -3,14 +3,69 @@ package cmd
 import (
 	"context"
 	"io"
+	"path/filepath"
 	"testing"
 
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/pkg/models"
 	publicworktree "go.kenn.io/kwt/worktree"
 )
+
+func TestTUIBackendMutationUsesLatestDaemonConfiguration(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	require.NoError(t, config.Init())
+	staleBase := filepath.Join(t.TempDir(), "stale")
+	viper.Set("worktree.basedir", staleBase)
+	viper.Set("worktree.auto_mkdir", true)
+	viper.Set("naming.template", "{{.Branch}}")
+	viper.Set("naming.sanitize_chars", map[string]string{"/": "-"})
+
+	repository := newTUITestRepo(t)
+	runTUITestGit(t, repository, "remote", "add", "origin", "https://github.com/acme/widget.git")
+	currentBase := filepath.Join(t.TempDir(), "current")
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error) {
+		return map[string]*models.WorktreeStatus{}, nil
+	}
+	backend.queryInventory = func(
+		context.Context,
+		publicworktree.Request,
+		bool,
+		io.Writer,
+	) (publicworktree.Result, error) {
+		return publicworktree.Result{
+			Freshness: publicworktree.Fresh,
+			Snapshot: publicworktree.Snapshot{
+				Config: &models.Config{
+					Worktree: models.WorktreeConfig{BaseDir: currentBase, AutoMkdir: true},
+					Naming: models.NamingConfig{
+						Template: "{{.Branch}}", SanitizeChars: map[string]string{"/": "-"},
+					},
+				},
+				Entries: []publicworktree.Entry{{
+					Path: repository, Branch: "main", IsMain: true,
+					Repository: publicworktree.Repository{FullPath: "github.com/acme/widget", Name: "widget"},
+				}},
+			},
+		}, nil
+	}
+
+	rows, _, err := backend.List(context.Background())
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	planned, err := backend.PreviewWorktree(rows[0], "feature/refreshed")
+
+	require.NoError(t, err)
+	assert.True(t, filepath.IsAbs(planned.Entry.Path))
+	assert.Equal(t, filepath.Join(currentBase, "feature-refreshed"), planned.Entry.Path)
+}
 
 func TestTUIBackendDaemonInventoryUsesCacheThenCurrent(t *testing.T) {
 	cfg := &models.Config{

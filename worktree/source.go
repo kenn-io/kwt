@@ -161,7 +161,11 @@ func (s *currentSource) loadRepository(
 		}, Notes: publicNotes(resolved.Notes)}, loadErr
 	}
 
-	isRepository, err := hasGitMarker(request.WorkingDirectory)
+	workingDirectory, err := filepath.EvalSymlinks(request.WorkingDirectory)
+	if err != nil {
+		return Result{}, fmt.Errorf("resolve repository path: %w", err)
+	}
+	isRepository, err := hasGitMarker(workingDirectory)
 	if err != nil {
 		return Result{}, err
 	}
@@ -177,7 +181,7 @@ func (s *currentSource) loadRepository(
 		}, Notes: publicNotes(resolved.Notes)}, loadErr
 	}
 
-	g := git.NewWithContext(ctx, request.WorkingDirectory)
+	g := git.NewWithContext(ctx, workingDirectory)
 	worktrees, listErr := g.ListWorktrees()
 	if listErr != nil {
 		return Result{}, listErr

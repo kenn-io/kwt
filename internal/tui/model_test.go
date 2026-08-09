@@ -537,6 +537,20 @@ func TestModelCyclesLayoutSelection(t *testing.T) {
 	assert.Equal(t, footerLine, lineIndexContaining(strings.Split(stripANSI(viewContent(model)), "\n"), "q quit"))
 }
 
+func TestModelRefreshesLayoutsAfterCurrentInventoryLoad(t *testing.T) {
+	backend := &fakeBackend{layoutNames: []string{"quad"}}
+	model := NewModel(backend, "/worktrees")
+	model.selectedLayout = "quad"
+	backend.layoutNames = []string{"focus"}
+
+	model, _ = updateModel(t, model, rowsMsg{
+		rows: []Row{testRow("kwt", "main", "/w/kwt/main")},
+	})
+
+	assert.Equal(t, []string{"focus"}, model.layouts)
+	assert.Empty(t, model.selectedLayout)
+}
+
 func TestModelCursorFilterAndEscape(t *testing.T) {
 	model := NewModel(&fakeBackend{}, "/worktrees")
 	model, _ = updateModel(t, model, rowsMsg{rows: []Row{

@@ -1896,6 +1896,38 @@ func TestLoadForTargetMergesTrustedRepositorySettings(t *testing.T) {
 	assert.Equal(t, []string{"echo trusted"}, cfg.RepositorySettings[0].SetupCommands)
 }
 
+func TestLoadForTargetFromMergesLocalConfigOverProvidedSnapshot(t *testing.T) {
+	kwtHome := t.TempDir()
+	t.Setenv("KWT_HOME", kwtHome)
+	target := t.TempDir()
+	localPath := filepath.Join(target, ".kwt.toml")
+	targetWorktrees := filepath.Join(target, "target-worktrees")
+	local := []byte("[worktree]\nbasedir = '" + targetWorktrees + "'\n[fleet]\ntoken_env = 'ATTACKER_TOKEN'\n[[repository_settings]]\nrepository = '" + target + "'\nsetup_commands = ['echo trusted']\n")
+	require.NoError(t, os.WriteFile(localPath, local, 0o600))
+	absPath, err := normalizeConfigPath(localPath)
+	require.NoError(t, err)
+	store := &TrustStore{path: defaultTrustStorePath()}
+	require.NoError(t, store.Add(absPath, computeSHA256(local)))
+	provided := &models.Config{
+		Worktree: models.WorktreeConfig{BaseDir: filepath.Join(t.TempDir(), "refreshed-worktrees"), AutoMkdir: true},
+		Fleet:    models.FleetConfig{TokenEnv: "REFRESHED_FLEET_TOKEN"},
+		Naming: models.NamingConfig{
+			Template:      "{{.Branch}}",
+			SanitizeChars: map[string]string{"/": "-"},
+		},
+	}
+
+	cfg, err := LoadForTargetFrom(provided, target, false)
+
+	require.NoError(t, err)
+	assert.Equal(t, targetWorktrees, cfg.Worktree.BaseDir)
+	assert.True(t, cfg.Worktree.AutoMkdir)
+	assert.Equal(t, "REFRESHED_FLEET_TOKEN", cfg.Fleet.TokenEnv)
+	assert.Equal(t, "{{.Branch}}", cfg.Naming.Template)
+	require.Len(t, cfg.RepositorySettings, 1)
+	assert.Equal(t, []string{"echo trusted"}, cfg.RepositorySettings[0].SetupCommands)
+}
+
 func TestLoadForTargetResolvesRelativePathsAgainstSelectedRepository(t *testing.T) {
 	kwtHome := t.TempDir()
 	t.Setenv("KWT_HOME", kwtHome)
