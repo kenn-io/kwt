@@ -8,7 +8,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.5
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/danielgtaylor/huma/v2 v2.39.1
-	github.com/go-viper/mapstructure/v2 v2.4.0
+	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/gofrs/flock v0.13.0
 	github.com/google/go-github/v90 v90.0.0
 	github.com/ktr0731/go-fuzzyfinder v0.9.0
