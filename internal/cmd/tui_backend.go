@@ -217,23 +217,22 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 	if err != nil {
 		return nil, nil, err
 	}
-	b.cfg.Projects = append([]models.Project(nil), result.Snapshot.Projects...)
-	b.cfg.Workspaces = append([]models.Workspace(nil), result.Snapshot.Workspaces...)
-	if result.Freshness == publicworktree.Fresh {
-		launchEntries := make([]*discovery.GlobalWorktreeEntry, 0, len(result.Snapshot.LaunchEntries))
-		for _, entry := range result.Snapshot.LaunchEntries {
-			launchEntries = append(launchEntries, dashboardInventoryEntry(entry))
-		}
-		b.registerLaunchProject(launchEntries)
-		b.registerLaunchWorkspace(launchEntries)
-	}
-
 	var statusByPath map[string]*models.WorktreeStatus
 	if includeStatuses {
 		statusByPath, err = b.collectStatuses(ctx, b.cfg.Worktree.BaseDir, entries)
 		if err != nil {
 			return nil, nil, err
 		}
+	}
+	if includeStatuses && result.Freshness == publicworktree.Fresh {
+		b.cfg.Projects = append([]models.Project(nil), result.Snapshot.Projects...)
+		b.cfg.Workspaces = append([]models.Workspace(nil), result.Snapshot.Workspaces...)
+		launchEntries := make([]*discovery.GlobalWorktreeEntry, 0, len(result.Snapshot.LaunchEntries))
+		for _, entry := range result.Snapshot.LaunchEntries {
+			launchEntries = append(launchEntries, dashboardInventoryEntry(entry))
+		}
+		b.registerLaunchProject(launchEntries)
+		b.registerLaunchWorkspace(launchEntries)
 	}
 	liveSessions := make(map[string]bool, len(sessions))
 	for _, session := range sessions {
@@ -247,7 +246,7 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 		}
 		rows = append(rows, buildTUIRow(entry, status, liveSessions))
 	}
-	rows = append(rows, b.workspaceRows(sessions)...)
+	rows = append(rows, workspaceRows(result.Snapshot.Workspaces, sessions)...)
 	return rows, nil, nil
 }
 
@@ -455,8 +454,12 @@ func (b *tuiBackend) workspaceRows(sessions []string) []dashboard.Row {
 	if b.cfg == nil || len(b.cfg.Workspaces) == 0 {
 		return nil
 	}
-	rows := make([]dashboard.Row, 0, len(b.cfg.Workspaces))
-	for _, record := range directoryWorkspaceRecords(b.cfg.Workspaces, sessions) {
+	return workspaceRows(b.cfg.Workspaces, sessions)
+}
+
+func workspaceRows(workspaces []models.Workspace, sessions []string) []dashboard.Row {
+	rows := make([]dashboard.Row, 0, len(workspaces))
+	for _, record := range directoryWorkspaceRecords(workspaces, sessions) {
 		rows = append(rows, dashboard.Row{
 			Workspace: &dashboard.WorkspaceInfo{
 				Name: record.Name,

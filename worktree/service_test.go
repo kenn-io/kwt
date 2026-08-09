@@ -64,6 +64,14 @@ func (s *testSource) Load(ctx context.Context, _ Request) (Result, error) {
 
 func (*testSource) ApproveConfig(context.Context, ConfigApproval) error { return nil }
 
+type sourceFunc func(context.Context, Request) (Result, error)
+
+func (f sourceFunc) Load(ctx context.Context, request Request) (Result, error) {
+	return f(ctx, request)
+}
+
+func (sourceFunc) ApproveConfig(context.Context, ConfigApproval) error { return nil }
+
 func TestServiceCachedDashboardReportsRefreshState(t *testing.T) {
 	cache := &testCache{ok: true, result: Result{Snapshot: Snapshot{Entries: []Entry{{Path: "/old"}}}}}
 	source := &testSource{started: make(chan struct{}), release: make(chan struct{})}
@@ -140,4 +148,92 @@ func TestServiceFreshDashboardSurvivesCacheWriteFailure(t *testing.T) {
 	assert.Equal(t, "/new", result.Snapshot.Entries[0].Path)
 	require.NotNil(t, result.RefreshError)
 	assert.Contains(t, result.RefreshError.Message, cacheErr.Error())
+}
+
+func TestServiceNewestDashboardRefreshOwnsSharedCache(t *testing.T) {
+	oldStarted, oldRelease := make(chan struct{}), make(chan struct{})
+	newStarted, newRelease := make(chan struct{}), make(chan struct{})
+	source := sourceFunc(func(ctx context.Context, request Request) (Result, error) {
+		started, release, path := oldStarted, oldRelease, "/old"
+		if request.LaunchDirectory == "/new" {
+			started, release, path = newStarted, newRelease, "/new"
+		}
+		close(started)
+		select {
+		case <-ctx.Done():
+			return Result{}, ctx.Err()
+		case <-release:
+			return Result{Snapshot: Snapshot{Entries: []Entry{{Path: path}}}}, nil
+		}
+	})
+	cache := &testCache{}
+	service := NewInventoryService(ServiceOptions{Source: source, Cache: cache})
+	oldDone, newDone := make(chan error, 1), make(chan error, 1)
+	go func() {
+		_, err := service.Query(context.Background(), Request{
+			View: ViewDashboard, LaunchDirectory: "/old", RequireCurrent: true,
+		})
+		oldDone <- err
+	}()
+	<-oldStarted
+	go func() {
+		_, err := service.Query(context.Background(), Request{
+			View: ViewDashboard, LaunchDirectory: "/new", RequireCurrent: true,
+		})
+		newDone <- err
+	}()
+	<-newStarted
+
+	close(newRelease)
+	require.NoError(t, <-newDone)
+	close(oldRelease)
+	require.NoError(t, <-oldDone)
+	cached, ok := cache.Current()
+	require.True(t, ok)
+	require.Len(t, cached.Snapshot.Entries, 1)
+	assert.Equal(t, "/new", cached.Snapshot.Entries[0].Path)
+}
+
+func TestServiceReportsRefreshingUntilEveryDashboardRefreshFinishes(t *testing.T) {
+	oneStarted, oneRelease := make(chan struct{}), make(chan struct{})
+	twoStarted, twoRelease := make(chan struct{}), make(chan struct{})
+	source := sourceFunc(func(ctx context.Context, request Request) (Result, error) {
+		started, release := oneStarted, oneRelease
+		if request.LaunchDirectory == "/two" {
+			started, release = twoStarted, twoRelease
+		}
+		close(started)
+		select {
+		case <-ctx.Done():
+			return Result{}, ctx.Err()
+		case <-release:
+			return Result{}, nil
+		}
+	})
+	cache := &testCache{ok: true, result: Result{Snapshot: Snapshot{Entries: []Entry{{Path: "/cached"}}}}}
+	service := NewInventoryService(ServiceOptions{Source: source, Cache: cache})
+	oneDone, twoDone := make(chan error, 1), make(chan error, 1)
+	go func() {
+		_, err := service.Query(context.Background(), Request{
+			View: ViewDashboard, LaunchDirectory: "/one", RequireCurrent: true,
+		})
+		oneDone <- err
+	}()
+	<-oneStarted
+	go func() {
+		_, err := service.Query(context.Background(), Request{
+			View: ViewDashboard, LaunchDirectory: "/two", RequireCurrent: true,
+		})
+		twoDone <- err
+	}()
+	<-twoStarted
+
+	close(twoRelease)
+	require.NoError(t, <-twoDone)
+	cached, err := service.Query(context.Background(), Request{View: ViewDashboard})
+	require.NoError(t, err)
+	assert.Equal(t, Refreshing, cached.Freshness)
+
+	close(oneRelease)
+	require.NoError(t, <-oneDone)
 }

@@ -569,10 +569,15 @@ func normalizeTargetConfigPath(path string) (string, error) {
 		return "", fmt.Errorf("stat %s: %w", lexicalPath, err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("%s is a symlink", lexicalPath)
+		return "", fmt.Errorf("%w: %s is a symlink", errUnsafeRepositoryConfig, lexicalPath)
 	}
 	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("%s is not a regular file (mode %s)", lexicalPath, info.Mode())
+		return "", fmt.Errorf(
+			"%w: %s is not a regular file (mode %s)",
+			errUnsafeRepositoryConfig,
+			lexicalPath,
+			info.Mode(),
+		)
 	}
 	return lexicalPath, nil
 }

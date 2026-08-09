@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -72,6 +73,55 @@ func TestResolveWorkingDirectoryIgnoresUntrustedForOneRequest(t *testing.T) {
 	})
 	var required *TrustRequiredError
 	assert.ErrorAs(t, err, &required)
+}
+
+func TestResolveWorkingDirectorySkipsUnsafeLocalConfig(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*testing.T, string)
+	}{
+		{
+			name: "directory",
+			setup: func(t *testing.T, path string) {
+				require.NoError(t, os.Mkdir(path, 0o700))
+			},
+		},
+		{
+			name: "symlink",
+			setup: func(t *testing.T, path string) {
+				if runtime.GOOS == "windows" {
+					t.Skip("symlink creation requires privileges on Windows")
+				}
+				target := filepath.Join(t.TempDir(), "target.toml")
+				require.NoError(t, os.WriteFile(target, []byte("[naming]\ntemplate = 'unsafe'\n"), 0o600))
+				require.NoError(t, os.Symlink(target, path))
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			home, repo := t.TempDir(), t.TempDir()
+			require.NoError(t, os.WriteFile(
+				filepath.Join(home, "config.toml"),
+				[]byte("[naming]\ntemplate = 'global/{{.Branch}}'\n"),
+				0o600,
+			))
+			path := filepath.Join(repo, ".kwt.toml")
+			test.setup(t, path)
+			canonicalRepo, err := filepath.EvalSymlinks(repo)
+			require.NoError(t, err)
+
+			result, err := ResolveWorkingDirectory(ResolveRequest{
+				Home: home, WorkingDirectory: repo, UntrustedPolicy: RequireInteraction,
+			})
+
+			require.NoError(t, err)
+			assert.Equal(t, "global/{{.Branch}}", result.Config.Naming.Template)
+			assert.Equal(t, []ConfigNote{{
+				Code: "unsafe_config_skipped", Path: filepath.Join(canonicalRepo, ".kwt.toml"),
+			}}, result.Notes)
+		})
+	}
 }
 
 func TestApproveWorkingDirectoryRevalidatesDigest(t *testing.T) {

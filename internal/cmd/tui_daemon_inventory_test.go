@@ -13,9 +13,12 @@ import (
 )
 
 func TestTUIBackendDaemonInventoryUsesCacheThenCurrent(t *testing.T) {
-	backend := newTUIBackendWithLaunchDir(&models.Config{
-		Worktree: models.WorktreeConfig{BaseDir: t.TempDir()},
-	}, "/launch")
+	cfg := &models.Config{
+		Worktree:   models.WorktreeConfig{BaseDir: t.TempDir()},
+		Projects:   []models.Project{{Repository: "github.com/acme/live", Name: "live", Path: "/live"}},
+		Workspaces: []models.Workspace{{Name: "live", Path: "/live/workspace"}},
+	}
+	backend := newTUIBackendWithLaunchDir(cfg, "/launch")
 	backend.listSessions = func() ([]string, error) { return nil, nil }
 	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error) {
 		return map[string]*models.WorktreeStatus{}, nil
@@ -31,20 +34,38 @@ func TestTUIBackendDaemonInventoryUsesCacheThenCurrent(t *testing.T) {
 	) (publicworktree.Result, error) {
 		requests = append(requests, request)
 		path := "/cached"
+		project := models.Project{Repository: "github.com/acme/cached", Name: "cached", Path: "/cached"}
+		workspace := models.Workspace{Name: "cached", Path: "/cached/workspace"}
+		freshness := publicworktree.Stale
 		if request.RequireCurrent {
 			path = "/fresh"
+			project = models.Project{Repository: "github.com/acme/fresh", Name: "fresh", Path: "/fresh"}
+			workspace = models.Workspace{Name: "fresh", Path: "/fresh/workspace"}
+			freshness = publicworktree.Fresh
 		}
-		return publicworktree.Result{Snapshot: publicworktree.Snapshot{Entries: []publicworktree.Entry{{
-			Path: path, Branch: "main", Repository: publicworktree.Repository{FullPath: "github.com/acme/repo", Name: "repo"},
-		}}}}, nil
+		return publicworktree.Result{
+			Freshness: freshness,
+			Snapshot: publicworktree.Snapshot{
+				Projects: []models.Project{project},
+				Entries: []publicworktree.Entry{{
+					Path: path, Branch: "main", Repository: publicworktree.Repository{FullPath: "github.com/acme/repo", Name: "repo"},
+				}},
+				Workspaces: []models.Workspace{workspace},
+			},
+		}, nil
 	}
 
 	fast, _, err := backend.ListFast(context.Background())
 	require.NoError(t, err)
+	assert.Equal(t, "/live", cfg.Projects[0].Path)
+	assert.Equal(t, "/live/workspace", cfg.Workspaces[0].Path)
+	assert.Equal(t, "/cached/workspace", fast[1].Workspace.Path)
 	current, _, err := backend.List(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, "/cached", fast[0].Entry.Path)
 	assert.Equal(t, "/fresh", current[0].Entry.Path)
+	assert.Equal(t, "/fresh", cfg.Projects[0].Path)
+	assert.Equal(t, "/fresh/workspace", cfg.Workspaces[0].Path)
 	require.Len(t, requests, 2)
 	assert.False(t, requests[0].RequireCurrent)
 	assert.True(t, requests[1].RequireCurrent)

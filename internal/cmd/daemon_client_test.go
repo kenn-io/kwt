@@ -18,6 +18,14 @@ func TestWriteConfigNotesPreservesNoninteractiveWarning(t *testing.T) {
 	assert.Equal(t, "kwt: skipping untrusted local config /repo/.kwt.toml (non-interactive session)\n", stderr.String())
 }
 
+func TestWriteConfigNotesWarnsWhenUnsafeLocalConfigIsSkipped(t *testing.T) {
+	var stderr bytes.Buffer
+	writeConfigNotes(&stderr, []publicworktree.Note{{
+		Code: "unsafe_config_skipped", Path: "/repo/.kwt.toml",
+	}}, false, false)
+	assert.Equal(t, "kwt: skipping unsafe local config /repo/.kwt.toml\n", stderr.String())
+}
+
 func TestTrustRequirementDecodesHTTPDetailTypes(t *testing.T) {
 	err := service.NewError(service.InteractionRequired, "trust", false, map[string]any{
 		"kind": "repository_config_trust", "path": "/repo/.kwt.toml",

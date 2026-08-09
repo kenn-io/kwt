@@ -22,6 +22,8 @@ const (
 
 var ErrConfigChanged = errors.New("repository config changed")
 
+var errUnsafeRepositoryConfig = errors.New("unsafe repository config")
+
 type ResolveRequest struct {
 	Home             string
 	WorkingDirectory string
@@ -83,10 +85,18 @@ func ResolveWorkingDirectory(request ResolveRequest) (*ResolveResult, error) {
 		return nil, fmt.Errorf("stat repository config %s: %w", path, err)
 	}
 
-	path, err = normalizeTargetConfigPath(path)
+	normalizedPath, err := normalizeTargetConfigPath(path)
 	if err != nil {
+		if errors.Is(err, errUnsafeRepositoryConfig) {
+			config, loadErr := configFromViper(target, false, false)
+			return &ResolveResult{
+				Config: config,
+				Notes:  []ConfigNote{{Code: "unsafe_config_skipped", Path: path}},
+			}, loadErr
+		}
 		return nil, err
 	}
+	path = normalizedPath
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read repository config %s: %w", path, err)

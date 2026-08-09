@@ -98,6 +98,7 @@ type Model struct {
 	inputMode           inputMode
 	confirm             confirmState
 	fetching            bool
+	inventoryCurrent    bool
 	fleetPending        bool
 	fleetCancel         context.CancelFunc
 	loadSeq             int
@@ -259,6 +260,7 @@ func (m Model) applyFastRows(msg fastRowsMsg) (Model, tea.Cmd) {
 		warnings: msg.warnings,
 		err:      msg.err,
 	})
+	next.inventoryCurrent = false
 	next = next.cancelFleetMerge()
 	next.fleetPending = false
 	if msg.err != nil {
@@ -404,6 +406,7 @@ func (m Model) applyRows(msg rowsMsg) (Model, tea.Cmd) {
 	rows = mergeCreatingRows(rows, m.rows, m.creating)
 	sortRows(rows)
 	m.rows = rows
+	m.inventoryCurrent = true
 	if !hadRows && m.anchorPath != "" {
 		m.projectPerspective = launchPerspective(rows, m.anchorPath)
 	}
@@ -549,6 +552,7 @@ func (m Model) startPendingRefresh() (Model, tea.Cmd) {
 func (m Model) startFetch() (Model, tea.Cmd) {
 	m.loadSeq++
 	m.fetching = true
+	m.inventoryCurrent = false
 	m.fleetPending = false
 	m = m.cancelFleetMerge()
 	return m, m.fetchFastRowsCmd()
@@ -652,6 +656,16 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 	if m.inputMode != inputNone {
 		return m.handleInputKey(msg)
+	}
+	if !m.inventoryCurrent && (key.Matches(msg, m.keys.Open) ||
+		key.Matches(msg, m.keys.New) ||
+		key.Matches(msg, m.keys.Existing) ||
+		key.Matches(msg, m.keys.Delete) ||
+		key.Matches(msg, m.keys.Sync) ||
+		key.Matches(msg, m.keys.Shell) ||
+		key.Matches(msg, m.keys.Kill)) {
+		m.message = "inventory is refreshing; wait for current results"
+		return m, nil
 	}
 
 	switch {

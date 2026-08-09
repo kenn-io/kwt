@@ -16,13 +16,15 @@ type ServiceOptions struct {
 }
 
 type Service struct {
-	source Source
-	cache  Cache
-	now    func() time.Time
-	group  singleflight.Group
-	mu     sync.RWMutex
-	active bool
-	last   *Diagnostic
+	source              Source
+	cache               Cache
+	now                 func() time.Time
+	group               singleflight.Group
+	publishMu           sync.Mutex
+	mu                  sync.RWMutex
+	active              int
+	dashboardGeneration uint64
+	last                *Diagnostic
 }
 
 func NewInventoryService(options ServiceOptions) *Service {
@@ -36,7 +38,7 @@ func (s *Service) Query(ctx context.Context, request Request) (Result, error) {
 	if request.View == ViewDashboard && !request.RequireCurrent {
 		if cached, ok := s.cache.Current(); ok {
 			s.mu.RLock()
-			if s.active {
+			if s.active > 0 {
 				cached.Freshness = Refreshing
 			} else {
 				cached.Freshness = Stale
@@ -48,40 +50,74 @@ func (s *Service) Query(ctx context.Context, request Request) (Result, error) {
 	}
 	encoded, _ := json.Marshal(request)
 	value, err, _ := s.group.Do(string(encoded), func() (any, error) {
+		var generation uint64
 		if request.View == ViewDashboard {
 			s.mu.Lock()
-			s.active = true
+			s.active++
+			s.dashboardGeneration++
+			generation = s.dashboardGeneration
 			s.mu.Unlock()
 			defer func() {
 				s.mu.Lock()
-				s.active = false
+				s.active--
 				s.mu.Unlock()
 			}()
 		}
 		result, loadErr := s.source.Load(ctx, request)
 		if loadErr != nil {
-			s.mu.Lock()
-			s.last = &Diagnostic{At: s.now(), Message: boundedDiagnostic(loadErr)}
-			s.mu.Unlock()
+			if request.View == ViewDashboard {
+				s.setDashboardDiagnostic(generation, &Diagnostic{
+					At: s.now(), Message: boundedDiagnostic(loadErr),
+				})
+			}
 			return Result{}, loadErr
 		}
 		result.Freshness = Fresh
 		result.ObservedAt = s.now()
 		result.RefreshError = nil
 		if request.View == ViewDashboard {
-			if storeErr := s.cache.Store(result); storeErr != nil {
-				result.RefreshError = &Diagnostic{At: s.now(), Message: boundedDiagnostic(storeErr)}
-			}
+			result.RefreshError = s.publishDashboard(generation, result)
 		}
-		s.mu.Lock()
-		s.last = cloneDiagnostic(result.RefreshError)
-		s.mu.Unlock()
 		return cloneResult(result), nil
 	})
 	if err != nil {
 		return Result{}, err
 	}
 	return cloneResult(value.(Result)), nil
+}
+
+func (s *Service) publishDashboard(generation uint64, result Result) *Diagnostic {
+	s.publishMu.Lock()
+	defer s.publishMu.Unlock()
+	if !s.isLatestDashboard(generation) {
+		return nil
+	}
+	var diagnostic *Diagnostic
+	if err := s.cache.Store(result); err != nil {
+		diagnostic = &Diagnostic{At: s.now(), Message: boundedDiagnostic(err)}
+	}
+	s.mu.Lock()
+	if generation == s.dashboardGeneration {
+		s.last = cloneDiagnostic(diagnostic)
+	}
+	s.mu.Unlock()
+	return diagnostic
+}
+
+func (s *Service) setDashboardDiagnostic(generation uint64, diagnostic *Diagnostic) {
+	s.publishMu.Lock()
+	defer s.publishMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if generation == s.dashboardGeneration {
+		s.last = cloneDiagnostic(diagnostic)
+	}
+}
+
+func (s *Service) isLatestDashboard(generation uint64) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return generation == s.dashboardGeneration
 }
 
 func (s *Service) ApproveConfig(ctx context.Context, approval ConfigApproval) error {
