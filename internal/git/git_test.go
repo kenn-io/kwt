@@ -1040,6 +1040,39 @@ func TestRemoveWorktreeTransactionDeletesObservedBranch(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestRemoveWorktreeTransactionAfterClaimHoldsMutationLock(t *testing.T) {
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "transaction-claim")
+	worktreePath := filepath.Join(t.TempDir(), "transaction-claim")
+	repo.CreateWorktree(t, worktreePath, "transaction-claim")
+	g := New(repo.Path)
+	generation, err := g.WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	competing := make(chan error, 1)
+
+	result, claimed, err := g.RemoveWorktreeTransactionAfterClaim(
+		worktreePath,
+		generation,
+		false,
+		false,
+		false,
+		func(remove func() error) (bool, error) {
+			go func() {
+				competing <- g.RemoveWorktree(worktreePath, false, generation)
+			}()
+			assertRemovalWaitsForLock(t, competing)
+			err := remove()
+			return err == nil, err
+		},
+	)
+
+	require.NoError(t, err)
+	assert.True(t, claimed)
+	assert.True(t, result.WorktreeRemoved)
+	assert.NoDirExists(t, worktreePath)
+	require.Error(t, receiveRemovalResult(t, competing))
+}
+
 func TestRemoveWorktreeTransactionRejectsChangedGeneration(t *testing.T) {
 	repo := NewTestRepository(t)
 	repo.CreateBranch(t, "transaction-replaced")

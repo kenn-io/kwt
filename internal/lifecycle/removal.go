@@ -73,24 +73,30 @@ func (s *removalService) Remove(
 	}
 	record, registered := reg.Get(request.Path)
 	var mutationErr error
-	committed, err := reg.RemoveIfMatchAfter(request.Path, record, func() error {
-		transaction, transactionErr := git.NewForInventory(ctx, root, nil).RemoveWorktreeTransaction(
-			request.Path,
-			request.ExpectedGeneration,
-			request.Force,
-			request.DeleteBranch,
-			request.ForceDeleteBranch,
-		)
-		result.Path = transaction.Path
-		result.Branch = transaction.Branch
-		result.WorktreeRemoved = transaction.WorktreeRemoved
-		result.BranchDeleted = transaction.BranchDeleted
-		mutationErr = transactionErr
-		if transaction.WorktreeRemoved {
-			return nil
-		}
-		return transactionErr
-	})
+	transaction, committed, err := git.NewForInventory(
+		ctx,
+		root,
+		nil,
+	).RemoveWorktreeTransactionAfterClaim(
+		request.Path,
+		request.ExpectedGeneration,
+		request.Force,
+		request.DeleteBranch,
+		request.ForceDeleteBranch,
+		func(remove func() error) (bool, error) {
+			return reg.RemoveIfMatchAfter(request.Path, record, func() error {
+				mutationErr = remove()
+				if git.WorktreeWasRemoved(mutationErr) {
+					return nil
+				}
+				return mutationErr
+			})
+		},
+	)
+	result.Path = transaction.Path
+	result.Branch = transaction.Branch
+	result.WorktreeRemoved = transaction.WorktreeRemoved
+	result.BranchDeleted = transaction.BranchDeleted
 	if err != nil {
 		return result, classifyRemovalError(err, result)
 	}

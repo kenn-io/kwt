@@ -38,6 +38,10 @@ type worktreeCreatedError struct {
 	err error
 }
 
+type worktreeRemovedError struct {
+	err error
+}
+
 type incompleteWorktreeRemovalError struct {
 	path  string
 	cause error
@@ -71,6 +75,18 @@ func (e *incompleteWorktreeRemovalError) WorktreeRemoved() bool {
 func WorktreeWasRemoved(err error) bool {
 	var removed interface{ WorktreeRemoved() bool }
 	return errors.As(err, &removed) && removed.WorktreeRemoved()
+}
+
+func (e *worktreeRemovedError) Error() string {
+	return e.err.Error()
+}
+
+func (e *worktreeRemovedError) Unwrap() error {
+	return e.err
+}
+
+func (e *worktreeRemovedError) WorktreeRemoved() bool {
+	return true
 }
 
 // GenerationStatus describes whether a durable kwt worktree generation was
@@ -1115,13 +1131,40 @@ func (g *Git) RemoveWorktreeTransaction(
 	deleteBranch bool,
 	forceBranch bool,
 ) (WorktreeRemovalResult, error) {
+	result, _, err := g.RemoveWorktreeTransactionAfterClaim(
+		path,
+		expectedGeneration,
+		forceWorktree,
+		deleteBranch,
+		forceBranch,
+		func(remove func() error) (bool, error) {
+			err := remove()
+			return err == nil || WorktreeWasRemoved(err), err
+		},
+	)
+	return result, err
+}
+
+// RemoveWorktreeTransactionAfterClaim revalidates under the repository
+// mutation lock, then lets the caller atomically claim its policy record
+// around the supplied lock-owned removal. Callers must invoke remove
+// synchronously at most once.
+func (g *Git) RemoveWorktreeTransactionAfterClaim(
+	path string,
+	expectedGeneration string,
+	forceWorktree bool,
+	deleteBranch bool,
+	forceBranch bool,
+	claim func(remove func() error) (bool, error),
+) (WorktreeRemovalResult, bool, error) {
 	result := WorktreeRemovalResult{Path: path}
 	if !filepath.IsAbs(path) {
-		return result, fmt.Errorf("worktree path must be absolute")
+		return result, false, fmt.Errorf("worktree path must be absolute")
 	}
 	if ValidateWorktreeGeneration(expectedGeneration) != nil {
-		return result, &ConditionError{Reason: ReasonGenerationChanged, Path: path}
+		return result, false, &ConditionError{Reason: ReasonGenerationChanged, Path: path}
 	}
+	claimed := false
 	err := g.withWorktreeMutationLock(nil, func() error {
 		if err := g.rejectActiveWorktreeCreation(nil); err != nil {
 			return err
@@ -1150,23 +1193,30 @@ func (g *Git) RemoveWorktreeTransaction(
 			return &ConditionError{Reason: ReasonLocked, Path: path}
 		}
 		result.Branch = selected.Branch
-		removalErr := g.removeWorktree(path, forceWorktree, true, nil)
-		if removalErr != nil && !WorktreeWasRemoved(removalErr) {
-			return removalErr
-		}
-		result.WorktreeRemoved = true
-		if deleteBranch && result.Branch != "" && result.Branch != "HEAD" {
-			if branchErr := g.DeleteBranch(result.Branch, forceBranch); branchErr != nil {
-				return errors.Join(removalErr, fmt.Errorf(
-					"worktree removed but failed to delete branch: %w",
-					branchErr,
-				))
+		var claimErr error
+		claimed, claimErr = claim(func() error {
+			removalErr := g.removeWorktree(path, forceWorktree, true, nil)
+			if removalErr != nil && !WorktreeWasRemoved(removalErr) {
+				return removalErr
 			}
-			result.BranchDeleted = true
-		}
-		return removalErr
+			result.WorktreeRemoved = true
+			if deleteBranch && result.Branch != "" && result.Branch != "HEAD" {
+				if branchErr := g.DeleteBranch(result.Branch, forceBranch); branchErr != nil {
+					return &worktreeRemovedError{err: errors.Join(
+						removalErr,
+						fmt.Errorf(
+							"worktree removed but failed to delete branch: %w",
+							branchErr,
+						),
+					)}
+				}
+				result.BranchDeleted = true
+			}
+			return removalErr
+		})
+		return claimErr
 	})
-	return result, err
+	return result, claimed, err
 }
 
 // RemoveWorktreeChecked removes a live worktree only while all supplied local
