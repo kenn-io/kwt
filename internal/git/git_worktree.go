@@ -43,6 +43,14 @@ type incompleteWorktreeRemovalError struct {
 	cause error
 }
 
+// WorktreeRemovalResult records which irreversible removal steps completed.
+type WorktreeRemovalResult struct {
+	Path            string
+	Branch          string
+	WorktreeRemoved bool
+	BranchDeleted   bool
+}
+
 func (e *incompleteWorktreeRemovalError) Error() string {
 	return fmt.Sprintf(
 		"worktree removed, but files remain at %s; inspect the path and remove it only if it contains leftovers from the removed worktree",
@@ -1097,6 +1105,70 @@ func (g *Git) RemoveWorktree(
 	})
 }
 
+// RemoveWorktreeTransaction revalidates and removes one exact linked
+// worktree, optionally deleting its observed branch, under the repository's
+// cross-process mutation lock.
+func (g *Git) RemoveWorktreeTransaction(
+	path string,
+	expectedGeneration string,
+	forceWorktree bool,
+	deleteBranch bool,
+	forceBranch bool,
+) (WorktreeRemovalResult, error) {
+	result := WorktreeRemovalResult{Path: path}
+	if !filepath.IsAbs(path) {
+		return result, fmt.Errorf("worktree path must be absolute")
+	}
+	if ValidateWorktreeGeneration(expectedGeneration) != nil {
+		return result, &ConditionError{Reason: ReasonGenerationChanged, Path: path}
+	}
+	err := g.withWorktreeMutationLock(nil, func() error {
+		if err := g.rejectActiveWorktreeCreation(nil); err != nil {
+			return err
+		}
+		inspections, err := g.inspectWorktreesLocked("", true, nil)
+		if err != nil {
+			return err
+		}
+		var selected *WorktreeInspection
+		for index := range inspections {
+			if comparableWorktreePath(inspections[index].Path) == comparableWorktreePath(path) {
+				if selected != nil {
+					return &ConditionError{Reason: ReasonGenerationChanged, Path: path}
+				}
+				selected = &inspections[index]
+			}
+		}
+		if selected == nil || selected.GenerationStatus != GenerationValid ||
+			selected.Generation != expectedGeneration {
+			return &ConditionError{Reason: ReasonGenerationChanged, Path: path}
+		}
+		if selected.IsMain {
+			return &ConditionError{Reason: ReasonMainWorktree, Path: path}
+		}
+		if selected.Locked {
+			return &ConditionError{Reason: ReasonLocked, Path: path}
+		}
+		result.Branch = selected.Branch
+		removalErr := g.removeWorktree(path, forceWorktree, true, nil)
+		if removalErr != nil && !WorktreeWasRemoved(removalErr) {
+			return removalErr
+		}
+		result.WorktreeRemoved = true
+		if deleteBranch && result.Branch != "" && result.Branch != "HEAD" {
+			if branchErr := g.DeleteBranch(result.Branch, forceBranch); branchErr != nil {
+				return errors.Join(removalErr, fmt.Errorf(
+					"worktree removed but failed to delete branch: %w",
+					branchErr,
+				))
+			}
+			result.BranchDeleted = true
+		}
+		return removalErr
+	})
+	return result, err
+}
+
 // RemoveWorktreeChecked removes a live worktree only while all supplied local
 // identity and safety facts still hold inside the mutation lock.
 func (g *Git) RemoveWorktreeChecked(
@@ -1469,7 +1541,9 @@ func (g *Git) removeWorktree(
 	canonicalPath := utils.CanonicalPath(path)
 	registryGit := g
 	if mainRoot, err := g.getMainRepoRootWithoutCredentials(protectedNames); err == nil {
-		registryGit = New(mainRoot)
+		copy := *g
+		copy.workDir = mainRoot
+		registryGit = &copy
 	}
 	wasRegistered, _ := registryGit.hasRegisteredWorktree(canonicalPath, protectedNames)
 

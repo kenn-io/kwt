@@ -14,10 +14,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
-	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 func withProjectsConfig(t *testing.T, projects []models.Project) {
@@ -31,13 +31,13 @@ func withProjectsConfig(t *testing.T, projects []models.Project) {
 	t.Cleanup(func() { queryProjectsInventory = origQuery })
 	queryProjectsInventory = func(
 		context.Context,
-		publicworktree.Request,
+		kwt.Request,
 		bool,
 		io.Writer,
-	) (publicworktree.Result, error) {
-		return publicworktree.Result{Snapshot: publicworktree.Snapshot{
+	) (kwt.Result, error) {
+		return kwt.Result{Snapshot: kwt.Snapshot{
 			Projects: func() []models.Project {
-				canonical, err := publicworktree.CanonicalProjects(context.Background(), projects)
+				canonical, err := kwt.CanonicalProjects(context.Background(), projects)
 				require.NoError(t, err)
 				return canonical
 			}(),
@@ -116,8 +116,8 @@ func TestRunProjectsRendersTable(t *testing.T) {
 func TestRunProjectsReturnsConfigLoadError(t *testing.T) {
 	origQuery := queryProjectsInventory
 	t.Cleanup(func() { queryProjectsInventory = origQuery })
-	queryProjectsInventory = func(context.Context, publicworktree.Request, bool, io.Writer) (publicworktree.Result, error) {
-		return publicworktree.Result{}, errors.New("config unavailable")
+	queryProjectsInventory = func(context.Context, kwt.Request, bool, io.Writer) (kwt.Result, error) {
+		return kwt.Result{}, errors.New("config unavailable")
 	}
 
 	err := runProjects(projectsCmd, nil)

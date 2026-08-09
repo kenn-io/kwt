@@ -1013,6 +1013,55 @@ func TestRemoveWorktree(t *testing.T) {
 	}
 }
 
+func TestRemoveWorktreeTransactionDeletesObservedBranch(t *testing.T) {
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "transaction-remove")
+	worktreePath := filepath.Join(t.TempDir(), "transaction-remove")
+	repo.CreateWorktree(t, worktreePath, "transaction-remove")
+	g := New(repo.Path)
+	generation, err := g.WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+
+	result, err := g.RemoveWorktreeTransaction(
+		worktreePath,
+		generation,
+		false,
+		true,
+		false,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, worktreePath, result.Path)
+	assert.Equal(t, "transaction-remove", result.Branch)
+	assert.True(t, result.WorktreeRemoved)
+	assert.True(t, result.BranchDeleted)
+	assert.NoDirExists(t, worktreePath)
+	_, err = g.RunCommand("show-ref", "--verify", "refs/heads/transaction-remove")
+	require.Error(t, err)
+}
+
+func TestRemoveWorktreeTransactionRejectsChangedGeneration(t *testing.T) {
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "transaction-replaced")
+	worktreePath := filepath.Join(t.TempDir(), "transaction-replaced")
+	repo.CreateWorktree(t, worktreePath, "transaction-replaced")
+
+	result, err := New(repo.Path).RemoveWorktreeTransaction(
+		worktreePath,
+		"0123456789abcdef0123456789abcdef",
+		false,
+		false,
+		false,
+	)
+
+	require.Error(t, err)
+	assert.False(t, result.WorktreeRemoved)
+	var conditionErr *ConditionError
+	require.ErrorAs(t, err, &conditionErr)
+	assert.Equal(t, ReasonGenerationChanged, conditionErr.Reason)
+	assert.DirExists(t, worktreePath)
+}
+
 func TestListWorktreesKeepsGenerationStableWhenDirectoryChanges(t *testing.T) {
 	repo := NewTestRepository(t)
 	g := New(repo.Path)

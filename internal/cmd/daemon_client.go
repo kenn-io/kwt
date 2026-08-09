@@ -8,28 +8,63 @@ import (
 	"slices"
 	"time"
 
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
 	kwtdaemon "go.kenn.io/kwt/internal/daemon"
 	"go.kenn.io/kwt/service"
-	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 var queryCLIInventory = queryInventoryForCLI
+var removeDaemonWorktree = removeWorktreeThroughDaemon
+
+func removeWorktreeThroughDaemon(
+	ctx context.Context,
+	request kwt.RemovalRequest,
+) (kwt.RemovalResult, error) {
+	controller, err := newDaemonController()
+	if err != nil {
+		return kwt.RemovalResult{}, err
+	}
+	for {
+		observation, err := controller.Start(ctx)
+		if err != nil {
+			return kwt.RemovalResult{}, err
+		}
+		if observation.Client == nil ||
+			!slices.Contains(observation.Status.Capabilities, kwtdaemon.CapabilityRemoval) {
+			return kwt.RemovalResult{}, service.NewError(
+				service.Unsupported,
+				"the running kwt daemon does not provide worktree removal",
+				false,
+				nil,
+				nil,
+			)
+		}
+		result, err := observation.Client.RemoveWorktree(ctx, request)
+		deadline, draining := inventoryDrainDeadline(err)
+		if !draining {
+			return result, err
+		}
+		if err := waitInventoryRetry(ctx, deadline); err != nil {
+			return kwt.RemovalResult{}, err
+		}
+	}
+}
 
 func queryInventoryForCLI(
 	ctx context.Context,
-	request publicworktree.Request,
+	request kwt.Request,
 	interactive bool,
 	stderr io.Writer,
-) (publicworktree.Result, error) {
+) (kwt.Result, error) {
 	controller, err := newDaemonController()
 	if err != nil {
-		return publicworktree.Result{}, err
+		return kwt.Result{}, err
 	}
 	if interactive {
-		request.UntrustedConfig = publicworktree.RequireConfigInteraction
+		request.UntrustedConfig = kwt.RequireConfigInteraction
 	} else {
-		request.UntrustedConfig = publicworktree.IgnoreUntrustedConfig
+		request.UntrustedConfig = kwt.IgnoreUntrustedConfig
 	}
 	declined := false
 	for {
@@ -39,49 +74,49 @@ func queryInventoryForCLI(
 			return result, nil
 		}
 		if !interactive || !service.IsCode(queryErr, service.InteractionRequired) {
-			return publicworktree.Result{}, queryErr
+			return kwt.Result{}, queryErr
 		}
 		requirement, requirementErr := trustRequirement(queryErr)
 		if requirementErr != nil {
-			return publicworktree.Result{}, requirementErr
+			return kwt.Result{}, requirementErr
 		}
 		approved, promptErr := config.PromptTrustRequirement(requirement)
 		if promptErr != nil {
-			return publicworktree.Result{}, promptErr
+			return kwt.Result{}, promptErr
 		}
 		if !approved {
 			declined = true
-			request.UntrustedConfig = publicworktree.IgnoreUntrustedConfig
+			request.UntrustedConfig = kwt.IgnoreUntrustedConfig
 			continue
 		}
 		observation, startErr := controller.Start(ctx)
 		if startErr != nil {
-			return publicworktree.Result{}, startErr
+			return kwt.Result{}, startErr
 		}
 		if err := requireInventoryCapability(observation); err != nil {
-			return publicworktree.Result{}, err
+			return kwt.Result{}, err
 		}
-		if err := observation.Client.ApproveConfig(ctx, publicworktree.ConfigApproval{
+		if err := observation.Client.ApproveConfig(ctx, kwt.ConfigApproval{
 			Path: requirement.Path, Digest: requirement.Digest,
 		}); err != nil {
-			return publicworktree.Result{}, err
+			return kwt.Result{}, err
 		}
-		request.UntrustedConfig = publicworktree.RequireConfigInteraction
+		request.UntrustedConfig = kwt.RequireConfigInteraction
 	}
 }
 
 func queryDaemonInventory(
 	ctx context.Context,
 	controller daemonController,
-	request publicworktree.Request,
-) (publicworktree.Result, error) {
+	request kwt.Request,
+) (kwt.Result, error) {
 	for {
 		observation, err := controller.Start(ctx)
 		if err != nil {
-			return publicworktree.Result{}, err
+			return kwt.Result{}, err
 		}
 		if err := requireInventoryCapability(observation); err != nil {
-			return publicworktree.Result{}, err
+			return kwt.Result{}, err
 		}
 		result, err := observation.Client.Inventory(ctx, request)
 		deadline, draining := inventoryDrainDeadline(err)
@@ -89,7 +124,7 @@ func queryDaemonInventory(
 			return result, err
 		}
 		if err := waitInventoryRetry(ctx, deadline); err != nil {
-			return publicworktree.Result{}, err
+			return kwt.Result{}, err
 		}
 	}
 }
@@ -189,7 +224,7 @@ func detailInt(details map[string]any, key string) int {
 	}
 }
 
-func writeConfigNotes(stderr io.Writer, notes []publicworktree.Note, interactive, declined bool) {
+func writeConfigNotes(stderr io.Writer, notes []kwt.Note, interactive, declined bool) {
 	for _, note := range notes {
 		if note.Code == "trust_store_unavailable" {
 			_, _ = fmt.Fprintf(

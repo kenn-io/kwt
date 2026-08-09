@@ -5,10 +5,11 @@ import "time"
 const (
 	ServiceName         = "kwt"
 	APISchemaMajor      = 1
-	APISchemaVersion    = "1.1.0"
+	APISchemaVersion    = "1.2.0"
 	CapabilityStatus    = "daemon.status"
 	CapabilityShutdown  = "daemon.shutdown"
 	CapabilityInventory = "worktree.inventory.v1"
+	CapabilityRemoval   = "worktree.removal.v1"
 )
 
 type State string

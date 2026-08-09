@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/table"
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
-	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 var (
@@ -73,7 +73,7 @@ func init() {
 func runProjects(cmd *cobra.Command, args []string) error {
 	result, err := queryProjectsInventory(
 		cmd.Context(),
-		publicworktree.Request{View: publicworktree.ViewProjects, RequireCurrent: true},
+		kwt.Request{View: kwt.ViewProjects, RequireCurrent: true},
 		false,
 		cmd.ErrOrStderr(),
 	)

@@ -11,8 +11,8 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
-	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 func captureListStdout(t *testing.T, run func() error) (string, error) {
@@ -40,17 +40,17 @@ func TestRunListRequestsCurrentInventoryAndPreservesJSONShape(t *testing.T) {
 
 	originalQuery := queryListInventory
 	t.Cleanup(func() { queryListInventory = originalQuery })
-	var gotRequest publicworktree.Request
+	var gotRequest kwt.Request
 	queryListInventory = func(
 		_ context.Context,
-		request publicworktree.Request,
+		request kwt.Request,
 		_ bool,
 		_ io.Writer,
-	) (publicworktree.Result, error) {
+	) (kwt.Result, error) {
 		gotRequest = request
-		return publicworktree.Result{Snapshot: publicworktree.Snapshot{Entries: []publicworktree.Entry{{
+		return kwt.Result{Snapshot: kwt.Snapshot{Entries: []kwt.Entry{{
 			Path: repository, Branch: "main",
-			Repository:  publicworktree.Repository{FullPath: "github.com/acme/repo"},
+			Repository:  kwt.Repository{FullPath: "github.com/acme/repo"},
 			SessionName: "kwt-workspace-repo-main",
 		}}}}, nil
 	}
@@ -60,7 +60,7 @@ func TestRunListRequestsCurrentInventoryAndPreservesJSONShape(t *testing.T) {
 
 	stdout, err := captureListStdout(t, func() error { return runList(listCmd, nil) })
 	require.NoError(t, err)
-	assert.Equal(t, publicworktree.ViewRepository, gotRequest.View)
+	assert.Equal(t, kwt.ViewRepository, gotRequest.View)
 	assert.True(t, gotRequest.RequireCurrent)
 	assert.False(t, gotRequest.ForceGlobal)
 	assert.True(t, gotRequest.IncludeProtectedSockets)
@@ -86,8 +86,8 @@ func TestRunListGlobalEmptyJSONRemainsBareArray(t *testing.T) {
 	t.Chdir(t.TempDir())
 	originalQuery := queryListInventory
 	t.Cleanup(func() { queryListInventory = originalQuery })
-	queryListInventory = func(context.Context, publicworktree.Request, bool, io.Writer) (publicworktree.Result, error) {
-		return publicworktree.Result{Snapshot: publicworktree.Snapshot{Entries: []publicworktree.Entry{}}}, nil
+	queryListInventory = func(context.Context, kwt.Request, bool, io.Writer) (kwt.Result, error) {
+		return kwt.Result{Snapshot: kwt.Snapshot{Entries: []kwt.Entry{}}}, nil
 	}
 	previousJSON, previousGlobal := listJSON, listGlobal
 	listJSON, listGlobal = true, true

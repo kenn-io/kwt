@@ -1,6 +1,6 @@
 //go:build windows
 
-package worktree
+package kwt
 
 import "golang.org/x/sys/windows"
 

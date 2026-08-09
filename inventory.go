@@ -1,5 +1,5 @@
-// Package worktree provides embeddable worktree inventory contracts.
-package worktree
+// Package kwt provides embeddable worktree inventory and lifecycle services.
+package kwt
 
 import (
 	"context"

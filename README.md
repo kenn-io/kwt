@@ -15,6 +15,21 @@ and resolve canonical tmux sessions for local and SSH-hosted workspaces. No
 separate system kwt installation is required for Ghosthub's bundled workflow;
 the standalone CLI remains available for terminal-first use.
 
+## Go package
+
+Applications such as Forge embed kwt through the module root:
+
+```go
+import kwt "go.kenn.io/kwt"
+
+inventory := kwt.NewInventoryService(kwt.InventoryServiceOptions{Source: source})
+removals := kwt.NewRemovalService(kwt.RemovalServiceOptions{Home: kwtHome})
+```
+
+The root package contains transport-neutral inventory and worktree lifecycle
+contracts. The CLI/TUI adapt them to kwt's local daemon; Go applications can
+construct the same services directly without Huma, Cobra, or daemon ownership.
+
 ## Install
 
 ```bash

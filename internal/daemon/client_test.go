@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	kitdaemon "go.kenn.io/kit/daemon"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/service"
-	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 func runtimeRecordForServer(
@@ -140,13 +140,13 @@ func TestVerifiedClientAllowsInventoryDiscoveryBeforeHeaders(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err = client.Inventory(ctx, publicworktree.Request{View: publicworktree.ViewDashboard})
+	_, err = client.Inventory(ctx, kwt.Request{View: kwt.ViewDashboard})
 
 	require.NoError(t, err)
 }
 
 func TestInventoryTransportOutlivesServerRefresh(t *testing.T) {
-	assert.Greater(t, inventoryRequestTimeout, publicworktree.DefaultRefreshTimeout)
+	assert.Greater(t, inventoryRequestTimeout, kwt.DefaultRefreshTimeout)
 }
 
 func TestVerifiedClientBoundsControlPlaneResponseWait(t *testing.T) {
@@ -180,15 +180,15 @@ func TestVerifiedClientBoundsControlPlaneResponseWait(t *testing.T) {
 func TestClientAllowsInventoryResponseLargerThanControlPlaneLimit(t *testing.T) {
 	largePath := strings.Repeat("x", 2<<20)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		require.NoError(t, json.NewEncoder(w).Encode(publicworktree.Result{
-			Notes: []publicworktree.Note{{Code: "large", Path: largePath}},
+		require.NoError(t, json.NewEncoder(w).Encode(kwt.Result{
+			Notes: []kwt.Note{{Code: "large", Path: largePath}},
 		}))
 	}))
 	defer server.Close()
 
 	client := clientForUnverifiedServer(t, server, "secret")
-	result, err := client.Inventory(context.Background(), publicworktree.Request{
-		View: publicworktree.ViewDashboard,
+	result, err := client.Inventory(context.Background(), kwt.Request{
+		View: kwt.ViewDashboard,
 	})
 
 	require.NoError(t, err)

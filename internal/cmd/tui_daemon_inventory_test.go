@@ -9,10 +9,10 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/pkg/models"
-	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 func TestTUIBackendMutationUsesLatestDaemonConfiguration(t *testing.T) {
@@ -36,22 +36,22 @@ func TestTUIBackendMutationUsesLatestDaemonConfiguration(t *testing.T) {
 	}
 	backend.queryInventory = func(
 		context.Context,
-		publicworktree.Request,
+		kwt.Request,
 		bool,
 		io.Writer,
-	) (publicworktree.Result, error) {
-		return publicworktree.Result{
-			Freshness: publicworktree.Fresh,
-			Snapshot: publicworktree.Snapshot{
+	) (kwt.Result, error) {
+		return kwt.Result{
+			Freshness: kwt.Fresh,
+			Snapshot: kwt.Snapshot{
 				Config: &models.Config{
 					Worktree: models.WorktreeConfig{BaseDir: currentBase, AutoMkdir: true},
 					Naming: models.NamingConfig{
 						Template: "{{.Branch}}", SanitizeChars: map[string]string{"/": "-"},
 					},
 				},
-				Entries: []publicworktree.Entry{{
+				Entries: []kwt.Entry{{
 					Path: repository, Branch: "main", IsMain: true,
-					Repository: publicworktree.Repository{FullPath: "github.com/acme/widget", Name: "widget"},
+					Repository: kwt.Repository{FullPath: "github.com/acme/widget", Name: "widget"},
 				}},
 			},
 		}, nil
@@ -82,23 +82,23 @@ func TestTUIBackendDaemonInventoryUsesCacheThenCurrent(t *testing.T) {
 	}
 	backend.registerProject = nil
 	backend.registerWorkspace = nil
-	var requests []publicworktree.Request
+	var requests []kwt.Request
 	backend.queryInventory = func(
 		_ context.Context,
-		request publicworktree.Request,
+		request kwt.Request,
 		_ bool,
 		_ io.Writer,
-	) (publicworktree.Result, error) {
+	) (kwt.Result, error) {
 		requests = append(requests, request)
 		path := "/cached"
 		project := models.Project{Repository: "github.com/acme/cached", Name: "cached", Path: "/cached"}
 		workspace := models.Workspace{Name: "cached", Path: "/cached/workspace"}
-		freshness := publicworktree.Stale
+		freshness := kwt.Stale
 		if request.RequireCurrent {
 			path = "/fresh"
 			project = models.Project{Repository: "github.com/acme/fresh", Name: "fresh", Path: "/fresh"}
 			workspace = models.Workspace{Name: "fresh", Path: "/fresh/workspace"}
-			freshness = publicworktree.Fresh
+			freshness = kwt.Fresh
 		}
 		effective := &models.Config{
 			Worktree:   models.WorktreeConfig{BaseDir: "/cached-base"},
@@ -110,13 +110,13 @@ func TestTUIBackendDaemonInventoryUsesCacheThenCurrent(t *testing.T) {
 			effective.Worktree.BaseDir = "/fresh-base"
 			effective.Layouts.Default = "fresh-layout"
 		}
-		return publicworktree.Result{
+		return kwt.Result{
 			Freshness: freshness,
-			Snapshot: publicworktree.Snapshot{
+			Snapshot: kwt.Snapshot{
 				Config:   effective,
 				Projects: []models.Project{project},
-				Entries: []publicworktree.Entry{{
-					Path: path, Branch: "main", Repository: publicworktree.Repository{FullPath: "github.com/acme/repo", Name: "repo"},
+				Entries: []kwt.Entry{{
+					Path: path, Branch: "main", Repository: kwt.Repository{FullPath: "github.com/acme/repo", Name: "repo"},
 				}},
 				Workspaces: []models.Workspace{workspace},
 			},
@@ -158,32 +158,32 @@ func TestTUIBackendRegistersOnlyCurrentLaunchInventory(t *testing.T) {
 	}
 	backend.queryInventory = func(
 		_ context.Context,
-		request publicworktree.Request,
+		request kwt.Request,
 		_ bool,
 		_ io.Writer,
-	) (publicworktree.Result, error) {
-		unrelated := publicworktree.Entry{
+	) (kwt.Result, error) {
+		unrelated := kwt.Entry{
 			Path: "/other", IsMain: true,
-			Repository: publicworktree.Repository{
+			Repository: kwt.Repository{
 				URL: "https://github.com/acme/other.git", FullPath: "github.com/acme/other", Name: "other",
 			},
 		}
-		launch := publicworktree.Entry{
+		launch := kwt.Entry{
 			Path: "/launch", IsMain: true,
-			Repository: publicworktree.Repository{
+			Repository: kwt.Repository{
 				URL: "https://github.com/acme/launch.git", FullPath: "github.com/acme/launch", Name: "launch",
 			},
 		}
-		freshness := publicworktree.Stale
+		freshness := kwt.Stale
 		if request.RequireCurrent {
-			freshness = publicworktree.Fresh
+			freshness = kwt.Fresh
 		}
-		return publicworktree.Result{
+		return kwt.Result{
 			Freshness: freshness,
-			Snapshot: publicworktree.Snapshot{
+			Snapshot: kwt.Snapshot{
 				Config:        &models.Config{},
-				Entries:       []publicworktree.Entry{unrelated, launch},
-				LaunchEntries: []publicworktree.Entry{launch},
+				Entries:       []kwt.Entry{unrelated, launch},
+				LaunchEntries: []kwt.Entry{launch},
 			},
 		}, nil
 	}
@@ -214,13 +214,13 @@ func TestTUIBackendCurrentInventoryIncludesNewLaunchWorkspace(t *testing.T) {
 	}
 	backend.queryInventory = func(
 		context.Context,
-		publicworktree.Request,
+		kwt.Request,
 		bool,
 		io.Writer,
-	) (publicworktree.Result, error) {
-		return publicworktree.Result{
-			Freshness: publicworktree.Fresh,
-			Snapshot:  publicworktree.Snapshot{Config: &models.Config{}},
+	) (kwt.Result, error) {
+		return kwt.Result{
+			Freshness: kwt.Fresh,
+			Snapshot:  kwt.Snapshot{Config: &models.Config{}},
 		}, nil
 	}
 

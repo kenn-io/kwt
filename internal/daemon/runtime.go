@@ -88,6 +88,7 @@ func NewRuntimeRecord(
 			CapabilityShutdown,
 			CapabilityStatus,
 			CapabilityInventory,
+			CapabilityRemoval,
 		}, ","),
 		metadataToken: token,
 	}

@@ -1,20 +1,19 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
-	"os"
 	pathpkg "path"
 	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/finder"
 	"go.kenn.io/kwt/internal/git"
-	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/utils"
-	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 )
 
@@ -93,6 +92,10 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	commandContext := cmd.Context()
+	if commandContext == nil {
+		commandContext = context.Background()
+	}
 	return ExecuteWithArgs(false, func(ctx *CommandContext, cmd *cobra.Command, args []string) error {
 		// Try to get git context, but don't fail if we're not in a git repo
 		gitCtx, gitErr := NewGitCommandContext()
@@ -104,6 +107,7 @@ func runRemove(cmd *cobra.Command, args []string) error {
 			removeGlobal,
 			func(ctx *CommandContext) error {
 				removed, err := removeLocalWorktree(
+					commandContext,
 					ctx,
 					args,
 					generationCondition,
@@ -115,6 +119,7 @@ func runRemove(cmd *cobra.Command, args []string) error {
 			},
 			func(ctx *CommandContext) error {
 				removed, err := removeGlobalWorktree(
+					commandContext,
 					ctx,
 					args,
 					generationCondition,
@@ -146,6 +151,7 @@ func requestedRemovalGeneration(
 }
 
 func removeLocalWorktree(
+	commandContext context.Context,
 	ctx *CommandContext,
 	args []string,
 	generationCondition removalGenerationCondition,
@@ -214,53 +220,35 @@ func removeLocalWorktree(
 	}
 
 	removed := 0
+	repositoryPath, err := ctx.Git.GetMainRepositoryPath()
+	if err != nil {
+		return 0, fmt.Errorf("failed to resolve main repository: %w", err)
+	}
 	for _, wt := range toRemove {
-		registryRecord := registeredWorktreeForRemoval(wt.Path)
-		if deleteBranch {
-			if err := ctx.WorktreeManager.RemoveWithBranch(
-				wt.Path,
-				wt.Branch,
-				removeForce,
-				deleteBranch,
-				forceDeleteBranch,
-				generationCondition.generation,
-			); err != nil {
-				if worktreeRemovalCompleted(wt.Path, err) {
-					removed++
-					unregisterWorktreeRecord(registryRecord)
-				}
-				if generationCondition.specified {
-					return removed, err
-				}
-				ctx.Printer.PrintError(fmt.Errorf("failed to remove %s: %v", wt.Branch, err))
-				continue
-			}
-			ctx.Printer.PrintSuccess(fmt.Sprintf("Removed worktree: %s", wt.Branch))
-			if wt.Branch != "" {
-				ctx.Printer.PrintSuccess(fmt.Sprintf("Deleted branch: %s", wt.Branch))
-			}
-		} else {
-			if err := ctx.WorktreeManager.Remove(
-				wt.Path,
-				removeForce,
-				generationCondition.generation,
-			); err != nil {
-				if worktreeRemovalCompleted(wt.Path, err) {
-					removed++
-					unregisterWorktreeRecord(registryRecord)
-				}
-				if generationCondition.specified {
-					return removed, err
-				}
-				ctx.Printer.PrintError(fmt.Errorf("failed to remove %s: %v", wt.Branch, err))
-				continue
-			}
-			ctx.Printer.PrintSuccess(fmt.Sprintf("Removed worktree: %s", wt.Branch))
+		generation := wt.Generation
+		if generationCondition.specified {
+			generation = generationCondition.generation
 		}
-		removed++
-
-		// Clean up registry entry after successful removal
-		unregisterWorktreeRecord(registryRecord)
+		result, removalErr := removeDaemonWorktree(commandContext, kwt.RemovalRequest{
+			RepositoryPath: repositoryPath,
+			Path:           wt.Path, ExpectedGeneration: generation,
+			Force: removeForce, DeleteBranch: deleteBranch,
+			ForceDeleteBranch: forceDeleteBranch,
+		})
+		if result.WorktreeRemoved {
+			removed++
+		}
+		if removalErr != nil {
+			if generationCondition.specified {
+				return removed, removalErr
+			}
+			ctx.Printer.PrintError(fmt.Errorf("failed to remove %s: %v", wt.Branch, removalErr))
+			continue
+		}
+		ctx.Printer.PrintSuccess(fmt.Sprintf("Removed worktree: %s", wt.Branch))
+		if result.BranchDeleted {
+			ctx.Printer.PrintSuccess(fmt.Sprintf("Deleted branch: %s", result.Branch))
+		}
 	}
 
 	return removed, nil
@@ -277,6 +265,7 @@ func filterNonMainWorktrees(worktrees []models.Worktree) []models.Worktree {
 }
 
 func removeGlobalWorktree(
+	commandContext context.Context,
 	ctx *CommandContext,
 	args []string,
 	generationCondition removalGenerationCondition,
@@ -383,100 +372,46 @@ func removeGlobalWorktree(
 		)
 	}
 
-	// Remove each worktree by changing to its repository directory
 	removed := 0
 	for _, entry := range toRemove {
-		registryRecord := registeredWorktreeForRemoval(entry.Path)
-		// Change to the repository directory to run git commands
-		originalDir, err := os.Getwd()
-		if err != nil {
-			ctx.Printer.PrintError(fmt.Errorf("failed to get current directory: %v", err))
-			continue
-		}
-
-		// Change to repository directory (need to find git repository root from URL)
-		repoPath := entry.RepositoryURL
-		if entry.RepositoryInfo != nil {
-			// Try to find repository in common locations
-			g := git.New(entry.Path)
-			if repoRootPath, err := g.GetMainRepositoryPath(); err == nil {
-				repoPath = repoRootPath
-			}
-		}
-
-		if err := os.Chdir(repoPath); err != nil {
-			ctx.Printer.PrintError(fmt.Errorf("failed to change to repository %s: %v", repoPath, err))
-			continue
-		}
-
-		// Create git instance for the repository
-		g := git.New(repoPath)
-		wm := worktree.New(g, ctx.Config)
-
-		if deleteBranch {
-			if err := wm.RemoveWithBranch(
-				entry.Path,
-				entry.Branch,
-				removeForce,
-				deleteBranch,
-				forceDeleteBranch,
-				generationCondition.generation,
-			); err != nil {
-				if worktreeRemovalCompleted(entry.Path, err) {
-					removed++
-					unregisterWorktreeRecord(registryRecord)
-				}
-				if generationCondition.specified {
-					_ = os.Chdir(originalDir)
-					return removed, err
-				}
-				repoName := "unknown"
-				if entry.RepositoryInfo != nil {
-					repoName = entry.RepositoryInfo.Repository
-				}
-				ctx.Printer.PrintError(fmt.Errorf("failed to remove %s:%s: %v", repoName, entry.Branch, err))
-				_ = os.Chdir(originalDir)
-				continue
-			}
-		} else {
-			if err := wm.Remove(
-				entry.Path,
-				removeForce,
-				generationCondition.generation,
-			); err != nil {
-				if worktreeRemovalCompleted(entry.Path, err) {
-					removed++
-					unregisterWorktreeRecord(registryRecord)
-				}
-				if generationCondition.specified {
-					_ = os.Chdir(originalDir)
-					return removed, err
-				}
-				repoName := "unknown"
-				if entry.RepositoryInfo != nil {
-					repoName = entry.RepositoryInfo.Repository
-				}
-				ctx.Printer.PrintError(fmt.Errorf("failed to remove %s:%s: %v", repoName, entry.Branch, err))
-				_ = os.Chdir(originalDir)
-				continue
-			}
-		}
-
 		repoName := "unknown"
 		if entry.RepositoryInfo != nil {
 			repoName = entry.RepositoryInfo.Repository
 		}
-		ctx.Printer.PrintSuccess(fmt.Sprintf("Removed worktree: %s:%s", repoName, entry.Branch))
-		if deleteBranch && entry.Branch != "" {
-			ctx.Printer.PrintSuccess(fmt.Sprintf("Deleted branch: %s", entry.Branch))
+		repoPath, resolveErr := git.NewWithContext(commandContext, entry.Path).GetMainRepositoryPath()
+		if resolveErr != nil {
+			ctx.Printer.PrintError(fmt.Errorf(
+				"failed to resolve repository for %s:%s: %v",
+				repoName,
+				entry.Branch,
+				resolveErr,
+			))
+			continue
 		}
-
-		// Clean up registry entry after successful removal
-		unregisterWorktreeRecord(registryRecord)
-		removed++
-
-		// Change back to original directory
-		_ = os.Chdir(originalDir)
+		generation := entry.Generation
+		if generationCondition.specified {
+			generation = generationCondition.generation
+		}
+		result, removalErr := removeDaemonWorktree(commandContext, kwt.RemovalRequest{
+			RepositoryPath: repoPath,
+			Path:           entry.Path, ExpectedGeneration: generation,
+			Force: removeForce, DeleteBranch: deleteBranch,
+			ForceDeleteBranch: forceDeleteBranch,
+		})
+		if result.WorktreeRemoved {
+			removed++
+		}
+		if removalErr != nil {
+			if generationCondition.specified {
+				return removed, removalErr
+			}
+			ctx.Printer.PrintError(fmt.Errorf("failed to remove %s:%s: %v", repoName, entry.Branch, removalErr))
+			continue
+		}
+		ctx.Printer.PrintSuccess(fmt.Sprintf("Removed worktree: %s:%s", repoName, entry.Branch))
+		if result.BranchDeleted {
+			ctx.Printer.PrintSuccess(fmt.Sprintf("Deleted branch: %s", result.Branch))
+		}
 	}
 
 	return removed, nil
@@ -545,47 +480,4 @@ func windowsStyleRemovalPath(rawPath string) bool {
 	return (len(rawPath) >= 2 && rawPath[1] == ':') ||
 		strings.HasPrefix(rawPath, `\\`) ||
 		strings.HasPrefix(rawPath, "//")
-}
-
-func worktreePathRemoved(path string) bool {
-	_, err := os.Stat(path)
-	return os.IsNotExist(err)
-}
-
-func worktreeRemovalCompleted(path string, err error) bool {
-	return worktreePathRemoved(path) || git.WorktreeWasRemoved(err)
-}
-
-type removalRegistryRecord struct {
-	path       string
-	generation string
-	present    bool
-}
-
-func registeredWorktreeForRemoval(path string) removalRegistryRecord {
-	reg, err := registry.New()
-	if err != nil {
-		return removalRegistryRecord{}
-	}
-	entry, ok := reg.Get(path)
-	if !ok {
-		return removalRegistryRecord{}
-	}
-	return removalRegistryRecord{
-		path:       entry.Path,
-		generation: entry.Generation,
-		present:    true,
-	}
-}
-
-func unregisterWorktreeRecord(record removalRegistryRecord) {
-	if !record.present {
-		return
-	}
-	if reg, err := registry.New(); err == nil {
-		_, _ = reg.UnregisterIfGeneration(
-			record.path,
-			record.generation,
-		)
-	}
 }

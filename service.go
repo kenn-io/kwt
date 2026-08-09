@@ -1,4 +1,4 @@
-package worktree
+package kwt
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-type ServiceOptions struct {
+type InventoryServiceOptions struct {
 	Source         Source
 	Cache          Cache
 	Now            func() time.Time
@@ -20,7 +20,7 @@ type ServiceOptions struct {
 	RefreshTimeout time.Duration
 }
 
-type Service struct {
+type InventoryService struct {
 	source              Source
 	cache               Cache
 	now                 func() time.Time
@@ -34,7 +34,7 @@ type Service struct {
 	last                *Diagnostic
 }
 
-func NewInventoryService(options ServiceOptions) *Service {
+func NewInventoryService(options InventoryServiceOptions) *InventoryService {
 	if options.Now == nil {
 		options.Now = time.Now
 	}
@@ -44,13 +44,13 @@ func NewInventoryService(options ServiceOptions) *Service {
 	if options.RefreshTimeout <= 0 {
 		options.RefreshTimeout = DefaultRefreshTimeout
 	}
-	return &Service{
+	return &InventoryService{
 		source: options.Source, cache: options.Cache, now: options.Now,
 		context: options.Context, refreshTimeout: options.RefreshTimeout,
 	}
 }
 
-func (s *Service) Query(ctx context.Context, request Request) (Result, error) {
+func (s *InventoryService) Query(ctx context.Context, request Request) (Result, error) {
 	if request.View == ViewDashboard && !request.RequireCurrent && s.cache != nil {
 		if cached, ok := s.cache.Current(); ok {
 			s.mu.RLock()
@@ -109,7 +109,7 @@ func (s *Service) Query(ctx context.Context, request Request) (Result, error) {
 	}
 }
 
-func (s *Service) publishDashboard(generation uint64, result Result) *Diagnostic {
+func (s *InventoryService) publishDashboard(generation uint64, result Result) *Diagnostic {
 	s.publishMu.Lock()
 	defer s.publishMu.Unlock()
 	if !s.isLatestDashboard(generation) {
@@ -129,7 +129,7 @@ func (s *Service) publishDashboard(generation uint64, result Result) *Diagnostic
 	return diagnostic
 }
 
-func (s *Service) setDashboardDiagnostic(generation uint64, diagnostic *Diagnostic) {
+func (s *InventoryService) setDashboardDiagnostic(generation uint64, diagnostic *Diagnostic) {
 	s.publishMu.Lock()
 	defer s.publishMu.Unlock()
 	s.mu.Lock()
@@ -139,13 +139,13 @@ func (s *Service) setDashboardDiagnostic(generation uint64, diagnostic *Diagnost
 	}
 }
 
-func (s *Service) isLatestDashboard(generation uint64) bool {
+func (s *InventoryService) isLatestDashboard(generation uint64) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return generation == s.dashboardGeneration
 }
 
-func (s *Service) ApproveConfig(ctx context.Context, approval ConfigApproval) error {
+func (s *InventoryService) ApproveConfig(ctx context.Context, approval ConfigApproval) error {
 	return s.source.ApproveConfig(ctx, approval)
 }
 

@@ -11,8 +11,8 @@ import (
 	"time"
 
 	kitdaemon "go.kenn.io/kit/daemon"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/service"
-	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 type Client struct {
@@ -20,6 +20,7 @@ type Client struct {
 	token         string
 	controlHTTP   *http.Client
 	inventoryHTTP *http.Client
+	mutationHTTP  *http.Client
 }
 
 var ErrResponseTooLarge = errors.New("kwt daemon response is too large")
@@ -27,7 +28,7 @@ var ErrResponseTooLarge = errors.New("kwt daemon response is too large")
 const (
 	controlRequestTimeout           = 2 * time.Second
 	inventoryResponseHeadroom       = 5 * time.Second
-	inventoryRequestTimeout         = publicworktree.DefaultRefreshTimeout + inventoryResponseHeadroom
+	inventoryRequestTimeout         = kwt.DefaultRefreshTimeout + inventoryResponseHeadroom
 	controlResponseLimit      int64 = 1 << 20
 	inventoryResponseLimit          = 64 << 20
 )
@@ -66,16 +67,17 @@ func NewVerifiedClient(
 			Timeout:               inventoryRequestTimeout,
 			ResponseHeaderTimeout: inventoryRequestTimeout,
 		}),
+		mutationHTTP: ep.HTTPClient(kitdaemon.HTTPClientOptions{}),
 	}, nil
 }
 
-func (c *Client) Inventory(ctx context.Context, request publicworktree.Request) (publicworktree.Result, error) {
-	expansion, err := publicworktree.CaptureExpansionContext()
+func (c *Client) Inventory(ctx context.Context, request kwt.Request) (kwt.Result, error) {
+	expansion, err := kwt.CaptureExpansionContext()
 	if err != nil {
-		return publicworktree.Result{}, err
+		return kwt.Result{}, err
 	}
 	request.Expansion = expansion
-	var result publicworktree.Result
+	var result kwt.Result
 	err = c.doWith(
 		ctx,
 		c.inventoryHTTP,
@@ -88,13 +90,58 @@ func (c *Client) Inventory(ctx context.Context, request publicworktree.Request) 
 	return result, err
 }
 
-func (c *Client) ApproveConfig(ctx context.Context, approval publicworktree.ConfigApproval) error {
+func (c *Client) ApproveConfig(ctx context.Context, approval kwt.ConfigApproval) error {
 	return c.do(ctx, http.MethodPost, "/api/v1/config/trust", approval, nil)
+}
+
+func (c *Client) RemoveWorktree(
+	ctx context.Context,
+	request kwt.RemovalRequest,
+) (kwt.RemovalResult, error) {
+	var result kwt.RemovalResult
+	err := c.doWith(
+		ctx,
+		c.mutationHTTP,
+		controlResponseLimit,
+		http.MethodPost,
+		"/api/v1/worktrees/remove",
+		request,
+		&result,
+	)
+	if err != nil {
+		result = removalResultFromError(err)
+	}
+	return result, err
+}
+
+func removalResultFromError(err error) kwt.RemovalResult {
+	var typed *service.Error
+	if !errors.As(err, &typed) {
+		return kwt.RemovalResult{}
+	}
+	return kwt.RemovalResult{
+		Path:                 detailStringValue(typed.Details, "path"),
+		Branch:               detailStringValue(typed.Details, "branch"),
+		WorktreeRemoved:      detailBoolValue(typed.Details, "worktree_removed"),
+		BranchDeleted:        detailBoolValue(typed.Details, "branch_deleted"),
+		RegistryUnregistered: detailBoolValue(typed.Details, "registry_unregistered"),
+	}
+}
+
+func detailStringValue(details map[string]any, key string) string {
+	value, _ := details[key].(string)
+	return value
+}
+
+func detailBoolValue(details map[string]any, key string) bool {
+	value, _ := details[key].(bool)
+	return value
 }
 
 func newClient(ep kitdaemon.Endpoint, token string, client *http.Client) *Client {
 	return &Client{
 		endpoint: ep, token: token, controlHTTP: client, inventoryHTTP: client,
+		mutationHTTP: client,
 	}
 }
 

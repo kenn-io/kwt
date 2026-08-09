@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/discovery"
@@ -28,7 +29,6 @@ import (
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
-	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 type tuiBackend struct {
@@ -55,7 +55,8 @@ type tuiBackend struct {
 	loadTargetConfig          func(string, bool) (*models.Config, error)
 	acknowledgeRemoteSource   func(string) error
 	now                       func() time.Time
-	queryInventory            func(context.Context, publicworktree.Request, bool, io.Writer) (publicworktree.Result, error)
+	queryInventory            func(context.Context, kwt.Request, bool, io.Writer) (kwt.Result, error)
+	removeWorktree            func(context.Context, kwt.RemovalRequest) (kwt.RemovalResult, error)
 	stderr                    io.Writer
 }
 
@@ -91,6 +92,7 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 		unregisterWorkspace:     config.UnregisterWorkspace,
 		readFleetState:          readTUIFleetState,
 		acknowledgeRemoteSource: acknowledgeRemoteSourcePath,
+		removeWorktree:          removeDaemonWorktree,
 		now:                     time.Now,
 	}
 	backend.loadTargetConfig = func(repoRoot string, interactive bool) (*models.Config, error) {
@@ -203,8 +205,8 @@ func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboar
 func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]dashboard.Row, []string, error) {
 	result, err := b.queryInventory(
 		ctx,
-		publicworktree.Request{
-			View: publicworktree.ViewDashboard, LaunchDirectory: b.launchDir,
+		kwt.Request{
+			View: kwt.ViewDashboard, LaunchDirectory: b.launchDir,
 			RequireCurrent: includeStatuses,
 		},
 		config.StdinInteractive(),
@@ -222,7 +224,7 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 		return nil, nil, err
 	}
 	renderWorkspaces := result.Snapshot.Workspaces
-	if includeStatuses && result.Freshness == publicworktree.Fresh {
+	if includeStatuses && result.Freshness == kwt.Fresh {
 		if err := b.applyInventoryConfig(result.Snapshot.Config); err != nil {
 			return nil, nil, err
 		}
@@ -282,7 +284,7 @@ func (b *tuiBackend) applyInventoryConfig(effective *models.Config) error {
 	return nil
 }
 
-func dashboardInventoryEntry(entry publicworktree.Entry) *discovery.GlobalWorktreeEntry {
+func dashboardInventoryEntry(entry kwt.Entry) *discovery.GlobalWorktreeEntry {
 	var info *url.RepositoryInfo
 	if entry.Repository.FullPath != "" {
 		info = &url.RepositoryInfo{
@@ -1386,27 +1388,22 @@ func (b *tuiBackend) RemoveWorktree(ctx context.Context, row dashboard.Row, forc
 	if strings.TrimSpace(generation) == "" {
 		return fmt.Errorf("worktree generation unavailable; refresh before removing")
 	}
-	registryRecord := registeredWorktreeForRemoval(row.Entry.Path)
-
 	repoRoot, err := b.repositoryRootForRow(row)
 	if err != nil {
 		return err
 	}
-	removalErr := b.removeWorktreeFromRoot(
-		repoRoot,
-		row.Entry.Path,
-		force,
-		generation,
-	)
-	if removalErr != nil && !git.WorktreeWasRemoved(removalErr) {
+	result, removalErr := b.removeWorktree(ctx, kwt.RemovalRequest{
+		RepositoryPath: repoRoot,
+		Path:           row.Entry.Path, ExpectedGeneration: generation,
+		Force: force,
+	})
+	if removalErr != nil && !result.WorktreeRemoved {
 		if strings.Contains(removalErr.Error(), "contains modified or untracked files") ||
 			strings.Contains(removalErr.Error(), "has local changes") {
 			return fmt.Errorf("worktree has uncommitted changes")
 		}
 		return removalErr
 	}
-
-	unregisterWorktreeRecord(registryRecord)
 
 	publishTUIFleetBestEffort(ctx, b.cfg)
 
@@ -1540,19 +1537,6 @@ func rowRepositoryIdentityCandidates(info *url.RepositoryInfo) []string {
 		candidates = append(candidates, path.Join(info.Host, info.Owner, info.Repository))
 	}
 	return candidates
-}
-
-func (b *tuiBackend) removeWorktreeFromRoot(
-	repoRoot string,
-	worktreePath string,
-	force bool,
-	generation string,
-) error {
-	return worktree.New(git.New(repoRoot), b.cfg).Remove(
-		worktreePath,
-		force,
-		generation,
-	)
 }
 
 func samePath(a string, b string) bool {

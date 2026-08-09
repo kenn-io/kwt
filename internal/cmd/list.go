@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/pkg/models"
-	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 var (
@@ -67,8 +67,8 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 	result, err := queryListInventory(
 		cmd.Context(),
-		publicworktree.Request{
-			View: publicworktree.ViewRepository, WorkingDirectory: workingDirectory,
+		kwt.Request{
+			View: kwt.ViewRepository, WorkingDirectory: workingDirectory,
 			ForceGlobal: listGlobal, RequireCurrent: true,
 			IncludeProtectedSockets: listJSON,
 		},
@@ -97,7 +97,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func listedWorktree(entry publicworktree.Entry) models.Worktree {
+func listedWorktree(entry kwt.Entry) models.Worktree {
 	return models.Worktree{
 		Path: entry.Path, Branch: entry.Branch, CommitHash: entry.CommitHash,
 		IsMain: entry.IsMain, CreatedAt: entry.CreatedAt, Generation: entry.Generation,

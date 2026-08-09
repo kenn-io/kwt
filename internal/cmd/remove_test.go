@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,10 +11,41 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/registry"
+	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
 )
+
+func TestRemoveLocalDelegatesMutationToDaemon(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetRemoveCommandFlags(t)
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	t.Chdir(repoPath)
+	worktreePath := filepath.Join(t.TempDir(), "daemon-remove")
+	runTUITestGit(t, repoPath, "worktree", "add", "-b", "daemon-remove", worktreePath)
+	var request kwt.RemovalRequest
+	removeDaemonWorktree = func(
+		_ context.Context,
+		input kwt.RemovalRequest,
+	) (kwt.RemovalResult, error) {
+		request = input
+		return kwt.RemovalResult{
+			Path: input.Path, Branch: "daemon-remove", WorktreeRemoved: true,
+		}, nil
+	}
+
+	cmd, _, _ := fleetTestCommand()
+	err := runRemove(cmd, []string{"daemon-remove"})
+
+	require.NoError(t, err)
+	assert.Equal(t, utils.PathKey(worktreePath), utils.PathKey(request.Path))
+	assert.Equal(t, utils.PathKey(repoPath), utils.PathKey(request.RepositoryPath))
+	assert.NotEmpty(t, request.ExpectedGeneration)
+	assert.DirExists(t, worktreePath, "only the daemon service may perform the mutation")
+}
 
 func TestRemoveLocalPublishesOnceAfterSuccessfulRemoval(t *testing.T) {
 	resetFleetCommandDeps(t)
@@ -514,6 +546,7 @@ func resetRemoveCommandFlags(t *testing.T) {
 	oldRemoveIfGeneration := removeIfGeneration
 	oldDeleteBranch := deleteBranch
 	oldForceDeleteBranch := forceDeleteBranch
+	oldRemoveDaemonWorktree := removeDaemonWorktree
 
 	t.Cleanup(func() {
 		removeForce = oldRemoveForce
@@ -522,6 +555,7 @@ func resetRemoveCommandFlags(t *testing.T) {
 		removeIfGeneration = oldRemoveIfGeneration
 		deleteBranch = oldDeleteBranch
 		forceDeleteBranch = oldForceDeleteBranch
+		removeDaemonWorktree = oldRemoveDaemonWorktree
 	})
 
 	removeForce = false
@@ -530,6 +564,14 @@ func resetRemoveCommandFlags(t *testing.T) {
 	removeIfGeneration = ""
 	deleteBranch = false
 	forceDeleteBranch = false
+	removeDaemonWorktree = func(
+		ctx context.Context,
+		request kwt.RemovalRequest,
+	) (kwt.RemovalResult, error) {
+		return kwt.NewRemovalService(kwt.RemovalServiceOptions{
+			Home: os.Getenv("KWT_HOME"),
+		}).Remove(ctx, request)
+	}
 }
 
 func setRemoveGenerationFlag(

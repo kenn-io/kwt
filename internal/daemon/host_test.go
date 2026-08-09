@@ -14,8 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/pkg/models"
-	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 func TestHTTPServerBoundsUnauthenticatedRequests(t *testing.T) {
@@ -197,16 +197,16 @@ func TestServeContinuesWithoutDisposableInventoryCache(t *testing.T) {
 	}
 
 	observation := waitForRuntime(t, home)
-	result, err := observation.Client.Inventory(context.Background(), publicworktree.Request{
-		View: publicworktree.ViewProjects, UntrustedConfig: publicworktree.IgnoreUntrustedConfig,
+	result, err := observation.Client.Inventory(context.Background(), kwt.Request{
+		View: kwt.ViewProjects, UntrustedConfig: kwt.IgnoreUntrustedConfig,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, publicworktree.Fresh, result.Freshness)
-	result, err = observation.Client.Inventory(context.Background(), publicworktree.Request{
-		View: publicworktree.ViewDashboard, UntrustedConfig: publicworktree.IgnoreUntrustedConfig,
+	assert.Equal(t, kwt.Fresh, result.Freshness)
+	result, err = observation.Client.Inventory(context.Background(), kwt.Request{
+		View: kwt.ViewDashboard, UntrustedConfig: kwt.IgnoreUntrustedConfig,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, publicworktree.Fresh, result.Freshness)
+	assert.Equal(t, kwt.Fresh, result.Freshness)
 	status, err := observation.Client.Status(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, status.LastError)

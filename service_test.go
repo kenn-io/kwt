@@ -1,4 +1,4 @@
-package worktree
+package kwt
 
 import (
 	"context"
@@ -87,7 +87,7 @@ func (c *observedDoneContext) Done() <-chan struct{} {
 func TestServiceCachedDashboardReportsRefreshState(t *testing.T) {
 	cache := &testCache{ok: true, result: Result{Snapshot: Snapshot{Entries: []Entry{{Path: "/old"}}}}}
 	source := &testSource{started: make(chan struct{}), release: make(chan struct{})}
-	service := NewInventoryService(ServiceOptions{Source: source, Cache: cache})
+	service := NewInventoryService(InventoryServiceOptions{Source: source, Cache: cache})
 
 	done := make(chan struct{})
 	go func() {
@@ -108,7 +108,7 @@ func TestServiceCurrentRefreshIsSingleFlight(t *testing.T) {
 		started: make(chan struct{}), release: make(chan struct{}),
 		result: Result{Snapshot: Snapshot{Entries: []Entry{{Path: "/new"}}}},
 	}
-	service := NewInventoryService(ServiceOptions{Source: source, Cache: &testCache{}})
+	service := NewInventoryService(InventoryServiceOptions{Source: source, Cache: &testCache{}})
 	var wait sync.WaitGroup
 	errorsOut := make(chan error, 8)
 	for range 8 {
@@ -135,7 +135,7 @@ func TestServiceCallerCancellationDoesNotCancelSharedRefresh(t *testing.T) {
 		started: make(chan struct{}), release: make(chan struct{}),
 		result: Result{Snapshot: Snapshot{Entries: []Entry{{Path: "/fresh"}}}},
 	}
-	service := NewInventoryService(ServiceOptions{Source: source, Cache: &testCache{}})
+	service := NewInventoryService(InventoryServiceOptions{Source: source, Cache: &testCache{}})
 	firstContext, cancelFirst := context.WithCancel(context.Background())
 	firstDone := make(chan error, 1)
 	go func() {
@@ -165,7 +165,7 @@ func TestServiceCanceledWaiterReturnsBeforeSharedRefreshFinishes(t *testing.T) {
 		started: make(chan struct{}), release: make(chan struct{}),
 		result: Result{Snapshot: Snapshot{Entries: []Entry{{Path: "/fresh"}}}},
 	}
-	service := NewInventoryService(ServiceOptions{Source: source, Cache: &testCache{}})
+	service := NewInventoryService(InventoryServiceOptions{Source: source, Cache: &testCache{}})
 	firstDone := make(chan error, 1)
 	go func() {
 		_, err := service.Query(context.Background(), Request{View: ViewDashboard, RequireCurrent: true})
@@ -202,7 +202,7 @@ func TestServiceCanceledWaiterReturnsBeforeSharedRefreshFinishes(t *testing.T) {
 
 func TestServiceFailedRefreshKeepsLastKnownGood(t *testing.T) {
 	cache := &testCache{ok: true, result: Result{Snapshot: Snapshot{Entries: []Entry{{Path: "/old"}}}}}
-	service := NewInventoryService(ServiceOptions{
+	service := NewInventoryService(InventoryServiceOptions{
 		Source: &testSource{err: errors.New("scan failed")}, Cache: cache,
 		Now: func() time.Time { return time.Unix(10, 0) },
 	})
@@ -216,7 +216,7 @@ func TestServiceFailedRefreshKeepsLastKnownGood(t *testing.T) {
 
 func TestServiceFreshDashboardSurvivesCacheWriteFailure(t *testing.T) {
 	cacheErr := errors.New("cache is read-only")
-	service := NewInventoryService(ServiceOptions{
+	service := NewInventoryService(InventoryServiceOptions{
 		Source: &testSource{result: Result{Snapshot: Snapshot{Entries: []Entry{{Path: "/new"}}}}},
 		Cache:  &testCache{storeErr: cacheErr},
 		Now:    func() time.Time { return time.Unix(10, 0) },
@@ -234,7 +234,7 @@ func TestServiceFreshDashboardSurvivesCacheWriteFailure(t *testing.T) {
 
 func TestServiceResultsDoNotShareEffectiveConfig(t *testing.T) {
 	cache := &testCache{}
-	service := NewInventoryService(ServiceOptions{
+	service := NewInventoryService(InventoryServiceOptions{
 		Source: &testSource{result: Result{Snapshot: Snapshot{Config: &models.Config{
 			Worktree: models.WorktreeConfig{BaseDir: "/original"},
 			Agents:   map[string]string{"agent": "command"},
@@ -278,7 +278,7 @@ func TestServiceNewestDashboardRefreshOwnsSharedCache(t *testing.T) {
 		}
 	})
 	cache := &testCache{}
-	service := NewInventoryService(ServiceOptions{Source: source, Cache: cache})
+	service := NewInventoryService(InventoryServiceOptions{Source: source, Cache: cache})
 	oldDone, newDone := make(chan error, 1), make(chan error, 1)
 	go func() {
 		_, err := service.Query(context.Background(), Request{
@@ -322,7 +322,7 @@ func TestServiceReportsRefreshingUntilEveryDashboardRefreshFinishes(t *testing.T
 		}
 	})
 	cache := &testCache{ok: true, result: Result{Snapshot: Snapshot{Entries: []Entry{{Path: "/cached"}}}}}
-	service := NewInventoryService(ServiceOptions{Source: source, Cache: cache})
+	service := NewInventoryService(InventoryServiceOptions{Source: source, Cache: cache})
 	oneDone, twoDone := make(chan error, 1), make(chan error, 1)
 	go func() {
 		_, err := service.Query(context.Background(), Request{

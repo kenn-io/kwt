@@ -10,8 +10,8 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/service"
-	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 type StatusProvider interface {
@@ -29,7 +29,8 @@ type ServerOptions struct {
 	Touch        func(time.Time)
 	Now          func() time.Time
 	MaxBodyBytes int64
-	Inventory    publicworktree.Inventory
+	Inventory    kwt.Inventory
+	Remover      kwt.Remover
 	Gate         *Gate
 }
 
@@ -37,14 +38,16 @@ type emptyInput struct{}
 type statusOutput struct{ Body Status }
 type shutdownInput struct{ Body ShutdownRequest }
 type shutdownOutput struct{ Body ShutdownResponse }
-type inventoryInput struct{ Body publicworktree.Request }
-type inventoryOutput struct{ Body publicworktree.Result }
-type configApprovalInput struct{ Body publicworktree.ConfigApproval }
+type inventoryInput struct{ Body kwt.Request }
+type inventoryOutput struct{ Body kwt.Result }
+type configApprovalInput struct{ Body kwt.ConfigApproval }
 type configApprovalOutput struct {
 	Body struct {
 		Status string `json:"status"`
 	}
 }
+type removalInput struct{ Body kwt.RemovalRequest }
+type removalOutput struct{ Body kwt.RemovalResult }
 
 const defaultMaxBodyBytes = 1 << 20
 
@@ -103,6 +106,27 @@ func NewServer(opts ServerOptions) http.Handler {
 				output := &configApprovalOutput{}
 				output.Body.Status = "approved"
 				return output, nil
+			},
+		)
+	}
+	if opts.Remover != nil {
+		huma.Register(
+			api,
+			huma.Operation{
+				Method: http.MethodPost, Path: "/api/v1/worktrees/remove",
+				OperationID: "worktree-remove",
+			},
+			func(ctx context.Context, input *removalInput) (*removalOutput, error) {
+				release, err := reserveInventoryWork(opts)
+				if err != nil {
+					return nil, problemFromError(err)
+				}
+				defer release()
+				result, err := opts.Remover.Remove(ctx, input.Body)
+				if err != nil {
+					return nil, problemFromError(err)
+				}
+				return &removalOutput{Body: result}, nil
 			},
 		)
 	}
@@ -286,6 +310,8 @@ func allowedProblemDetails(details map[string]any) map[string]any {
 	allowed := map[string]bool{
 		"kind": true, "path": true, "digest": true, "size": true,
 		"preview": true, "truncated": true, "drain_deadline": true,
+		"branch": true, "reason": true, "worktree_removed": true,
+		"branch_deleted": true, "registry_unregistered": true,
 	}
 	result := make(map[string]any)
 	for key, value := range details {

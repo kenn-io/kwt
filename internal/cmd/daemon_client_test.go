@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/service"
-	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 func TestInventoryDrainDeadlineRequiresDeadlineBearingBusyError(t *testing.T) {
@@ -48,7 +48,7 @@ func TestInventoryDrainDeadlineRequiresDeadlineBearingBusyError(t *testing.T) {
 
 func TestWriteConfigNotesPreservesNoninteractiveWarning(t *testing.T) {
 	var stderr bytes.Buffer
-	writeConfigNotes(&stderr, []publicworktree.Note{{
+	writeConfigNotes(&stderr, []kwt.Note{{
 		Code: "untrusted_config_skipped", Path: "/repo/.kwt.toml",
 	}}, false, false)
 	assert.Equal(t, "kwt: skipping untrusted local config /repo/.kwt.toml (non-interactive session)\n", stderr.String())
@@ -56,7 +56,7 @@ func TestWriteConfigNotesPreservesNoninteractiveWarning(t *testing.T) {
 
 func TestWriteConfigNotesWarnsWhenUnsafeLocalConfigIsSkipped(t *testing.T) {
 	var stderr bytes.Buffer
-	writeConfigNotes(&stderr, []publicworktree.Note{{
+	writeConfigNotes(&stderr, []kwt.Note{{
 		Code: "unsafe_config_skipped", Path: "/repo/.kwt.toml",
 	}}, false, false)
 	assert.Equal(t, "kwt: skipping unsafe local config /repo/.kwt.toml\n", stderr.String())
@@ -64,7 +64,7 @@ func TestWriteConfigNotesWarnsWhenUnsafeLocalConfigIsSkipped(t *testing.T) {
 
 func TestWriteConfigNotesWarnsWhenTrustStoreIsUnavailable(t *testing.T) {
 	var stderr bytes.Buffer
-	writeConfigNotes(&stderr, []publicworktree.Note{{
+	writeConfigNotes(&stderr, []kwt.Note{{
 		Code: "trust_store_unavailable", Path: "/home/trusted_configs.json",
 	}}, false, false)
 	assert.Equal(t, "kwt: failed to load trust store /home/trusted_configs.json (continuing empty)\n", stderr.String())

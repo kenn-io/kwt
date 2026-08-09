@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/fleet"
@@ -1706,6 +1707,7 @@ func TestHasStableProjectIdentityRejectsAbsolutePathFallbacks(t *testing.T) {
 }
 
 func TestTUIBackendRemoveWorktreeFallsBackToRegisteredProjectRoot(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -1736,12 +1738,52 @@ func TestTUIBackendRemoveWorktreeFallsBackToRegisteredProjectRoot(t *testing.T) 
 		Generation: generation,
 	}}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	useInProcessTUIRemoval(t, backend)
 
 	err := backend.RemoveWorktree(context.Background(), row, false)
 
 	require.NoError(t, err)
 	output := runTUITestGitOutput(t, repoPath, "worktree", "list", "--porcelain")
 	assert.NotContains(t, output, worktreePath)
+}
+
+func TestTUIBackendRemoveWorktreeDelegatesToDaemon(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "daemon-tui-remove")
+	runTUITestGit(t, repoPath, "worktree", "add", "-b", "daemon-tui-remove", worktreePath)
+	generation := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
+	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
+		Path: worktreePath, Branch: "daemon-tui-remove", Generation: generation,
+	}}
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	var request kwt.RemovalRequest
+	backend.removeWorktree = func(
+		_ context.Context,
+		input kwt.RemovalRequest,
+	) (kwt.RemovalResult, error) {
+		request = input
+		return kwt.RemovalResult{
+			Path: input.Path, Branch: "daemon-tui-remove", WorktreeRemoved: true,
+		}, nil
+	}
+
+	err := backend.RemoveWorktree(context.Background(), row, false)
+
+	require.NoError(t, err)
+	assert.Equal(t, utils.PathKey(repoPath), utils.PathKey(request.RepositoryPath))
+	assert.Equal(t, utils.PathKey(worktreePath), utils.PathKey(request.Path))
+	assert.Equal(t, generation, request.ExpectedGeneration)
+	assert.DirExists(t, worktreePath, "only the daemon service may perform the mutation")
+}
+
+func useInProcessTUIRemoval(t *testing.T, backend *tuiBackend) {
+	t.Helper()
+	home, err := config.CanonicalHome()
+	require.NoError(t, err)
+	backend.removeWorktree = kwt.NewRemovalService(
+		kwt.RemovalServiceOptions{Home: home},
+	).Remove
 }
 
 func TestTUIBackendCreateWorktreePublishesAfterSuccessfulMutation(t *testing.T) {
@@ -1899,6 +1941,7 @@ func TestTUIBackendCreateWorktreeDoesNotExpandRepositoryLocalTemplate(t *testing
 
 func TestTUIBackendRemoveWorktreePublishesAfterSuccessfulMutation(t *testing.T) {
 	resetFleetCommandDeps(t)
+	t.Setenv("KWT_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -1941,6 +1984,7 @@ func TestTUIBackendRemoveWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 		),
 	}}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	useInProcessTUIRemoval(t, backend)
 
 	err := backend.RemoveWorktree(context.Background(), row, false)
 
@@ -1955,6 +1999,7 @@ func TestTUIBackendCompletesBookkeepingAfterGitDeregistersWithResidualFiles(
 		t.Skip("test uses a POSIX shell wrapper")
 	}
 	resetFleetCommandDeps(t)
+	t.Setenv("KWT_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -2038,6 +2083,7 @@ exec "$REAL_GIT" "$@"
 		SessionName: "kwt-workspace-service-api-residual",
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	useInProcessTUIRemoval(t, backend)
 
 	err = backend.RemoveWorktree(context.Background(), row, false)
 
@@ -2052,6 +2098,7 @@ exec "$REAL_GIT" "$@"
 }
 
 func TestTUIBackendRemoveWorktreeUnregistersLegacyEntry(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -2085,6 +2132,7 @@ func TestTUIBackendRemoveWorktreeUnregistersLegacyEntry(t *testing.T) {
 	backend := newTUIBackendWithLaunchDir(&models.Config{
 		Worktree: models.WorktreeConfig{BaseDir: t.TempDir()},
 	}, "")
+	useInProcessTUIRemoval(t, backend)
 
 	err = backend.RemoveWorktree(context.Background(), row, false)
 
@@ -2096,6 +2144,7 @@ func TestTUIBackendRemoveWorktreeUnregistersLegacyEntry(t *testing.T) {
 }
 
 func TestTUIBackendRemoveWorktreeRejectsReplacementGeneration(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -2129,6 +2178,7 @@ func TestTUIBackendRemoveWorktreeRejectsReplacementGeneration(t *testing.T) {
 	backend := newTUIBackendWithLaunchDir(&models.Config{
 		Worktree: models.WorktreeConfig{BaseDir: t.TempDir()},
 	}, "")
+	useInProcessTUIRemoval(t, backend)
 
 	err = backend.RemoveWorktree(context.Background(), row, true)
 
@@ -2220,6 +2270,7 @@ func TestTUIBackendAcceptsDiscoveryLocalRepositoryIdentity(t *testing.T) {
 }
 
 func TestTUIBackendRemoveWorktreeDirtyErrorDoesNotSuggestCLIForce(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -2252,6 +2303,7 @@ func TestTUIBackendRemoveWorktreeDirtyErrorDoesNotSuggestCLIForce(t *testing.T) 
 		),
 	}}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	useInProcessTUIRemoval(t, backend)
 
 	err := backend.RemoveWorktree(context.Background(), row, false)
 
@@ -2262,6 +2314,7 @@ func TestTUIBackendRemoveWorktreeDirtyErrorDoesNotSuggestCLIForce(t *testing.T) 
 }
 
 func TestTUIBackendForceRemoveDeletesDirtyWorktree(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -2294,6 +2347,7 @@ func TestTUIBackendForceRemoveDeletesDirtyWorktree(t *testing.T) {
 		),
 	}}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	useInProcessTUIRemoval(t, backend)
 
 	err := backend.RemoveWorktree(context.Background(), row, true)
 
@@ -2888,6 +2942,7 @@ func TestTUIBackendMaterializeWorktreeExplainsUnavailableBranch(t *testing.T) {
 }
 
 func TestTUIBackendRemoveWorktreeRejectsBrokenGitFile(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -2922,6 +2977,7 @@ func TestTUIBackendRemoveWorktreeRejectsBrokenGitFile(t *testing.T) {
 		Generation: generation,
 	}}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	useInProcessTUIRemoval(t, backend)
 
 	err := backend.RemoveWorktree(context.Background(), row, false)
 
@@ -2929,38 +2985,6 @@ func TestTUIBackendRemoveWorktreeRejectsBrokenGitFile(t *testing.T) {
 	output := runTUITestGitOutput(t, repoPath, "worktree", "list", "--porcelain")
 	assert.Contains(t, output, "branch refs/heads/codex/broken")
 	assert.DirExists(t, worktreePath)
-}
-
-func TestTUIBackendRemoveWorktreePreservesCrossRepositoryReplacementWithBrokenGitFile(
-	t *testing.T,
-) {
-	repoA := newTUITestRepo(t)
-	repoB := newTUITestRepo(t)
-	worktreePath := filepath.Join(t.TempDir(), "replaced-worktree")
-	runTUITestGit(t, repoA, "worktree", "add", "-b", "codex/original", worktreePath)
-	generation := tuiTestWorktreeGeneration(t, repoA, worktreePath)
-
-	require.NoError(t, os.RemoveAll(worktreePath))
-	runTUITestGit(t, repoB, "worktree", "add", "-b", "codex/replacement", worktreePath)
-	const sentinel = "repository B must survive\n"
-	require.NoError(t, os.WriteFile(
-		filepath.Join(worktreePath, "replacement.txt"),
-		[]byte(sentinel),
-		0644,
-	))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(worktreePath, ".git"),
-		[]byte("gitdir: /missing/repository-b/worktree\n"),
-		0644,
-	))
-
-	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
-	err := backend.removeWorktreeFromRoot(repoA, worktreePath, true, generation)
-
-	require.Error(t, err)
-	data, readErr := os.ReadFile(filepath.Join(worktreePath, "replacement.txt"))
-	require.NoError(t, readErr)
-	assert.Equal(t, sentinel, string(data))
 }
 
 func TestTUIBackendResolveLayoutFallsBackToRegisteredProjectRoot(t *testing.T) {
@@ -3057,6 +3081,7 @@ func TestDiscoverLaunchRepoWorktreesListsLocalOnlyRepository(t *testing.T) {
 }
 
 func TestTUIBackendRemovesLaunchWorktreeOutsideGlobalBase(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -3077,6 +3102,7 @@ func TestTUIBackendRemovesLaunchWorktreeOutsideGlobalBase(t *testing.T) {
 		},
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, repoPath)
+	useInProcessTUIRemoval(t, backend)
 	backend.listSessions = func() ([]string, error) { return nil, nil }
 	backend.registerProject = func(models.Project) error { return nil }
 	backend.registerWorkspace = func(

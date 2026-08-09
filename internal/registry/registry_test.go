@@ -81,6 +81,17 @@ func TestNewUsesKWT_HOME(t *testing.T) {
 	assert.DirExists(t, kwtHome)
 }
 
+func TestNewAtUsesExplicitHome(t *testing.T) {
+	explicitHome := filepath.Join(t.TempDir(), "explicit")
+	t.Setenv("KWT_HOME", filepath.Join(t.TempDir(), "ambient"))
+
+	reg, err := NewAt(explicitHome)
+
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(explicitHome, "registry.json"), reg.path)
+	assert.DirExists(t, explicitHome)
+}
+
 func TestEntryMatchesNilOnlyWhenPathIsUnregistered(t *testing.T) {
 	t.Setenv("KWT_HOME", t.TempDir())
 	reg, err := New()

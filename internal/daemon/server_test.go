@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	publicworktree "go.kenn.io/kwt/worktree"
+	kwt "go.kenn.io/kwt"
 )
 
 type testStatusProvider struct{ status Status }
@@ -104,14 +104,14 @@ func TestServerDefaultBodyLimitAccommodatesClientExpansionContext(t *testing.T) 
 		Inventory:    &fakeInventory{},
 		Gate:         NewGate(time.Now()),
 	})
-	body, err := json.Marshal(publicworktree.Request{
-		View: publicworktree.ViewProjects,
-		Expansion: publicworktree.ExpansionContext{
+	body, err := json.Marshal(kwt.Request{
+		View: kwt.ViewProjects,
+		Expansion: kwt.ExpansionContext{
 			WorkingDirectory: "/workspace",
 			HomeDirectory:    "/home/user",
 			Environment:      map[string]string{"LARGE_PATH_CONTEXT": strings.Repeat("x", 100<<10)},
 		},
-		UntrustedConfig: publicworktree.IgnoreUntrustedConfig,
+		UntrustedConfig: kwt.IgnoreUntrustedConfig,
 	})
 	require.NoError(t, err)
 	request := httptest.NewRequest(

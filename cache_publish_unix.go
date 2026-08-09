@@ -1,6 +1,6 @@
 //go:build !windows
 
-package worktree
+package kwt
 
 import "os"
 

@@ -54,6 +54,17 @@ func New() (*Registry, error) {
 	} else {
 		registryDir = platformRegistryDir()
 	}
+	return NewAt(registryDir)
+}
+
+// NewAt opens the registry rooted at an explicit kwt home.
+func NewAt(registryDir string) (*Registry, error) {
+	if registryDir == "" {
+		return nil, fmt.Errorf("registry home is empty")
+	}
+	if !filepath.IsAbs(registryDir) {
+		return nil, fmt.Errorf("registry home must be absolute")
+	}
 	if err := os.MkdirAll(registryDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create registry directory: %w", err)
 	}

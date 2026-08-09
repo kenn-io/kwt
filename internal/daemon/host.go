@@ -13,9 +13,9 @@ import (
 	"time"
 
 	kitdaemon "go.kenn.io/kit/daemon"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
-	publicworktree "go.kenn.io/kwt/worktree"
 )
 
 const (
@@ -34,7 +34,8 @@ type ServeOptions struct {
 	IdleCheckInterval time.Duration
 	Stdout            io.Writer
 	Stderr            io.Writer
-	Inventory         publicworktree.Inventory
+	Inventory         kwt.Inventory
+	Remover           kwt.Remover
 }
 
 type hostStatus struct {
@@ -161,23 +162,29 @@ func runHost(
 	startedAt := opts.Now()
 	gate := NewGate(startedAt)
 	inventory := opts.Inventory
-	var cacheDiagnostic *publicworktree.Diagnostic
+	remover := opts.Remover
+	var cacheDiagnostic *kwt.Diagnostic
 	if inventory == nil {
-		cache, diagnostic, cacheErr := publicworktree.NewFileCache(opts.Home)
-		var serviceCache publicworktree.Cache
+		cache, diagnostic, cacheErr := kwt.NewFileCache(opts.Home)
+		var serviceCache kwt.Cache
 		if cacheErr != nil {
-			cacheDiagnostic = &publicworktree.Diagnostic{
+			cacheDiagnostic = &kwt.Diagnostic{
 				At: opts.Now(), Message: boundedError(cacheErr),
 			}
 		} else {
 			cacheDiagnostic = diagnostic
 			serviceCache = cache
 		}
-		inventory = publicworktree.NewInventoryService(publicworktree.ServiceOptions{
-			Source:  publicworktree.NewSource(publicworktree.SourceOptions{Home: opts.Home}),
+		inventory = kwt.NewInventoryService(kwt.InventoryServiceOptions{
+			Source:  kwt.NewSource(kwt.SourceOptions{Home: opts.Home}),
 			Cache:   serviceCache,
 			Now:     opts.Now,
 			Context: ctx,
+		})
+	}
+	if remover == nil {
+		remover = kwt.NewRemovalService(kwt.RemovalServiceOptions{
+			Home: opts.Home,
 		})
 	}
 	status := &hostStatus{
@@ -195,6 +202,7 @@ func runHost(
 				CapabilityShutdown,
 				CapabilityStatus,
 				CapabilityInventory,
+				CapabilityRemoval,
 			},
 			StartedAt: startedAt,
 		},
@@ -222,6 +230,7 @@ func runHost(
 		Touch:        gate.Touch,
 		Now:          opts.Now,
 		Inventory:    inventory,
+		Remover:      remover,
 		Gate:         gate,
 	})
 	httpServer := newHTTPServer(handler)
