@@ -24,6 +24,10 @@ const (
 
 type Freshness string
 
+// DefaultRefreshTimeout bounds one service-owned inventory refresh. Transports
+// must allow additional time for request delivery and response encoding.
+const DefaultRefreshTimeout = 30 * time.Second
+
 const (
 	Fresh      Freshness = "fresh"
 	Refreshing Freshness = "refreshing"
@@ -199,6 +203,7 @@ type Diagnostic struct {
 }
 
 type Snapshot struct {
+	Config        *models.Config     `json:"config"`
 	Projects      []models.Project   `json:"projects"`
 	Entries       []Entry            `json:"entries"`
 	LaunchEntries []Entry            `json:"launch_entries,omitempty"`

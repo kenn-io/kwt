@@ -37,6 +37,12 @@ current inventory remains available without it. The cache is never mutation
 authority. Git status and fetch remain in the foreground client so their
 credential environment is unchanged.
 
+A current snapshot carries the effective global configuration used for its
+discovery. Before enabling actions, the TUI installs that configuration,
+collects status with its worktree base directory, and rebuilds config-derived
+tmux and credential handling. Cached first paint never changes client
+configuration.
+
 Each inventory request carries the invoking client's working directory, home
 directory, and sanitized environment map for path expansion. The daemon does
 not use its startup environment or working directory to interpret global path

@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 	publicworktree "go.kenn.io/kwt/worktree"
 )
 
@@ -217,17 +218,11 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 	if err != nil {
 		return nil, nil, err
 	}
-	var statusByPath map[string]*models.WorktreeStatus
 	renderWorkspaces := result.Snapshot.Workspaces
-	if includeStatuses {
-		statusByPath, err = b.collectStatuses(ctx, b.cfg.Worktree.BaseDir, entries)
-		if err != nil {
+	if includeStatuses && result.Freshness == publicworktree.Fresh {
+		if err := b.applyInventoryConfig(result.Snapshot.Config); err != nil {
 			return nil, nil, err
 		}
-	}
-	if includeStatuses && result.Freshness == publicworktree.Fresh {
-		b.cfg.Projects = append([]models.Project(nil), result.Snapshot.Projects...)
-		b.cfg.Workspaces = append([]models.Workspace(nil), result.Snapshot.Workspaces...)
 		launchEntries := make([]*discovery.GlobalWorktreeEntry, 0, len(result.Snapshot.LaunchEntries))
 		for _, entry := range result.Snapshot.LaunchEntries {
 			launchEntries = append(launchEntries, dashboardInventoryEntry(entry))
@@ -235,6 +230,13 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 		b.registerLaunchProject(launchEntries)
 		b.registerLaunchWorkspace(launchEntries)
 		renderWorkspaces = append([]models.Workspace(nil), b.cfg.Workspaces...)
+	}
+	var statusByPath map[string]*models.WorktreeStatus
+	if includeStatuses {
+		statusByPath, err = b.collectStatuses(ctx, b.cfg.Worktree.BaseDir, entries)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	liveSessions := make(map[string]bool, len(sessions))
 	for _, session := range sessions {
@@ -250,6 +252,31 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 	}
 	rows = append(rows, workspaceRows(renderWorkspaces, sessions)...)
 	return rows, nil, nil
+}
+
+func (b *tuiBackend) applyInventoryConfig(effective *models.Config) error {
+	if effective == nil {
+		return service.NewError(
+			service.TransportFailure,
+			"kwt daemon returned fresh inventory without effective configuration",
+			true,
+			nil,
+			nil,
+		)
+	}
+	if b.cfg == nil {
+		b.cfg = effective
+	} else {
+		*b.cfg = *effective
+	}
+	b.protectedNames = credentials.ProtectedNames(b.cfg)
+	b.tmux = tmux.NewTmuxCommandWithStripNames("", b.protectedNames)
+	b.listSessions = b.tmux.ListSessions
+	b.ensureAndAttach = tmux.NewWorkspaceRunner(
+		b.tmux,
+		b.protectedNames,
+	).EnsureAndAttach
+	return nil
 }
 
 func dashboardInventoryEntry(entry publicworktree.Entry) *discovery.GlobalWorktreeEntry {

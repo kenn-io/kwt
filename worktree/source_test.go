@@ -149,6 +149,25 @@ func TestSourceProjectsFiltersInaccessibleRegistrations(t *testing.T) {
 	assert.Equal(t, "github.com/acme/repo", result.Snapshot.Projects[0].Repository)
 }
 
+func TestSourceSnapshotIncludesEffectiveGlobalConfig(t *testing.T) {
+	home := t.TempDir()
+	baseDirectory := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home, "config.toml"),
+		[]byte("[worktree]\nbasedir = '"+baseDirectory+"'\n[layouts]\ndefault = 'quad'\n"),
+		0o600,
+	))
+
+	result, err := NewSource(SourceOptions{Home: home}).Load(context.Background(), Request{
+		View: ViewProjects, Expansion: testExpansion(t), UntrustedConfig: IgnoreUntrustedConfig,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Snapshot.Config)
+	assert.Equal(t, baseDirectory, result.Snapshot.Config.Worktree.BaseDir)
+	assert.Equal(t, "quad", result.Snapshot.Config.Layouts.Default)
+}
+
 func TestSourceRejectsRelativeRepositoryDirectory(t *testing.T) {
 	_, err := NewSource(SourceOptions{Home: t.TempDir()}).Load(context.Background(), Request{
 		View: ViewRepository, WorkingDirectory: "relative", Expansion: testExpansion(t),

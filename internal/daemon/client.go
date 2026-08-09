@@ -25,10 +25,11 @@ type Client struct {
 var ErrResponseTooLarge = errors.New("kwt daemon response is too large")
 
 const (
-	controlRequestTimeout         = 2 * time.Second
-	inventoryRequestTimeout       = 30 * time.Second
-	controlResponseLimit    int64 = 1 << 20
-	inventoryResponseLimit        = 64 << 20
+	controlRequestTimeout           = 2 * time.Second
+	inventoryResponseHeadroom       = 5 * time.Second
+	inventoryRequestTimeout         = publicworktree.DefaultRefreshTimeout + inventoryResponseHeadroom
+	controlResponseLimit      int64 = 1 << 20
+	inventoryResponseLimit          = 64 << 20
 )
 
 func NewVerifiedClient(

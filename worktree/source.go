@@ -56,6 +56,7 @@ func (s *currentSource) Load(ctx context.Context, request Request) (result Resul
 		return Result{}, err
 	}
 	result = Result{Snapshot: Snapshot{
+		Config:     snapshot.Config,
 		Workspaces: append([]models.Workspace(nil), snapshot.Config.Workspaces...),
 	}}
 

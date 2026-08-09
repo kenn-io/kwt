@@ -20,7 +20,9 @@ func TestTUIBackendDaemonInventoryUsesCacheThenCurrent(t *testing.T) {
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, "/launch")
 	backend.listSessions = func() ([]string, error) { return nil, nil }
-	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error) {
+	var statusBaseDirectory string
+	backend.collectStatuses = func(_ context.Context, baseDirectory string, _ []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error) {
+		statusBaseDirectory = baseDirectory
 		return map[string]*models.WorktreeStatus{}, nil
 	}
 	backend.registerProject = nil
@@ -43,9 +45,20 @@ func TestTUIBackendDaemonInventoryUsesCacheThenCurrent(t *testing.T) {
 			workspace = models.Workspace{Name: "fresh", Path: "/fresh/workspace"}
 			freshness = publicworktree.Fresh
 		}
+		effective := &models.Config{
+			Worktree:   models.WorktreeConfig{BaseDir: "/cached-base"},
+			Projects:   []models.Project{project},
+			Workspaces: []models.Workspace{workspace},
+			Layouts:    models.LayoutsConfig{Default: "cached-layout"},
+		}
+		if request.RequireCurrent {
+			effective.Worktree.BaseDir = "/fresh-base"
+			effective.Layouts.Default = "fresh-layout"
+		}
 		return publicworktree.Result{
 			Freshness: freshness,
 			Snapshot: publicworktree.Snapshot{
+				Config:   effective,
 				Projects: []models.Project{project},
 				Entries: []publicworktree.Entry{{
 					Path: path, Branch: "main", Repository: publicworktree.Repository{FullPath: "github.com/acme/repo", Name: "repo"},
@@ -66,6 +79,9 @@ func TestTUIBackendDaemonInventoryUsesCacheThenCurrent(t *testing.T) {
 	assert.Equal(t, "/fresh", current[0].Entry.Path)
 	assert.Equal(t, "/fresh", cfg.Projects[0].Path)
 	assert.Equal(t, "/fresh/workspace", cfg.Workspaces[0].Path)
+	assert.Equal(t, "/fresh-base", cfg.Worktree.BaseDir)
+	assert.Equal(t, "fresh-layout", cfg.Layouts.Default)
+	assert.Equal(t, "/fresh-base", statusBaseDirectory)
 	require.Len(t, requests, 2)
 	assert.False(t, requests[0].RequireCurrent)
 	assert.True(t, requests[1].RequireCurrent)
@@ -110,6 +126,7 @@ func TestTUIBackendRegistersOnlyCurrentLaunchInventory(t *testing.T) {
 		return publicworktree.Result{
 			Freshness: freshness,
 			Snapshot: publicworktree.Snapshot{
+				Config:        &models.Config{},
 				Entries:       []publicworktree.Entry{unrelated, launch},
 				LaunchEntries: []publicworktree.Entry{launch},
 			},
@@ -146,7 +163,10 @@ func TestTUIBackendCurrentInventoryIncludesNewLaunchWorkspace(t *testing.T) {
 		bool,
 		io.Writer,
 	) (publicworktree.Result, error) {
-		return publicworktree.Result{Freshness: publicworktree.Fresh}, nil
+		return publicworktree.Result{
+			Freshness: publicworktree.Fresh,
+			Snapshot:  publicworktree.Snapshot{Config: &models.Config{}},
+		}, nil
 	}
 
 	rows, _, err := backend.List(context.Background())

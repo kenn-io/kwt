@@ -145,6 +145,10 @@ func TestVerifiedClientAllowsInventoryDiscoveryBeforeHeaders(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestInventoryTransportOutlivesServerRefresh(t *testing.T) {
+	assert.Greater(t, inventoryRequestTimeout, publicworktree.DefaultRefreshTimeout)
+}
+
 func TestVerifiedClientBoundsControlPlaneResponseWait(t *testing.T) {
 	token := "test-secret"
 	mux := http.NewServeMux()

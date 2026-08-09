@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kwt/pkg/models"
 )
 
 type testCache struct {
@@ -72,6 +73,17 @@ func (f sourceFunc) Load(ctx context.Context, request Request) (Result, error) {
 
 func (sourceFunc) ApproveConfig(context.Context, ConfigApproval) error { return nil }
 
+type observedDoneContext struct {
+	context.Context
+	observed chan struct{}
+	once     sync.Once
+}
+
+func (c *observedDoneContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.observed) })
+	return c.Context.Done()
+}
+
 func TestServiceCachedDashboardReportsRefreshState(t *testing.T) {
 	cache := &testCache{ok: true, result: Result{Snapshot: Snapshot{Entries: []Entry{{Path: "/old"}}}}}
 	source := &testSource{started: make(chan struct{}), release: make(chan struct{})}
@@ -131,14 +143,15 @@ func TestServiceCallerCancellationDoesNotCancelSharedRefresh(t *testing.T) {
 		firstDone <- err
 	}()
 	<-source.started
-	secondEntered := make(chan struct{})
+	secondContext := &observedDoneContext{
+		Context: context.Background(), observed: make(chan struct{}),
+	}
 	secondDone := make(chan error, 1)
 	go func() {
-		close(secondEntered)
-		_, err := service.Query(context.Background(), Request{View: ViewDashboard, RequireCurrent: true})
+		_, err := service.Query(secondContext, Request{View: ViewDashboard, RequireCurrent: true})
 		secondDone <- err
 	}()
-	<-secondEntered
+	<-secondContext.observed
 	cancelFirst()
 	require.ErrorIs(t, <-firstDone, context.Canceled)
 	close(source.release)
@@ -159,15 +172,16 @@ func TestServiceCanceledWaiterReturnsBeforeSharedRefreshFinishes(t *testing.T) {
 		firstDone <- err
 	}()
 	<-source.started
-	waiterContext, cancelWaiter := context.WithCancel(context.Background())
-	waiterEntered := make(chan struct{})
+	waiterBase, cancelWaiter := context.WithCancel(context.Background())
+	waiterContext := &observedDoneContext{
+		Context: waiterBase, observed: make(chan struct{}),
+	}
 	waiterDone := make(chan error, 1)
 	go func() {
-		close(waiterEntered)
 		_, err := service.Query(waiterContext, Request{View: ViewDashboard, RequireCurrent: true})
 		waiterDone <- err
 	}()
-	<-waiterEntered
+	<-waiterContext.observed
 	cancelWaiter()
 
 	var waiterErr error
@@ -216,6 +230,35 @@ func TestServiceFreshDashboardSurvivesCacheWriteFailure(t *testing.T) {
 	assert.Equal(t, "/new", result.Snapshot.Entries[0].Path)
 	require.NotNil(t, result.RefreshError)
 	assert.Contains(t, result.RefreshError.Message, cacheErr.Error())
+}
+
+func TestServiceResultsDoNotShareEffectiveConfig(t *testing.T) {
+	cache := &testCache{}
+	service := NewInventoryService(ServiceOptions{
+		Source: &testSource{result: Result{Snapshot: Snapshot{Config: &models.Config{
+			Worktree: models.WorktreeConfig{BaseDir: "/original"},
+			Agents:   map[string]string{"agent": "command"},
+			Layouts: models.LayoutsConfig{Presets: []models.Layout{{
+				Name: "layout", Panes: []string{"original"},
+			}}},
+		}}}},
+		Cache: cache,
+	})
+
+	result, err := service.Query(context.Background(), Request{
+		View: ViewDashboard, RequireCurrent: true,
+	})
+	require.NoError(t, err)
+	result.Snapshot.Config.Worktree.BaseDir = "/mutated"
+	result.Snapshot.Config.Agents["agent"] = "changed"
+	result.Snapshot.Config.Layouts.Presets[0].Panes[0] = "changed"
+
+	cached, ok := cache.Current()
+	require.True(t, ok)
+	require.NotNil(t, cached.Snapshot.Config)
+	assert.Equal(t, "/original", cached.Snapshot.Config.Worktree.BaseDir)
+	assert.Equal(t, "command", cached.Snapshot.Config.Agents["agent"])
+	assert.Equal(t, "original", cached.Snapshot.Config.Layouts.Presets[0].Panes[0])
 }
 
 func TestServiceNewestDashboardRefreshOwnsSharedCache(t *testing.T) {

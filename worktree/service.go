@@ -3,9 +3,12 @@ package worktree
 import (
 	"context"
 	"encoding/json"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
+	"go.kenn.io/kwt/pkg/models"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -39,7 +42,7 @@ func NewInventoryService(options ServiceOptions) *Service {
 		options.Context = context.Background()
 	}
 	if options.RefreshTimeout <= 0 {
-		options.RefreshTimeout = 30 * time.Second
+		options.RefreshTimeout = DefaultRefreshTimeout
 	}
 	return &Service{
 		source: options.Source, cache: options.Cache, now: options.Now,
@@ -148,6 +151,7 @@ func (s *Service) ApproveConfig(ctx context.Context, approval ConfigApproval) er
 
 func cloneResult(result Result) Result {
 	copy := result
+	copy.Snapshot.Config = cloneConfig(result.Snapshot.Config)
 	copy.Snapshot.Projects = cloneSlice(result.Snapshot.Projects)
 	copy.Snapshot.Entries = cloneSlice(result.Snapshot.Entries)
 	copy.Snapshot.LaunchEntries = cloneSlice(result.Snapshot.LaunchEntries)
@@ -155,6 +159,31 @@ func cloneResult(result Result) Result {
 	copy.Notes = cloneSlice(result.Notes)
 	copy.RefreshError = cloneDiagnostic(result.RefreshError)
 	return copy
+}
+
+func cloneConfig(value *models.Config) *models.Config {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	copy.Agents = maps.Clone(value.Agents)
+	copy.Projects = slices.Clone(value.Projects)
+	copy.Workspaces = slices.Clone(value.Workspaces)
+	copy.RepositorySettings = slices.Clone(value.RepositorySettings)
+	for index := range copy.RepositorySettings {
+		copy.RepositorySettings[index].SetupCommands = slices.Clone(
+			value.RepositorySettings[index].SetupCommands,
+		)
+		copy.RepositorySettings[index].CopyFiles = slices.Clone(
+			value.RepositorySettings[index].CopyFiles,
+		)
+	}
+	copy.Layouts.Presets = slices.Clone(value.Layouts.Presets)
+	for index := range copy.Layouts.Presets {
+		copy.Layouts.Presets[index].Panes = slices.Clone(value.Layouts.Presets[index].Panes)
+	}
+	copy.Naming.SanitizeChars = maps.Clone(value.Naming.SanitizeChars)
+	return &copy
 }
 
 func cloneSlice[T any](values []T) []T {
