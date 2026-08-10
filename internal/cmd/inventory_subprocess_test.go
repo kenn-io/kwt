@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 )
 
 func runInventoryCommand(
@@ -174,18 +175,31 @@ path = "`+filepath.ToSlash(repository)+`"
 func TestInventorySubprocessDaemonFailuresNeverUseSSHExit255(t *testing.T) {
 	binary, _ := buildDaemonTestBinaries(t)
 	fixture := buildDaemonFixture(t)
-	for _, mode := range []string{"unresponsive", "incompatible", "draining"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, test := range []struct {
+		mode string
+		code service.Code
+	}{
+		{mode: "unresponsive", code: service.DaemonUnresponsive},
+		{mode: "incompatible", code: service.DaemonIncompatible},
+		{mode: "draining", code: service.DaemonDraining},
+		{mode: "inventory_failed", code: service.InventoryFailed},
+	} {
+		t.Run(test.mode, func(t *testing.T) {
 			home := newDaemonTestHome(t, validDaemonConfig)
 			repository := filepath.Join(t.TempDir(), "repo")
 			require.NoError(t, exec.Command("git", "init", repository).Run())
-			startDaemonFixture(t, fixture, home, mode)
+			startDaemonFixture(t, fixture, home, test.mode)
 
-			_, stderr, err := runInventoryCommand(t, binary, home, repository, "list", "--json")
+			stdout, stderr, err := runInventoryCommand(t, binary, home, repository, "list", "--json")
 			var exitErr *exec.ExitError
 			require.ErrorAs(t, err, &exitErr, "stderr=%s", stderr)
 			assert.Equal(t, 1, exitErr.ExitCode(), "stderr=%s", stderr)
 			assert.NotEqual(t, 255, exitErr.ExitCode())
+			var envelope jsonErrorEnvelope
+			require.NoError(t, json.Unmarshal(stdout, &envelope), "stdout=%s stderr=%s", stdout, stderr)
+			assert.Equal(t, test.code, envelope.Error.Code)
+			assert.NotEmpty(t, envelope.Error.Message)
+			assert.NotContains(t, string(stderr), `{"error":`)
 		})
 	}
 }

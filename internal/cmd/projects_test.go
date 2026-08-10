@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 )
 
 func withProjectsConfig(t *testing.T, projects []models.Project) {
@@ -123,6 +124,33 @@ func TestRunProjectsReturnsConfigLoadError(t *testing.T) {
 	err := runProjects(projectsCmd, nil)
 
 	require.EqualError(t, err, "config unavailable")
+}
+
+func TestRunProjectsJSONWritesStableInventoryFailure(t *testing.T) {
+	originalQuery := queryProjectsInventory
+	t.Cleanup(func() { queryProjectsInventory = originalQuery })
+	queryProjectsInventory = func(context.Context, kwt.Request, bool, io.Writer) (kwt.Result, error) {
+		return kwt.Result{}, service.NewError(
+			service.InventoryTimeout, "inventory refresh timed out", true, nil, context.DeadlineExceeded,
+		)
+	}
+	previousJSON := projectsJSON
+	projectsJSON = true
+	t.Cleanup(func() { projectsJSON = previousJSON })
+	var stdout, stderr bytes.Buffer
+	projectsCmd.SetOut(&stdout)
+	projectsCmd.SetErr(&stderr)
+
+	err := runProjects(projectsCmd, nil)
+
+	var coded interface{ ExitCode() int }
+	require.ErrorAs(t, err, &coded)
+	assert.Equal(t, 1, coded.ExitCode())
+	var envelope jsonErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	assert.Equal(t, service.InventoryTimeout, envelope.Error.Code)
+	assert.True(t, envelope.Error.Retryable)
+	assert.Contains(t, stderr.String(), "inventory_timeout")
 }
 
 // TestRunProjectsJSONCanonicalizesLegacyAbsolutePathIdentity pins the fix for
@@ -532,9 +560,9 @@ func TestRunProjectsRemoveJSONReportsMissingProject(t *testing.T) {
 	var exitErr interface{ ExitCode() int }
 	require.ErrorAs(t, err, &exitErr)
 	assert.Equal(t, 2, exitErr.ExitCode())
-	var response projectCommandErrorEnvelope
+	var response jsonErrorEnvelope
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &response))
-	assert.Equal(t, "project_not_found", response.Error.Code)
+	assert.Equal(t, service.Code("project_not_found"), response.Error.Code)
 	assert.False(t, response.Error.Retryable)
 	assert.Contains(t, stderr.String(), "project_not_found")
 }
@@ -546,12 +574,12 @@ func TestProjectsAddArgumentValidationUsesStructuredErrors(t *testing.T) {
 
 	err := projectsExactArgs(1)(cmd, nil)
 
-	var exitErr *projectCommandError
+	var exitErr *commandFailure
 	require.ErrorAs(t, err, &exitErr)
 	assert.Equal(t, 2, exitErr.ExitCode())
-	var envelope projectCommandErrorEnvelope
+	var envelope jsonErrorEnvelope
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
-	assert.Equal(t, "invalid_repository", envelope.Error.Code)
+	assert.Equal(t, service.Code("invalid_repository"), envelope.Error.Code)
 	assert.Contains(t, stderr.String(), "invalid_repository")
 }
 
@@ -581,9 +609,9 @@ func TestProjectsAddUnknownFlagBeforeJSONUsesStructuredError(t *testing.T) {
 	var exitErr *exec.ExitError
 	require.ErrorAs(t, err, &exitErr)
 	assert.Equal(t, 2, exitErr.ExitCode())
-	var envelope projectCommandErrorEnvelope
+	var envelope jsonErrorEnvelope
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
-	assert.Equal(t, "invalid_repository", envelope.Error.Code)
+	assert.Equal(t, service.Code("invalid_repository"), envelope.Error.Code)
 	assert.Contains(t, stderr.String(), "invalid_repository")
 }
 
@@ -612,9 +640,9 @@ func TestProjectsConfigInitializationFailureUsesJSONContract(t *testing.T) {
 	var exitErr *exec.ExitError
 	require.ErrorAs(t, err, &exitErr)
 	assert.Equal(t, 1, exitErr.ExitCode())
-	var envelope projectCommandErrorEnvelope
+	var envelope jsonErrorEnvelope
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
-	assert.Equal(t, "registration_failed", envelope.Error.Code)
+	assert.Equal(t, service.Code("registration_failed"), envelope.Error.Code)
 	assert.Contains(t, stderr.String(), "registration_failed")
 }
 

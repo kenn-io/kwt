@@ -12,11 +12,25 @@ import (
 	"time"
 
 	kitdaemon "go.kenn.io/kit/daemon"
+	kwt "go.kenn.io/kwt"
 	kwtdaemon "go.kenn.io/kwt/internal/daemon"
+	"go.kenn.io/kwt/service"
 )
 
 type statusProvider struct {
 	status kwtdaemon.Status
+}
+
+type failingInventory struct{}
+
+func (failingInventory) Query(context.Context, kwt.Request) (kwt.Result, error) {
+	return kwt.Result{}, service.NewError(
+		service.InventoryFailed, "inventory source failed", false, nil, nil,
+	)
+}
+
+func (failingInventory) ApproveConfig(context.Context, kwt.ConfigApproval) error {
+	return nil
 }
 
 func (p statusProvider) Status(time.Time) kwtdaemon.Status { return p.status }
@@ -41,7 +55,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	build := kwtdaemon.Build{Version: "v1.0.0", Revision: "fixture"}
+	build := kwtdaemon.Build{Version: "v1.0.0", Revision: strings.Repeat("a", 40)}
 	record, token, err := kwtdaemon.NewRuntimeRecord(*home, build, endpoint)
 	if err != nil {
 		log.Fatal(err)
@@ -88,13 +102,17 @@ func main() {
 		status.DrainDeadline = &deadline
 	}
 	provider := statusProvider{status: status}
-	handler := kwtdaemon.NewServer(kwtdaemon.ServerOptions{
+	serverOptions := kwtdaemon.ServerOptions{
 		Token: token, ExpectedHost: listener.Addr().String(), Status: provider,
 		Shutdown: func(context.Context, kwtdaemon.ShutdownRequest) (kwtdaemon.Status, error) {
 			return provider.status, nil
 		},
 		Ping: ping,
-	})
+	}
+	if *mode == "inventory_failed" {
+		serverOptions.Inventory = failingInventory{}
+	}
+	handler := kwtdaemon.NewServer(serverOptions)
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: time.Second}
 	go func() {
 		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {

@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 )
 
 var (
@@ -92,6 +93,15 @@ func runProjects(cmd *cobra.Command, args []string) error {
 		cmd.ErrOrStderr(),
 	)
 	if err != nil {
+		if projectsJSON {
+			return writeCommandFailure(
+				cmd,
+				service.AsError(err).Descriptor,
+				1,
+				true,
+				"projects",
+			)
+		}
 		return err
 	}
 	projects := result.Snapshot.Projects
@@ -118,24 +128,6 @@ type projectMutationResult struct {
 	Status  string         `json:"status"`
 	Project models.Project `json:"project"`
 }
-
-type projectCommandErrorBody struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	Retryable bool   `json:"retryable"`
-}
-
-type projectCommandErrorEnvelope struct {
-	Error projectCommandErrorBody `json:"error"`
-}
-
-type projectCommandError struct {
-	body     projectCommandErrorBody
-	exitCode int
-}
-
-func (e *projectCommandError) Error() string { return e.body.Message }
-func (e *projectCommandError) ExitCode() int { return e.exitCode }
 
 func projectsNoArgs(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
@@ -328,20 +320,15 @@ func writeProjectCommandErrorWithRetry(
 	exitCode int,
 	retryable bool,
 ) error {
-	body := projectCommandErrorBody{
-		Code:      code,
-		Message:   message,
-		Retryable: retryable,
-	}
-	cmd.Root().SilenceUsage = true
-	cmd.Root().SilenceErrors = true
-	if projectCommandJSONRequested() {
-		encoder := json.NewEncoder(cmd.OutOrStdout())
-		encoder.SetIndent("", "  ")
-		_ = encoder.Encode(projectCommandErrorEnvelope{Error: body})
-	}
-	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "kwt projects: %s: %s\n", code, message)
-	return &projectCommandError{body: body, exitCode: exitCode}
+	return writeCommandFailure(
+		cmd,
+		service.Descriptor{
+			Code: service.Code(code), Message: message, Retryable: retryable,
+		},
+		exitCode,
+		projectCommandJSONRequested(),
+		"projects",
+	)
 }
 
 func projectCommandJSONRequested() bool {

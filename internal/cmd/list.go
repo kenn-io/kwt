@@ -9,6 +9,7 @@ import (
 	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 )
 
 var (
@@ -59,11 +60,11 @@ func init() {
 func runList(cmd *cobra.Command, args []string) error {
 	workingDirectory, err := os.Getwd()
 	if err != nil {
-		return err
+		return writeListFailure(cmd, err, err)
 	}
 	workingDirectory, err = filepath.Abs(workingDirectory)
 	if err != nil {
-		return err
+		return writeListFailure(cmd, err, err)
 	}
 	result, err := queryListInventory(
 		cmd.Context(),
@@ -76,11 +77,11 @@ func runList(cmd *cobra.Command, args []string) error {
 		cmd.ErrOrStderr(),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to list worktrees: %w", err)
+		return writeListFailure(cmd, err, fmt.Errorf("failed to list worktrees: %w", err))
 	}
 	ctx, err := NewCommandContext()
 	if err != nil {
-		return err
+		return writeListFailure(cmd, err, err)
 	}
 	worktrees := make([]models.Worktree, len(result.Snapshot.Entries))
 	for index, entry := range result.Snapshot.Entries {
@@ -95,6 +96,19 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 	ctx.Printer.PrintWorktrees(worktrees, listVerbose)
 	return nil
+}
+
+func writeListFailure(cmd *cobra.Command, err, humanError error) error {
+	if !listJSON {
+		return humanError
+	}
+	return writeCommandFailure(
+		cmd,
+		service.AsError(err).Descriptor,
+		1,
+		true,
+		"list",
+	)
 }
 
 func listedWorktree(entry kwt.Entry) models.Worktree {
