@@ -60,3 +60,24 @@ func TestCurrentBuildInfoUsesVCSTimeForUnstampedRevisionTime(t *testing.T) {
 	assert.Equal(t, "2026-08-09T12:00:00Z", info.RevisionTime)
 	assert.Equal(t, "2026-08-09T12:00:00Z", info.Date)
 }
+
+func TestCurrentBuildInfoRejectsVCSTimeForMismatchedExplicitRevision(t *testing.T) {
+	oldVersion, oldCommit, oldDate, oldRevisionTime := version, commit, date, revisionTime
+	oldReadBuildInfo := readBuildInfo
+	t.Cleanup(func() {
+		version, commit, date, revisionTime = oldVersion, oldCommit, oldDate, oldRevisionTime
+		readBuildInfo = oldReadBuildInfo
+	})
+	version, commit, date, revisionTime = "sha-build", "explicit-revision", "unknown", ""
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Settings: []debug.BuildSetting{
+			{Key: "vcs.revision", Value: "ambient-revision"},
+			{Key: "vcs.time", Value: "2026-08-09T12:00:00Z"},
+		}}, true
+	}
+
+	info := currentBuildInfo()
+	assert.Equal(t, "explicit-revision", info.Revision)
+	assert.Empty(t, info.RevisionTime)
+	assert.Equal(t, "2026-08-09T12:00:00Z", info.Date)
+}
