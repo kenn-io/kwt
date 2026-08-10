@@ -109,6 +109,22 @@ func TestPrivateDiagnosticRedactsAuthorizationAndURIUserinfo(t *testing.T) {
 	}
 }
 
+func TestPrivateDiagnosticRedactsStructureBeforeOverlappingValues(t *testing.T) {
+	const headerCredential = "private-header-credential"
+	got := privateDiagnostic(
+		errors.New(
+			"Authorization: Basic "+headerCredential+"\n"+
+				"overlapping abcdef and abc",
+		),
+		[]string{"Authorization", "abc", "abcdef", "abc"},
+	)
+
+	assert.NotContains(t, got, headerCredential)
+	assert.NotContains(t, got, "abcdef")
+	assert.NotContains(t, got, "[redacted]def")
+	assert.Contains(t, got, "[redacted]")
+}
+
 func TestRotatingLogRotatesAnOversizedExistingFileOnOpen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "daemon.log")
 	require.NoError(t, os.WriteFile(path, []byte("already-too-large"), 0o600))

@@ -44,6 +44,10 @@ type worktreeRemovedError struct {
 	err error
 }
 
+type worktreeRemovalCommandError struct {
+	err error
+}
+
 type incompleteWorktreeRemovalError struct {
 	path  string
 	cause error
@@ -89,6 +93,21 @@ func (e *worktreeRemovedError) Unwrap() error {
 
 func (e *worktreeRemovedError) WorktreeRemoved() bool {
 	return true
+}
+
+func (e *worktreeRemovalCommandError) Error() string {
+	return e.err.Error()
+}
+
+func (e *worktreeRemovalCommandError) Unwrap() error {
+	return e.err
+}
+
+// IsWorktreeRemovalCommandError reports a Git-owned removal-command failure
+// whose credential-sanitized message is safe to present to the caller.
+func IsWorktreeRemovalCommandError(err error) bool {
+	var commandError *worktreeRemovalCommandError
+	return errors.As(err, &commandError)
 }
 
 // GenerationStatus describes whether a durable kwt worktree generation was
@@ -1637,7 +1656,9 @@ func (g *Git) removeWorktree(
 			}
 			return nil
 		}
-		return fmt.Errorf("failed to remove worktree: %w", err)
+		return &worktreeRemovalCommandError{
+			err: fmt.Errorf("failed to remove worktree: %w", err),
+		}
 	}
 	return nil
 }

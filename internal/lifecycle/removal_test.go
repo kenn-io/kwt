@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -122,6 +123,24 @@ func TestRemovalServiceIgnoresDaemonRepositoryRoutingEnvironment(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.WorktreeRemoved)
 	assert.NoDirExists(t, worktreePath)
+}
+
+func TestClassifyRemovalErrorHidesUnexpectedCredentialBearingCause(t *testing.T) {
+	const secret = "removal-password"
+	cause := errors.New("fetch ssh://user:" + secret + "@example.invalid/repository")
+
+	err := classifyRemovalError(cause, RemovalResult{
+		Path: "/worktrees/topic", WorktreeRemoved: true,
+	})
+
+	var typed *service.Error
+	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, service.Internal, typed.Code)
+	assert.Equal(t, "internal failure", typed.Message)
+	assert.NotContains(t, typed.Message, secret)
+	assert.Equal(t, "/worktrees/topic", typed.Details["path"])
+	assert.Equal(t, true, typed.Details["worktree_removed"])
+	assert.ErrorIs(t, err, cause)
 }
 
 func removalRepository(t *testing.T, branch string) (string, string) {

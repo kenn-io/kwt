@@ -174,7 +174,10 @@ func classifyRemovalError(err error, result RemovalResult) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return service.NewError(service.Busy, "worktree removal canceled", true, details, err)
 	}
-	return service.NewError(service.Internal, boundedDiagnostic(err), false, details, err)
+	if git.WorktreeWasRemoved(err) || git.IsWorktreeRemovalCommandError(err) {
+		return service.NewError(service.Internal, boundedDiagnostic(err), false, details, err)
+	}
+	return service.NewError(service.Internal, "internal failure", false, details, err)
 }
 
 func requestSafePath(path string) string {

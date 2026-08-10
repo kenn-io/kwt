@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 
@@ -67,18 +68,41 @@ func privateDiagnostic(err error, sensitiveValues []string) string {
 		return ""
 	}
 	message := err.Error()
-	for _, value := range sensitiveValues {
-		if value != "" {
-			message = strings.ReplaceAll(message, value, "[redacted]")
-		}
-	}
 	message = sensitiveAssignmentPattern.ReplaceAllString(message, "$1=[redacted]")
 	message = authorizationHeaderPattern.ReplaceAllString(message, "$1[redacted]")
 	message = credentialURLPattern.ReplaceAllString(message, "$1[redacted]@")
+	message = redactSensitiveValues(message, sensitiveValues)
 	if len(message) > maximumDiagnosticBytes {
 		message = message[:maximumDiagnosticBytes]
 	}
 	return message
+}
+
+func redactSensitiveValues(message string, sensitiveValues []string) string {
+	unique := make(map[string]struct{}, len(sensitiveValues))
+	for _, value := range sensitiveValues {
+		if value != "" {
+			unique[value] = struct{}{}
+		}
+	}
+	values := make([]string, 0, len(unique))
+	for value := range unique {
+		values = append(values, value)
+	}
+	sort.Slice(values, func(left, right int) bool {
+		if len(values[left]) == len(values[right]) {
+			return values[left] < values[right]
+		}
+		return len(values[left]) > len(values[right])
+	})
+	replacements := make([]string, 0, len(values)*2)
+	for _, value := range values {
+		replacements = append(replacements, value, "[redacted]")
+	}
+	if len(replacements) == 0 {
+		return message
+	}
+	return strings.NewReplacer(replacements...).Replace(message)
 }
 
 func processDiagnosticSecrets(bearer string, fleetTokenEnvironment string) []string {
