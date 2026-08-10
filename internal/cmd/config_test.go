@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -41,9 +42,12 @@ func TestConfigSetRejectsDirectProjectRegistryWrites(t *testing.T) {
 			oldLocal := configSetLocal
 			configSetLocal = false
 			t.Cleanup(func() { configSetLocal = oldLocal })
+			projectPath := filepath.Join(t.TempDir(), "widget")
+			contents := "[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'widget'\npath = " +
+				strconv.Quote(projectPath) + "\nlast_touched = 'before'\n"
 			require.NoError(t, os.WriteFile(
 				filepath.Join(configHome, "config.toml"),
-				[]byte("[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'widget'\npath = '/code/widget'\nlast_touched = 'before'\n"),
+				[]byte(contents),
 				0o600,
 			))
 
@@ -58,7 +62,7 @@ func TestConfigSetRejectsDirectProjectRegistryWrites(t *testing.T) {
 			assert.Equal(t, []models.Project{{
 				Repository:  "github.com/acme/widget",
 				Name:        "widget",
-				Path:        "/code/widget",
+				Path:        projectPath,
 				LastTouched: "before",
 			}}, snapshot.Config.Projects)
 		})
