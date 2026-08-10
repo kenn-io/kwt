@@ -54,7 +54,7 @@ func (s *currentSource) Load(ctx context.Context, request Request) (result Resul
 	expansion := request.Expansion
 	snapshot, err := config.LoadGlobalSnapshotAtWithExpansion(s.home, expansion.expandPath)
 	if err != nil {
-		return Result{}, err
+		return Result{}, inventorySourceFailure("load global configuration", err)
 	}
 	result = Result{Snapshot: Snapshot{
 		Config:     snapshot.Config,
@@ -65,30 +65,50 @@ func (s *currentSource) Load(ctx context.Context, request Request) (result Resul
 	switch request.View {
 	case ViewProjects:
 		result.Snapshot.Projects, err = CanonicalProjects(ctx, snapshot.Config.Projects, protectedNames...)
-		return result, err
+		return result, inventorySourceFailure("inspect registered projects", err)
 	case ViewGlobal:
 		result.Snapshot.Projects, err = CanonicalProjects(ctx, snapshot.Config.Projects, protectedNames...)
-		if err == nil {
-			result.Snapshot.Entries, err = s.loadGlobal(ctx, snapshot.Config)
+		if err != nil {
+			return Result{}, inventorySourceFailure("inspect registered projects", err)
+		}
+		result.Snapshot.Entries, err = s.loadGlobal(ctx, snapshot.Config)
+		if err != nil {
+			return Result{}, inventorySourceFailure("discover global worktrees", err)
 		}
 	case ViewRepository:
 		result, err = s.loadRepository(ctx, request, snapshot.Config, expansion.expandPath)
+		if err != nil {
+			return Result{}, inventorySourceFailure("load repository inventory", err)
+		}
 	case ViewDashboard:
 		result.Snapshot.Projects, err = CanonicalProjects(ctx, snapshot.Config.Projects, protectedNames...)
-		if err == nil {
-			result.Snapshot.Entries, result.Snapshot.LaunchEntries, err =
-				s.loadDashboard(ctx, request, snapshot.Config)
+		if err != nil {
+			return Result{}, inventorySourceFailure("inspect registered projects", err)
 		}
-	}
-	if err != nil {
-		return Result{}, err
+		result.Snapshot.Entries, result.Snapshot.LaunchEntries, err =
+			s.loadDashboard(ctx, request, snapshot.Config)
+		if err != nil {
+			return Result{}, inventorySourceFailure("load dashboard inventory", err)
+		}
 	}
 	if request.IncludeProtectedSockets {
 		if err := s.annotateProtectedSockets(ctx, result.Snapshot.Entries); err != nil {
-			return Result{}, err
+			return Result{}, inventorySourceFailure("failed to read pull-request provenance", err)
 		}
 	}
 	return result, nil
+}
+
+func inventorySourceFailure(message string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var typed *service.Error
+	if errors.As(err, &typed) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return service.NewError(service.InventoryFailed, message, false, nil, err)
 }
 
 func classifyInventoryError(err error) error {
@@ -110,7 +130,7 @@ func classifyInventoryError(err error) error {
 		)
 	}
 	return service.NewError(
-		service.InventoryFailed, boundedDiagnostic(err), false, nil, err,
+		service.Internal, "internal failure", false, nil, err,
 	)
 }
 

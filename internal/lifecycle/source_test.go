@@ -67,6 +67,19 @@ func TestClassifyInventoryErrorPreservesTimeoutAndCancellation(t *testing.T) {
 	}
 }
 
+func TestClassifyInventoryErrorHidesUnexpectedCredentialBearingCause(t *testing.T) {
+	const secret = "inventory-password"
+	cause := errors.New("fetch https://user:" + secret + "@example.invalid/repository")
+
+	err := classifyInventoryError(cause)
+
+	typed := service.AsError(err)
+	assert.Equal(t, service.Internal, typed.Code)
+	assert.Equal(t, "internal failure", typed.Message)
+	assert.NotContains(t, typed.Message, secret)
+	assert.ErrorIs(t, err, cause)
+}
+
 func TestBoundedDiagnosticRemovesControlCharacters(t *testing.T) {
 	got := boundedDiagnostic(errors.New("unsafe\nmessage\twith\rcontrols"))
 

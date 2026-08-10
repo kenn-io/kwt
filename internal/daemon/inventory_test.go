@@ -92,10 +92,9 @@ func TestInventoryClientRoundTripsResult(t *testing.T) {
 }
 
 func TestInventoryServerReportsPrivateCauseWithoutReturningIt(t *testing.T) {
-	cause := errors.New("private inventory diagnostic")
-	inventory := &fakeInventory{err: service.NewError(
-		service.Internal, "internal failure", false, nil, cause,
-	)}
+	const secret = "inventory-password"
+	cause := errors.New("fetch https://user:" + secret + "@example.invalid/repository")
+	inventory := &fakeInventory{err: cause}
 	provider := &testStatusProvider{status: Status{State: StateReady}}
 	var reportedRoute string
 	var reported *service.Error
@@ -123,6 +122,7 @@ func TestInventoryServerReportsPrivateCauseWithoutReturningIt(t *testing.T) {
 	assert.Equal(t, service.Internal, typed.Code)
 	assert.Equal(t, "internal failure", typed.Message)
 	assert.NotContains(t, typed.Error(), cause.Error())
+	assert.NotContains(t, typed.Error(), secret)
 	assert.Equal(t, "/api/v1/inventory", reportedRoute)
 	require.NotNil(t, reported)
 	assert.ErrorIs(t, reported, cause)
