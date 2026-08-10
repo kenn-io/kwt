@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/kwt/internal/config"
@@ -88,6 +89,10 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 func runConfigSet(cmd *cobra.Command, args []string) error {
 	key := args[0]
 	value := args[1]
+	normalizedKey := strings.ToLower(key)
+	if normalizedKey == "projects" || strings.HasPrefix(normalizedKey, "projects.") {
+		return fmt.Errorf("projects is managed by kwt projects add and kwt projects remove")
+	}
 
 	// Convert string values to appropriate types
 	var typedValue any = value

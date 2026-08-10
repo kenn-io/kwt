@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -9,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/pkg/models"
 )
 
 func TestConfigSetRoundTripsDaemonDuration(t *testing.T) {
@@ -26,4 +29,38 @@ func TestConfigSetRoundTripsDaemonDuration(t *testing.T) {
 	snapshot, err := config.LoadGlobalSnapshot()
 	require.NoError(t, err)
 	assert.Equal(t, 2*time.Hour, snapshot.Config.Daemon.IdleTimeout)
+}
+
+func TestConfigSetRejectsDirectProjectRegistryWrites(t *testing.T) {
+	for _, key := range []string{"projects", "Projects", "projects.path"} {
+		t.Run(key, func(t *testing.T) {
+			configHome := t.TempDir()
+			t.Setenv("KWT_HOME", configHome)
+			viper.Reset()
+			t.Cleanup(viper.Reset)
+			oldLocal := configSetLocal
+			configSetLocal = false
+			t.Cleanup(func() { configSetLocal = oldLocal })
+			require.NoError(t, os.WriteFile(
+				filepath.Join(configHome, "config.toml"),
+				[]byte("[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'widget'\npath = '/code/widget'\nlast_touched = 'before'\n"),
+				0o600,
+			))
+
+			err := runConfigSet(
+				&cobra.Command{},
+				[]string{key, "[]"},
+			)
+
+			require.ErrorContains(t, err, "kwt projects")
+			snapshot, err := config.LoadGlobalSnapshotAt(configHome)
+			require.NoError(t, err)
+			assert.Equal(t, []models.Project{{
+				Repository:  "github.com/acme/widget",
+				Name:        "widget",
+				Path:        "/code/widget",
+				LastTouched: "before",
+			}}, snapshot.Config.Projects)
+		})
+	}
 }
