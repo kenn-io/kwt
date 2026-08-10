@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -138,7 +139,43 @@ func TestControllerLaunchFailsWhenDaemonReportsFailed(t *testing.T) {
 
 	_, err := NewController(options).Start(context.Background())
 	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.DaemonStartFailed))
 	assert.Contains(t, err.Error(), "failed state")
+}
+
+func TestControllerClassifiesLaunchFailure(t *testing.T) {
+	options := testControllerOptions(t)
+	options.Inspect = scriptedInspector(t, Observation{State: RuntimeAbsent})
+	options.Launch = func(context.Context) error { return context.DeadlineExceeded }
+
+	_, err := NewController(options).Start(context.Background())
+
+	assert.True(t, service.IsCode(err, service.DaemonStartFailed))
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestControllerClassifiesObservedRuntimeFailures(t *testing.T) {
+	controller := NewController(testControllerOptions(t))
+	for _, test := range []struct {
+		name string
+		err  error
+		code service.Code
+	}{
+		{
+			name: "incompatible",
+			err:  controller.incompatibleError(Observation{Err: errors.New("schema mismatch")}),
+			code: service.DaemonIncompatible,
+		},
+		{
+			name: "unresponsive",
+			err:  controller.unresponsiveError(Observation{Err: errors.New("identity unknown")}),
+			code: service.DaemonUnresponsive,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert.True(t, service.IsCode(test.err, test.code))
+		})
+	}
 }
 
 func TestControllerWaitsForExistingStartingDaemon(t *testing.T) {

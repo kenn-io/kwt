@@ -101,16 +101,16 @@ func classifyInventoryError(err error) error {
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return service.NewError(
-			service.Busy, "inventory refresh timed out", true, nil, err,
+			service.InventoryTimeout, "inventory refresh timed out", true, nil, err,
 		)
 	}
 	if errors.Is(err, context.Canceled) {
 		return service.NewError(
-			service.Busy, "inventory refresh canceled", true, nil, err,
+			service.InventoryFailed, "inventory refresh canceled", true, nil, err,
 		)
 	}
 	return service.NewError(
-		service.Internal, boundedDiagnostic(err), false, nil, err,
+		service.InventoryFailed, boundedDiagnostic(err), false, nil, err,
 	)
 }
 

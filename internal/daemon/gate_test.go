@@ -19,7 +19,7 @@ func TestGateRejectsNewWorkDuringDrainWithDeadline(t *testing.T) {
 	_, err := gate.Reserve(ReservationWork, now)
 	var typed *service.Error
 	require.ErrorAs(t, err, &typed)
-	assert.Equal(t, service.Busy, typed.Code)
+	assert.Equal(t, service.DaemonDraining, typed.Code)
 	assert.True(t, typed.Retryable)
 	assert.Equal(t, deadline, typed.Details["drain_deadline"])
 }

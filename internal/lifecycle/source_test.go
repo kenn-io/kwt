@@ -40,9 +40,31 @@ func TestSourceClassifiesInventoryFailuresWithActionableMessage(t *testing.T) {
 
 	var typed *service.Error
 	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, service.InventoryFailed, typed.Code)
+	assert.False(t, typed.Retryable)
 	assert.NotEqual(t, "internal failure", typed.Message)
 	assert.Contains(t, typed.Message, "config")
 	assert.LessOrEqual(t, len(typed.Message), 512)
+}
+
+func TestClassifyInventoryErrorPreservesTimeoutAndCancellation(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		cause error
+		code  service.Code
+	}{
+		{name: "deadline", cause: context.DeadlineExceeded, code: service.InventoryTimeout},
+		{name: "cancellation", cause: context.Canceled, code: service.InventoryFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := classifyInventoryError(test.cause)
+			var typed *service.Error
+			require.ErrorAs(t, err, &typed)
+			assert.Equal(t, test.code, typed.Code)
+			assert.True(t, typed.Retryable)
+			assert.ErrorIs(t, err, test.cause)
+		})
+	}
 }
 
 func TestBoundedDiagnosticRemovesControlCharacters(t *testing.T) {

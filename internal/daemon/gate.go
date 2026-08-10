@@ -71,7 +71,7 @@ func (g *Gate) Reserve(kind ReservationKind, now time.Time) (func(), error) {
 	defer g.mu.Unlock()
 	if g.draining {
 		return nil, service.NewError(
-			service.Busy,
+			service.DaemonDraining,
 			"daemon is draining",
 			true,
 			map[string]any{"drain_deadline": g.drainDeadline},

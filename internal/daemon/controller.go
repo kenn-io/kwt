@@ -216,7 +216,13 @@ func (c *Controller) launchAndWait(ctx context.Context) (Observation, error) {
 	startupCtx, cancel := context.WithTimeout(ctx, c.options.StartTimeout)
 	defer cancel()
 	if err := c.options.Launch(startupCtx); err != nil {
-		return Observation{}, err
+		return Observation{}, service.NewError(
+			service.DaemonStartFailed,
+			"kwt daemon failed to start",
+			true,
+			nil,
+			err,
+		)
 	}
 	return c.waitUntilReady(startupCtx)
 }
@@ -241,7 +247,7 @@ func (c *Controller) waitUntilReady(ctx context.Context) (Observation, error) {
 		}
 		if err := c.waitPoll(ctx); err != nil {
 			return Observation{}, service.NewError(
-				service.Busy,
+				service.DaemonStartFailed,
 				"kwt daemon did not become ready",
 				true,
 				nil,
@@ -275,10 +281,10 @@ func (c *Controller) waitForAbsent(ctx context.Context) error {
 		if err := c.waitPoll(waitCtx); err != nil {
 			cancel()
 			return service.NewError(
-				service.Busy,
+				service.DaemonDraining,
 				"kwt daemon did not stop before the replacement deadline",
 				true,
-				nil,
+				map[string]any{"drain_deadline": waitDeadline},
 				err,
 			)
 		}
@@ -318,7 +324,7 @@ func (c *Controller) reportShutdown(status Status) {
 
 func (c *Controller) incompatibleError(observation Observation) error {
 	return service.NewError(
-		service.Unsupported,
+		service.DaemonIncompatible,
 		"the running kwt daemon uses an incompatible API",
 		false,
 		nil,
@@ -328,7 +334,7 @@ func (c *Controller) incompatibleError(observation Observation) error {
 
 func (c *Controller) unresponsiveError(observation Observation) error {
 	return service.NewError(
-		service.Conflict,
+		service.DaemonUnresponsive,
 		"the running kwt daemon owner is unresponsive",
 		true,
 		nil,
@@ -342,7 +348,7 @@ func (c *Controller) failedError(observation Observation) error {
 		cause = errors.New(observation.Status.LastError.Message)
 	}
 	return service.NewError(
-		service.Conflict,
+		service.DaemonStartFailed,
 		"the running kwt daemon is in a failed state",
 		true,
 		nil,
