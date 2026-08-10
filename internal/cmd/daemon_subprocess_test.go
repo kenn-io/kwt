@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,8 +50,8 @@ func buildDaemonTestBinaries(t *testing.T) (string, string) {
 		require.NoError(t, err, string(output))
 		return path
 	}
-	return build("kwt-old", "v1.0.0", "old"),
-		build("kwt-new", "v1.1.0", "new")
+	return build("kwt-old", "v1.0.0", strings.Repeat("a", 40)),
+		build("kwt-new", "v1.1.0", strings.Repeat("b", 40))
 }
 
 func newDaemonTestHome(t *testing.T, body string) string {

@@ -17,9 +17,10 @@ import (
 )
 
 var (
-	version = "dev"
-	commit  = "none"
-	date    = "unknown"
+	version      = "dev"
+	commit       = "none"
+	date         = "unknown"
+	revisionTime = ""
 )
 
 var (
@@ -32,7 +33,8 @@ var (
 	stdoutIsTerminal = func() bool {
 		return term.IsTerminal(int(os.Stdout.Fd()))
 	}
-	runRootTUI = runTUI
+	runRootTUI    = runTUI
+	readBuildInfo = debug.ReadBuildInfo
 )
 
 // rootCmd represents the base command when called without any subcommands.
@@ -163,15 +165,17 @@ func globalOnlyPreRun(*cobra.Command, []string) error {
 }
 
 type buildInfo struct {
-	Version  string
-	Revision string
-	Date     string
-	Display  string
+	Version      string
+	Revision     string
+	RevisionTime string
+	Date         string
+	Display      string
 }
 
 func currentBuildInfo() buildInfo {
-	buildVersion, buildRevision, buildDate := version, commit, date
-	info, ok := debug.ReadBuildInfo()
+	buildVersion, buildRevision := version, commit
+	buildRevisionTime, buildDate := revisionTime, date
+	info, ok := readBuildInfo()
 	if ok {
 		if buildVersion == "dev" &&
 			info.Main.Version != "" && info.Main.Version != "(devel)" {
@@ -184,6 +188,9 @@ func currentBuildInfo() buildInfo {
 					buildRevision = setting.Value
 				}
 			case "vcs.time":
+				if buildRevisionTime == "" && setting.Value != "" {
+					buildRevisionTime = setting.Value
+				}
 				if buildDate == "unknown" && setting.Value != "" {
 					buildDate = setting.Value
 				}
@@ -195,9 +202,10 @@ func currentBuildInfo() buildInfo {
 		displayRevision = displayRevision[:7]
 	}
 	return buildInfo{
-		Version:  buildVersion,
-		Revision: buildRevision,
-		Date:     buildDate,
+		Version:      buildVersion,
+		Revision:     buildRevision,
+		RevisionTime: buildRevisionTime,
+		Date:         buildDate,
 		Display: fmt.Sprintf(
 			"%s (commit: %s, built: %s)",
 			buildVersion,

@@ -34,8 +34,12 @@ var newDaemonController = func() (daemonController, error) {
 		return nil, err
 	}
 	return kwtdaemon.NewController(kwtdaemon.ControllerOptions{
-		Home:        home,
-		Build:       kwtdaemon.Build{Version: build.Version, Revision: build.Revision},
+		Home: home,
+		Build: kwtdaemon.Build{
+			Version:      build.Version,
+			Revision:     build.Revision,
+			RevisionTime: build.RevisionTime,
+		},
 		Config:      snapshot.Config.Daemon,
 		Executable:  executable,
 		Environment: os.Environ(),

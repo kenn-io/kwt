@@ -21,8 +21,12 @@ var loadServeOptions = func() (kwtdaemon.ServeOptions, error) {
 	}
 	build := currentBuildInfo()
 	return kwtdaemon.ServeOptions{
-		Home:   home,
-		Build:  kwtdaemon.Build{Version: build.Version, Revision: build.Revision},
+		Home: home,
+		Build: kwtdaemon.Build{
+			Version:      build.Version,
+			Revision:     build.Revision,
+			RevisionTime: build.RevisionTime,
+		},
 		Config: snapshot.Config.Daemon,
 	}, nil
 }
