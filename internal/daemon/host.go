@@ -234,8 +234,17 @@ func runHost(
 		Inventory:    inventory,
 		Remover:      remover,
 		Gate:         gate,
-		ReportError: func(route string, failure *service.Error) {
-			logServiceFailure(logger, route, failure, diagnosticSecrets)
+		ReportError: func(
+			route string,
+			failure *service.Error,
+			expansion kwt.ExpansionContext,
+		) {
+			secrets := append([]string(nil), diagnosticSecrets...)
+			secrets = append(
+				secrets,
+				invocationDiagnosticSecrets(opts.Home, expansion)...,
+			)
+			logServiceFailure(logger, route, failure, secrets)
 		},
 	})
 	httpServer := newHTTPServer(handler)

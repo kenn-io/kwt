@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -89,6 +90,34 @@ func TestRemovalClientPreservesPartialResultOnError(t *testing.T) {
 			assert.Equal(t, "topic", result.Branch)
 		})
 	}
+}
+
+func TestRemovalClientHidesUnexpectedInternalCause(t *testing.T) {
+	const secret = "removal-password"
+	cause := errors.New("fetch ssh://user:" + secret + "@example.invalid/repository")
+	remover := &fakeRemover{err: service.NewError(
+		service.Internal,
+		cause.Error(),
+		false,
+		map[string]any{
+			"path": "/worktrees/topic", "branch": "topic",
+			"worktree_removed": true, "branch_deleted": false,
+			"registry_unregistered": true,
+		},
+		cause,
+	)}
+	client, closeServer := removalTestClient(t, remover)
+	defer closeServer()
+
+	result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{})
+
+	require.Error(t, err)
+	typed := service.AsError(err)
+	assert.Equal(t, service.Internal, typed.Code)
+	assert.Equal(t, "internal failure", typed.Message)
+	assert.NotContains(t, typed.Message, secret)
+	assert.True(t, result.WorktreeRemoved)
+	assert.True(t, result.RegistryUnregistered)
 }
 
 func TestRemovalClientReconcilesLostSuccessfulResponse(t *testing.T) {

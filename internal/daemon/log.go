@@ -7,10 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 
 	"go.kenn.io/kit/safefileio"
+	kwt "go.kenn.io/kwt"
+	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/service"
 )
 
@@ -91,6 +94,41 @@ func processDiagnosticSecrets(bearer string) []string {
 		values = append(values, value)
 	}
 	return values
+}
+
+func invocationDiagnosticSecrets(home string, expansion kwt.ExpansionContext) []string {
+	values := make([]string, 0, 4)
+	for name, value := range expansion.Environment {
+		if value != "" && sensitiveEnvironmentName(name) {
+			values = append(values, value)
+		}
+	}
+	snapshot, err := config.LoadGlobalSnapshotAtWithExpansion(
+		home,
+		func(path string) (string, error) { return path, nil },
+	)
+	if err != nil || snapshot.Config.Fleet.TokenEnv == "" {
+		return values
+	}
+	if value := environmentValue(
+		expansion.Environment,
+		snapshot.Config.Fleet.TokenEnv,
+	); value != "" {
+		values = append(values, value)
+	}
+	return values
+}
+
+func environmentValue(environment map[string]string, name string) string {
+	if runtime.GOOS != "windows" {
+		return environment[name]
+	}
+	for candidate, value := range environment {
+		if strings.EqualFold(candidate, name) {
+			return value
+		}
+	}
+	return ""
 }
 
 func sensitiveEnvironmentName(name string) bool {

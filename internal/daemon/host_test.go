@@ -3,6 +3,7 @@ package daemon
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -215,6 +216,55 @@ func TestServeContinuesWithoutDisposableInventoryCache(t *testing.T) {
 	_, err = observation.Client.Shutdown(context.Background(), "stop")
 	require.NoError(t, err)
 	require.NoError(t, <-done)
+}
+
+func TestServeRedactsInvocationSecretsChangedAfterStartup(t *testing.T) {
+	const (
+		passwordName  = "KWT_TEST_PASSWORD"
+		passwordValue = "request-password-after-start"
+		fleetName     = "GHOSTHUB_AUTH"
+		fleetValue    = "request-fleet-auth-after-start"
+	)
+	home := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home, "config.toml"),
+		[]byte("[fleet]\ntoken_env = \""+fleetName+"\"\n"),
+		0o600,
+	))
+	t.Setenv(passwordName, "")
+	t.Setenv(fleetName, "")
+	cause := errors.New("credentials " + passwordValue + " and " + fleetValue)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, ServeOptions{
+			Home:  home,
+			Build: Build{Version: "v1.0.0", Revision: "abc"},
+			Config: models.DaemonConfig{
+				IdleTimeout: time.Hour, AutoRestart: "newer",
+				ReplacementGrace: time.Second,
+			},
+			Inventory: &fakeInventory{err: cause},
+		})
+	}()
+
+	observation := waitForRuntime(t, home)
+	require.NoError(t, os.Setenv(passwordName, passwordValue))
+	require.NoError(t, os.Setenv(fleetName, fleetValue))
+	_, err := observation.Client.Inventory(context.Background(), kwt.Request{
+		View: kwt.ViewProjects, UntrustedConfig: kwt.IgnoreUntrustedConfig,
+	})
+	require.Error(t, err)
+	_, err = observation.Client.Shutdown(context.Background(), "stop")
+	require.NoError(t, err)
+	require.NoError(t, <-done)
+
+	logBody, err := os.ReadFile(filepath.Join(home, backgroundLogName))
+	require.NoError(t, err)
+	assert.NotContains(t, string(logBody), passwordValue)
+	assert.NotContains(t, string(logBody), fleetValue)
+	assert.Contains(t, string(logBody), "[redacted]")
 }
 
 func TestServeRefusesASecondWritableOwner(t *testing.T) {

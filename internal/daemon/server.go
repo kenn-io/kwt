@@ -32,7 +32,7 @@ type ServerOptions struct {
 	Inventory    kwt.Inventory
 	Remover      kwt.Remover
 	Gate         *Gate
-	ReportError  func(string, *service.Error)
+	ReportError  func(string, *service.Error, kwt.ExpansionContext)
 }
 
 type emptyInput struct{}
@@ -87,7 +87,9 @@ func NewServer(opts ServerOptions) http.Handler {
 				defer release()
 				result, err := opts.Inventory.Query(ctx, input.Body)
 				if err != nil {
-					return nil, reportProblem(opts, "/api/v1/inventory", err)
+					return nil, reportProblemWithExpansion(
+						opts, "/api/v1/inventory", err, input.Body.Expansion,
+					)
 				}
 				return &inventoryOutput{Body: result}, nil
 			},
@@ -303,17 +305,30 @@ func problemFromError(err error) *Problem {
 	case service.TransportFailure, service.DaemonTransportFailed:
 		status = http.StatusBadGateway
 	}
+	message := typed.Message
+	if typed.Code == service.Internal {
+		message = "internal failure"
+	}
 	problem := newProblem(status, service.Descriptor{
-		Code: typed.Code, Message: typed.Message, Retryable: typed.Retryable,
+		Code: typed.Code, Message: message, Retryable: typed.Retryable,
 		Details: allowedProblemDetails(typed.Code, typed.Details),
 	})
 	return &problem
 }
 
 func reportProblem(opts ServerOptions, route string, err error) *Problem {
+	return reportProblemWithExpansion(opts, route, err, kwt.ExpansionContext{})
+}
+
+func reportProblemWithExpansion(
+	opts ServerOptions,
+	route string,
+	err error,
+	expansion kwt.ExpansionContext,
+) *Problem {
 	typed := service.AsError(err)
 	if opts.ReportError != nil {
-		opts.ReportError(route, typed)
+		opts.ReportError(route, typed, expansion)
 	}
 	return problemFromError(typed)
 }

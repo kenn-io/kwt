@@ -103,7 +103,7 @@ func TestInventoryServerReportsPrivateCauseWithoutReturningIt(t *testing.T) {
 		Token: "secret", ExpectedHost: server.Listener.Addr().String(), Status: provider,
 		Shutdown:  func(context.Context, ShutdownRequest) (Status, error) { return provider.status, nil },
 		Inventory: inventory, Gate: NewGate(time.Now()),
-		ReportError: func(route string, failure *service.Error) {
+		ReportError: func(route string, failure *service.Error, _ kwt.ExpansionContext) {
 			reportedRoute, reported = route, failure
 		},
 	})
