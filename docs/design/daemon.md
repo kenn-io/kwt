@@ -20,8 +20,10 @@ Compatible clients share the newest running daemon. Build order uses an exact
 full source revision first, then differing semantic versions, then the source
 commit time. Source times are canonical RFC3339 UTC values authenticated in
 both the private runtime record and status response. Hashes are never compared
-lexically. Different revisions with equal source times, missing contemporary
-metadata, or invalid values have unknown order.
+lexically. Matching semantic module versions count as the same build only when
+both installations explicitly lack VCS revision and time identity, as with
+`go install ...@version`. Different revisions with equal source times, missing
+contemporary metadata, or invalid values have unknown order.
 
 With `daemon.auto_restart = "newer"`, a provably newer client asks an older
 daemon to drain before replacement. Automatic start reuses a ready daemon when

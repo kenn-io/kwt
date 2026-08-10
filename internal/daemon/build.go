@@ -28,12 +28,17 @@ func CompareBuilds(
 	if fullRevision(invoking.Revision) && invoking.Revision == running.Revision {
 		return BuildSame
 	}
+	sameModuleVersion := false
 	if left, leftOK := comparableVersion(invoking.Version); leftOK {
-		if right, rightOK := comparableVersion(running.Version); rightOK && left != right {
-			if semver.Compare(left, right) > 0 {
+		if right, rightOK := comparableVersion(running.Version); rightOK {
+			comparison := semver.Compare(left, right)
+			if comparison > 0 {
 				return BuildNewer
 			}
-			return BuildOlder
+			if comparison < 0 {
+				return BuildOlder
+			}
+			sameModuleVersion = left == right
 		}
 	}
 	leftTime, leftOK := parseRevisionTime(invoking.RevisionTime)
@@ -50,7 +55,16 @@ func CompareBuilds(
 	if invoking.RevisionTime == "" && rightOK {
 		return BuildOlder
 	}
+	if sameModuleVersion && revisionUnavailable(invoking.Revision) &&
+		revisionUnavailable(running.Revision) && invoking.RevisionTime == "" &&
+		running.RevisionTime == "" {
+		return BuildSame
+	}
 	return BuildUnknown
+}
+
+func revisionUnavailable(value string) bool {
+	return value == "" || value == "none"
 }
 
 func fullRevision(value string) bool {

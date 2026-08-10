@@ -49,6 +49,41 @@ func TestCompareBuilds(t *testing.T) {
 			want:                  BuildOlder,
 		},
 		{
+			name: "semantic build metadata falls through to revision time",
+			invoking: Build{
+				Version: "v1.2.3+one", Revision: "new",
+				RevisionTime: "2026-08-09T12:00:01Z",
+			},
+			running: Build{
+				Version: "v1.2.3+two", Revision: "old",
+				RevisionTime: "2026-08-09T12:00:00Z",
+			},
+			runningAdvertisedTime: true,
+			want:                  BuildNewer,
+		},
+		{
+			name: "same module version without VCS identity is same",
+			invoking: Build{
+				Version: "v1.2.3", Revision: "none",
+			},
+			running: Build{
+				Version: "v1.2.3", Revision: "none",
+			},
+			runningAdvertisedTime: true,
+			want:                  BuildSame,
+		},
+		{
+			name: "same module version with conflicting revisions is unknown",
+			invoking: Build{
+				Version: "v1.2.3", Revision: "left",
+			},
+			running: Build{
+				Version: "v1.2.3", Revision: "right",
+			},
+			runningAdvertisedTime: true,
+			want:                  BuildUnknown,
+		},
+		{
 			name: "newer revision time",
 			invoking: Build{
 				Version: "new", Revision: "new",
