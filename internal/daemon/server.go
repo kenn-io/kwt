@@ -32,6 +32,7 @@ type ServerOptions struct {
 	Inventory    kwt.Inventory
 	Remover      kwt.Remover
 	Gate         *Gate
+	ReportError  func(string, *service.Error)
 }
 
 type emptyInput struct{}
@@ -81,12 +82,12 @@ func NewServer(opts ServerOptions) http.Handler {
 			func(ctx context.Context, input *inventoryInput) (*inventoryOutput, error) {
 				release, err := reserveInventoryWork(opts)
 				if err != nil {
-					return nil, problemFromError(err)
+					return nil, reportProblem(opts, "/api/v1/inventory", err)
 				}
 				defer release()
 				result, err := opts.Inventory.Query(ctx, input.Body)
 				if err != nil {
-					return nil, problemFromError(err)
+					return nil, reportProblem(opts, "/api/v1/inventory", err)
 				}
 				return &inventoryOutput{Body: result}, nil
 			},
@@ -97,11 +98,11 @@ func NewServer(opts ServerOptions) http.Handler {
 			func(ctx context.Context, input *configApprovalInput) (*configApprovalOutput, error) {
 				release, err := reserveInventoryWork(opts)
 				if err != nil {
-					return nil, problemFromError(err)
+					return nil, reportProblem(opts, "/api/v1/config/trust", err)
 				}
 				defer release()
 				if err := opts.Inventory.ApproveConfig(ctx, input.Body); err != nil {
-					return nil, problemFromError(err)
+					return nil, reportProblem(opts, "/api/v1/config/trust", err)
 				}
 				output := &configApprovalOutput{}
 				output.Body.Status = "approved"
@@ -119,12 +120,12 @@ func NewServer(opts ServerOptions) http.Handler {
 			func(ctx context.Context, input *removalInput) (*removalOutput, error) {
 				release, err := reserveInventoryWork(opts)
 				if err != nil {
-					return nil, problemFromError(err)
+					return nil, reportProblem(opts, "/api/v1/worktrees/remove", err)
 				}
 				defer release()
 				result, err := opts.Remover.Remove(ctx, input.Body)
 				if err != nil {
-					return nil, problemFromError(err)
+					return nil, reportProblem(opts, "/api/v1/worktrees/remove", err)
 				}
 				return &removalOutput{Body: result}, nil
 			},
@@ -140,7 +141,7 @@ func NewServer(opts ServerOptions) http.Handler {
 		func(ctx context.Context, input *shutdownInput) (*shutdownOutput, error) {
 			status, err := opts.Shutdown(ctx, input.Body)
 			if err != nil {
-				return nil, problemFromError(err)
+				return nil, reportProblem(opts, "/api/v1/daemon/shutdown", err)
 			}
 			return &shutdownOutput{Body: ShutdownResponse{Status: status}}, nil
 		},
@@ -288,6 +289,14 @@ func problemFromError(err error) *Problem {
 		Details: allowedProblemDetails(typed.Code, typed.Details),
 	})
 	return &problem
+}
+
+func reportProblem(opts ServerOptions, route string, err error) *Problem {
+	typed := service.AsError(err)
+	if opts.ReportError != nil {
+		opts.ReportError(route, typed)
+	}
+	return problemFromError(typed)
 }
 
 type problemDetailType uint8

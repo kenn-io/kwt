@@ -50,6 +50,37 @@ and repository-config approval under `/api/v1`, proof-capable liveness at
 require the `worktree.inventory.v1` capability. An operation never has
 simultaneous direct and HTTP execution paths.
 
+Service failures cross the in-process, HTTP, and machine-readable CLI
+boundaries as one descriptor with `code`, human-facing `message`, `retryable`,
+and optional typed `details`. Adapters preserve the descriptor; they do not
+infer a failure from prose or HTTP status. HTTP uses the same message as its
+RFC problem `detail`. Unknown HTTP codes become `daemon_transport_failed`
+instead of being guessed. Detail keys are allowlisted per code: draining may
+carry an RFC3339 `drain_deadline`, and repository trust interaction carries
+its typed digest-bound prompt fields.
+
+The daemon and inventory paths currently emit these stable codes:
+
+| Code | Meaning |
+| --- | --- |
+| `invalid_request` | The request is structurally invalid. |
+| `daemon_start_failed` | The daemon could not launch or become ready. |
+| `daemon_unresponsive` | A verified owner exists but cannot safely be reused or replaced. |
+| `daemon_incompatible` | The owner lacks the required API major or capability. |
+| `daemon_downgrade_refused` | An older client attempted replacement. |
+| `daemon_build_order_unknown` | Replacement order cannot be proved. |
+| `daemon_draining` | The owner is draining; retry according to its deadline. |
+| `daemon_transport_failed` | The verified daemon exchange failed or was not understood. |
+| `inventory_timeout` | A current inventory refresh exceeded its bound. |
+| `inventory_failed` | Inventory discovery failed for another known source cause. |
+| `interaction_required` | Repository configuration needs digest-bound approval. |
+| `internal` | An unexpected failure was withheld from the public response. |
+
+`operation_id_conflict`, `operation_capacity_exhausted`,
+`operation_journal_unavailable`, and `operation_outcome_unknown` are reserved
+for the API-major-2 durable-operation protocol. No current endpoint emits
+them.
+
 `kwt projects` and `kwt list` auto-start or reuse the daemon and require a
 current inventory result. They fail instead of falling back to cached or direct
 filesystem data. The TUI may paint immediately from the derived last-known-good

@@ -222,6 +222,7 @@ func runHost(
 		}
 		return status.Status(opts.Now()), nil
 	}
+	diagnosticSecrets := processDiagnosticSecrets(token)
 	handler := NewServer(ServerOptions{
 		Token:        token,
 		ExpectedHost: ep.Address,
@@ -233,6 +234,9 @@ func runHost(
 		Inventory:    inventory,
 		Remover:      remover,
 		Gate:         gate,
+		ReportError: func(route string, failure *service.Error) {
+			logServiceFailure(logger, route, failure, diagnosticSecrets)
+		},
 	})
 	httpServer := newHTTPServer(handler)
 	serverDone := make(chan error, 1)

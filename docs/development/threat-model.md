@@ -83,6 +83,14 @@ A remote client reaches inventory by invoking the remote machine's kwt CLI over
 its existing shell boundary; the loopback daemon itself is not remotely
 reachable.
 
+Public service descriptors never contain an unexpected error's private cause.
+HTTP detail keys are selected by stable code and type-checked before
+serialization; arbitrary cause metadata is not forwarded. The owner-private
+daemon log records the route, stable code, and a diagnostic capped at 1024
+bytes. The bearer, values from credential-named environment variables,
+authorization headers, and URL user information are redacted before that
+diagnostic is written. Request bodies are never logged.
+
 PID liveness alone does not authorize cleanup or replacement. Kwt also checks
 the recorded process creation identity. A dead PID or exact creation mismatch
 makes a runtime record stale; an identity that cannot be read, a timed-out

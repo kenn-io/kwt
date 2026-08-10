@@ -3,17 +3,32 @@ package daemon
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 
 	"go.kenn.io/kit/safefileio"
+	"go.kenn.io/kwt/service"
 )
 
 const (
-	backgroundLogName = "daemon.log"
-	backgroundLogSize = int64(10 << 20)
-	backgroundBackups = 3
+	backgroundLogName      = "daemon.log"
+	backgroundLogSize      = int64(10 << 20)
+	backgroundBackups      = 3
+	maximumDiagnosticBytes = 1024
+)
+
+var (
+	sensitiveAssignmentPattern = regexp.MustCompile(
+		`(?i)\b([a-z_][a-z0-9_]*(?:token|secret|password|passwd|credential|api_key)[a-z0-9_]*)=("[^"]*"|'[^']*'|[^\s]+)`,
+	)
+	bearerPattern = regexp.MustCompile(
+		`(?i)(authorization:\s*bearer\s+|bearer\s+)[^\s,;]+`,
+	)
+	credentialURLPattern = regexp.MustCompile(`(?i)(https?://)[^/\s@]+@`)
 )
 
 type rotatingLog struct {
@@ -23,6 +38,69 @@ type rotatingLog struct {
 	size    int64
 	maxSize int64
 	backups int
+}
+
+func logServiceFailure(
+	logger *slog.Logger,
+	route string,
+	failure *service.Error,
+	sensitiveValues []string,
+) {
+	if logger == nil || failure == nil || failure.Err == nil {
+		return
+	}
+	logger.Warn(
+		"daemon request failed",
+		"route", route,
+		"code", failure.Code,
+		"error", privateDiagnostic(failure.Err, sensitiveValues),
+	)
+}
+
+func privateDiagnostic(err error, sensitiveValues []string) string {
+	if err == nil {
+		return ""
+	}
+	message := err.Error()
+	for _, value := range sensitiveValues {
+		if value != "" {
+			message = strings.ReplaceAll(message, value, "[redacted]")
+		}
+	}
+	message = sensitiveAssignmentPattern.ReplaceAllString(message, "$1=[redacted]")
+	message = bearerPattern.ReplaceAllString(message, "$1[redacted]")
+	message = credentialURLPattern.ReplaceAllString(message, "$1[redacted]@")
+	if len(message) > maximumDiagnosticBytes {
+		message = message[:maximumDiagnosticBytes]
+	}
+	return message
+}
+
+func processDiagnosticSecrets(bearer string) []string {
+	values := make([]string, 0, 4)
+	if bearer != "" {
+		values = append(values, bearer)
+	}
+	for _, entry := range os.Environ() {
+		name, value, ok := strings.Cut(entry, "=")
+		if !ok || value == "" || !sensitiveEnvironmentName(name) {
+			continue
+		}
+		values = append(values, value)
+	}
+	return values
+}
+
+func sensitiveEnvironmentName(name string) bool {
+	name = strings.ToUpper(name)
+	for _, marker := range []string{
+		"TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "API_KEY",
+	} {
+		if strings.Contains(name, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func openBackgroundLog(home string) (*rotatingLog, error) {
