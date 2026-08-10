@@ -383,6 +383,9 @@ func decodeProblem(status int, body io.Reader) error {
 	if message == "" {
 		message = http.StatusText(status)
 	}
+	if code == service.Internal {
+		message = "internal failure"
+	}
 	details := problem.Details
 	if _, validDeadline := drainDeadlineDetail(details); problem.DrainDeadline != nil && !validDeadline {
 		details = maps.Clone(details)

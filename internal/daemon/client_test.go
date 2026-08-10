@@ -118,6 +118,20 @@ func TestClientRejectsUnknownProblemCodeWithoutStatusInference(t *testing.T) {
 	assert.NotEqual(t, service.Busy, typed.Code)
 }
 
+func TestClientNormalizesLegacyInternalProblemMessage(t *testing.T) {
+	const secret = "legacy-daemon-password"
+	err := decodeProblem(http.StatusInternalServerError, strings.NewReader(
+		`{"type":"about:blank","title":"Internal Server Error","status":500,"detail":"fetch ssh://user:`+
+			secret+`@example.invalid/repository","code":"internal","retryable":false}`,
+	))
+
+	var typed *service.Error
+	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, service.Internal, typed.Code)
+	assert.Equal(t, "internal failure", typed.Message)
+	assert.NotContains(t, typed.Message, secret)
+}
+
 func TestVerifiedClientUsesBearerAfterSuccessfulProof(t *testing.T) {
 	token := "test-secret"
 	mux := http.NewServeMux()

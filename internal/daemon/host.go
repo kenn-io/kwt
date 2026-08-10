@@ -222,7 +222,10 @@ func runHost(
 		}
 		return status.Status(opts.Now()), nil
 	}
-	diagnosticSecrets := processDiagnosticSecrets(token)
+	diagnosticSecrets := processDiagnosticSecrets(
+		token,
+		configuredFleetTokenEnvironment(opts.Home),
+	)
 	handler := NewServer(ServerOptions{
 		Token:        token,
 		ExpectedHost: ep.Address,

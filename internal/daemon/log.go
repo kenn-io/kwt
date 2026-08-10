@@ -81,10 +81,15 @@ func privateDiagnostic(err error, sensitiveValues []string) string {
 	return message
 }
 
-func processDiagnosticSecrets(bearer string) []string {
+func processDiagnosticSecrets(bearer string, fleetTokenEnvironment string) []string {
 	values := make([]string, 0, 4)
 	if bearer != "" {
 		values = append(values, bearer)
+	}
+	if name := strings.TrimSpace(fleetTokenEnvironment); name != "" {
+		if value, ok := os.LookupEnv(name); ok && value != "" {
+			values = append(values, value)
+		}
 	}
 	for _, entry := range os.Environ() {
 		name, value, ok := strings.Cut(entry, "=")
@@ -103,20 +108,28 @@ func invocationDiagnosticSecrets(home string, expansion kwt.ExpansionContext) []
 			values = append(values, value)
 		}
 	}
-	snapshot, err := config.LoadGlobalSnapshotAtWithExpansion(
-		home,
-		func(path string) (string, error) { return path, nil },
-	)
-	if err != nil || snapshot.Config.Fleet.TokenEnv == "" {
+	fleetTokenEnvironment := configuredFleetTokenEnvironment(home)
+	if fleetTokenEnvironment == "" {
 		return values
 	}
 	if value := environmentValue(
 		expansion.Environment,
-		snapshot.Config.Fleet.TokenEnv,
+		fleetTokenEnvironment,
 	); value != "" {
 		values = append(values, value)
 	}
 	return values
+}
+
+func configuredFleetTokenEnvironment(home string) string {
+	snapshot, err := config.LoadGlobalSnapshotAtWithExpansion(
+		home,
+		func(path string) (string, error) { return path, nil },
+	)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(snapshot.Config.Fleet.TokenEnv)
 }
 
 func environmentValue(environment map[string]string, name string) string {
