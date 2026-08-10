@@ -14,12 +14,14 @@ import (
 
 	kitdaemon "go.kenn.io/kit/daemon"
 	"go.kenn.io/kwt/service"
+	"golang.org/x/mod/semver"
 )
 
 const (
 	RuntimePrefix         = "kwt"
 	metadataHome          = "home"
 	metadataRevision      = "revision"
+	metadataRevisionTime  = "revision_time"
 	metadataSchemaMajor   = "schema_major"
 	metadataSchemaVersion = "schema_version"
 	metadataCapabilities  = "capabilities"
@@ -54,12 +56,14 @@ type Observation struct {
 }
 
 type runtimeMetadata struct {
-	home          string
-	revision      string
-	schemaMajor   int
-	schemaVersion string
-	capabilities  []string
-	token         string
+	home                   string
+	revision               string
+	revisionTime           string
+	revisionTimeAdvertised bool
+	schemaMajor            int
+	schemaVersion          string
+	capabilities           []string
+	token                  string
 }
 
 func RuntimeStore(home string) kitdaemon.RuntimeStore {
@@ -83,6 +87,7 @@ func NewRuntimeRecord(
 	rec.Metadata = map[string]string{
 		metadataHome:          home,
 		metadataRevision:      build.Revision,
+		metadataRevisionTime:  build.RevisionTime,
 		metadataSchemaMajor:   strconv.Itoa(APISchemaMajor),
 		metadataSchemaVersion: APISchemaVersion,
 		metadataCapabilities: strings.Join([]string{
@@ -218,6 +223,7 @@ func parseRuntimeMetadata(
 		schemaVersion: rec.Metadata[metadataSchemaVersion],
 		token:         rec.Metadata[metadataToken],
 	}
+	metadata.revisionTime, metadata.revisionTimeAdvertised = rec.Metadata[metadataRevisionTime]
 	if metadata.home == "" || metadata.home != home {
 		return runtimeMetadata{}, errors.New("runtime home does not match")
 	}
@@ -231,6 +237,19 @@ func parseRuntimeMetadata(
 	metadata.schemaMajor = major
 	if metadata.schemaVersion == "" {
 		return runtimeMetadata{}, errors.New("runtime schema version is missing")
+	}
+	schemaVersion, schemaVersionValid := comparableVersion(metadata.schemaVersion)
+	if !schemaVersionValid {
+		return runtimeMetadata{}, errors.New("runtime schema version is invalid")
+	}
+	if semver.Compare(schemaVersion, "v1.3.0") >= 0 &&
+		!metadata.revisionTimeAdvertised {
+		return runtimeMetadata{}, errors.New("runtime revision time is missing")
+	}
+	if metadata.revisionTime != "" {
+		if _, valid := parseRevisionTime(metadata.revisionTime); !valid {
+			return runtimeMetadata{}, errors.New("runtime revision time is invalid")
+		}
 	}
 	metadata.capabilities, err = parseCapabilities(rec.Metadata[metadataCapabilities])
 	if err != nil {
@@ -264,7 +283,8 @@ func validateRuntimeStatus(
 		status.PID != rec.PID || status.Endpoint != rec.Endpoint().Address {
 		return errors.New("daemon status does not match its runtime record")
 	}
-	if status.Version != rec.Version || status.Revision != metadata.revision {
+	if status.Version != rec.Version || status.Revision != metadata.revision ||
+		status.RevisionTime != metadata.revisionTime {
 		return errors.New("daemon build identity does not match its runtime record")
 	}
 	if status.SchemaMajor <= 0 || status.SchemaMajor != metadata.schemaMajor ||

@@ -196,6 +196,7 @@ func runHost(
 			PID:           record.PID,
 			Version:       opts.Build.Version,
 			Revision:      opts.Build.Revision,
+			RevisionTime:  opts.Build.RevisionTime,
 			SchemaMajor:   APISchemaMajor,
 			SchemaVersion: APISchemaVersion,
 			Capabilities: []string{

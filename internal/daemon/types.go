@@ -5,7 +5,7 @@ import "time"
 const (
 	ServiceName         = "kwt"
 	APISchemaMajor      = 1
-	APISchemaVersion    = "1.2.0"
+	APISchemaVersion    = "1.3.0"
 	CapabilityStatus    = "daemon.status"
 	CapabilityShutdown  = "daemon.shutdown"
 	CapabilityInventory = "worktree.inventory.v1"
@@ -34,6 +34,7 @@ type Status struct {
 	PID           int        `json:"pid"`
 	Version       string     `json:"version"`
 	Revision      string     `json:"revision"`
+	RevisionTime  string     `json:"revision_time"`
 	SchemaMajor   int        `json:"schema_major"`
 	SchemaVersion string     `json:"schema_version"`
 	Capabilities  []string   `json:"capabilities"`

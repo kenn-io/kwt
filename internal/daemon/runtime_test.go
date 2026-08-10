@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"maps"
 	"math"
 	"net"
 	"net/http"
@@ -24,6 +25,7 @@ func validMetadata(home, token string) map[string]string {
 	return map[string]string{
 		metadataHome:          home,
 		metadataRevision:      "abc",
+		metadataRevisionTime:  "2026-08-09T12:00:00Z",
 		metadataSchemaMajor:   strconv.Itoa(APISchemaMajor),
 		metadataSchemaVersion: APISchemaVersion,
 		metadataCapabilities: strings.Join([]string{
@@ -32,6 +34,83 @@ func validMetadata(home, token string) map[string]string {
 		}, ","),
 		metadataToken: token,
 	}
+}
+
+func TestNewRuntimeRecordAlwaysAdvertisesRevisionTime(t *testing.T) {
+	home := t.TempDir()
+	record, _, err := NewRuntimeRecord(home, Build{
+		Version:      "v1.2.3",
+		Revision:     "abc",
+		RevisionTime: "2026-08-09T12:00:00Z",
+	}, kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: "127.0.0.1:1"})
+	require.NoError(t, err)
+
+	value, present := record.Metadata[metadataRevisionTime]
+	assert.True(t, present)
+	assert.Equal(t, "2026-08-09T12:00:00Z", value)
+
+	record, _, err = NewRuntimeRecord(home, Build{Version: "development"}, kitdaemon.Endpoint{
+		Network: kitdaemon.NetworkTCP,
+		Address: "127.0.0.1:1",
+	})
+	require.NoError(t, err)
+	value, present = record.Metadata[metadataRevisionTime]
+	assert.True(t, present)
+	assert.Empty(t, value)
+}
+
+func TestParseRuntimeMetadataRevisionTimeCompatibility(t *testing.T) {
+	home := t.TempDir()
+	record := kitdaemon.NewRuntimeRecord(
+		ServiceName,
+		"v1.2.3",
+		kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: "127.0.0.1:1"},
+	)
+	record.Metadata = validMetadata(home, "secret")
+
+	t.Run("new schema accepts canonical time", func(t *testing.T) {
+		metadata, err := parseRuntimeMetadata(record, home)
+		require.NoError(t, err)
+		assert.True(t, metadata.revisionTimeAdvertised)
+		assert.Equal(t, "2026-08-09T12:00:00Z", metadata.revisionTime)
+	})
+
+	t.Run("new schema accepts explicit unknown time", func(t *testing.T) {
+		unknown := record
+		unknown.Metadata = maps.Clone(record.Metadata)
+		unknown.Metadata[metadataRevisionTime] = ""
+		metadata, err := parseRuntimeMetadata(unknown, home)
+		require.NoError(t, err)
+		assert.True(t, metadata.revisionTimeAdvertised)
+		assert.Empty(t, metadata.revisionTime)
+	})
+
+	t.Run("new schema rejects missing time", func(t *testing.T) {
+		missing := record
+		missing.Metadata = maps.Clone(record.Metadata)
+		delete(missing.Metadata, metadataRevisionTime)
+		_, err := parseRuntimeMetadata(missing, home)
+		require.ErrorContains(t, err, "revision time")
+	})
+
+	t.Run("new schema rejects malformed time", func(t *testing.T) {
+		malformed := record
+		malformed.Metadata = maps.Clone(record.Metadata)
+		malformed.Metadata[metadataRevisionTime] = "2026-08-09 12:00:00"
+		_, err := parseRuntimeMetadata(malformed, home)
+		require.ErrorContains(t, err, "revision time")
+	})
+
+	t.Run("legacy schema accepts omitted time", func(t *testing.T) {
+		legacy := record
+		legacy.Metadata = maps.Clone(record.Metadata)
+		legacy.Metadata[metadataSchemaVersion] = "1.2.0"
+		delete(legacy.Metadata, metadataRevisionTime)
+		metadata, err := parseRuntimeMetadata(legacy, home)
+		require.NoError(t, err)
+		assert.False(t, metadata.revisionTimeAdvertised)
+		assert.Empty(t, metadata.revisionTime)
+	})
 }
 
 func TestInspectRemovesADeadPIDRuntimeRecord(t *testing.T) {
@@ -96,6 +175,26 @@ func TestInspectPreservesMatchingButUnresponsiveOwner(t *testing.T) {
 	assert.FileExists(t, path)
 }
 
+func TestInspectPreservesOwnerWithInvalidRevisionTime(t *testing.T) {
+	home := t.TempDir()
+	store := RuntimeStore(home)
+	record := kitdaemon.NewRuntimeRecord(
+		ServiceName,
+		"v1.2.3",
+		kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: "127.0.0.1:1"},
+	)
+	record.Metadata = validMetadata(home, "secret")
+	record.Metadata[metadataRevisionTime] = "invalid"
+	path, err := store.Write(record)
+	require.NoError(t, err)
+
+	observation, err := Inspect(context.Background(), store, home)
+	require.NoError(t, err)
+	assert.Equal(t, RuntimeUnresponsive, observation.State)
+	require.ErrorContains(t, observation.Err, "revision time")
+	assert.FileExists(t, path)
+}
+
 func TestInspectReturnsAProofVerifiedRuntime(t *testing.T) {
 	home := t.TempDir()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -113,6 +212,7 @@ func TestInspectReturnsAProofVerifiedRuntime(t *testing.T) {
 		PID:           rec.PID,
 		Version:       rec.Version,
 		Revision:      "abc",
+		RevisionTime:  "2026-08-09T12:00:00Z",
 		Home:          home,
 		Endpoint:      ep.Address,
 		SchemaMajor:   APISchemaMajor,
@@ -160,6 +260,7 @@ func TestInspectPreservesUnknownProcessIdentityAsUnresponsive(t *testing.T) {
 		PID:           rec.PID,
 		Version:       rec.Version,
 		Revision:      "abc",
+		RevisionTime:  "2026-08-09T12:00:00Z",
 		Home:          home,
 		Endpoint:      ep.Address,
 		SchemaMajor:   APISchemaMajor,
@@ -209,14 +310,16 @@ func TestValidateRuntimeStatusRejectsBuildIdentityMismatch(t *testing.T) {
 		PID:           rec.PID,
 		Version:       rec.Version,
 		Revision:      metadata.revision,
+		RevisionTime:  metadata.revisionTime,
 		SchemaMajor:   APISchemaMajor,
 		SchemaVersion: APISchemaVersion,
 		Capabilities:  []string{CapabilityShutdown, CapabilityStatus},
 	}
 
 	for name, mutate := range map[string]func(*Status){
-		"version":  func(value *Status) { value.Version = "v9.9.9" },
-		"revision": func(value *Status) { value.Revision = "different" },
+		"version":       func(value *Status) { value.Version = "v9.9.9" },
+		"revision":      func(value *Status) { value.Revision = "different" },
+		"revision_time": func(value *Status) { value.RevisionTime = "2026-08-09T12:00:01Z" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			mismatched := status
