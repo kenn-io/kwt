@@ -63,5 +63,8 @@ type Problem struct {
 	Title  string `json:"title"`
 	Status int    `json:"status"`
 	Detail string `json:"detail"`
+	// DrainDeadline mirrors Descriptor.Details for API-major-1 clients. A
+	// future API-major-2 problem type need not carry this legacy top-level field.
+	DrainDeadline *time.Time `json:"drain_deadline,omitempty"`
 	service.Descriptor
 }

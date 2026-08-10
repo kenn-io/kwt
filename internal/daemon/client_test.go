@@ -88,6 +88,26 @@ func TestClientDecodesDrainingProblem(t *testing.T) {
 	assert.Equal(t, deadline.Format(time.RFC3339), typed.Details["drain_deadline"])
 }
 
+func TestClientDecodesLegacyDeadlineBearingBusyAsDrain(t *testing.T) {
+	deadline := time.Now().Add(time.Minute).UTC().Truncate(time.Second)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"type": "https://kwt.dev/problems/busy", "title": "Service Unavailable",
+			"status": http.StatusServiceUnavailable, "detail": "daemon is draining",
+			"code": service.Busy, "retryable": true, "drain_deadline": deadline,
+		}))
+	}))
+	defer server.Close()
+
+	client := clientForUnverifiedServer(t, server, "secret")
+	_, err := client.Status(context.Background())
+	typed := service.AsError(err)
+	assert.Equal(t, service.Busy, typed.Code)
+	assert.Equal(t, deadline, typed.Details["drain_deadline"])
+}
+
 func TestClientRejectsUnknownProblemCodeWithoutStatusInference(t *testing.T) {
 	err := decodeProblem(http.StatusServiceUnavailable, strings.NewReader(
 		`{"type":"about:blank","title":"Unavailable","status":503,"detail":"future failure","code":"future_code","message":"future failure","retryable":true}`,

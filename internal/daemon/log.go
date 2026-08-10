@@ -25,10 +25,12 @@ var (
 	sensitiveAssignmentPattern = regexp.MustCompile(
 		`(?i)\b([a-z_][a-z0-9_]*(?:token|secret|password|passwd|credential|api_key)[a-z0-9_]*)=("[^"]*"|'[^']*'|[^\s]+)`,
 	)
-	bearerPattern = regexp.MustCompile(
-		`(?i)(authorization:\s*bearer\s+|bearer\s+)[^\s,;]+`,
+	authorizationHeaderPattern = regexp.MustCompile(
+		`(?i)(\b(?:proxy-)?authorization\s*:\s*)[^\r\n]*`,
 	)
-	credentialURLPattern = regexp.MustCompile(`(?i)(https?://)[^/\s@]+@`)
+	credentialURLPattern = regexp.MustCompile(
+		`(?i)([a-z][a-z0-9+.-]*://)[^/\s@]+@`,
+	)
 )
 
 type rotatingLog struct {
@@ -68,7 +70,7 @@ func privateDiagnostic(err error, sensitiveValues []string) string {
 		}
 	}
 	message = sensitiveAssignmentPattern.ReplaceAllString(message, "$1=[redacted]")
-	message = bearerPattern.ReplaceAllString(message, "$1[redacted]")
+	message = authorizationHeaderPattern.ReplaceAllString(message, "$1[redacted]")
 	message = credentialURLPattern.ReplaceAllString(message, "$1[redacted]@")
 	if len(message) > maximumDiagnosticBytes {
 		message = message[:maximumDiagnosticBytes]

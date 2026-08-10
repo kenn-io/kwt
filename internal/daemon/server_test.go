@@ -175,11 +175,16 @@ func TestDrainingServerReturnsRetryableProblemWithDeadline(t *testing.T) {
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	require.Equal(t, http.StatusServiceUnavailable, response.Code)
-	var problem Problem
+	var problem struct {
+		service.Descriptor
+		DrainDeadline *time.Time `json:"drain_deadline"`
+	}
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&problem))
 	assert.Equal(t, service.DaemonDraining, problem.Code)
 	assert.True(t, problem.Retryable)
 	assert.Equal(t, deadline.Format(time.RFC3339), problem.Details["drain_deadline"])
+	require.NotNil(t, problem.DrainDeadline)
+	assert.Equal(t, deadline, *problem.DrainDeadline)
 }
 
 func TestProblemRoundTripsServiceDescriptor(t *testing.T) {

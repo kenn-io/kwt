@@ -40,7 +40,7 @@ func TestServiceFailureLogBoundsAndRedactsPrivateCause(t *testing.T) {
 	const bearerSecret = "bearer-secret-value"
 	cause := errors.New(
 		"KWT_API_TOKEN=" + environmentSecret +
-			" Authorization: Bearer " + bearerSecret + " " +
+			"\nAuthorization: Bearer " + bearerSecret + "\n" +
 			strings.Repeat("command-output-", 200),
 	)
 	failure := service.NewError(
@@ -66,6 +66,47 @@ func TestServiceFailureLogBoundsAndRedactsPrivateCause(t *testing.T) {
 	require.True(t, ok)
 	assert.LessOrEqual(t, len(diagnostic), maximumDiagnosticBytes)
 	assert.Contains(t, diagnostic, "[redacted]")
+}
+
+func TestPrivateDiagnosticRedactsAuthorizationAndURIUserinfo(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		message    string
+		secrets    []string
+		wantSuffix string
+	}{
+		{
+			name:    "basic authorization",
+			message: "request failed\nAuthorization: Basic dXNlcjpwYXNz\ncontinued",
+			secrets: []string{"Basic dXNlcjpwYXNz"}, wantSuffix: "\ncontinued",
+		},
+		{
+			name:    "proxy authorization",
+			message: "Proxy-Authorization: Negotiate opaque-credential\ncontinued",
+			secrets: []string{"Negotiate opaque-credential"}, wantSuffix: "\ncontinued",
+		},
+		{
+			name:    "ssh URI user information",
+			message: "clone ssh://user:password@host/repo",
+			secrets: []string{"user:password"},
+		},
+		{
+			name:    "git ssh URI user information",
+			message: "clone git+ssh://token@host/repo",
+			secrets: []string{"token"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := privateDiagnostic(errors.New(test.message), nil)
+			for _, secret := range test.secrets {
+				assert.NotContains(t, got, secret)
+			}
+			assert.Contains(t, got, "[redacted]")
+			if test.wantSuffix != "" {
+				assert.True(t, strings.HasSuffix(got, test.wantSuffix), got)
+			}
+		})
+	}
 }
 
 func TestRotatingLogRotatesAnOversizedExistingFileOnOpen(t *testing.T) {

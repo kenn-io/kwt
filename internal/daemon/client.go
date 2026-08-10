@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"time"
 
@@ -382,9 +383,17 @@ func decodeProblem(status int, body io.Reader) error {
 	if message == "" {
 		message = http.StatusText(status)
 	}
+	details := problem.Details
+	if _, validDeadline := drainDeadlineDetail(details); problem.DrainDeadline != nil && !validDeadline {
+		details = maps.Clone(details)
+		if details == nil {
+			details = make(map[string]any)
+		}
+		details["drain_deadline"] = *problem.DrainDeadline
+	}
 	return service.NewDescriptorError(service.Descriptor{
 		Code: code, Message: message, Retryable: problem.Retryable,
-		Details: problem.Details,
+		Details: details,
 	}, nil)
 }
 

@@ -57,7 +57,10 @@ infer a failure from prose or HTTP status. HTTP uses the same message as its
 RFC problem `detail`. Unknown HTTP codes become `daemon_transport_failed`
 instead of being guessed. Detail keys are allowlisted per code: draining may
 carry an RFC3339 `drain_deadline`, and repository trust interaction carries
-its typed digest-bound prompt fields.
+its typed digest-bound prompt fields. Within API major 1, draining responses
+also mirror the deadline in the legacy top-level `drain_deadline` field, and
+clients recognize a legacy `busy` response only when it carries a valid drain
+deadline.
 
 The daemon and inventory paths currently emit these stable codes:
 

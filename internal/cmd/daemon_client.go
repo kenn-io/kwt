@@ -135,7 +135,8 @@ func queryDaemonInventory(
 
 func inventoryDrainDeadline(err error) (*time.Time, bool) {
 	var typed *service.Error
-	if !errors.As(err, &typed) || typed.Code != service.DaemonDraining {
+	if !errors.As(err, &typed) ||
+		(typed.Code != service.DaemonDraining && typed.Code != service.Busy) {
 		return nil, false
 	}
 	switch deadline := typed.Details["drain_deadline"].(type) {

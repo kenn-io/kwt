@@ -52,33 +52,43 @@ func TestRemovalClientRoundTripsResult(t *testing.T) {
 }
 
 func TestRemovalClientPreservesPartialResultOnError(t *testing.T) {
-	remover := &fakeRemover{
-		result: kwt.RemovalResult{
-			Path: "/worktrees/topic", Branch: "topic", WorktreeRemoved: true,
-		},
-		err: service.NewError(
-			service.Internal,
-			"worktree removed but branch deletion failed",
-			false,
-			map[string]any{
-				"path": "/worktrees/topic", "branch": "topic",
-				"worktree_removed": true, "branch_deleted": false,
-				"registry_unregistered": true,
-			},
-			nil,
-		),
+	for _, code := range []service.Code{
+		service.Internal,
+		service.Conflict,
+		service.Busy,
+		service.ConnectionChanged,
+	} {
+		t.Run(string(code), func(t *testing.T) {
+			remover := &fakeRemover{
+				result: kwt.RemovalResult{
+					Path: "/worktrees/topic", Branch: "topic", WorktreeRemoved: true,
+				},
+				err: service.NewError(
+					code,
+					"worktree removed but cleanup failed",
+					code == service.Busy,
+					map[string]any{
+						"path": "/worktrees/topic", "branch": "topic",
+						"worktree_removed": true, "branch_deleted": false,
+						"registry_unregistered": true,
+					},
+					nil,
+				),
+			}
+			client, closeServer := removalTestClient(t, remover)
+			defer closeServer()
+
+			result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{})
+
+			require.Error(t, err)
+			assert.True(t, service.IsCode(err, code))
+			assert.True(t, git.WorktreeWasRemoved(err))
+			assert.Equal(t, "/worktrees/topic", result.Path)
+			assert.True(t, result.WorktreeRemoved)
+			assert.True(t, result.RegistryUnregistered)
+			assert.Equal(t, "topic", result.Branch)
+		})
 	}
-	client, closeServer := removalTestClient(t, remover)
-	defer closeServer()
-
-	result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{})
-
-	require.Error(t, err)
-	assert.True(t, service.IsCode(err, service.Internal))
-	assert.True(t, git.WorktreeWasRemoved(err))
-	assert.True(t, result.WorktreeRemoved)
-	assert.True(t, result.RegistryUnregistered)
-	assert.Equal(t, "topic", result.Branch)
 }
 
 func TestRemovalClientReconcilesLostSuccessfulResponse(t *testing.T) {

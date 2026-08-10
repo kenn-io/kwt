@@ -240,11 +240,30 @@ func writeProblem(w http.ResponseWriter, problem Problem) {
 }
 
 func newProblem(status int, descriptor service.Descriptor) Problem {
-	return Problem{
+	problem := Problem{
 		Type:  "https://kwt.dev/problems/" + string(descriptor.Code),
 		Title: http.StatusText(status), Status: status, Detail: descriptor.Message,
 		Descriptor: descriptor,
 	}
+	if deadline, ok := drainDeadlineDetail(descriptor.Details); ok {
+		problem.DrainDeadline = &deadline
+	}
+	return problem
+}
+
+func drainDeadlineDetail(details map[string]any) (time.Time, bool) {
+	switch deadline := details["drain_deadline"].(type) {
+	case time.Time:
+		return deadline, true
+	case *time.Time:
+		if deadline != nil {
+			return *deadline, true
+		}
+	case string:
+		parsed, err := time.Parse(time.RFC3339Nano, deadline)
+		return parsed, err == nil
+	}
+	return time.Time{}, false
 }
 
 func (p *Problem) Error() string { return p.Detail }
@@ -315,12 +334,19 @@ var allowedProblemDetailTypes = map[service.Code]map[string]problemDetailType{
 		"size": detailNumber, "preview": detailString, "truncated": detailBool,
 	},
 	service.Conflict: {
-		"branch": detailString, "reason": detailString, "worktree_removed": detailBool,
-		"branch_deleted": detailBool, "registry_unregistered": detailBool,
+		"path": detailString, "branch": detailString, "reason": detailString,
+		"worktree_removed": detailBool, "branch_deleted": detailBool,
+		"registry_unregistered": detailBool,
 	},
 	service.ConnectionChanged: {
-		"branch": detailString, "reason": detailString, "worktree_removed": detailBool,
-		"branch_deleted": detailBool, "registry_unregistered": detailBool,
+		"path": detailString, "branch": detailString, "reason": detailString,
+		"worktree_removed": detailBool, "branch_deleted": detailBool,
+		"registry_unregistered": detailBool,
+	},
+	service.Busy: {
+		"path": detailString, "branch": detailString, "reason": detailString,
+		"worktree_removed": detailBool, "branch_deleted": detailBool,
+		"registry_unregistered": detailBool,
 	},
 	service.Internal: {
 		"path": detailString, "branch": detailString, "worktree_removed": detailBool,

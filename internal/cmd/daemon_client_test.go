@@ -29,6 +29,17 @@ func TestInventoryDrainDeadlineRequiresDaemonDrainingCode(t *testing.T) {
 			}, nil),
 			want: &deadline,
 		},
+		{
+			name: "legacy daemon drain",
+			err: service.NewError(service.Busy, "daemon is draining", true, map[string]any{
+				"drain_deadline": deadline,
+			}, nil),
+			want: &deadline,
+		},
+		{
+			name: "legacy busy without deadline",
+			err:  service.NewError(service.Busy, "inventory is busy", true, nil, nil),
+		},
 	}
 
 	for _, tt := range tests {
