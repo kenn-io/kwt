@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -10,6 +11,18 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/service"
 )
+
+func TestDescriptorIsTheTransportNeutralErrorValue(t *testing.T) {
+	descriptor := service.Descriptor{
+		Code: service.DaemonDraining, Message: "the kwt daemon is draining", Retryable: true,
+		Details: map[string]any{"drain_deadline": "2026-08-10T01:02:03Z"},
+	}
+	err := service.NewDescriptorError(descriptor, context.DeadlineExceeded)
+
+	assert.Equal(t, descriptor, err.Descriptor)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Equal(t, service.DaemonDraining, err.Code)
+}
 
 func TestErrorPreservesCategoryRetryabilityAndCause(t *testing.T) {
 	cause := errors.New("locked")

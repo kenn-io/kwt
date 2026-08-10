@@ -16,19 +16,44 @@ const (
 	ConnectionChanged       Code = "connection_changed"
 	Unsupported             Code = "unsupported"
 	TransportFailure        Code = "transport_failure"
+	DaemonStartFailed       Code = "daemon_start_failed"
+	DaemonUnresponsive      Code = "daemon_unresponsive"
+	DaemonIncompatible      Code = "daemon_incompatible"
 	DaemonDowngradeRefused  Code = "daemon_downgrade_refused"
 	DaemonBuildOrderUnknown Code = "daemon_build_order_unknown"
-	Internal                Code = "internal"
+	DaemonDraining          Code = "daemon_draining"
+	DaemonTransportFailed   Code = "daemon_transport_failed"
+	InventoryTimeout        Code = "inventory_timeout"
+	InventoryFailed         Code = "inventory_failed"
+	// Reserved for API major 2 operation streaming; slice 2 does not emit
+	// these codes.
+	OperationIDConflict         Code = "operation_id_conflict"
+	OperationCapacityExhausted  Code = "operation_capacity_exhausted"
+	OperationJournalUnavailable Code = "operation_journal_unavailable"
+	OperationOutcomeUnknown     Code = "operation_outcome_unknown"
+	Internal                    Code = "internal"
 )
+
+// Descriptor is the stable, transport-neutral representation of a service
+// failure. Message is human-facing; Code, Retryable, and documented Details
+// are the machine contract.
+type Descriptor struct {
+	Code      Code           `json:"code"`
+	Message   string         `json:"message"`
+	Retryable bool           `json:"retryable"`
+	Details   map[string]any `json:"details,omitempty"`
+}
 
 // Error carries a stable category and retry policy across in-process and HTTP
 // service boundaries.
 type Error struct {
-	Code      Code
-	Message   string
-	Retryable bool
-	Details   map[string]any
-	Err       error
+	Descriptor
+	Err error `json:"-"`
+}
+
+// NewDescriptorError attaches a private cause to a stable descriptor.
+func NewDescriptorError(descriptor Descriptor, cause error) *Error {
+	return &Error{Descriptor: descriptor, Err: cause}
 }
 
 // NewError constructs a typed service failure.
@@ -39,13 +64,9 @@ func NewError(
 	details map[string]any,
 	cause error,
 ) *Error {
-	return &Error{
-		Code:      code,
-		Message:   message,
-		Retryable: retryable,
-		Details:   details,
-		Err:       cause,
-	}
+	return NewDescriptorError(Descriptor{
+		Code: code, Message: message, Retryable: retryable, Details: details,
+	}, cause)
 }
 
 func (e *Error) Error() string {
