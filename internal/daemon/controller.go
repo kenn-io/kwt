@@ -32,7 +32,7 @@ type ControllerOptions struct {
 	AllowEphemeral   bool
 	Inspect          func(context.Context) (Observation, error)
 	Launch           func(context.Context) error
-	RequestShutdown  func(context.Context, Observation, string) error
+	RequestShutdown  func(context.Context, Observation, string) (Status, error)
 	PollInterval     time.Duration
 	StartTimeout     time.Duration
 	CleanupAllowance time.Duration
@@ -101,9 +101,11 @@ func (c *Controller) Stop(ctx context.Context) error {
 	case RuntimeAbsent:
 		return nil
 	case RuntimeReady, RuntimeStarting, RuntimeFailed:
-		if err := c.options.RequestShutdown(ctx, observation, "stop"); err != nil {
+		status, err := c.options.RequestShutdown(ctx, observation, "stop")
+		if err != nil {
 			return err
 		}
+		c.reportShutdown(status)
 	case RuntimeDraining:
 		c.reportDrain(observation)
 	case RuntimeIncompatible:
@@ -135,9 +137,11 @@ func (c *Controller) Restart(ctx context.Context) (Observation, error) {
 		case BuildUnknown:
 			return Observation{}, daemonBuildOrderUnknownError()
 		}
-		if err := c.options.RequestShutdown(ctx, observation, "restart"); err != nil {
+		status, err := c.options.RequestShutdown(ctx, observation, "restart")
+		if err != nil {
 			return Observation{}, err
 		}
+		c.reportShutdown(status)
 	case RuntimeDraining:
 		switch c.buildOrder(observation) {
 		case BuildOlder:
@@ -174,9 +178,11 @@ func (c *Controller) startLocked(ctx context.Context) (Observation, error) {
 		) == reuseDaemon {
 			return observation, nil
 		}
-		if err := c.options.RequestShutdown(ctx, observation, "replacement"); err != nil {
+		status, err := c.options.RequestShutdown(ctx, observation, "replacement")
+		if err != nil {
 			return Observation{}, err
 		}
+		c.reportShutdown(status)
 		if err := c.waitForAbsent(ctx); err != nil {
 			return Observation{}, err
 		}
@@ -304,6 +310,12 @@ func (c *Controller) reportDrain(observation Observation) {
 	)
 }
 
+func (c *Controller) reportShutdown(status Status) {
+	if status.State == StateDraining || status.DrainDeadline != nil {
+		c.reportDrain(Observation{State: RuntimeDraining, Status: status})
+	}
+}
+
 func (c *Controller) incompatibleError(observation Observation) error {
 	return service.NewError(
 		service.Unsupported,
@@ -381,9 +393,9 @@ func requestShutdown(
 	ctx context.Context,
 	observation Observation,
 	reason string,
-) error {
+) (Status, error) {
 	if observation.Client == nil {
-		return service.NewError(
+		return Status{}, service.NewError(
 			service.Conflict,
 			"the running kwt daemon was not proof-verified",
 			false,
@@ -391,8 +403,8 @@ func requestShutdown(
 			nil,
 		)
 	}
-	_, err := observation.Client.Shutdown(ctx, reason)
-	return err
+	response, err := observation.Client.Shutdown(ctx, reason)
+	return response.Status, err
 }
 
 func comparableVersion(value string) (string, bool) {

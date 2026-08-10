@@ -194,9 +194,9 @@ func TestControllerReplacesOlderDaemonAfterDrain(t *testing.T) {
 		_ context.Context,
 		_ Observation,
 		reason string,
-	) error {
+	) (Status, error) {
 		shutdownReason = reason
-		return nil
+		return Status{}, nil
 	}
 	launches := 0
 	options.Launch = func(context.Context) error {
@@ -229,9 +229,14 @@ func TestControllerReplacesOlderSHAStampedDaemon(t *testing.T) {
 		ready,
 	)
 	shutdown := false
-	options.RequestShutdown = func(context.Context, Observation, string) error {
+	deadline := time.Now().Add(time.Second)
+	var progress bytes.Buffer
+	options.Progress = &progress
+	options.RequestShutdown = func(context.Context, Observation, string) (Status, error) {
 		shutdown = true
-		return nil
+		return Status{
+			State: StateDraining, ActiveLeases: 2, DrainDeadline: &deadline,
+		}, nil
 	}
 	options.Launch = func(context.Context) error { return nil }
 
@@ -239,6 +244,7 @@ func TestControllerReplacesOlderSHAStampedDaemon(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ready, got)
 	assert.True(t, shutdown)
+	assert.Contains(t, progress.String(), "draining, waiting on 2 leases")
 }
 
 func TestControllerReportsDrainProgressBeforeStarting(t *testing.T) {
@@ -308,9 +314,9 @@ func TestControllerStopRequestsShutdownForNonReadyOwner(t *testing.T) {
 				_ context.Context,
 				_ Observation,
 				_ string,
-			) error {
+			) (Status, error) {
 				shutdown = true
-				return nil
+				return Status{}, nil
 			}
 
 			require.NoError(t, NewController(options).Stop(context.Background()))
@@ -342,8 +348,8 @@ func TestControllerStopUsesRunningDaemonDrainDeadline(t *testing.T) {
 		_ context.Context,
 		_ Observation,
 		_ string,
-	) error {
-		return nil
+	) (Status, error) {
+		return Status{}, nil
 	}
 
 	require.NoError(t, NewController(options).Stop(context.Background()))
@@ -364,9 +370,9 @@ func TestControllerRestartStopsThenStartsInvokingBinary(t *testing.T) {
 		_ context.Context,
 		_ Observation,
 		reason string,
-	) error {
+	) (Status, error) {
 		reasons = append(reasons, reason)
-		return nil
+		return Status{}, nil
 	}
 	options.Launch = func(context.Context) error { return nil }
 	got, err := NewController(options).Restart(context.Background())
@@ -390,9 +396,9 @@ func TestControllerRestartRecoversFailedDaemon(t *testing.T) {
 		_ context.Context,
 		_ Observation,
 		_ string,
-	) error {
+	) (Status, error) {
 		shutdown = true
-		return nil
+		return Status{}, nil
 	}
 	options.Launch = func(context.Context) error { return nil }
 
@@ -415,9 +421,9 @@ func TestControllerRestartRejectsUnknownBuildOrder(t *testing.T) {
 		Record: runtimeRecordWithRevisionTime("2026-08-09T12:00:00Z"),
 	})
 	shutdown := false
-	options.RequestShutdown = func(context.Context, Observation, string) error {
+	options.RequestShutdown = func(context.Context, Observation, string) (Status, error) {
 		shutdown = true
-		return nil
+		return Status{}, nil
 	}
 
 	_, err := NewController(options).Restart(context.Background())
@@ -478,9 +484,9 @@ func TestControllerRestartRefusesToDowngradeNewerDaemon(t *testing.T) {
 		_ context.Context,
 		_ Observation,
 		_ string,
-	) error {
+	) (Status, error) {
 		shutdown = true
-		return nil
+		return Status{}, nil
 	}
 
 	_, err := NewController(options).Restart(context.Background())

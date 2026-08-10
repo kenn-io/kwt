@@ -26,6 +26,22 @@ replacement_grace = "200ms"
 
 func buildDaemonTestBinaries(t *testing.T) (string, string) {
 	t.Helper()
+	return buildDaemonTestBinary(t, daemonTestBuild{
+			Name: "kwt-old", Version: "v1.0.0", Revision: strings.Repeat("a", 40),
+		}), buildDaemonTestBinary(t, daemonTestBuild{
+			Name: "kwt-new", Version: "v1.1.0", Revision: strings.Repeat("b", 40),
+		})
+}
+
+type daemonTestBuild struct {
+	Name         string
+	Version      string
+	Revision     string
+	RevisionTime string
+}
+
+func buildDaemonTestBinary(t *testing.T, build daemonTestBuild) string {
+	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
 	suffix := ""
@@ -33,25 +49,22 @@ func buildDaemonTestBinaries(t *testing.T) (string, string) {
 		suffix = ".exe"
 	}
 	dir := t.TempDir()
-	build := func(name, version, revision string) string {
-		path := filepath.Join(dir, name+suffix)
-		command := exec.Command(
-			"go",
-			"build",
-			"-ldflags",
-			"-X go.kenn.io/kwt/internal/cmd.version="+version+
-				" -X go.kenn.io/kwt/internal/cmd.commit="+revision,
-			"-o",
-			path,
-			"./cmd/kwt",
-		)
-		command.Dir = root
-		output, err := command.CombinedOutput()
-		require.NoError(t, err, string(output))
-		return path
-	}
-	return build("kwt-old", "v1.0.0", strings.Repeat("a", 40)),
-		build("kwt-new", "v1.1.0", strings.Repeat("b", 40))
+	path := filepath.Join(dir, build.Name+suffix)
+	command := exec.Command(
+		"go",
+		"build",
+		"-ldflags",
+		"-X go.kenn.io/kwt/internal/cmd.version="+build.Version+
+			" -X go.kenn.io/kwt/internal/cmd.commit="+build.Revision+
+			" -X go.kenn.io/kwt/internal/cmd.revisionTime="+build.RevisionTime,
+		"-o",
+		path,
+		"./cmd/kwt",
+	)
+	command.Dir = root
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+	return path
 }
 
 func newDaemonTestHome(t *testing.T, body string) string {
@@ -186,6 +199,62 @@ func TestDaemonSubprocessNewestCompatibleBinaryWins(t *testing.T) {
 	requireCommandSuccess(t, oldBinary, home, "daemon", "start")
 	stillNew := daemonStatus(t, oldBinary, home)
 	assert.Equal(t, upgraded.PID, stillNew.PID)
+}
+
+func TestDaemonSubprocessSHARevisionOrderingAndEqualTimeOverride(t *testing.T) {
+	older := buildDaemonTestBinary(t, daemonTestBuild{
+		Name: "kwt-sha-older", Version: "sha-older", Revision: strings.Repeat("a", 40),
+		RevisionTime: "2026-08-09T12:00:00Z",
+	})
+	newer := buildDaemonTestBinary(t, daemonTestBuild{
+		Name: "kwt-sha-newer", Version: "sha-newer", Revision: strings.Repeat("b", 40),
+		RevisionTime: "2026-08-09T12:00:01Z",
+	})
+	equalLeft := buildDaemonTestBinary(t, daemonTestBuild{
+		Name: "kwt-sha-equal-left", Version: "sha-left", Revision: strings.Repeat("c", 40),
+		RevisionTime: "2026-08-09T12:00:02Z",
+	})
+	equalRight := buildDaemonTestBinary(t, daemonTestBuild{
+		Name: "kwt-sha-equal-right", Version: "sha-right", Revision: strings.Repeat("d", 40),
+		RevisionTime: "2026-08-09T12:00:02Z",
+	})
+
+	orderedHome := newDaemonTestHome(t, validDaemonConfig)
+	registerDaemonCleanup(t, newer, orderedHome)
+	requireCommandSuccess(t, older, orderedHome, "daemon", "start")
+	oldStatus := daemonStatus(t, older, orderedHome)
+	_, progress, err := runDaemonCommand(t, newer, orderedHome, "daemon", "start")
+	require.NoError(t, err, "stderr=%s", progress)
+	assert.Contains(t, string(progress), "daemon draining")
+	newStatus := daemonStatus(t, newer, orderedHome)
+	assert.Equal(t, strings.Repeat("b", 40), newStatus.Revision)
+	assert.Equal(t, "2026-08-09T12:00:01Z", newStatus.RevisionTime)
+	assert.NotEqual(t, oldStatus.PID, newStatus.PID)
+
+	requireCommandSuccess(t, older, orderedHome, "daemon", "start")
+	reused := daemonStatus(t, older, orderedHome)
+	assert.Equal(t, newStatus.PID, reused.PID)
+	_, stderr, err := runDaemonCommand(t, older, orderedHome, "daemon", "restart")
+	require.Error(t, err)
+	assert.Contains(t, string(stderr), "older kwt cannot replace")
+	assert.Equal(t, newStatus.PID, daemonStatus(t, newer, orderedHome).PID)
+
+	equalHome := newDaemonTestHome(t, validDaemonConfig)
+	registerDaemonCleanup(t, equalRight, equalHome)
+	requireCommandSuccess(t, equalLeft, equalHome, "daemon", "start")
+	leftStatus := daemonStatus(t, equalLeft, equalHome)
+	requireCommandSuccess(t, equalRight, equalHome, "daemon", "start")
+	assert.Equal(t, leftStatus.PID, daemonStatus(t, equalRight, equalHome).PID)
+	_, stderr, err = runDaemonCommand(t, equalRight, equalHome, "daemon", "restart")
+	require.Error(t, err)
+	assert.Contains(t, string(stderr), "cannot prove whether it is newer")
+	assert.Equal(t, leftStatus.PID, daemonStatus(t, equalLeft, equalHome).PID)
+
+	requireCommandSuccess(t, equalRight, equalHome, "daemon", "stop")
+	requireCommandSuccess(t, equalRight, equalHome, "daemon", "start")
+	rightStatus := daemonStatus(t, equalRight, equalHome)
+	assert.Equal(t, strings.Repeat("d", 40), rightStatus.Revision)
+	assert.NotEqual(t, leftStatus.PID, rightStatus.PID)
 }
 
 func TestDaemonSubprocessOlderBinaryCannotRestartNewerDaemon(t *testing.T) {
