@@ -1,6 +1,7 @@
 package git
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -19,9 +20,10 @@ import (
 )
 
 const (
-	worktreeMutationLockName        = "kwt-worktree.lock"
-	worktreeCreationLockName        = "kwt-worktree-create.lock"
-	worktreeCreationReservationName = "kwt-worktree-create.path"
+	worktreeMutationLockName           = "kwt-worktree.lock"
+	worktreeCreationLockName           = "kwt-worktree-create.lock"
+	worktreeCreationReservationName    = "kwt-worktree-create.path"
+	worktreeRemovalVerificationTimeout = 5 * time.Second
 )
 
 var (
@@ -1603,7 +1605,14 @@ func (g *Git) removeWorktree(
 	}
 	args = append(args, path)
 	if _, err := registryGit.runWithoutCredentials(protectedNames, args...); err != nil {
-		stillRegistered, listErr := registryGit.hasRegisteredWorktree(
+		verificationContext, cancel := context.WithTimeout(
+			context.Background(),
+			worktreeRemovalVerificationTimeout,
+		)
+		defer cancel()
+		verificationGit := *registryGit
+		verificationGit.ctx = verificationContext
+		stillRegistered, listErr := verificationGit.hasRegisteredWorktree(
 			canonicalPath,
 			protectedNames,
 		)

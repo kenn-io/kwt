@@ -54,6 +54,14 @@ func (removedWithResidualFilesError) WorktreeRemoved() bool {
 	return true
 }
 
+type refreshRequiredActionError struct {
+	error
+}
+
+func (refreshRequiredActionError) RefreshRequired() bool {
+	return true
+}
+
 func (b *fakeBackend) ListFast(ctx context.Context) ([]Row, []string, error) {
 	b.fastListCalls++
 	return append([]Row(nil), b.rows...), nil, nil
@@ -1347,6 +1355,23 @@ func TestModelRefreshesAfterPartialRemovalWarning(t *testing.T) {
 
 	updated, _ = updateModel(t, updated, press("j"))
 	assert.NoError(t, updated.err)
+}
+
+func TestModelRefreshesAfterIndeterminateRemoval(t *testing.T) {
+	row := testRow("kwt", "feature", "/w/kwt/feature")
+	backend := &fakeBackend{
+		rows: []Row{row},
+		removeErr: refreshRequiredActionError{
+			errors.New("worktree removal outcome is indeterminate"),
+		},
+	}
+	model := NewModel(backend, "/worktrees")
+	model, _ = updateModel(t, model, rowsMsg{rows: backend.rows})
+	done, ok := model.removeWorktreeCmd(row, false)().(actionDoneMsg)
+	require.True(t, ok)
+
+	require.Error(t, done.err)
+	assert.True(t, done.refresh)
 }
 
 func TestModelDeleteDirtyWorktreeConfirmsDiscardAndForcesRemove(t *testing.T) {

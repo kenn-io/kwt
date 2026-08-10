@@ -17,6 +17,10 @@ import (
 var queryCLIInventory = queryInventoryForCLI
 var removeDaemonWorktree = removeWorktreeThroughDaemon
 
+func daemonMutationRequiresRefresh(err error) bool {
+	return kwtdaemon.RequiresRefresh(err)
+}
+
 func removeWorktreeThroughDaemon(
 	ctx context.Context,
 	request kwt.RemovalRequest,

@@ -70,6 +70,13 @@ snapshot. Other worktree mutations, Git status collection, tmux attachment,
 and SSH remain on their existing paths until their complete service
 migrations.
 
+Daemon ownership must not buffer human-facing operation progress. Removal
+continues to print each selected worktree's result as soon as that target
+finishes. Before longer mutations such as add, pull-request import, doctor,
+prune, or SSH lifecycle move behind the daemon, their ordered status events
+must stream to CLI stderr as they occur; machine-readable stdout and established
+exit codes remain unchanged.
+
 When `kwt add -b` creates a branch, it fetches `origin` and starts from its
 default branch. If that remote base is unavailable, it falls back to local
 `main`, then `master`, then the branch checked out in the primary worktree.
@@ -176,6 +183,11 @@ generation, main-worktree status, and lock state while holding the repository's
 cross-process mutation lock. It also performs generation-safe registry cleanup.
 The CLI and TUI retain selection, output, fleet publication, and tmux-session
 cleanup; stale inventory alone never authorizes deletion.
+If a removal response is lost, the client requests a fresh bounded repository
+inventory. A missing original generation is reported as an irreversible partial
+result so fleet publication, TUI refresh, and session cleanup still run. If the
+postcondition cannot be observed, the client reports an indeterminate transport
+failure and requests fleet/UI refresh without claiming removal or killing tmux.
 
 ## `kwt doctor`
 

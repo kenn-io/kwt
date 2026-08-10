@@ -2272,6 +2272,57 @@ exec "$REAL_GIT" "$@"
 	assert.FileExists(t, filepath.Join(worktreePath, "replacement"))
 }
 
+func TestConditionalRemoveWorktreeVerifiesDeregistrationAfterCancellation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a POSIX shell wrapper")
+	}
+
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "canceled-after-removal")
+	worktreePath := filepath.Join(t.TempDir(), "remove-wt")
+	repo.CreateWorktree(t, worktreePath, "canceled-after-removal")
+	generation, err := New(repo.Path).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+
+	realGit, err := exec.LookPath("git")
+	require.NoError(t, err)
+	wrapperDir := t.TempDir()
+	completedPath := filepath.Join(wrapperDir, "removal-completed")
+	wrapperPath := filepath.Join(wrapperDir, "git")
+	wrapper := `#!/bin/sh
+if [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
+	"$REAL_GIT" "$@" || exit $?
+	: > "$REMOVAL_COMPLETED"
+	while true; do sleep 1; done
+fi
+exec "$REAL_GIT" "$@"
+`
+	require.NoError(t, os.WriteFile(wrapperPath, []byte(wrapper), 0755))
+	t.Setenv("REAL_GIT", realGit)
+	t.Setenv("REMOVAL_COMPLETED", completedPath)
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		result <- NewWithContext(ctx, worktreePath).RemoveWorktree(
+			worktreePath,
+			false,
+			generation,
+		)
+	}()
+	require.Eventually(t, func() bool {
+		_, statErr := os.Stat(completedPath)
+		return statErr == nil
+	}, 5*time.Second, 10*time.Millisecond)
+	cancel()
+
+	err = receiveRemovalResult(t, result)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.True(t, WorktreeWasRemoved(err))
+	assert.NoDirExists(t, worktreePath)
+}
+
 func TestPruneWorktrees(t *testing.T) {
 	repo := NewTestRepository(t)
 	g := New(repo.Path)

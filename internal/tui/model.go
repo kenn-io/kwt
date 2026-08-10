@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -1383,11 +1384,16 @@ func (m Model) removeWorktreeCmd(row Row, force bool) tea.Cmd {
 		if err := m.backend.RemoveWorktree(context.Background(), row, force); err != nil {
 			return actionDoneMsg{
 				err:     err,
-				refresh: git.WorktreeWasRemoved(err),
+				refresh: git.WorktreeWasRemoved(err) || actionRefreshRequired(err),
 			}
 		}
 		return actionDoneMsg{message: fmt.Sprintf("removed %s", rowLabel(row)), refresh: true}
 	}
+}
+
+func actionRefreshRequired(err error) bool {
+	var required interface{ RefreshRequired() bool }
+	return errors.As(err, &required) && required.RefreshRequired()
 }
 
 func (m Model) unregisterWorkspaceCmd(row Row) tea.Cmd {

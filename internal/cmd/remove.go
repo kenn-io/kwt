@@ -235,7 +235,7 @@ func removeLocalWorktree(
 			Force: removeForce, DeleteBranch: deleteBranch,
 			ForceDeleteBranch: forceDeleteBranch,
 		})
-		if result.WorktreeRemoved {
+		if result.WorktreeRemoved || daemonMutationRequiresRefresh(removalErr) {
 			removed++
 		}
 		if removalErr != nil {
@@ -398,7 +398,7 @@ func removeGlobalWorktree(
 			Force: removeForce, DeleteBranch: deleteBranch,
 			ForceDeleteBranch: forceDeleteBranch,
 		})
-		if result.WorktreeRemoved {
+		if result.WorktreeRemoved || daemonMutationRequiresRefresh(removalErr) {
 			removed++
 		}
 		if removalErr != nil {

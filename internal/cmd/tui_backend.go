@@ -1398,6 +1398,9 @@ func (b *tuiBackend) RemoveWorktree(ctx context.Context, row dashboard.Row, forc
 		Force: force,
 	})
 	if removalErr != nil && !result.WorktreeRemoved {
+		if daemonMutationRequiresRefresh(removalErr) {
+			publishTUIFleetBestEffort(ctx, b.cfg)
+		}
 		if strings.Contains(removalErr.Error(), "contains modified or untracked files") ||
 			strings.Contains(removalErr.Error(), "has local changes") {
 			return fmt.Errorf("worktree has uncommitted changes")

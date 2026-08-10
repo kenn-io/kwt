@@ -2,7 +2,10 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -76,6 +79,65 @@ func TestRemovalClientPreservesPartialResultOnError(t *testing.T) {
 	assert.True(t, result.WorktreeRemoved)
 	assert.True(t, result.RegistryUnregistered)
 	assert.Equal(t, "topic", result.Branch)
+}
+
+func TestRemovalClientReconcilesLostSuccessfulResponse(t *testing.T) {
+	var reconciled atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/worktrees/remove":
+			connection, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Errorf("hijack removal response: %v", err)
+				return
+			}
+			_ = connection.Close()
+		case "/api/v1/inventory":
+			reconciled.Store(true)
+			_ = json.NewEncoder(w).Encode(kwt.Result{Snapshot: kwt.Snapshot{}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+
+	result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{
+		RepositoryPath:     "/repos/widget",
+		Path:               "/worktrees/topic",
+		ExpectedGeneration: "0123456789abcdef0123456789abcdef",
+	})
+
+	require.Error(t, err)
+	assert.True(t, reconciled.Load())
+	assert.True(t, result.WorktreeRemoved)
+	assert.True(t, git.WorktreeWasRemoved(err))
+	assert.True(t, service.IsCode(err, service.TransportFailure))
+}
+
+func TestRemovalClientMarksUnreconciledResponseLossForRefresh(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connection, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Errorf("hijack %s response: %v", r.URL.Path, err)
+			return
+		}
+		_ = connection.Close()
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+
+	result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{
+		RepositoryPath:     "/repos/widget",
+		Path:               "/worktrees/topic",
+		ExpectedGeneration: "0123456789abcdef0123456789abcdef",
+	})
+
+	require.Error(t, err)
+	assert.False(t, result.WorktreeRemoved)
+	assert.False(t, git.WorktreeWasRemoved(err))
+	assert.True(t, RequiresRefresh(err))
+	assert.True(t, service.IsCode(err, service.TransportFailure))
 }
 
 func removalTestClient(t *testing.T, remover kwt.Remover) (*Client, func()) {

@@ -18,6 +18,16 @@ import (
 	"go.kenn.io/kwt/pkg/models"
 )
 
+type refreshRequiredRemovalError struct{}
+
+func (refreshRequiredRemovalError) Error() string {
+	return "worktree removal outcome is indeterminate"
+}
+
+func (refreshRequiredRemovalError) RefreshRequired() bool {
+	return true
+}
+
 func TestRemoveLocalDelegatesMutationToDaemon(t *testing.T) {
 	resetFleetCommandDeps(t)
 	resetRemoveCommandFlags(t)
@@ -69,6 +79,33 @@ func TestRemoveLocalPublishesOnceAfterSuccessfulRemoval(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, calls)
+}
+
+func TestRemoveLocalPublishesForIndeterminateDaemonOutcome(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetRemoveCommandFlags(t)
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	t.Chdir(repoPath)
+	worktreePath := filepath.Join(t.TempDir(), "remove-local-indeterminate")
+	runTUITestGit(t, repoPath, "worktree", "add", "-b", "remove-local-indeterminate", worktreePath)
+	removeDaemonWorktree = func(
+		context.Context,
+		kwt.RemovalRequest,
+	) (kwt.RemovalResult, error) {
+		return kwt.RemovalResult{}, refreshRequiredRemovalError{}
+	}
+	var calls int
+	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) {
+		calls++
+	}
+
+	cmd, _, _ := fleetTestCommand()
+	err := runRemove(cmd, []string{"remove-local-indeterminate"})
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, calls)
+	assert.DirExists(t, worktreePath)
 }
 
 func TestRemoveLocalUnregistersLegacyEntry(t *testing.T) {

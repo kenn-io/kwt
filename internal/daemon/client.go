@@ -12,6 +12,7 @@ import (
 
 	kitdaemon "go.kenn.io/kit/daemon"
 	kwt "go.kenn.io/kwt"
+	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/service"
 )
 
@@ -27,6 +28,10 @@ type worktreeRemovedError struct {
 	err error
 }
 
+type refreshRequiredError struct {
+	err error
+}
+
 func (e *worktreeRemovedError) Error() string {
 	return e.err.Error()
 }
@@ -39,12 +44,33 @@ func (e *worktreeRemovedError) WorktreeRemoved() bool {
 	return true
 }
 
+func (e *refreshRequiredError) Error() string {
+	return e.err.Error()
+}
+
+func (e *refreshRequiredError) Unwrap() error {
+	return e.err
+}
+
+func (e *refreshRequiredError) RefreshRequired() bool {
+	return true
+}
+
+// RequiresRefresh reports whether a mutation result could not be reconciled
+// after its response was lost. Callers should refresh observable state without
+// assuming that the mutation completed.
+func RequiresRefresh(err error) bool {
+	var required interface{ RefreshRequired() bool }
+	return errors.As(err, &required) && required.RefreshRequired()
+}
+
 var ErrResponseTooLarge = errors.New("kwt daemon response is too large")
 
 const (
 	controlRequestTimeout           = 2 * time.Second
 	inventoryResponseHeadroom       = 5 * time.Second
 	inventoryRequestTimeout         = kwt.DefaultRefreshTimeout + inventoryResponseHeadroom
+	removalReconcileTimeout         = 5 * time.Second
 	controlResponseLimit      int64 = 1 << 20
 	inventoryResponseLimit          = 64 << 20
 )
@@ -128,9 +154,45 @@ func (c *Client) RemoveWorktree(
 		result = removalResultFromError(err)
 		if result.WorktreeRemoved {
 			err = &worktreeRemovedError{err: err}
+		} else if service.IsCode(err, service.TransportFailure) {
+			removed, reconcileErr := c.reconcileRemoval(request)
+			if reconcileErr != nil {
+				err = &refreshRequiredError{err: errors.Join(
+					err,
+					fmt.Errorf("reconcile worktree removal: %w", reconcileErr),
+				)}
+			} else if removed {
+				result = kwt.RemovalResult{
+					Path:            request.Path,
+					WorktreeRemoved: true,
+				}
+				err = &worktreeRemovedError{err: err}
+			}
 		}
 	}
 	return result, err
+}
+
+func (c *Client) reconcileRemoval(request kwt.RemovalRequest) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), removalReconcileTimeout)
+	defer cancel()
+	result, err := c.Inventory(ctx, kwt.Request{
+		View:             kwt.ViewRepository,
+		WorkingDirectory: request.RepositoryPath,
+		RequireCurrent:   true,
+		UntrustedConfig:  kwt.IgnoreUntrustedConfig,
+	})
+	if err != nil {
+		return false, err
+	}
+	wantedPath := utils.PathKey(request.Path)
+	for _, entry := range result.Snapshot.Entries {
+		if utils.PathKey(entry.Path) == wantedPath &&
+			entry.Generation == request.ExpectedGeneration {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func removalResultFromError(err error) kwt.RemovalResult {
