@@ -16,6 +16,7 @@ builds:
       - -X go.kenn.io/kwt/internal/cmd.version={{ .Version }}
       - -X go.kenn.io/kwt/internal/cmd.commit={{ .Commit }}
       - -X go.kenn.io/kwt/internal/cmd.date={{ .CommitDate }}
+      - -X go.kenn.io/kwt/internal/cmd.revisionTime={{ .CommitDate }}
     goos:
       - darwin
       - linux

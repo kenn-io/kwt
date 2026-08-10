@@ -62,6 +62,15 @@ kwt daemon stop
 kwt serve
 ```
 
+`kwt daemon start` replaces a compatible running daemon only when the invoking
+build is provably newer and `daemon.auto_restart` is `"newer"`. `kwt daemon
+restart` refuses a provable downgrade and also refuses different builds whose
+order is unknown, including distinct revisions with the same source commit
+time. Use `kwt daemon stop` followed by `kwt daemon start` as the explicit
+override when you intend to install an otherwise unordered build. Replacement
+and restart print drain progress to stderr before waiting; JSON stdout and
+ordinary command exit behavior remain unchanged.
+
 `kwt projects`, `kwt list`, `kwt remove`, and TUI inventory/removal auto-start
 or reuse a compatible local daemon. CLI inventory requires a current refresh
 and fails if one cannot complete; it never prints cached data. The TUI may

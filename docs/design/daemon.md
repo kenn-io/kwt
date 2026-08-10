@@ -16,11 +16,29 @@ serve` runs the same host in the foreground, disables idle exit, and refuses to
 replace an existing owner. Background logs are written to
 `<kwt-home>/daemon.log`, rotate at 10 MiB, and retain three owner-only backups.
 
-Compatible clients share the newest running daemon. A newer client asks an
-older daemon to drain before replacement; an older client never downgrades a
-newer daemon. Draining rejects new operations with a retryable typed response
-that carries the deadline. Active work and leases may finish until
-`daemon.replacement_grace`; the default is five minutes.
+Compatible clients share the newest running daemon. Build order uses an exact
+full source revision first, then differing semantic versions, then the source
+commit time. Source times are canonical RFC3339 UTC values authenticated in
+both the private runtime record and status response. Hashes are never compared
+lexically. Different revisions with equal source times, missing contemporary
+metadata, or invalid values have unknown order.
+
+With `daemon.auto_restart = "newer"`, a provably newer client asks an older
+daemon to drain before replacement. Automatic start reuses a ready daemon when
+order is unknown; it never guesses. Explicit restart accepts the same or a
+newer invoking build, returns `daemon_downgrade_refused` for an older build,
+and returns `daemon_build_order_unknown` when order cannot be proved. A
+draining daemon applies the same refusal before another binary waits and
+launches. `kwt daemon stop` followed by `kwt daemon start` is the deliberate
+operator override for unknown order and may install either build. Ghosthub may
+use that override only for an explicit helper-update action, never routine
+polling.
+
+Draining rejects new operations with a retryable typed response that carries
+the deadline. The command requesting shutdown prints the returned drain state
+immediately, then continues reporting observed drain state while it waits.
+Active work and leases may finish until `daemon.replacement_grace`; the default
+is five minutes.
 
 The API exposes authenticated status, graceful shutdown, worktree inventory,
 and repository-config approval under `/api/v1`, proof-capable liveness at
