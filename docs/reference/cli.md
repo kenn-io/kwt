@@ -89,7 +89,7 @@ shape to stdout:
     "code": "daemon_draining",
     "message": "the kwt daemon is draining",
     "retryable": true,
-    "details": {"drain_deadline": "2026-08-10T01:02:03Z"}
+    "details": { "drain_deadline": "2026-08-10T01:02:03Z" }
   }
 }
 ```
