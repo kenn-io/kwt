@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/pkg/models"
+	servicecontract "go.kenn.io/kwt/service"
 )
 
 type testCache struct {
@@ -212,6 +213,24 @@ func TestServiceFailedRefreshKeepsLastKnownGood(t *testing.T) {
 	cached, ok := cache.Current()
 	require.True(t, ok)
 	assert.Equal(t, "/old", cached.Snapshot.Entries[0].Path)
+}
+
+func TestServiceNormalizesUnexpectedCustomSourceError(t *testing.T) {
+	const secret = "custom-source-password"
+	cause := errors.New("fetch https://user:" + secret + "@example.invalid/repository")
+	inventory := NewInventoryService(InventoryServiceOptions{
+		Source: &testSource{err: cause},
+	})
+
+	_, err := inventory.Query(context.Background(), Request{View: ViewProjects})
+
+	require.Error(t, err)
+	var typed *servicecontract.Error
+	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, servicecontract.Internal, typed.Code)
+	assert.Equal(t, "internal failure", typed.Message)
+	assert.NotContains(t, typed.Message, secret)
+	assert.ErrorIs(t, err, cause)
 }
 
 func TestServiceFreshDashboardSurvivesCacheWriteFailure(t *testing.T) {

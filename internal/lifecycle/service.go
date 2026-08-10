@@ -82,6 +82,7 @@ func (s *InventoryService) Query(ctx context.Context, request Request) (Result, 
 			}()
 		}
 		result, loadErr := s.source.Load(refreshContext, request)
+		loadErr = classifyInventoryError(loadErr)
 		if loadErr != nil {
 			if request.View == ViewDashboard {
 				s.setDashboardDiagnostic(generation, &Diagnostic{
