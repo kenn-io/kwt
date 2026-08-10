@@ -245,6 +245,7 @@ func runProjectsRemove(cmd *cobra.Command, args []string) error {
 			true,
 		)
 	}
+	project.Repository = publishableProjectRepository(project)
 
 	if projectsRemoveJSON {
 		encoder := json.NewEncoder(cmd.OutOrStdout())

@@ -487,6 +487,33 @@ func TestRunProjectsRemoveJSONUnregistersByPath(t *testing.T) {
 	assert.Equal(t, removed, response.Project)
 }
 
+func TestRunProjectsRemoveJSONNeverEmitsRegistryCredentials(t *testing.T) {
+	const token = "ghp_secret123"
+	originalUnregister := unregisterProject
+	t.Cleanup(func() { unregisterProject = originalUnregister })
+	unregisterProject = func(string) (models.Project, bool, error) {
+		return models.Project{
+			Repository: "https://wesm:" + token + "@github.com/acme/widget.git",
+			Name:       "widget",
+			Path:       "/code/widget",
+		}, true, nil
+	}
+	projectsRemoveJSON = true
+	t.Cleanup(func() { projectsRemoveJSON = false })
+	stdout := &bytes.Buffer{}
+	projectsRemoveCmd.SetOut(stdout)
+
+	require.NoError(t, runProjectsRemove(
+		projectsRemoveCmd,
+		[]string{"/code/widget"},
+	))
+
+	var response projectMutationResult
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &response))
+	assert.Equal(t, "github.com/acme/widget", response.Project.Repository)
+	assert.NotContains(t, stdout.String(), token)
+}
+
 func TestRunProjectsRemoveJSONReportsMissingProject(t *testing.T) {
 	originalUnregister := unregisterProject
 	t.Cleanup(func() { unregisterProject = originalUnregister })
