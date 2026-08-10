@@ -1171,7 +1171,7 @@ func (g *Git) RemoveWorktreeTransactionAfterClaim(
 		if err := g.rejectActiveWorktreeCreation(nil); err != nil {
 			return err
 		}
-		inspections, err := g.inspectWorktreesLocked("", true, nil)
+		inspections, err := g.inspectWorktreesLocked("", false, nil)
 		if err != nil {
 			return err
 		}

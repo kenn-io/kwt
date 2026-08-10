@@ -1040,6 +1040,51 @@ func TestRemoveWorktreeTransactionDeletesObservedBranch(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestRemoveWorktreeTransactionUsesBaselineCompatibleInspection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a POSIX git compatibility wrapper")
+	}
+
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "baseline-remove")
+	worktreePath := filepath.Join(t.TempDir(), "baseline-remove")
+	repo.CreateWorktree(t, worktreePath, "baseline-remove")
+	g := New(repo.Path)
+	generation, err := g.WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+
+	realGit, err := exec.LookPath("git")
+	require.NoError(t, err)
+	wrapperDir := t.TempDir()
+	wrapperPath := filepath.Join(wrapperDir, "git")
+	wrapper := `#!/bin/sh
+if [ "$1" = "worktree" ] && [ "$2" = "list" ]; then
+	for arg in "$@"; do
+		if [ "$arg" = "--expire" ]; then
+			printf '%s\n' 'error: unknown option expire' >&2
+			exit 129
+		fi
+	done
+fi
+exec "$REAL_GIT" "$@"
+`
+	require.NoError(t, os.WriteFile(wrapperPath, []byte(wrapper), 0755))
+	t.Setenv("REAL_GIT", realGit)
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	result, err := g.RemoveWorktreeTransaction(
+		worktreePath,
+		generation,
+		false,
+		false,
+		false,
+	)
+
+	require.NoError(t, err)
+	assert.True(t, result.WorktreeRemoved)
+	assert.NoDirExists(t, worktreePath)
+}
+
 func TestRemoveWorktreeTransactionAfterClaimHoldsMutationLock(t *testing.T) {
 	repo := NewTestRepository(t)
 	repo.CreateBranch(t, "transaction-claim")
