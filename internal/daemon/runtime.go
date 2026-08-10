@@ -27,8 +27,9 @@ const (
 )
 
 type Build struct {
-	Version  string
-	Revision string
+	Version      string
+	Revision     string
+	RevisionTime string
 }
 
 type RuntimeState uint8
