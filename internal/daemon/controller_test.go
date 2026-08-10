@@ -3,33 +3,64 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kitdaemon "go.kenn.io/kit/daemon"
 	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 )
 
 func TestReplacementDecision(t *testing.T) {
 	for _, test := range []struct {
-		name    string
-		client  string
-		running string
-		policy  string
-		want    replacementDecision
+		name           string
+		client         Build
+		running        Build
+		advertisedTime bool
+		policy         string
+		want           replacementDecision
 	}{
-		{"newer client replaces", "v1.2.0", "v1.1.0", "newer", replaceDaemon},
-		{"older client reuses", "v1.1.0", "v1.2.0", "newer", reuseDaemon},
-		{"same client reuses", "v1.2.0", "v1.2.0", "newer", reuseDaemon},
-		{"policy never reuses", "v1.2.0", "v1.1.0", "never", reuseDaemon},
-		{"development versions do not order", "dev", "v1.1.0", "newer", reuseDaemon},
+		{
+			name:   "newer semantic client replaces",
+			client: Build{Version: "v1.2.0"}, running: Build{Version: "v1.1.0"},
+			policy: "newer", want: replaceDaemon,
+		},
+		{
+			name:   "older semantic client reuses",
+			client: Build{Version: "v1.1.0"}, running: Build{Version: "v1.2.0"},
+			policy: "newer", want: reuseDaemon,
+		},
+		{
+			name:           "newer SHA timestamp replaces",
+			client:         Build{Version: "sha-new", Revision: "new", RevisionTime: "2026-08-09T12:00:01Z"},
+			running:        Build{Version: "sha-old", Revision: "old", RevisionTime: "2026-08-09T12:00:00Z"},
+			advertisedTime: true, policy: "newer", want: replaceDaemon,
+		},
+		{
+			name:           "unknown order reuses",
+			client:         Build{Version: "sha-new", Revision: "new", RevisionTime: "2026-08-09T12:00:00Z"},
+			running:        Build{Version: "sha-old", Revision: "old", RevisionTime: "2026-08-09T12:00:00Z"},
+			advertisedTime: true, policy: "newer", want: reuseDaemon,
+		},
+		{
+			name:   "policy never reuses",
+			client: Build{Version: "v1.2.0"}, running: Build{Version: "v1.1.0"},
+			policy: "never", want: reuseDaemon,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert.Equal(
 				t,
 				test.want,
-				decideReplacement(test.client, test.running, test.policy),
+				decideReplacement(
+					test.client,
+					test.running,
+					test.advertisedTime,
+					test.policy,
+				),
 			)
 		})
 	}
@@ -54,14 +85,25 @@ func scriptedInspector(
 func testControllerOptions(t *testing.T) ControllerOptions {
 	t.Helper()
 	return ControllerOptions{
-		Home:  t.TempDir(),
-		Build: Build{Version: "v1.2.0"},
+		Home: t.TempDir(),
+		Build: Build{
+			Version:  "v1.2.0",
+			Revision: strings.Repeat("a", 40),
+		},
 		Config: models.DaemonConfig{
 			AutoRestart:      "newer",
 			ReplacementGrace: 50 * time.Millisecond,
 		},
 		PollInterval: time.Millisecond,
 		StartTimeout: time.Second,
+	}
+}
+
+func matchingBuildStatus(options ControllerOptions) Status {
+	return Status{
+		Version:      options.Build.Version,
+		Revision:     options.Build.Revision,
+		RevisionTime: options.Build.RevisionTime,
 	}
 }
 
@@ -167,12 +209,46 @@ func TestControllerReplacesOlderDaemonAfterDrain(t *testing.T) {
 	assert.Equal(t, 1, launches)
 }
 
+func TestControllerReplacesOlderSHAStampedDaemon(t *testing.T) {
+	options := testControllerOptions(t)
+	options.Build = Build{
+		Version: "sha-new", Revision: "new", RevisionTime: "2026-08-09T12:00:01Z",
+	}
+	old := Observation{
+		State: RuntimeReady,
+		Status: Status{
+			Version: "sha-old", Revision: "old", RevisionTime: "2026-08-09T12:00:00Z",
+		},
+		Record: runtimeRecordWithRevisionTime("2026-08-09T12:00:00Z"),
+	}
+	ready := Observation{State: RuntimeReady, Status: matchingBuildStatus(options)}
+	options.Inspect = scriptedInspector(
+		t,
+		old,
+		Observation{State: RuntimeAbsent},
+		ready,
+	)
+	shutdown := false
+	options.RequestShutdown = func(context.Context, Observation, string) error {
+		shutdown = true
+		return nil
+	}
+	options.Launch = func(context.Context) error { return nil }
+
+	got, err := NewController(options).Start(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, ready, got)
+	assert.True(t, shutdown)
+}
+
 func TestControllerReportsDrainProgressBeforeStarting(t *testing.T) {
 	options := testControllerOptions(t)
 	deadline := time.Now().Add(time.Second)
 	options.Inspect = scriptedInspector(
 		t,
 		Observation{State: RuntimeDraining, Status: Status{
+			Version:       options.Build.Version,
+			Revision:      options.Build.Revision,
 			State:         StateDraining,
 			ActiveLeases:  3,
 			DrainDeadline: &deadline,
@@ -275,10 +351,10 @@ func TestControllerStopUsesRunningDaemonDrainDeadline(t *testing.T) {
 
 func TestControllerRestartStopsThenStartsInvokingBinary(t *testing.T) {
 	options := testControllerOptions(t)
-	ready := Observation{State: RuntimeReady, Status: Status{Version: "v1.2.0"}}
+	ready := Observation{State: RuntimeReady, Status: matchingBuildStatus(options)}
 	options.Inspect = scriptedInspector(
 		t,
-		Observation{State: RuntimeReady, Status: Status{Version: "v1.2.0"}},
+		Observation{State: RuntimeReady, Status: matchingBuildStatus(options)},
 		Observation{State: RuntimeAbsent},
 		Observation{State: RuntimeAbsent},
 		ready,
@@ -301,10 +377,10 @@ func TestControllerRestartStopsThenStartsInvokingBinary(t *testing.T) {
 
 func TestControllerRestartRecoversFailedDaemon(t *testing.T) {
 	options := testControllerOptions(t)
-	ready := Observation{State: RuntimeReady, Status: Status{Version: "v1.2.0"}}
+	ready := Observation{State: RuntimeReady, Status: matchingBuildStatus(options)}
 	options.Inspect = scriptedInspector(
 		t,
-		Observation{State: RuntimeFailed, Status: Status{Version: "v1.2.0"}},
+		Observation{State: RuntimeFailed, Status: matchingBuildStatus(options)},
 		Observation{State: RuntimeAbsent},
 		Observation{State: RuntimeAbsent},
 		ready,
@@ -326,6 +402,71 @@ func TestControllerRestartRecoversFailedDaemon(t *testing.T) {
 	assert.True(t, shutdown)
 }
 
+func TestControllerRestartRejectsUnknownBuildOrder(t *testing.T) {
+	options := testControllerOptions(t)
+	options.Build = Build{
+		Version: "sha-new", Revision: "new", RevisionTime: "2026-08-09T12:00:00Z",
+	}
+	options.Inspect = scriptedInspector(t, Observation{
+		State: RuntimeReady,
+		Status: Status{
+			Version: "sha-old", Revision: "old", RevisionTime: "2026-08-09T12:00:00Z",
+		},
+		Record: runtimeRecordWithRevisionTime("2026-08-09T12:00:00Z"),
+	})
+	shutdown := false
+	options.RequestShutdown = func(context.Context, Observation, string) error {
+		shutdown = true
+		return nil
+	}
+
+	_, err := NewController(options).Restart(context.Background())
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.DaemonBuildOrderUnknown))
+	assert.False(t, shutdown)
+}
+
+func TestControllerUnknownBuildCannotReplaceDrainingDaemon(t *testing.T) {
+	for name, act := range map[string]func(*Controller) error{
+		"start": func(controller *Controller) error {
+			_, err := controller.Start(context.Background())
+			return err
+		},
+		"restart": func(controller *Controller) error {
+			_, err := controller.Restart(context.Background())
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			options := testControllerOptions(t)
+			options.Build = Build{
+				Version: "sha-new", Revision: "new", RevisionTime: "2026-08-09T12:00:00Z",
+			}
+			options.Inspect = scriptedInspector(t, Observation{
+				State: RuntimeDraining,
+				Status: Status{
+					Version: "sha-old", Revision: "old", RevisionTime: "2026-08-09T12:00:00Z",
+				},
+				Record: runtimeRecordWithRevisionTime("2026-08-09T12:00:00Z"),
+			})
+			launched := false
+			options.Launch = func(context.Context) error {
+				launched = true
+				return nil
+			}
+
+			err := act(NewController(options))
+			require.Error(t, err)
+			assert.True(t, service.IsCode(err, service.DaemonBuildOrderUnknown))
+			assert.False(t, launched)
+		})
+	}
+}
+
+func runtimeRecordWithRevisionTime(value string) kitdaemon.RuntimeRecord {
+	return kitdaemon.RuntimeRecord{Metadata: map[string]string{metadataRevisionTime: value}}
+}
+
 func TestControllerRestartRefusesToDowngradeNewerDaemon(t *testing.T) {
 	options := testControllerOptions(t)
 	options.Inspect = scriptedInspector(t, Observation{
@@ -344,6 +485,7 @@ func TestControllerRestartRefusesToDowngradeNewerDaemon(t *testing.T) {
 
 	_, err := NewController(options).Restart(context.Background())
 	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.DaemonDowngradeRefused))
 	assert.False(t, shutdown)
 }
 

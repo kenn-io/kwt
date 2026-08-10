@@ -7,16 +7,18 @@ import "errors"
 type Code string
 
 const (
-	InvalidRequest      Code = "invalid_request"
-	Conflict            Code = "conflict"
-	Busy                Code = "busy"
-	NotFound            Code = "not_found"
-	InteractionRequired Code = "interaction_required"
-	PermissionDenied    Code = "permission_denied"
-	ConnectionChanged   Code = "connection_changed"
-	Unsupported         Code = "unsupported"
-	TransportFailure    Code = "transport_failure"
-	Internal            Code = "internal"
+	InvalidRequest          Code = "invalid_request"
+	Conflict                Code = "conflict"
+	Busy                    Code = "busy"
+	NotFound                Code = "not_found"
+	InteractionRequired     Code = "interaction_required"
+	PermissionDenied        Code = "permission_denied"
+	ConnectionChanged       Code = "connection_changed"
+	Unsupported             Code = "unsupported"
+	TransportFailure        Code = "transport_failure"
+	DaemonDowngradeRefused  Code = "daemon_downgrade_refused"
+	DaemonBuildOrderUnknown Code = "daemon_build_order_unknown"
+	Internal                Code = "internal"
 )
 
 // Error carries a stable category and retry policy across in-process and HTTP
