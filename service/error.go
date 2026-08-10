@@ -25,6 +25,7 @@ const (
 	DaemonTransportFailed   Code = "daemon_transport_failed"
 	InventoryTimeout        Code = "inventory_timeout"
 	InventoryFailed         Code = "inventory_failed"
+	RemovalFailed           Code = "removal_failed"
 	// Reserved for API major 2 operation streaming; slice 2 does not emit
 	// these codes.
 	OperationIDConflict         Code = "operation_id_conflict"

@@ -420,6 +420,7 @@ func problemCode(code service.Code) (service.Code, bool) {
 		service.DaemonTransportFailed,
 		service.InventoryTimeout,
 		service.InventoryFailed,
+		service.RemovalFailed,
 		service.Internal:
 		return code, true
 	default:

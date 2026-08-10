@@ -367,6 +367,10 @@ var allowedProblemDetailTypes = map[service.Code]map[string]problemDetailType{
 		"path": detailString, "branch": detailString, "worktree_removed": detailBool,
 		"branch_deleted": detailBool, "registry_unregistered": detailBool,
 	},
+	service.RemovalFailed: {
+		"path": detailString, "branch": detailString, "worktree_removed": detailBool,
+		"branch_deleted": detailBool, "registry_unregistered": detailBool,
+	},
 }
 
 func allowedProblemDetails(code service.Code, details map[string]any) map[string]any {

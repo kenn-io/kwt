@@ -92,6 +92,52 @@ func TestRemovalClientPreservesPartialResultOnError(t *testing.T) {
 	}
 }
 
+func TestRemovalClientPreservesKnownRemovalFailure(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		message string
+		result  kwt.RemovalResult
+	}{
+		{
+			name: "failed before removal", message: "worktree has uncommitted changes",
+			result: kwt.RemovalResult{Path: "/worktrees/topic", Branch: "topic"},
+		},
+		{
+			name: "partial completion", message: "worktree removed but failed to delete branch",
+			result: kwt.RemovalResult{
+				Path: "/worktrees/topic", Branch: "topic", WorktreeRemoved: true,
+				RegistryUnregistered: true,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			remover := &fakeRemover{result: test.result, err: service.NewError(
+				service.RemovalFailed,
+				test.message,
+				false,
+				map[string]any{
+					"path": test.result.Path, "branch": test.result.Branch,
+					"worktree_removed":      test.result.WorktreeRemoved,
+					"branch_deleted":        test.result.BranchDeleted,
+					"registry_unregistered": test.result.RegistryUnregistered,
+				},
+				errors.New("private removal cause"),
+			)}
+			client, closeServer := removalTestClient(t, remover)
+			defer closeServer()
+
+			result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{})
+
+			require.Error(t, err)
+			typed := service.AsError(err)
+			assert.Equal(t, service.RemovalFailed, typed.Code)
+			assert.Equal(t, test.message, typed.Message)
+			assert.Equal(t, test.result, result)
+			assert.Equal(t, test.result.WorktreeRemoved, git.WorktreeWasRemoved(err))
+		})
+	}
+}
+
 func TestRemovalClientHidesUnexpectedInternalCause(t *testing.T) {
 	const secret = "removal-password"
 	cause := errors.New("fetch ssh://user:" + secret + "@example.invalid/repository")

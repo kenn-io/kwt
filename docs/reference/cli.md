@@ -216,6 +216,9 @@ generation, main-worktree status, and lock state while holding the repository's
 cross-process mutation lock. It also performs generation-safe registry cleanup.
 The CLI and TUI retain selection, output, fleet publication, and tmux-session
 cleanup; stale inventory alone never authorizes deletion.
+Known Git removal failures use the stable `removal_failed` code and preserve
+their credential-sanitized message and partial-result fields across the daemon
+boundary. Unexpected failures use `internal` and withhold their cause.
 If a removal response is lost, the client requests a fresh bounded repository
 inventory. A missing original generation is reported as an irreversible partial
 result so fleet publication, TUI refresh, and session cleanup still run. If the

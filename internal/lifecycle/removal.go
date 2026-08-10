@@ -175,7 +175,7 @@ func classifyRemovalError(err error, result RemovalResult) error {
 		return service.NewError(service.Busy, "worktree removal canceled", true, details, err)
 	}
 	if git.WorktreeWasRemoved(err) || git.IsWorktreeRemovalCommandError(err) {
-		return service.NewError(service.Internal, boundedDiagnostic(err), false, details, err)
+		return service.NewError(service.RemovalFailed, boundedDiagnostic(err), false, details, err)
 	}
 	return service.NewError(service.Internal, "internal failure", false, details, err)
 }
