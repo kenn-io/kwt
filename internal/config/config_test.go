@@ -1737,6 +1737,67 @@ auto_mkdir = true
 	assert.NotContains(t, text, "dangerously-skip-permissions")
 }
 
+func TestInitRepairsStringEncodedEmptyProjectRegistry(t *testing.T) {
+	kwtHome := t.TempDir()
+	t.Setenv("KWT_HOME", kwtHome)
+	require.NoError(t, os.WriteFile(filepath.Join(kwtHome, "config.toml"), []byte(`
+projects = '[]'
+
+[agents]
+codex = "codex"
+claude = "claude"
+roborev = "roborev tui"
+
+[layouts]
+auto_launch_on_add = true
+
+[naming]
+template = "{{.FullPath}}/{{.Branch}}"
+
+[custom]
+sentinel = "preserved"
+`), 0o600))
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	require.NoError(t, Init())
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Empty(t, cfg.Projects)
+	stored, err := readGlobalViper(filepath.Join(kwtHome, "config.toml"))
+	require.NoError(t, err)
+	assert.IsType(t, []any{}, stored.Get("projects"))
+	assert.Equal(t, "preserved", stored.GetString("custom.sentinel"))
+	projects, err := rawProjectEntries(stored)
+	require.NoError(t, err)
+	assert.Empty(t, projects)
+	migrated, err := backfillWorkspaceConfig(filepath.Join(kwtHome, "config.toml"))
+	require.NoError(t, err)
+	assert.False(t, migrated)
+}
+
+func TestInitDoesNotRepairOtherMalformedProjectRegistries(t *testing.T) {
+	for _, value := range []string{"' [] '", "'other'", "['not-a-project']"} {
+		t.Run(value, func(t *testing.T) {
+			kwtHome := t.TempDir()
+			t.Setenv("KWT_HOME", kwtHome)
+			require.NoError(t, os.WriteFile(
+				filepath.Join(kwtHome, "config.toml"),
+				[]byte("projects = "+value+"\n"),
+				0o600,
+			))
+
+			viper.Reset()
+			t.Cleanup(viper.Reset)
+			require.NoError(t, Init())
+
+			_, err := Load()
+			require.ErrorContains(t, err, "projects")
+		})
+	}
+}
+
 func TestInitLeavesExistingLayoutsUntouched(t *testing.T) {
 	kwtHome := t.TempDir()
 	t.Setenv("KWT_HOME", kwtHome)

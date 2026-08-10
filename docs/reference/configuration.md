@@ -96,7 +96,9 @@ without opening the dashboard by running `kwt projects add <path> --json`.
 They can unregister that metadata with `kwt projects remove <path> --json`;
 the command never deletes repository, worktree, or tmux-session data. The
 project registry is structured metadata, so `kwt config set projects ...`
-refuses direct scalar writes that would corrupt it.
+refuses direct scalar writes that would corrupt it. On startup, kwt also
+repairs the historical string-encoded empty value `projects = '[]'` to the
+canonical empty array. Other malformed project values still fail validation.
 
 Project entries are discovery metadata, not worktree-creation policy:
 

@@ -312,6 +312,10 @@ func backfillWorkspaceConfig(configPath string) (bool, error) {
 	return (globalConfigStore{path: configPath}).mutate(
 		func(globalViper *viper.Viper) (bool, error) {
 			migrated := false
+			if projects, ok := globalViper.Get("projects").(string); ok && projects == "[]" {
+				globalViper.Set("projects", []map[string]any{})
+				migrated = true
+			}
 			agents := globalViper.GetStringMapString("agents")
 			if agents == nil {
 				agents = make(map[string]string)
