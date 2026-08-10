@@ -11,8 +11,8 @@ import (
 	"go.kenn.io/kwt/service"
 )
 
-func TestInventoryDrainDeadlineRequiresDeadlineBearingBusyError(t *testing.T) {
-	deadline := time.Now().Add(time.Minute)
+func TestInventoryDrainDeadlineRequiresDaemonDrainingCode(t *testing.T) {
+	deadline := time.Now().UTC().Add(time.Minute)
 	tests := []struct {
 		name string
 		err  error
@@ -20,12 +20,12 @@ func TestInventoryDrainDeadlineRequiresDeadlineBearingBusyError(t *testing.T) {
 	}{
 		{
 			name: "inventory refresh timeout",
-			err:  service.NewError(service.Busy, "inventory refresh timed out", true, nil, nil),
+			err:  service.NewError(service.InventoryTimeout, "inventory refresh timed out", true, nil, nil),
 		},
 		{
 			name: "daemon drain",
-			err: service.NewError(service.Busy, "daemon is draining", true, map[string]any{
-				"drain_deadline": deadline,
+			err: service.NewError(service.DaemonDraining, "daemon is draining", true, map[string]any{
+				"drain_deadline": deadline.Format(time.RFC3339Nano),
 			}, nil),
 			want: &deadline,
 		},

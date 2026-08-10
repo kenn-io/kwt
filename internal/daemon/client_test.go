@@ -69,11 +69,12 @@ func TestClientDecodesDrainingProblem(t *testing.T) {
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		require.NoError(t, json.NewEncoder(w).Encode(Problem{
-			Status:        http.StatusServiceUnavailable,
-			Code:          "daemon_draining",
-			Detail:        "daemon is draining",
-			Retryable:     true,
-			DrainDeadline: &deadline,
+			Status: http.StatusServiceUnavailable,
+			Detail: "daemon is draining",
+			Descriptor: service.Descriptor{
+				Code: service.DaemonDraining, Message: "daemon is draining", Retryable: true,
+				Details: map[string]any{"drain_deadline": deadline.Format(time.RFC3339)},
+			},
 		}))
 	}))
 	defer server.Close()
@@ -82,9 +83,19 @@ func TestClientDecodesDrainingProblem(t *testing.T) {
 	_, err := client.Status(context.Background())
 	var typed *service.Error
 	require.ErrorAs(t, err, &typed)
-	assert.Equal(t, service.Busy, typed.Code)
+	assert.Equal(t, service.DaemonDraining, typed.Code)
 	assert.True(t, typed.Retryable)
-	assert.Equal(t, deadline, typed.Details["drain_deadline"])
+	assert.Equal(t, deadline.Format(time.RFC3339), typed.Details["drain_deadline"])
+}
+
+func TestClientRejectsUnknownProblemCodeWithoutStatusInference(t *testing.T) {
+	err := decodeProblem(http.StatusServiceUnavailable, strings.NewReader(
+		`{"type":"about:blank","title":"Unavailable","status":503,"detail":"future failure","code":"future_code","message":"future failure","retryable":true}`,
+	))
+
+	typed := service.AsError(err)
+	assert.Equal(t, service.DaemonTransportFailed, typed.Code)
+	assert.NotEqual(t, service.Busy, typed.Code)
 }
 
 func TestVerifiedClientUsesBearerAfterSuccessfulProof(t *testing.T) {
@@ -174,7 +185,7 @@ func TestVerifiedClientBoundsControlPlaneResponseWait(t *testing.T) {
 	require.Error(t, err)
 	var typed *service.Error
 	require.ErrorAs(t, err, &typed)
-	assert.Equal(t, service.TransportFailure, typed.Code)
+	assert.Equal(t, service.DaemonTransportFailed, typed.Code)
 }
 
 func TestClientAllowsInventoryResponseLargerThanControlPlaneLimit(t *testing.T) {

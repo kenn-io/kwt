@@ -112,7 +112,7 @@ func TestRemovalClientReconcilesLostSuccessfulResponse(t *testing.T) {
 	assert.True(t, reconciled.Load())
 	assert.True(t, result.WorktreeRemoved)
 	assert.True(t, git.WorktreeWasRemoved(err))
-	assert.True(t, service.IsCode(err, service.TransportFailure))
+	assert.True(t, service.IsCode(err, service.DaemonTransportFailed))
 }
 
 func TestRemovalClientMarksUnreconciledResponseLossForRefresh(t *testing.T) {
@@ -137,7 +137,7 @@ func TestRemovalClientMarksUnreconciledResponseLossForRefresh(t *testing.T) {
 	assert.False(t, result.WorktreeRemoved)
 	assert.False(t, git.WorktreeWasRemoved(err))
 	assert.True(t, RequiresRefresh(err))
-	assert.True(t, service.IsCode(err, service.TransportFailure))
+	assert.True(t, service.IsCode(err, service.DaemonTransportFailed))
 }
 
 func removalTestClient(t *testing.T, remover kwt.Remover) (*Client, func()) {

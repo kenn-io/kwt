@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	kwt "go.kenn.io/kwt"
+	"go.kenn.io/kwt/service"
 )
 
 type testStatusProvider struct{ status Status }
@@ -92,7 +95,7 @@ func TestServerRejectsBrowserOriginAndOversizedBodies(t *testing.T) {
 	assert.Equal(t, http.StatusRequestEntityTooLarge, response.Code)
 	var problem Problem
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&problem))
-	assert.Equal(t, "invalid_request", problem.Code)
+	assert.Equal(t, service.InvalidRequest, problem.Code)
 }
 
 func TestServerDefaultBodyLimitAccommodatesClientExpansionContext(t *testing.T) {
@@ -174,8 +177,25 @@ func TestDrainingServerReturnsRetryableProblemWithDeadline(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, response.Code)
 	var problem Problem
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&problem))
-	assert.Equal(t, "daemon_draining", problem.Code)
+	assert.Equal(t, service.DaemonDraining, problem.Code)
 	assert.True(t, problem.Retryable)
-	require.NotNil(t, problem.DrainDeadline)
-	assert.Equal(t, deadline, *problem.DrainDeadline)
+	assert.Equal(t, deadline.Format(time.RFC3339), problem.Details["drain_deadline"])
+}
+
+func TestProblemRoundTripsServiceDescriptor(t *testing.T) {
+	descriptor := service.Descriptor{
+		Code: service.DaemonDraining, Message: "the kwt daemon is draining", Retryable: true,
+		Details: map[string]any{"drain_deadline": "2026-08-10T01:02:03Z"},
+	}
+	problem := problemFromError(service.NewDescriptorError(descriptor, errors.New("private cause")))
+	encoded, err := json.Marshal(problem)
+	require.NoError(t, err)
+
+	decoded := decodeProblem(problem.Status, bytes.NewReader(encoded))
+	typed := service.AsError(decoded)
+	assert.Equal(t, descriptor.Code, typed.Code)
+	assert.Equal(t, descriptor.Message, typed.Message)
+	assert.Equal(t, descriptor.Retryable, typed.Retryable)
+	assert.Equal(t, descriptor.Details, typed.Details)
+	assert.NotContains(t, string(encoded), "private cause")
 }

@@ -37,7 +37,7 @@ func removeWorktreeThroughDaemon(
 		if observation.Client == nil ||
 			!slices.Contains(observation.Status.Capabilities, kwtdaemon.CapabilityRemoval) {
 			return kwt.RemovalResult{}, service.NewError(
-				service.Unsupported,
+				service.DaemonIncompatible,
 				"the running kwt daemon does not provide worktree removal",
 				false,
 				nil,
@@ -135,7 +135,7 @@ func queryDaemonInventory(
 
 func inventoryDrainDeadline(err error) (*time.Time, bool) {
 	var typed *service.Error
-	if !errors.As(err, &typed) || typed.Code != service.Busy {
+	if !errors.As(err, &typed) || typed.Code != service.DaemonDraining {
 		return nil, false
 	}
 	switch deadline := typed.Details["drain_deadline"].(type) {
@@ -143,6 +143,9 @@ func inventoryDrainDeadline(err error) (*time.Time, bool) {
 		return &deadline, true
 	case *time.Time:
 		return deadline, deadline != nil
+	case string:
+		parsed, err := time.Parse(time.RFC3339Nano, deadline)
+		return &parsed, err == nil
 	default:
 		return nil, false
 	}
@@ -151,7 +154,7 @@ func inventoryDrainDeadline(err error) (*time.Time, bool) {
 func requireInventoryCapability(observation kwtdaemon.Observation) error {
 	if observation.Client == nil || !slices.Contains(observation.Status.Capabilities, kwtdaemon.CapabilityInventory) {
 		return service.NewError(
-			service.Unsupported,
+			service.DaemonIncompatible,
 			"the running kwt daemon does not provide worktree inventory",
 			false,
 			nil,
@@ -166,7 +169,13 @@ func waitInventoryRetry(ctx context.Context, deadline *time.Time) error {
 	if deadline != nil {
 		remaining := time.Until(*deadline)
 		if remaining <= 0 {
-			return service.NewError(service.Busy, "the kwt daemon is still draining", true, nil, nil)
+			return service.NewError(
+				service.DaemonDraining,
+				"the kwt daemon is still draining",
+				true,
+				map[string]any{"drain_deadline": deadline.Format(time.RFC3339Nano)},
+				nil,
+			)
 		}
 		if remaining < delay {
 			delay = remaining
@@ -197,7 +206,7 @@ func trustRequirement(err error) (config.TrustRequiredError, error) {
 	if detailString(typed.Details, "kind") != "repository_config_trust" ||
 		requirement.Path == "" || requirement.Digest == "" {
 		return config.TrustRequiredError{}, service.NewError(
-			service.TransportFailure,
+			service.DaemonTransportFailed,
 			"kwt daemon returned an incomplete trust requirement",
 			false,
 			nil,

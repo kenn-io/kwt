@@ -162,24 +162,16 @@ func secureLocalHandler(next http.Handler, opts ServerOptions) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Host != opts.ExpectedHost {
 			w.Header().Set("Connection", "close")
-			writeProblem(w, Problem{
-				Type:   "https://kwt.dev/problems/invalid-request",
-				Title:  http.StatusText(http.StatusBadRequest),
-				Status: http.StatusBadRequest,
-				Detail: "request host does not match the daemon endpoint",
-				Code:   string(service.InvalidRequest),
-			})
+			writeProblem(w, newProblem(http.StatusBadRequest, service.Descriptor{
+				Code: service.InvalidRequest, Message: "request host does not match the daemon endpoint",
+			}))
 			return
 		}
 		if r.Header.Get("Origin") != "" {
 			w.Header().Set("Connection", "close")
-			writeProblem(w, Problem{
-				Type:   "https://kwt.dev/problems/permission-denied",
-				Title:  http.StatusText(http.StatusForbidden),
-				Status: http.StatusForbidden,
-				Detail: "browser-origin requests are not accepted",
-				Code:   string(service.PermissionDenied),
-			})
+			writeProblem(w, newProblem(http.StatusForbidden, service.Descriptor{
+				Code: service.PermissionDenied, Message: "browser-origin requests are not accepted",
+			}))
 			return
 		}
 		if r.URL.Path == "/api/ping" || r.URL.Path == "/openapi.json" {
@@ -193,23 +185,15 @@ func secureLocalHandler(next http.Handler, opts ServerOptions) http.Handler {
 			[]byte(expectedAuthorization),
 		) != 1 {
 			w.Header().Set("Connection", "close")
-			writeProblem(w, Problem{
-				Type:   "https://kwt.dev/problems/permission-denied",
-				Title:  http.StatusText(http.StatusUnauthorized),
-				Status: http.StatusUnauthorized,
-				Detail: "a valid daemon bearer token is required",
-				Code:   string(service.PermissionDenied),
-			})
+			writeProblem(w, newProblem(http.StatusUnauthorized, service.Descriptor{
+				Code: service.PermissionDenied, Message: "a valid daemon bearer token is required",
+			}))
 			return
 		}
 		if r.ContentLength > opts.MaxBodyBytes {
-			writeProblem(w, Problem{
-				Type:   "https://kwt.dev/problems/invalid-request",
-				Title:  http.StatusText(http.StatusRequestEntityTooLarge),
-				Status: http.StatusRequestEntityTooLarge,
-				Detail: "request body exceeds the daemon limit",
-				Code:   string(service.InvalidRequest),
-			})
+			writeProblem(w, newProblem(http.StatusRequestEntityTooLarge, service.Descriptor{
+				Code: service.InvalidRequest, Message: "request body exceeds the daemon limit",
+			}))
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, opts.MaxBodyBytes)
@@ -232,15 +216,16 @@ func secureLocalHandler(next http.Handler, opts ServerOptions) http.Handler {
 				}
 				w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
 			}
-			writeProblem(w, Problem{
-				Type:          "https://kwt.dev/problems/daemon-draining",
-				Title:         "Daemon draining",
-				Status:        http.StatusServiceUnavailable,
-				Detail:        "the kwt daemon is draining for replacement or shutdown",
-				Code:          "daemon_draining",
-				Retryable:     true,
-				DrainDeadline: status.DrainDeadline,
-			})
+			details := make(map[string]any)
+			if status.DrainDeadline != nil {
+				details["drain_deadline"] = status.DrainDeadline.Format(time.RFC3339Nano)
+			}
+			writeProblem(w, newProblem(http.StatusServiceUnavailable, service.Descriptor{
+				Code:      service.DaemonDraining,
+				Message:   "the kwt daemon is draining for replacement or shutdown",
+				Retryable: true,
+				Details:   details,
+			}))
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -251,6 +236,14 @@ func writeProblem(w http.ResponseWriter, problem Problem) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(problem.Status)
 	_ = json.NewEncoder(w).Encode(problem)
+}
+
+func newProblem(status int, descriptor service.Descriptor) Problem {
+	return Problem{
+		Type:  "https://kwt.dev/problems/" + string(descriptor.Code),
+		Title: http.StatusText(status), Status: status, Detail: descriptor.Message,
+		Descriptor: descriptor,
+	}
 }
 
 func (p *Problem) Error() string { return p.Detail }
@@ -276,53 +269,111 @@ func problemFromError(err error) *Problem {
 		status = http.StatusNotFound
 	case service.Conflict, service.ConnectionChanged:
 		status = http.StatusConflict
+	case service.DaemonDowngradeRefused, service.DaemonBuildOrderUnknown:
+		status = http.StatusConflict
 	case service.InteractionRequired:
 		status = http.StatusPreconditionRequired
-	case service.Busy:
+	case service.Busy, service.DaemonStartFailed, service.DaemonUnresponsive,
+		service.DaemonDraining, service.InventoryTimeout:
 		status = http.StatusServiceUnavailable
 	case service.Unsupported:
 		status = http.StatusNotImplemented
-	case service.TransportFailure:
+	case service.DaemonIncompatible:
+		status = http.StatusUpgradeRequired
+	case service.TransportFailure, service.DaemonTransportFailed:
 		status = http.StatusBadGateway
 	}
-	problem := &Problem{
-		Type:      "https://kwt.dev/problems/" + string(typed.Code),
-		Title:     http.StatusText(status),
-		Status:    status,
-		Detail:    typed.Message,
-		Code:      string(typed.Code),
-		Retryable: typed.Retryable,
-		Details:   allowedProblemDetails(typed.Details),
-	}
-	if deadline, ok := typed.Details["drain_deadline"].(time.Time); ok {
-		problem.DrainDeadline = &deadline
-	}
-	if deadline, ok := typed.Details["drain_deadline"].(*time.Time); ok {
-		problem.DrainDeadline = deadline
-	}
-	return problem
+	problem := newProblem(status, service.Descriptor{
+		Code: typed.Code, Message: typed.Message, Retryable: typed.Retryable,
+		Details: allowedProblemDetails(typed.Code, typed.Details),
+	})
+	return &problem
 }
 
-func allowedProblemDetails(details map[string]any) map[string]any {
+type problemDetailType uint8
+
+const (
+	detailString problemDetailType = iota + 1
+	detailBool
+	detailNumber
+	detailRFC3339
+)
+
+var allowedProblemDetailTypes = map[service.Code]map[string]problemDetailType{
+	service.DaemonDraining: {"drain_deadline": detailRFC3339},
+	service.InteractionRequired: {
+		"kind": detailString, "path": detailString, "digest": detailString,
+		"size": detailNumber, "preview": detailString, "truncated": detailBool,
+	},
+	service.Conflict: {
+		"branch": detailString, "reason": detailString, "worktree_removed": detailBool,
+		"branch_deleted": detailBool, "registry_unregistered": detailBool,
+	},
+	service.ConnectionChanged: {
+		"branch": detailString, "reason": detailString, "worktree_removed": detailBool,
+		"branch_deleted": detailBool, "registry_unregistered": detailBool,
+	},
+	service.Internal: {
+		"path": detailString, "branch": detailString, "worktree_removed": detailBool,
+		"branch_deleted": detailBool, "registry_unregistered": detailBool,
+	},
+}
+
+func allowedProblemDetails(code service.Code, details map[string]any) map[string]any {
 	if len(details) == 0 {
 		return nil
 	}
-	allowed := map[string]bool{
-		"kind": true, "path": true, "digest": true, "size": true,
-		"preview": true, "truncated": true, "drain_deadline": true,
-		"branch": true, "reason": true, "worktree_removed": true,
-		"branch_deleted": true, "registry_unregistered": true,
+	allowed := allowedProblemDetailTypes[code]
+	if len(allowed) == 0 {
+		return nil
 	}
 	result := make(map[string]any)
 	for key, value := range details {
-		if allowed[key] {
-			result[key] = value
+		typeOf, ok := allowed[key]
+		if !ok {
+			continue
+		}
+		if normalized, ok := normalizeProblemDetail(typeOf, value); ok {
+			result[key] = normalized
 		}
 	}
 	if len(result) == 0 {
 		return nil
 	}
 	return result
+}
+
+func normalizeProblemDetail(kind problemDetailType, value any) (any, bool) {
+	switch kind {
+	case detailString:
+		result, ok := value.(string)
+		return result, ok
+	case detailBool:
+		result, ok := value.(bool)
+		return result, ok
+	case detailNumber:
+		switch value.(type) {
+		case int, int8, int16, int32, int64,
+			uint, uint8, uint16, uint32, uint64, float32, float64:
+			return value, true
+		default:
+			return nil, false
+		}
+	case detailRFC3339:
+		switch result := value.(type) {
+		case time.Time:
+			return result.Format(time.RFC3339Nano), true
+		case *time.Time:
+			if result != nil {
+				return result.Format(time.RFC3339Nano), true
+			}
+		case string:
+			if _, err := time.Parse(time.RFC3339Nano, result); err == nil {
+				return result, true
+			}
+		}
+	}
+	return nil, false
 }
 
 func init() {
@@ -342,13 +393,10 @@ func init() {
 		case http.StatusServiceUnavailable:
 			code = "busy"
 		}
-		return &Problem{
-			Type:      "https://kwt.dev/problems/" + code,
-			Title:     http.StatusText(status),
-			Status:    status,
-			Detail:    message,
-			Code:      code,
+		returnProblem := newProblem(status, service.Descriptor{
+			Code: service.Code(code), Message: message,
 			Retryable: status == http.StatusServiceUnavailable,
-		}
+		})
+		return &returnProblem
 	}
 }

@@ -1,11 +1,15 @@
 package daemon
 
-import "time"
+import (
+	"time"
+
+	"go.kenn.io/kwt/service"
+)
 
 const (
 	ServiceName         = "kwt"
 	APISchemaMajor      = 1
-	APISchemaVersion    = "1.3.0"
+	APISchemaVersion    = "1.4.0"
 	CapabilityStatus    = "daemon.status"
 	CapabilityShutdown  = "daemon.shutdown"
 	CapabilityInventory = "worktree.inventory.v1"
@@ -55,12 +59,9 @@ type ShutdownResponse struct {
 }
 
 type Problem struct {
-	Type          string         `json:"type"`
-	Title         string         `json:"title"`
-	Status        int            `json:"status"`
-	Detail        string         `json:"detail"`
-	Code          string         `json:"code"`
-	Retryable     bool           `json:"retryable"`
-	DrainDeadline *time.Time     `json:"drain_deadline,omitempty"`
-	Details       map[string]any `json:"details,omitempty"`
+	Type   string `json:"type"`
+	Title  string `json:"title"`
+	Status int    `json:"status"`
+	Detail string `json:"detail"`
+	service.Descriptor
 }

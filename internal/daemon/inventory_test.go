@@ -51,6 +51,7 @@ func TestInventoryClientPreservesActionableSourceFailure(t *testing.T) {
 	})
 
 	typed := service.AsError(err)
+	assert.Equal(t, service.InventoryFailed, typed.Code)
 	assert.NotEqual(t, "internal failure", typed.Message)
 	assert.Contains(t, typed.Message, "config")
 }
