@@ -81,3 +81,28 @@ func TestCurrentBuildInfoRejectsVCSTimeForMismatchedExplicitRevision(t *testing.
 	assert.Empty(t, info.RevisionTime)
 	assert.Equal(t, "2026-08-09T12:00:00Z", info.Date)
 }
+
+func TestCurrentBuildInfoRejectsOrderingIdentityForModifiedSource(t *testing.T) {
+	oldVersion, oldCommit, oldDate, oldRevisionTime := version, commit, date, revisionTime
+	oldReadBuildInfo := readBuildInfo
+	t.Cleanup(func() {
+		version, commit, date, revisionTime = oldVersion, oldCommit, oldDate, oldRevisionTime
+		readBuildInfo = oldReadBuildInfo
+	})
+	version = "sha-build"
+	commit = "0123456789abcdef0123456789abcdef01234567"
+	date = "unknown"
+	revisionTime = "2026-08-09T12:00:00Z"
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Settings: []debug.BuildSetting{
+			{Key: "vcs.revision", Value: commit},
+			{Key: "vcs.time", Value: revisionTime},
+			{Key: "vcs.modified", Value: "true"},
+		}}, true
+	}
+
+	info := currentBuildInfo()
+	assert.Equal(t, commit+"-dirty", info.Revision)
+	assert.Empty(t, info.RevisionTime)
+	assert.Equal(t, "2026-08-09T12:00:00Z", info.Date)
+}

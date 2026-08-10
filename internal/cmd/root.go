@@ -178,6 +178,7 @@ func currentBuildInfo() buildInfo {
 	info, ok := readBuildInfo()
 	if ok {
 		var vcsRevision, vcsTime string
+		var vcsModified bool
 		if buildVersion == "dev" &&
 			info.Main.Version != "" && info.Main.Version != "(devel)" {
 			buildVersion = info.Main.Version
@@ -191,6 +192,8 @@ func currentBuildInfo() buildInfo {
 				if buildDate == "unknown" && setting.Value != "" {
 					buildDate = setting.Value
 				}
+			case "vcs.modified":
+				vcsModified = setting.Value == "true"
 			}
 		}
 		if buildRevision == "none" && vcsRevision != "" {
@@ -199,6 +202,14 @@ func currentBuildInfo() buildInfo {
 		if buildRevisionTime == "" && vcsTime != "" &&
 			vcsRevision != "" && buildRevision == vcsRevision {
 			buildRevisionTime = vcsTime
+		}
+		if vcsModified {
+			if buildRevision == "" || buildRevision == "none" {
+				buildRevision = "dirty"
+			} else {
+				buildRevision += "-dirty"
+			}
+			buildRevisionTime = ""
 		}
 	}
 	displayRevision := buildRevision

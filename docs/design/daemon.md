@@ -23,7 +23,9 @@ both the private runtime record and status response. Hashes are never compared
 lexically. Matching semantic module versions count as the same build only when
 both installations explicitly lack VCS revision and time identity, as with
 `go install ...@version`. Different revisions with equal source times, missing
-contemporary metadata, or invalid values have unknown order.
+contemporary metadata, or invalid values have unknown order. A build from a
+dirty worktree marks its revision dirty and omits revision time, so it cannot
+claim the clean checkout's identity or source order.
 
 With `daemon.auto_restart = "newer"`, a provably newer client asks an older
 daemon to drain before replacement. Automatic start reuses a ready daemon when
