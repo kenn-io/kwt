@@ -646,14 +646,13 @@ func TestFixerRepairsProjectAfterRegistryCleanup(t *testing.T) {
 			return true, nil
 		}},
 		RegistryEntries: []*registry.WorktreeEntry{entry},
-		Projects: &fakeProjectMutator{compareAndSwap: func(got config.ProjectRegistration, replacement *models.Project) (bool, error) {
+		Projects: &fakeProjectMutator{relocate: func(_ context.Context, got config.ProjectRegistration, replacement models.Project) (bool, error) {
 			calls = append(calls, "project")
 			assert.Equal(t, expected, got.Persisted)
-			require.NotNil(t, replacement)
 			assert.Equal(t, models.Project{
 				Repository: "github.com/acme/widget", Name: "Widget",
 				Path: "/repos/widget", LastTouched: "2026-08-01T12:00:00Z",
-			}, *replacement)
+			}, replacement)
 			return true, nil
 		}},
 		InspectRepository: func(path string) (RepositorySnapshot, error) {
@@ -708,7 +707,7 @@ func TestFixerRevalidatesProjectRepair(t *testing.T) {
 			condition := base
 			var mutations int
 			fixer := &Fixer{
-				Projects: &fakeProjectMutator{compareAndSwap: func(config.ProjectRegistration, *models.Project) (bool, error) {
+				Projects: &fakeProjectMutator{relocate: func(context.Context, config.ProjectRegistration, models.Project) (bool, error) {
 					mutations++
 					return true, nil
 				}},
@@ -738,10 +737,9 @@ func TestFixerRemovesOnlyFixableStaleProjectByCAS(t *testing.T) {
 	expected := models.Project{Repository: "github.com/acme/widget", Path: "~/old/widget"}
 	var calls int
 	fixer := &Fixer{
-		Projects: &fakeProjectMutator{compareAndSwap: func(got config.ProjectRegistration, replacement *models.Project) (bool, error) {
+		Projects: &fakeProjectMutator{remove: func(_ context.Context, got config.ProjectRegistration) (bool, error) {
 			calls++
 			assert.Equal(t, expected, got.Persisted)
-			assert.Nil(t, replacement)
 			return false, nil
 		}},
 		PathExists: func(string) (bool, error) { return false, nil },
@@ -765,17 +763,29 @@ type fakeRegistryMutator struct {
 }
 
 type fakeProjectMutator struct {
-	compareAndSwap func(config.ProjectRegistration, *models.Project) (bool, error)
+	remove   func(context.Context, config.ProjectRegistration) (bool, error)
+	relocate func(context.Context, config.ProjectRegistration, models.Project) (bool, error)
 }
 
-func (f *fakeProjectMutator) CompareAndSwapProject(
+func (f *fakeProjectMutator) RemoveProject(
+	ctx context.Context,
 	expected config.ProjectRegistration,
-	replacement *models.Project,
 ) (bool, error) {
-	if f.compareAndSwap == nil {
+	if f.remove == nil {
 		return false, nil
 	}
-	return f.compareAndSwap(expected, replacement)
+	return f.remove(ctx, expected)
+}
+
+func (f *fakeProjectMutator) RelocateProject(
+	ctx context.Context,
+	expected config.ProjectRegistration,
+	replacement models.Project,
+) (bool, error) {
+	if f.relocate == nil {
+		return false, nil
+	}
+	return f.relocate(ctx, expected, replacement)
 }
 
 func (f *fakeRegistryMutator) UnregisterIfGeneration(path, generation string) (bool, error) {

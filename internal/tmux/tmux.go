@@ -422,10 +422,13 @@ func (t *TmuxCommand) socketArgs(args []string) []string {
 }
 
 func (t *TmuxCommand) stripExtraNames(env []string) []string {
-	if len(t.extraStripNames) == 0 {
+	if len(t.extraStripNames) == 0 && t.socketName == "" {
 		return env
 	}
 	return filteredEnviron(env, func(name string) bool {
+		if t.socketName != "" && strings.EqualFold(name, "TMUX_TMPDIR") {
+			return true
+		}
 		return t.extraStripNames[strings.ToLower(name)]
 	})
 }

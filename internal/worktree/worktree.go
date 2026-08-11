@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
 
 	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/git"
@@ -850,7 +851,7 @@ func repositoryInfoFromLocalPath(repoRoot string, trim bool) (*url.RepositoryInf
 		return nil, fmt.Errorf("empty repository path")
 	}
 	cleanPath := repoRoot
-	if absPath, err := filepath.Abs(cleanPath); err == nil {
+	if absPath, err := absolutePathPreservingTrailingWhitespace(cleanPath); err == nil {
 		cleanPath = absPath
 	} else {
 		return nil, err
@@ -866,6 +867,18 @@ func repositoryInfoFromLocalPath(repoRoot string, trim bool) (*url.RepositoryInf
 		Repository: name,
 		FullPath:   localRepositoryFullPath(cleanPath),
 	}, nil
+}
+
+func absolutePathPreservingTrailingWhitespace(path string) (string, error) {
+	suffix := path[len(strings.TrimRightFunc(path, unicode.IsSpace)):]
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if suffix != "" && !strings.HasSuffix(absPath, suffix) {
+		absPath += suffix
+	}
+	return absPath, nil
 }
 
 func localRepositoryFullPath(cleanPath string) string {

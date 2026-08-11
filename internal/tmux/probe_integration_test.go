@@ -27,13 +27,21 @@ func TestProbeProtectedSessionAgainstRealTmux(t *testing.T) {
 	session := "expected"
 	runTmux := func(args ...string) (string, error) {
 		command := exec.Command("tmux", append([]string{"-L", socket}, args...)...)
+		command.Env = filteredEnviron(os.Environ(), func(name string) bool {
+			return strings.EqualFold(name, "TMUX_TMPDIR")
+		})
 		output, err := command.CombinedOutput()
 		return string(output), err
 	}
-	_, err := runTmux("new-session", "-d", "-s", session, "sleep", "60")
+	t.Setenv("TMUX_TMPDIR", filepath.Join(t.TempDir(), "creator"))
+	protected := NewTmuxCommandForSocketWithStripNames("", socket, nil)
+	err := protected.RunCommandContext(
+		context.Background(), "new-session", "-d", "-s", session, "sleep", "60",
+	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = runTmux("kill-server") })
 
+	t.Setenv("TMUX_TMPDIR", filepath.Join(t.TempDir(), "probe"))
 	state, err := ProbeProtectedSession(context.Background(), socket, session)
 	require.NoError(t, err)
 	assert.Equal(t, ProtectedSessionLive, state, "detached session")
@@ -42,6 +50,9 @@ func TestProbeProtectedSessionAgainstRealTmux(t *testing.T) {
 	attach := exec.CommandContext(
 		attachCtx, "tmux", "-L", socket, "-C", "attach-session", "-t", session,
 	)
+	attach.Env = filteredEnviron(os.Environ(), func(name string) bool {
+		return strings.EqualFold(name, "TMUX_TMPDIR")
+	})
 	attach.Stdout = io.Discard
 	attach.Stderr = io.Discard
 	attachInput, err := attach.StdinPipe()
@@ -63,14 +74,15 @@ func TestProbeProtectedSessionAgainstRealTmux(t *testing.T) {
 	_, err = runTmux("kill-server")
 	require.NoError(t, err)
 	cancelAttach()
-	state, err = ProbeProtectedSession(context.Background(), socket, session)
-	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		state, err = ProbeProtectedSession(context.Background(), socket, session)
+		return err == nil && state == ProtectedSessionAbsent
+	}, 2*time.Second, 10*time.Millisecond)
 	assert.Equal(t, ProtectedSessionAbsent, state, "missing server and session")
 
-	notDirectory := filepath.Join(t.TempDir(), "not-a-directory")
-	require.NoError(t, os.WriteFile(notDirectory, []byte("x"), 0o600))
-	t.Setenv("TMUX_TMPDIR", notDirectory)
-	state, err = ProbeProtectedSession(context.Background(), "operational-failure", session)
+	state, err = ProbeProtectedSession(
+		context.Background(), strings.Repeat("x", 200), session,
+	)
 	assert.Equal(t, ProtectedSessionIndeterminate, state)
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "protected endpoint is absent")

@@ -43,6 +43,17 @@ func resolveProjectIdentity(
 	return stableProjectIdentity(registration)
 }
 
+// ResolveProjectRegistrationIdentity applies the same credential-free
+// identity contract used by project inventory, lifecycle claims, and guarded
+// removal.
+func ResolveProjectRegistrationIdentity(
+	ctx context.Context,
+	registration config.ProjectRegistration,
+	protectedNames ...string,
+) (string, error) {
+	return resolveProjectIdentity(ctx, registration, protectedNames...)
+}
+
 func stableProjectIdentity(registration config.ProjectRegistration) (string, error) {
 	if identity, ok := repositoryurl.CanonicalRepositoryIdentity(
 		registration.Persisted.Repository,

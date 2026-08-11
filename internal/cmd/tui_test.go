@@ -33,6 +33,7 @@ import (
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 )
 
 func TestTUICmdIsolatesFromCwdConfig(t *testing.T) {
@@ -1786,8 +1787,20 @@ func useInProcessTUIRemoval(t *testing.T, backend *tuiBackend) {
 	).Remove
 }
 
+func allowTUIProjectOperations(backend *tuiBackend) {
+	backend.runProjectOperation = func(
+		_ context.Context,
+		_ string,
+		_ bool,
+		mutation func() error,
+	) error {
+		return mutation()
+	}
+}
+
 func TestTUIBackendCreateWorktreePublishesAfterSuccessfulMutation(t *testing.T) {
 	resetFleetCommandDeps(t)
+	t.Setenv("KWT_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -1824,6 +1837,40 @@ func TestTUIBackendCreateWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 	assert.Equal(t, 1, published)
 }
 
+func TestTUIBackendCreateWorktreeLosesToProjectRemoval(t *testing.T) {
+	resetFleetCommandDeps(t)
+	home := t.TempDir()
+	t.Setenv("KWT_HOME", home)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	repoPath := newTUITestRepo(t)
+	require.NoError(t, config.RegisterProject(models.Project{
+		Repository: "github.com/example/kwt", Name: "kwt", Path: repoPath,
+	}))
+	cfg := &models.Config{Worktree: models.WorktreeConfig{
+		BaseDir: filepath.Join(t.TempDir(), "worktrees"), AutoMkdir: true,
+	}}
+	backend := newTUIBackendWithLaunchDir(cfg, "")
+	backend.loadTargetConfig = func(string, bool) (*models.Config, error) { return cfg, nil }
+	oldBeforeAcquire := beforeProjectGuardAcquire
+	t.Cleanup(func() { beforeProjectGuardAcquire = oldBeforeAcquire })
+	beforeProjectGuardAcquire = func() {
+		snapshot, snapshotErr := config.LoadGlobalSnapshotAt(home)
+		require.NoError(t, snapshotErr)
+		changed, removeErr := config.CompareAndSwapProjectAt(home, snapshot.Projects[0], nil)
+		require.NoError(t, removeErr)
+		require.True(t, changed)
+	}
+	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{Branch: "main", Path: repoPath}}
+
+	path, err := backend.CreateWorktree(
+		context.Background(), row, "feature/removed-before-create", "",
+	)
+
+	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+	assert.Empty(t, path)
+}
+
 func TestTUIBackendExistingLocalBranchRemainsUnreviewed(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -1848,6 +1895,7 @@ func TestTUIBackendExistingLocalBranchRemainsUnreviewed(t *testing.T) {
 		Path:   repoPath,
 	}}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	allowTUIProjectOperations(backend)
 	backend.loadTargetConfig = func(string, bool) (*models.Config, error) {
 		return cfg, nil
 	}
@@ -1881,6 +1929,7 @@ func TestTUIBackendWorktreeCreationUsesSelectedRepositoryConfig(t *testing.T) {
 		Path:   repoPath,
 	}}
 	backend := newTUIBackendWithLaunchDir(globalCfg, "")
+	allowTUIProjectOperations(backend)
 	backend.loadTargetConfig = func(path string, interactive bool) (*models.Config, error) {
 		expectedRoot, err := filepath.EvalSymlinks(repoPath)
 		require.NoError(t, err)
@@ -1922,6 +1971,7 @@ func TestTUIBackendCreateWorktreeDoesNotExpandRepositoryLocalTemplate(t *testing
 		Path:   repoPath,
 	}}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	allowTUIProjectOperations(backend)
 	backend.loadTargetConfig = func(string, bool) (*models.Config, error) {
 		return cfg, nil
 	}
@@ -2356,6 +2406,7 @@ func TestTUIBackendForceRemoveDeletesDirtyWorktree(t *testing.T) {
 }
 
 func TestTUIBackendMaterializeWorktreeUsesRegisteredProjectRoot(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -2371,6 +2422,7 @@ func TestTUIBackendMaterializeWorktreeUsesRegisteredProjectRoot(t *testing.T) {
 			Path:       repoPath,
 		}},
 	}
+	require.NoError(t, config.RegisterProject(cfg.Projects[0]))
 	backend := newTUIBackendWithLaunchDir(cfg, "")
 	stubTUITargetConfig(backend, cfg)
 	row := dashboard.Row{Fleet: &dashboard.FleetInfo{
@@ -2389,6 +2441,37 @@ func TestTUIBackendMaterializeWorktreeUsesRegisteredProjectRoot(t *testing.T) {
 	assert.True(t, strings.HasPrefix(path, baseDir), path)
 	branch := strings.TrimSpace(runTUITestGitOutput(t, path, "branch", "--show-current"))
 	assert.Equal(t, "feature/studio-only", branch)
+}
+
+func TestTUIBackendMaterializeWorktreeRequiresCurrentRegistration(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	repoPath := newTUITestRepo(t)
+	runTUITestGit(t, repoPath, "branch", "feature/removed-project")
+	cfg := &models.Config{
+		Worktree: models.WorktreeConfig{
+			BaseDir: filepath.Join(t.TempDir(), "worktrees"), AutoMkdir: true,
+		},
+		Projects: []models.Project{{
+			Repository: "github.com/example/kwt", Name: "kwt", Path: repoPath,
+		}},
+	}
+	backend := newTUIBackendWithLaunchDir(cfg, "")
+	stubTUITargetConfig(backend, cfg)
+	row := dashboard.Row{Fleet: &dashboard.FleetInfo{
+		ProjectIdentity: "github.com/example/kwt",
+		ProjectName:     "kwt",
+		Kind:            "branch",
+		Ref:             "feature/removed-project",
+		Branch:          "feature/removed-project",
+		Hosts:           []string{"host-b"},
+	}}
+
+	path, err := backend.MaterializeWorktree(context.Background(), row)
+
+	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+	assert.Empty(t, path)
 }
 
 func TestTUIBackendMaterializeWorktreeUsesSelectedProjectConfig(t *testing.T) {
@@ -2423,6 +2506,7 @@ func TestTUIBackendMaterializeWorktreeUsesSelectedProjectConfig(t *testing.T) {
 		},
 	}
 	backend := newTUIBackendWithLaunchDir(globalCfg, "")
+	allowTUIProjectOperations(backend)
 	loadedTargetConfig := false
 	backend.loadTargetConfig = func(path string, interactive bool) (*models.Config, error) {
 		loadedTargetConfig = true
@@ -2477,6 +2561,7 @@ func TestTUIBackendMaterializeWorktreeTracksRemoteOnlyBranch(t *testing.T) {
 		}},
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	allowTUIProjectOperations(backend)
 	stubTUITargetConfig(backend, cfg)
 	row := dashboard.Row{Fleet: &dashboard.FleetInfo{
 		ProjectIdentity: "github.com/example/kwt",
@@ -2531,6 +2616,7 @@ func TestTUIBackendMaterializeWorktreeRejectsStaleLocalHead(t *testing.T) {
 		}},
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	allowTUIProjectOperations(backend)
 	stubTUITargetConfig(backend, cfg)
 	row := dashboard.Row{Fleet: &dashboard.FleetInfo{
 		ProjectIdentity: "github.com/example/kwt",
@@ -2589,6 +2675,7 @@ func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnStaleHead(t *tes
 		}},
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	allowTUIProjectOperations(backend)
 	stubTUITargetConfig(backend, cfg)
 	row := dashboard.Row{Fleet: &dashboard.FleetInfo{
 		ProjectIdentity: "github.com/example/kwt",
@@ -2689,6 +2776,7 @@ func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnCheckoutFailure(
 		}},
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	allowTUIProjectOperations(backend)
 	stubTUITargetConfig(backend, cfg)
 	row := dashboard.Row{Fleet: &dashboard.FleetInfo{
 		ProjectIdentity: "github.com/example/kwt",
@@ -2856,6 +2944,7 @@ func TestTUIBackendMaterializeWorktreeSkipsRepositorySetupCommands(t *testing.T)
 		}},
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	allowTUIProjectOperations(backend)
 	stubTUITargetConfig(backend, cfg)
 	row := dashboard.Row{Fleet: &dashboard.FleetInfo{
 		ProjectIdentity: "github.com/example/kwt",
@@ -2923,6 +3012,7 @@ func TestTUIBackendMaterializeWorktreeExplainsUnavailableBranch(t *testing.T) {
 		}},
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, "")
+	allowTUIProjectOperations(backend)
 	stubTUITargetConfig(backend, cfg)
 	row := dashboard.Row{Fleet: &dashboard.FleetInfo{
 		ProjectIdentity: "github.com/example/kwt",

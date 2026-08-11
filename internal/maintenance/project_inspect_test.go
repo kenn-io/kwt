@@ -244,11 +244,10 @@ func TestInspectorRemovesMissingDuplicateOfRegisteredLiveProject(t *testing.T) {
 
 	projects := []models.Project{stale.Persisted, live.Persisted}
 	fixer := &Fixer{
-		Projects: &fakeProjectMutator{compareAndSwap: func(
+		Projects: &fakeProjectMutator{remove: func(
+			_ context.Context,
 			expected config.ProjectRegistration,
-			replacement *models.Project,
 		) (bool, error) {
-			require.Nil(t, replacement)
 			for index := range projects {
 				if projects[index] == expected.Persisted {
 					projects = append(projects[:index], projects[index+1:]...)

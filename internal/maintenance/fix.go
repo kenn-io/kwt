@@ -23,7 +23,8 @@ type RegistryMutator interface {
 // ProjectMutator is the narrow configuration surface used after Git and
 // registry maintenance have released their locks.
 type ProjectMutator interface {
-	CompareAndSwapProject(config.ProjectRegistration, *models.Project) (bool, error)
+	RemoveProject(context.Context, config.ProjectRegistration) (bool, error)
+	RelocateProject(context.Context, config.ProjectRegistration, models.Project) (bool, error)
 }
 
 // Fixer applies only findings whose inspection established unique ownership.
@@ -259,7 +260,7 @@ func (f *Fixer) Fix(ctx context.Context, report Report) error {
 
 			switch condition.Action {
 			case RemoveProject:
-				if _, err := f.Projects.CompareAndSwapProject(condition.Expected, nil); err != nil {
+				if _, err := f.Projects.RemoveProject(ctx, condition.Expected); err != nil {
 					return fmt.Errorf("remove stale project registration %s: %w", finding.Path, err)
 				}
 			case RelocateProject:
@@ -276,7 +277,7 @@ func (f *Fixer) Fix(ctx context.Context, report Report) error {
 				replacement := condition.Expected.Persisted
 				replacement.Path = condition.TargetRoot
 				replacement.Repository = condition.TargetRepository
-				if _, err := f.Projects.CompareAndSwapProject(condition.Expected, &replacement); err != nil {
+				if _, err := f.Projects.RelocateProject(ctx, condition.Expected, replacement); err != nil {
 					return fmt.Errorf("relocate project registration %s: %w", finding.Path, err)
 				}
 			}

@@ -271,6 +271,27 @@ func TestProtectedAttachStripsParentTmuxIdentity(t *testing.T) {
 	}
 }
 
+func TestNamedSocketCommandsIgnoreAmbientTmuxTempDirectory(t *testing.T) {
+	t.Setenv("TMUX_TMPDIR", "/tmp/caller-specific-tmux")
+
+	tc := NewTmuxCommandForSocketWithStripNames(
+		"tmux",
+		"kwt-pr-0123456789abcdef",
+		nil,
+	)
+	commands := []*exec.Cmd{
+		tc.newCmd(context.Background(), []string{"has-session", "-t", "workspace"}),
+		tc.newAttachCmd(context.Background(), []string{"attach-session", "-t", "workspace"}),
+	}
+	for _, command := range commands {
+		for _, entry := range command.Env {
+			if hasEnvName(entry, "TMUX_TMPDIR") {
+				t.Fatalf("named socket command inherited TMUX_TMPDIR")
+			}
+		}
+	}
+}
+
 func TestExternalAttachReplacesCurrentProcess(t *testing.T) {
 	t.Setenv("EDITOR", "vim")
 	t.Setenv("TMUX", "/tmp/tmux-501/default,123,0")

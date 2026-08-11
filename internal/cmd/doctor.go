@@ -5,7 +5,10 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/credentials"
+	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/internal/maintenance"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/utils"
@@ -50,15 +53,82 @@ var (
 			Registry: reg, RegistryEntries: entries, Projects: doctorProjectMutator{},
 		}).Fix(ctx, report)
 	}
+	resolveDoctorProjectIdentity = func(
+		ctx context.Context,
+		registration config.ProjectRegistration,
+	) (string, error) {
+		snapshot, err := config.LoadGlobalSnapshot()
+		if err != nil {
+			return "", err
+		}
+		return lifecycle.ResolveProjectRegistrationIdentity(
+			ctx,
+			registration,
+			credentials.ProtectedNames(snapshot.Config)...,
+		)
+	}
+	newDoctorProjectRemover = func(home string) kwt.ProjectRemover {
+		return kwt.NewProjectRemovalService(kwt.ProjectRemovalServiceOptions{Home: home})
+	}
+	transitionDoctorProjectRegistration = lifecycle.TransitionProjectRegistration
+	compareAndSwapDoctorProject         = config.CompareAndSwapProjectAt
 )
 
 type doctorProjectMutator struct{}
 
-func (doctorProjectMutator) CompareAndSwapProject(
+func (doctorProjectMutator) RemoveProject(
+	ctx context.Context,
 	expected config.ProjectRegistration,
-	replacement *models.Project,
 ) (bool, error) {
-	return config.CompareAndSwapProject(expected, replacement)
+	home, err := config.CanonicalHome()
+	if err != nil {
+		return false, err
+	}
+	expansion, err := kwt.CaptureExpansionContext()
+	if err != nil {
+		return false, err
+	}
+	identity, err := resolveDoctorProjectIdentity(ctx, expected)
+	if err != nil {
+		return false, err
+	}
+	_, err = newDoctorProjectRemover(home).RemoveProject(
+		ctx,
+		kwt.ProjectRemovalRequest{
+			Path: expected.Persisted.Path, ExpectedRepository: identity, Expansion: expansion,
+		},
+	)
+	return err == nil, err
+}
+
+func (doctorProjectMutator) RelocateProject(
+	ctx context.Context,
+	expected config.ProjectRegistration,
+	replacement models.Project,
+) (bool, error) {
+	home, err := config.CanonicalHome()
+	if err != nil {
+		return false, err
+	}
+	expansion, err := kwt.CaptureExpansionContext()
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	err = transitionDoctorProjectRegistration(
+		ctx,
+		home,
+		expansion,
+		replacement,
+		func() error {
+			var mutationErr error
+			changed, mutationErr = compareAndSwapDoctorProject(
+				home, expected, &replacement,
+			)
+			return mutationErr
+		},
+	)
+	return changed, err
 }
 
 var doctorCmd = &cobra.Command{

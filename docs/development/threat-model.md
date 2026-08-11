@@ -93,7 +93,9 @@ deletion of this owner-private state is outside the supported integrity model.
 
 The daemon derives protected socket names from durable session and worktree
 identity and probes each endpoint without collapsing operational failures into
-absence. A live endpoint blocks metadata removal; permission, connection, or
+absence. Protected named-socket commands discard ambient `TMUX_TMPDIR`, so a
+foreground client and the daemon resolve the same owner-specific endpoint. A
+live endpoint blocks metadata removal; permission, connection, or
 other indeterminate failures fail closed. Public errors expose only the exact
 protected session and socket identity needed to resolve the block. Ordinary
 tmux-server sessions are outside this authority and are neither probed as
