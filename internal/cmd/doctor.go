@@ -90,11 +90,16 @@ func (doctorProjectMutator) RemoveProject(
 	if err != nil {
 		return false, err
 	}
+	fingerprint, err := expected.Fingerprint()
+	if err != nil {
+		return false, err
+	}
 	return removeDoctorProjectRegistration(
 		ctx,
 		home,
 		kwt.ProjectRemovalRequest{
-			Path: expected.Persisted.Path, ExpectedRepository: identity, Expansion: expansion,
+			Path: expected.Persisted.Path, ExpectedRepository: identity,
+			ExpectedRegistration: fingerprint, Expansion: expansion,
 		},
 		expected,
 	)

@@ -93,9 +93,59 @@ func (f *projectRemovalFixture) writeProvenance() {
 }
 
 func (f *projectRemovalFixture) request() ProjectRemovalRequest {
+	snapshot, err := configSnapshot(f.home, f.expansion)
+	require.NoError(f.t, err)
+	require.Len(f.t, snapshot.Projects, 1)
+	fingerprint, err := snapshot.Projects[0].Fingerprint()
+	require.NoError(f.t, err)
 	return ProjectRemovalRequest{
-		Path: f.path, ExpectedRepository: f.identity, Expansion: f.expansion,
+		Path: f.path, ExpectedRepository: f.identity,
+		ExpectedRegistration: fingerprint, Expansion: f.expansion,
 	}
+}
+
+func TestProjectRemovalRequiresObservedRegistrationFingerprint(t *testing.T) {
+	fixture := newProjectRemovalFixture(t, "/repo ", "github.com/acme/widget")
+
+	for _, fingerprint := range []string{
+		"",
+		"v1:bad",
+		"v1:0000000000000000000000000000000000000000000000000000000000000000",
+	} {
+		request := fixture.request()
+		request.ExpectedRegistration = fingerprint
+		_, err := fixture.service.RemoveProject(context.Background(), request)
+
+		typed := service.AsError(err)
+		if fingerprint == "" || fingerprint == "v1:bad" {
+			assert.Equal(t, service.InvalidRequest, typed.Code)
+			assert.False(t, typed.Retryable)
+		} else {
+			assert.Equal(t, service.RegistrationChanged, typed.Code)
+			assert.True(t, typed.Retryable)
+		}
+	}
+
+	remaining, err := configSnapshot(fixture.home, fixture.expansion)
+	require.NoError(t, err)
+	require.Len(t, remaining.Projects, 1)
+}
+
+func TestProjectRemovalRejectsRawRegistrationChangeBeforeEndpointInspection(t *testing.T) {
+	fixture := newProjectRemovalFixture(t, "/repo ", "github.com/acme/widget")
+	request := fixture.request()
+	require.NoError(t, os.WriteFile(filepath.Join(fixture.home, "config.toml"), []byte(
+		"[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'widget'\npath = '/repo '\nlast_touched = 'after'\nfuture = true\n",
+	), 0o600))
+
+	_, err := fixture.service.RemoveProject(context.Background(), request)
+
+	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+	assert.Empty(t, fixture.probe.sockets)
+	remaining, loadErr := configSnapshot(fixture.home, fixture.expansion)
+	require.NoError(t, loadErr)
+	require.Len(t, remaining.Projects, 1)
+	assert.Equal(t, "after", remaining.Projects[0].Persisted.LastTouched)
 }
 
 func TestProjectRemovalMissingCheckoutWithoutProtectedSessionSucceeds(t *testing.T) {
@@ -164,7 +214,8 @@ func TestProjectRemovalAcceptsPublishedLiveIdentityForLegacyRegistration(t *test
 
 	result, err := remover.RemoveProject(context.Background(), ProjectRemovalRequest{
 		Path: repository, ExpectedRepository: inventory.Snapshot.Projects[0].Repository,
-		Expansion: expansion,
+		ExpectedRegistration: inventory.Snapshot.Projects[0].RegistrationFingerprint,
+		Expansion:            expansion,
 	})
 
 	require.NoError(t, err)
@@ -364,13 +415,14 @@ func TestProjectRemovalCASLossPreservesReplacement(t *testing.T) {
 
 func TestProjectRemovalDuplicateExactPathFailsClosed(t *testing.T) {
 	fixture := newProjectRemovalFixture(t, "/repo ", "github.com/acme/widget")
+	request := fixture.request()
 	duplicate := []byte(
 		"[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'one'\npath = '/repo '\n" +
 			"[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'two'\npath = '/repo '\n",
 	)
 	require.NoError(t, os.WriteFile(filepath.Join(fixture.home, "config.toml"), duplicate, 0o600))
 
-	_, err := fixture.service.RemoveProject(context.Background(), fixture.request())
+	_, err := fixture.service.RemoveProject(context.Background(), request)
 
 	typed := service.AsError(err)
 	assert.Equal(t, service.UnregistrationFailed, typed.Code)

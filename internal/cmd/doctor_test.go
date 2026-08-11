@@ -23,9 +23,13 @@ func TestDoctorProjectRemovalUsesGuardedLifecycleService(t *testing.T) {
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	t.Setenv("KWT_HOME", home)
-	expected := config.ProjectRegistration{Persisted: models.Project{
-		Path: "/repo ", Repository: "github.com/acme/widget",
-	}}
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
+		"[[projects]]\npath = '/repo '\nrepository = 'github.com/acme/widget'\n",
+	), 0o600))
+	snapshot, err := config.LoadGlobalSnapshotAt(home)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Projects, 1)
+	expected := snapshot.Projects[0]
 	oldResolver := resolveDoctorProjectIdentity
 	oldRemover := removeDoctorProjectRegistration
 	t.Cleanup(func() {
@@ -54,6 +58,9 @@ func TestDoctorProjectRemovalUsesGuardedLifecycleService(t *testing.T) {
 	assert.True(t, changed)
 	assert.Equal(t, "/repo ", request.Path)
 	assert.Equal(t, "github.com/acme/widget", request.ExpectedRepository)
+	fingerprint, err := expected.Fingerprint()
+	require.NoError(t, err)
+	assert.Equal(t, fingerprint, request.ExpectedRegistration)
 }
 
 func TestDoctorProjectRemovalPreservesChangedRegistration(t *testing.T) {

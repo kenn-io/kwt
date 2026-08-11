@@ -18,9 +18,10 @@ import (
 )
 
 type ProjectRemovalRequest struct {
-	Path               string           `json:"path"`
-	ExpectedRepository string           `json:"expected_repository"`
-	Expansion          ExpansionContext `json:"expansion"`
+	Path                 string           `json:"path"`
+	ExpectedRepository   string           `json:"expected_repository"`
+	ExpectedRegistration string           `json:"expected_registration"`
+	Expansion            ExpansionContext `json:"expansion"`
 }
 
 type ProjectRemovalResult struct {
@@ -91,7 +92,8 @@ func (s *projectRemovalService) RemoveProject(
 	request ProjectRemovalRequest,
 ) (result ProjectRemovalResult, resultErr error) {
 	identity, err := validateStableProjectIdentity(request.ExpectedRepository)
-	if err != nil || request.Path == "" {
+	if err != nil || request.Path == "" ||
+		!config.ValidProjectRegistrationFingerprint(request.ExpectedRegistration) {
 		return result, projectRemovalError(
 			service.InvalidRequest,
 			"project removal request is invalid",
@@ -146,6 +148,17 @@ func (s *projectRemovalService) RemoveProject(
 			service.UnregistrationFailed,
 			"multiple project registrations use the exact path",
 			false, nil, nil,
+		)
+	}
+	fingerprint, err := registration.Fingerprint()
+	if err != nil {
+		return result, projectRemovalInternal(err)
+	}
+	if fingerprint != request.ExpectedRegistration {
+		return result, projectRemovalError(
+			service.RegistrationChanged,
+			"the project registration changed after it was observed",
+			true, nil, nil,
 		)
 	}
 	if s.expectedRegistration != nil &&
