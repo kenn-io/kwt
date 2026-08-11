@@ -13,6 +13,7 @@ import (
 
 	kitdaemon "go.kenn.io/kit/daemon"
 	kwt "go.kenn.io/kwt"
+	repositoryurl "go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
@@ -235,7 +236,9 @@ func (c *Client) reconcileProjectRemoval(
 			Path: request.Path, Repository: request.ExpectedRepository,
 		}}, true, nil
 	}
-	if len(matches) != 1 || matches[0].Repository != request.ExpectedRepository {
+	if len(matches) != 1 ||
+		repositoryurl.FoldRepositoryIdentity(matches[0].Repository) !=
+			repositoryurl.FoldRepositoryIdentity(request.ExpectedRepository) {
 		return kwt.ProjectRemovalResult{}, false, service.NewError(
 			service.RegistrationChanged,
 			"the project registration changed while removal was being reconciled",

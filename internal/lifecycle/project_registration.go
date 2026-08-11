@@ -94,6 +94,10 @@ func projectRegistrationTransitionIdentities(
 	if err != nil {
 		return nil, err
 	}
+	identity, err = foldProjectIdentity(identity)
+	if err != nil {
+		return nil, err
+	}
 	identities := []string{identity}
 	for _, registration := range snapshot.Projects {
 		if !projectRegistrationUpdateMatches(registration, next) {
@@ -102,6 +106,10 @@ func projectRegistrationTransitionIdentities(
 		identity, identityErr := resolveProjectIdentity(
 			ctx, registration, protectedNames...,
 		)
+		if identityErr != nil {
+			return nil, identityErr
+		}
+		identity, identityErr = foldProjectIdentity(identity)
 		if identityErr != nil {
 			return nil, identityErr
 		}

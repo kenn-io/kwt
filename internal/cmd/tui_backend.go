@@ -57,7 +57,7 @@ type tuiBackend struct {
 	now                       func() time.Time
 	queryInventory            func(context.Context, kwt.Request, bool, io.Writer) (kwt.Result, error)
 	removeWorktree            func(context.Context, kwt.RemovalRequest) (kwt.RemovalResult, error)
-	runProjectOperation       func(context.Context, string, bool, func() error) error
+	runProjectOperation       func(context.Context, string, bool, []string, func() error) error
 	stderr                    io.Writer
 }
 
@@ -1049,7 +1049,7 @@ func (b *tuiBackend) CreateWorktree(
 		return "", err
 	}
 	var path string
-	err = b.runProjectOperation(ctx, row.Entry.Path, false, func() error {
+	err = b.runProjectOperation(ctx, row.Entry.Path, false, nil, func() error {
 		var mutationErr error
 		switch source {
 		case "":
@@ -1072,6 +1072,7 @@ func observeTUIProjectGuard(
 	ctx context.Context,
 	repositoryPath string,
 	required bool,
+	expectedIdentities []string,
 ) (*guardedProjectOperation, error) {
 	mainPath, err := git.New(repositoryPath).GetMainRepositoryPath()
 	if err != nil {
@@ -1087,7 +1088,7 @@ func observeTUIProjectGuard(
 	}
 	if required {
 		return observeRequiredGuardedProjectOperation(
-			ctx, home, mainPath, expansion,
+			ctx, home, mainPath, expansion, expectedIdentities...,
 		)
 	}
 	return observeGuardedProjectOperation(ctx, home, mainPath, expansion)
@@ -1097,9 +1098,12 @@ func runTUIProjectOperation(
 	ctx context.Context,
 	repositoryPath string,
 	required bool,
+	expectedIdentities []string,
 	mutation func() error,
 ) error {
-	guard, err := observeTUIProjectGuard(ctx, repositoryPath, required)
+	guard, err := observeTUIProjectGuard(
+		ctx, repositoryPath, required, expectedIdentities,
+	)
 	if err != nil {
 		return err
 	}
@@ -1170,11 +1174,17 @@ func (b *tuiBackend) MaterializeWorktree(ctx context.Context, row dashboard.Row)
 		return "", fmt.Errorf("no local project configured for %s", row.Fleet.ProjectIdentity)
 	}
 	var path string
-	err := b.runProjectOperation(ctx, project.Path, true, func() error {
-		var mutationErr error
-		path, mutationErr = b.materializeWorktree(ctx, row, project)
-		return mutationErr
-	})
+	err := b.runProjectOperation(
+		ctx,
+		project.Path,
+		true,
+		[]string{row.Fleet.ProjectIdentity, project.Repository},
+		func() error {
+			var mutationErr error
+			path, mutationErr = b.materializeWorktree(ctx, row, project)
+			return mutationErr
+		},
+	)
 	if err != nil {
 		return "", err
 	}

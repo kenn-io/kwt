@@ -81,3 +81,18 @@ func validateStableProjectIdentity(identity string) (string, error) {
 	}
 	return "", fmt.Errorf("expected repository identity is invalid")
 }
+
+// EqualProjectIdentity reports whether two credential-free project identities
+// name the same repository under the canonical host's case rules.
+func EqualProjectIdentity(left, right string) bool {
+	return repositoryurl.FoldRepositoryIdentity(left) ==
+		repositoryurl.FoldRepositoryIdentity(right)
+}
+
+func foldProjectIdentity(identity string) (string, error) {
+	identity, err := validateStableProjectIdentity(identity)
+	if err != nil {
+		return "", err
+	}
+	return repositoryurl.FoldRepositoryIdentity(identity), nil
+}

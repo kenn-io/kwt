@@ -121,6 +121,21 @@ func TestProjectRemovalClientPreservesLostResponseWhenRegistrationRemains(t *tes
 	assert.False(t, RequiresRefresh(err))
 }
 
+func TestProjectRemovalClientReconcilesEquivalentRepositoryCase(t *testing.T) {
+	client, closeServer := lostProjectRemovalClient(t, []models.Project{{
+		Path: "/repo ", Repository: "github.com/Acme/Widget",
+	}}, false)
+	defer closeServer()
+
+	_, err := client.RemoveProject(context.Background(), kwt.ProjectRemovalRequest{
+		Path: "/repo ", ExpectedRepository: "github.com/acme/widget",
+		Expansion: kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
+	})
+
+	assert.True(t, service.IsCode(err, service.DaemonTransportFailed))
+	assert.False(t, service.IsCode(err, service.RegistrationChanged))
+}
+
 func TestProjectRemovalClientReportsReplacementAfterLostResponse(t *testing.T) {
 	client, closeServer := lostProjectRemovalClient(t, []models.Project{{
 		Path: "/repo ", Repository: "github.com/acme/replacement",

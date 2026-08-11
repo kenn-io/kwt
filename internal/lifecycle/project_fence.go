@@ -28,7 +28,7 @@ func acquireProjectFence(
 	home string,
 	identity string,
 ) (func() error, error) {
-	identity, err := validateStableProjectIdentity(identity)
+	identity, err := foldProjectIdentity(identity)
 	if err != nil {
 		return nil, service.NewError(service.InvalidRequest, err.Error(), false, nil, err)
 	}
@@ -190,7 +190,7 @@ func projectClaimMatches(
 		if identityErr != nil {
 			return false, identityErr
 		}
-		return identity == claim.Identity, nil
+		return EqualProjectIdentity(identity, claim.Identity), nil
 	}
 	return false, nil
 }

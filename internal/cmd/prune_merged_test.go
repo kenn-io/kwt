@@ -16,12 +16,15 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/prunepolicy"
 	"go.kenn.io/kwt/internal/pullrequest"
 	"go.kenn.io/kwt/internal/registry"
+	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 )
 
 const (
@@ -254,6 +257,7 @@ func TestPruneMergedDoesNotRemoveWhileCandidateCreationIsActive(t *testing.T) {
 		return nil
 	})
 	cmd, stdout, _ := fleetTestCommand()
+	cmd.SetContext(context.Background())
 
 	err := runPrune(cmd, nil)
 
@@ -618,6 +622,138 @@ func TestPruneMergedRemovesExactProvenance(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, record.PullRequestID, store.removedKey)
 	assert.Equal(t, record, store.removedRecord)
+}
+
+func TestPruneMergedProtectedOperationRejectsLiveSession(t *testing.T) {
+	candidate := protectedPruneMergedCandidate(t)
+	probePruneMergedProtectedSession = func(
+		context.Context, string, string, []string,
+	) (tmux.ProtectedSessionState, error) {
+		return tmux.ProtectedSessionLive, nil
+	}
+	called := false
+
+	err := defaultRunPruneMergedProtectedOperation(
+		context.Background(), &models.Config{}, candidate,
+		func() error { called = true; return nil },
+	)
+
+	assert.True(t, service.IsCode(err, service.ProtectedSessionLive))
+	assert.False(t, called)
+}
+
+func TestPruneMergedProtectedOperationRejectsIndeterminateSession(t *testing.T) {
+	candidate := protectedPruneMergedCandidate(t)
+	probePruneMergedProtectedSession = func(
+		context.Context, string, string, []string,
+	) (tmux.ProtectedSessionState, error) {
+		return tmux.ProtectedSessionIndeterminate, errors.New("permission denied")
+	}
+	called := false
+
+	err := defaultRunPruneMergedProtectedOperation(
+		context.Background(), &models.Config{}, candidate,
+		func() error { called = true; return nil },
+	)
+
+	assert.True(t, service.IsCode(err, service.ProtectedEndpointInventoryIncomplete))
+	assert.False(t, called)
+}
+
+func TestPruneMergedProtectedOperationRunsWhenSessionIsAbsent(t *testing.T) {
+	candidate := protectedPruneMergedCandidate(t)
+	var protectedNames []string
+	probePruneMergedProtectedSession = func(
+		_ context.Context, _, _ string, names []string,
+	) (tmux.ProtectedSessionState, error) {
+		protectedNames = append([]string(nil), names...)
+		return tmux.ProtectedSessionAbsent, nil
+	}
+	called := false
+
+	err := defaultRunPruneMergedProtectedOperation(
+		context.Background(), &models.Config{
+			Fleet: models.FleetConfig{TokenEnv: "GHOSTHUB_AUTH"},
+		}, candidate,
+		func() error { called = true; return nil },
+	)
+
+	require.NoError(t, err)
+	assert.True(t, called)
+	assert.Contains(t, protectedNames, "GHOSTHUB_AUTH")
+}
+
+func TestPruneMergedProtectedOperationRequiresAliasConnectedRegistration(t *testing.T) {
+	candidate := protectedPruneMergedCandidate(t)
+	home, err := config.CanonicalHome()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
+		"[[projects]]\nrepository = 'github.com/acme/replacement'\nname = 'widget'\npath = '"+candidate.RepositoryRoot+"'\n",
+	), 0o600))
+	called := false
+
+	err = defaultRunPruneMergedProtectedOperation(
+		context.Background(), &models.Config{}, candidate,
+		func() error { called = true; return nil },
+	)
+
+	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+	assert.False(t, called)
+}
+
+func TestPruneMergedLiveProtectedSessionPreservesWorktreeAndProvenance(t *testing.T) {
+	resetPruneMergedCommand(t)
+	pruneJSON = true
+	candidate := protectedPruneMergedCandidate(t)
+	setPruneMergedInventory(candidate)
+	setPruneMergedProvider(providerForCommandCandidates(candidate))
+	record := *candidate.Policy.Provenance
+	store := &fakePruneMergedProvenance{
+		records:      map[string]pullrequest.Provenance{candidate.ProvenanceKey: record},
+		removeResult: true,
+	}
+	openPruneMergedProvenanceStore = func() pruneMergedProvenanceStore { return store }
+	runPruneMergedProtectedOperation = defaultRunPruneMergedProtectedOperation
+	probePruneMergedProtectedSession = func(
+		context.Context, string, string, []string,
+	) (tmux.ProtectedSessionState, error) {
+		return tmux.ProtectedSessionLive, nil
+	}
+	removed := 0
+	removePruneMergedWorktree = fakePruneMergedRemoval(
+		func(pruneMergedCandidate) error { removed++; return nil },
+	)
+	cmd, stdout, _ := fleetTestCommand()
+	cmd.SetContext(context.Background())
+
+	err := runPrune(cmd, nil)
+
+	assertExitCode(t, err, 1)
+	var report prunepolicy.Report
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
+	require.Len(t, report.Outcomes, 1)
+	assert.Equal(t, prunepolicy.ProtectedSessionLive, report.Outcomes[0].Reason)
+	assert.Equal(t, "widget-pr-17", report.Outcomes[0].Evidence["session_name"])
+	assert.Zero(t, removed)
+	assert.Empty(t, store.removedKey)
+}
+
+func protectedPruneMergedCandidate(t *testing.T) pruneMergedCandidate {
+	t.Helper()
+	oldProbe := probePruneMergedProtectedSession
+	t.Cleanup(func() { probePruneMergedProtectedSession = oldProbe })
+	home := t.TempDir()
+	t.Setenv("KWT_HOME", home)
+	candidate := commandMergedCandidate("/worktrees/imported", commandMergedHead)
+	record := commandMergedProvenance(candidate)
+	record.Workspace.Generation = candidate.Policy.Generation
+	record.Workspace.SessionName = "widget-pr-17"
+	candidate.ProvenanceKey = record.PullRequestID
+	candidate.Policy.Provenance = &record
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
+		"[[projects]]\nrepository = '"+commandBaseRepo+"'\nname = 'widget'\npath = '"+candidate.RepositoryRoot+"'\n",
+	), 0o600))
+	return candidate
 }
 
 func TestAttachMergedProvenanceIgnoresMismatchedGeneration(t *testing.T) {
@@ -1516,6 +1652,14 @@ func resetPruneMergedCommand(t *testing.T) {
 	removePruneMergedWorktree = fakePruneMergedRemoval(
 		func(pruneMergedCandidate) error { return nil },
 	)
+	runPruneMergedProtectedOperation = func(
+		_ context.Context,
+		_ *models.Config,
+		_ pruneMergedCandidate,
+		operation func() error,
+	) error {
+		return operation()
+	}
 }
 
 func resetPruneMergedDeps(t *testing.T) {
@@ -1528,6 +1672,8 @@ func resetPruneMergedDeps(t *testing.T) {
 	oldValidate := validatePruneMergedWorktree
 	oldRemove := removePruneMergedWorktree
 	oldFindGlobalPaths := findPruneMergedGlobalPaths
+	oldProbeProtected := probePruneMergedProtectedSession
+	oldRunProtected := runPruneMergedProtectedOperation
 	t.Cleanup(func() {
 		loadPruneMergedConfig = oldLoad
 		openPruneMergedRegistry = oldRegistry
@@ -1537,6 +1683,8 @@ func resetPruneMergedDeps(t *testing.T) {
 		validatePruneMergedWorktree = oldValidate
 		removePruneMergedWorktree = oldRemove
 		findPruneMergedGlobalPaths = oldFindGlobalPaths
+		probePruneMergedProtectedSession = oldProbeProtected
+		runPruneMergedProtectedOperation = oldRunProtected
 	})
 }
 

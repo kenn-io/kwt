@@ -174,6 +174,7 @@ func runPRImport(cmd *cobra.Command, args []string) error {
 	}
 	guard, err := observeRequiredGuardedProjectOperation(
 		cmd.Context(), home, project.Path, expansion,
+		registeredIdentity, project.Identity,
 	)
 	if err != nil {
 		return writePRError(cmd, err)
@@ -252,6 +253,7 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 	}
 	guard, err := observeRequiredGuardedProjectOperation(
 		cmd.Context(), home, record.Project.Path, expansion,
+		pullrequest.ProvenanceRepositoryIdentities(record)...,
 	)
 	if err != nil {
 		return writePRError(cmd, err)

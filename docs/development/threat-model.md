@@ -95,7 +95,9 @@ The daemon derives protected socket names from durable session and worktree
 identity and probes each endpoint without collapsing operational failures into
 absence. Protected named-socket commands discard ambient `TMUX_TMPDIR`, so a
 foreground client and the daemon resolve the same owner-specific endpoint. A
-live endpoint blocks metadata removal; permission, connection, or
+probe also strips the configured fleet-token environment name in addition to
+kwt's canonical credential variables. A live endpoint blocks metadata removal
+and provenance-backed pruning; permission, connection, or
 other indeterminate failures fail closed. Public errors expose only the exact
 protected session and socket identity needed to resolve the block. Ordinary
 tmux-server sessions are outside this authority and are neither probed as

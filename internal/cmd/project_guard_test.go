@@ -45,3 +45,49 @@ func TestGuardedProjectOperationRejectsRemovedRegistration(t *testing.T) {
 	assert.True(t, service.IsCode(err, service.RegistrationChanged))
 	assert.False(t, called)
 }
+
+func TestRequiredProjectGuardRejectsUnexpectedRepository(t *testing.T) {
+	home := t.TempDir()
+	projectPath := filepath.Join(t.TempDir(), "repo")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home, "config.toml"),
+		[]byte("[[projects]]\nrepository = 'github.com/acme/replacement'\nname = 'widget'\npath = '"+projectPath+"'\n"),
+		0o600,
+	))
+	expansion, err := kwt.CaptureExpansionContext()
+	require.NoError(t, err)
+
+	guard, err := observeRequiredGuardedProjectOperation(
+		context.Background(), home, projectPath, expansion,
+		"github.com/acme/original",
+	)
+
+	assert.Nil(t, guard)
+	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+}
+
+func TestRequiredProjectGuardAcceptsEquivalentRepositoryCase(t *testing.T) {
+	home := t.TempDir()
+	projectPath := filepath.Join(t.TempDir(), "repo")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home, "config.toml"),
+		[]byte("[[projects]]\nrepository = 'github.com/Acme/Widget'\nname = 'widget'\npath = '"+projectPath+"'\n"),
+		0o600,
+	))
+	expansion, err := kwt.CaptureExpansionContext()
+	require.NoError(t, err)
+
+	guard, err := observeRequiredGuardedProjectOperation(
+		context.Background(), home, projectPath, expansion,
+		"github.com/acme/widget",
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, guard)
+	called := false
+	require.NoError(t, guard.run(context.Background(), func() error {
+		called = true
+		return nil
+	}))
+	assert.True(t, called)
+}

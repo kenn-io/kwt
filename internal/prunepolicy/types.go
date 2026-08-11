@@ -31,6 +31,9 @@ const (
 	PathUnavailable             Reason = "path_unavailable"
 	RemovalFailed               Reason = "removal_failed"
 	CleanupIncomplete           Reason = "cleanup_incomplete"
+	ProtectedSessionLive        Reason = "protected_session_live"
+	ProtectedEndpointIncomplete Reason = "protected_endpoint_inventory_incomplete"
+	RegistrationChanged         Reason = "registration_changed"
 )
 
 type Outcome struct {

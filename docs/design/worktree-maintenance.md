@@ -261,7 +261,12 @@ registry and imported-PR provenance cleanup use their observed generation or
 complete value. New provenance records include the worktree generation, so a
 same-path re-import cannot be deleted by cleanup for the removed incarnation; a
 concurrent replacement produces `cleanup_incomplete` rather than being
-overwritten. Every removal runs from the resolved main repository,
+overwritten. Provenance-backed pruning requires a current project registration
+connected through the record's repository alias history. It holds the project
+lifecycle claim through a credential-stripped, three-state protected-session
+probe, worktree removal, and provenance cleanup. Live or indeterminate
+protected endpoints preserve both the worktree and its durable provenance.
+Every removal runs from the resolved main repository,
 so deleting a globally discovered linked worktree cannot invalidate the Git
 context needed to remove later candidates. Fleet state publishes once after any
 actual removal, never for doctor, dry-runs, or no-ops.
@@ -290,7 +295,9 @@ outcomes include `removed`, `would_remove`, `missing_generation`,
 `source_repository_mismatch`, `source_branch_mismatch`, `ambiguous_pr_match`,
 `authentication_failed`, `network_failure`, `generation_changed`,
 `expiration_policy_changed`, `head_changed`, `repository_identity_changed`, `main_worktree`,
-`locked_worktree`, and `cleanup_incomplete`.
+`locked_worktree`, `protected_session_live`,
+`protected_endpoint_inventory_incomplete`, `registration_changed`, and
+`cleanup_incomplete`.
 `no_associated_pr` and `pr_not_merged` are normal non-candidates and do not by
 themselves make prune exit nonzero.
 An individually discovered path that cannot be inspected becomes a

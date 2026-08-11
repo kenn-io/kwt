@@ -37,6 +37,7 @@ type protectedSessionProbe func(
 	context.Context,
 	string,
 	string,
+	[]string,
 ) (tmux.ProtectedSessionState, error)
 
 type projectRemovalService struct {
@@ -126,7 +127,7 @@ func (s *projectRemovalService) RemoveProject(
 		registration,
 		credentials.ProtectedNames(snapshot.Config)...,
 	)
-	if err != nil || actualIdentity != identity {
+	if err != nil || !EqualProjectIdentity(actualIdentity, identity) {
 		return result, projectRemovalError(
 			service.RegistrationChanged,
 			"the project registration no longer matches the expected repository",
@@ -166,13 +167,14 @@ func (s *projectRemovalService) RemoveProject(
 		currentRegistration,
 		credentials.ProtectedNames(current.Config)...,
 	)
-	if identityErr != nil || currentIdentity != identity {
+	if identityErr != nil || !EqualProjectIdentity(currentIdentity, identity) {
 		return result, projectRemovalError(
 			service.RegistrationChanged,
 			"the project registration no longer matches the expected repository",
 			true, nil, identityErr,
 		)
 	}
+	protectedNames := credentials.ProtectedNames(current.Config)
 	registration = currentRegistration
 	if releaseErr := releaseTransition(); releaseErr != nil {
 		return result, projectRemovalInternal(releaseErr)
@@ -183,7 +185,9 @@ func (s *projectRemovalService) RemoveProject(
 		return result, err
 	}
 	for _, endpoint := range endpoints {
-		state, probeErr := s.probe(ctx, endpoint.SocketName, endpoint.SessionName)
+		state, probeErr := s.probe(
+			ctx, endpoint.SocketName, endpoint.SessionName, protectedNames,
+		)
 		switch state {
 		case tmux.ProtectedSessionAbsent:
 			if probeErr == nil {

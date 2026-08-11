@@ -72,6 +72,20 @@ func TestNewCmdStripsConfiguredSensitiveEnvironmentName(t *testing.T) {
 	}
 }
 
+func TestProtectedSessionProbeCommandStripsConfiguredCredential(t *testing.T) {
+	t.Setenv("GHOSTHUB_AUTH", "secret")
+
+	command := newProtectedSessionProbeCommand(
+		"kwt-pr-0123456789abcdef", []string{"GHOSTHUB_AUTH"},
+	).newCmd(context.Background(), []string{"list-sessions"})
+
+	for _, entry := range command.Env {
+		if hasEnvName(entry, "GHOSTHUB_AUTH") {
+			t.Fatalf("protected-session probe leaked configured credential: %v", command.Env)
+		}
+	}
+}
+
 func TestSocketCommandPrefixesEveryInvocationWithSocketName(t *testing.T) {
 	tc := NewTmuxCommandForSocketWithStripNames(
 		"tmux",

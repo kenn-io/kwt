@@ -973,6 +973,7 @@ func TestRunPRAttachUsesTransferredProvenanceAliasHistory(t *testing.T) {
 		},
 	))
 	cfg := testPRConfig()
+	cfg.Projects[0].Repository = registeredIdentity
 	withPRCommandDeps(t, cfg, &fakePRService{})
 	inspectPRProjectClone = func(
 		_ context.Context,

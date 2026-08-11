@@ -28,6 +28,21 @@ func TestProjectFenceWaitHonorsCancellation(t *testing.T) {
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
+func TestProjectFenceRepositoryCaseVariantsContend(t *testing.T) {
+	home := t.TempDir()
+	release, err := acquireProjectFence(
+		context.Background(), home, "github.com/Acme/Widget",
+	)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, release()) }()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	_, err = acquireProjectFence(ctx, home, "github.com/acme/widget")
+
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
 func TestProjectClaimRejectsRegistrationRemovedWhileWaiting(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(t.TempDir(), "repo")
@@ -199,4 +214,21 @@ func TestProjectRegistrationTransitionReacquiresChangedIdentitySet(t *testing.T)
 	}
 	require.NoError(t, releaseC())
 	require.NoError(t, <-done)
+}
+
+func TestProjectRegistrationTransitionDeduplicatesRepositoryCaseVariants(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(t.TempDir(), "repo")
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
+		"[[projects]]\nrepository = 'github.com/Acme/Widget'\nname = 'repo'\npath = '"+path+"'\n",
+	), 0o600))
+
+	identities, err := projectRegistrationTransitionIdentities(
+		context.Background(), home, testExpansion(t), models.Project{
+			Repository: "github.com/acme/widget", Name: "repo", Path: path,
+		},
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"github.com/acme/widget"}, identities)
 }

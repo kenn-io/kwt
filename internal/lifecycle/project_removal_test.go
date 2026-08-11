@@ -24,16 +24,19 @@ type projectRemovalProbe struct {
 	state   tmux.ProtectedSessionState
 	err     error
 	sockets []string
+	names   [][]string
 }
 
 func (p *projectRemovalProbe) probe(
 	_ context.Context,
 	socket string,
 	_ string,
+	names []string,
 ) (tmux.ProtectedSessionState, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.sockets = append(p.sockets, socket)
+	p.names = append(p.names, append([]string(nil), names...))
 	return p.state, p.err
 }
 
@@ -118,6 +121,17 @@ func TestProjectRemovalRequiresExactPathAndRepository(t *testing.T) {
 	assert.True(t, service.IsCode(err, service.RegistrationChanged))
 }
 
+func TestProjectRemovalAcceptsEquivalentRepositoryCase(t *testing.T) {
+	fixture := newProjectRemovalFixture(t, "/repo ", "github.com/Acme/Widget")
+	request := fixture.request()
+	request.ExpectedRepository = "github.com/acme/widget"
+
+	result, err := fixture.service.RemoveProject(context.Background(), request)
+
+	require.NoError(t, err)
+	assert.Equal(t, "github.com/acme/widget", result.Project.Repository)
+}
+
 func TestProjectRemovalAcceptsPublishedLiveIdentityForLegacyRegistration(t *testing.T) {
 	home := t.TempDir()
 	repository := t.TempDir()
@@ -169,6 +183,23 @@ func TestProjectRemovalRejectsLiveProtectedSession(t *testing.T) {
 	remaining, loadErr := configSnapshot(fixture.home, fixture.expansion)
 	require.NoError(t, loadErr)
 	require.Len(t, remaining.Projects, 1)
+}
+
+func TestProjectRemovalProbeStripsConfiguredCredential(t *testing.T) {
+	fixture := newProjectRemovalFixture(
+		t, filepath.Join(t.TempDir(), "missing"), "github.com/acme/widget",
+	)
+	require.NoError(t, os.WriteFile(filepath.Join(fixture.home, "config.toml"), []byte(
+		"[fleet]\ntoken_env = 'GHOSTHUB_AUTH'\n"+
+			"[[projects]]\nrepository = '"+fixture.identity+"'\nname = 'widget'\npath = '"+fixture.path+"'\n",
+	), 0o600))
+	fixture.writeProvenance()
+
+	_, err := fixture.service.RemoveProject(context.Background(), fixture.request())
+
+	require.NoError(t, err)
+	require.Len(t, fixture.probe.names, 1)
+	assert.Contains(t, fixture.probe.names[0], "GHOSTHUB_AUTH")
 }
 
 func TestProjectRemovalRejectsTransferredAliasProtectedEndpoint(t *testing.T) {

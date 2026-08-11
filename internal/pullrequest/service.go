@@ -420,6 +420,22 @@ func provenanceRepositoryIdentities(record Provenance) []string {
 	return identities
 }
 
+// ProvenanceRepositoryIdentities returns the credential-free repository
+// identities connected by a durable import record's alias history.
+func ProvenanceRepositoryIdentities(record Provenance) []string {
+	identities := provenanceRepositoryIdentities(record)
+	if len(identities) != 0 || record.Repository != "" {
+		return append([]string(nil), identities...)
+	}
+	identities = appendCanonicalRepositoryIdentity(
+		identities, record.Project.Identity,
+	)
+	identities = appendCanonicalRepositoryIdentity(
+		identities, record.Workspace.Repository,
+	)
+	return identities
+}
+
 func appendCanonicalRepositoryIdentity(
 	identities []string,
 	identity string,

@@ -1792,6 +1792,7 @@ func allowTUIProjectOperations(backend *tuiBackend) {
 		_ context.Context,
 		_ string,
 		_ bool,
+		_ []string,
 		mutation func() error,
 	) error {
 		return mutation()

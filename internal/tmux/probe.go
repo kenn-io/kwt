@@ -21,8 +21,9 @@ func ProbeProtectedSession(
 	ctx context.Context,
 	socketName string,
 	expectedSession string,
+	protectedNames []string,
 ) (ProtectedSessionState, error) {
-	command := NewTmuxCommandForSocketWithStripNames("", socketName, nil)
+	command := newProtectedSessionProbeCommand(socketName, protectedNames)
 	output, stderr, err := command.runCommandOutputContextWithStderr(
 		ctx,
 		"list-sessions",
@@ -33,6 +34,15 @@ func ProbeProtectedSession(
 		err = errors.Join(ctxErr, err)
 	}
 	return classifyProtectedSessionProbe(expectedSession, output, stderr, err)
+}
+
+func newProtectedSessionProbeCommand(
+	socketName string,
+	protectedNames []string,
+) *TmuxCommand {
+	return NewTmuxCommandForSocketWithStripNames(
+		"", socketName, protectedNames,
+	)
 }
 
 func classifyProtectedSessionProbe(

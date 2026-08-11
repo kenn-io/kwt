@@ -341,7 +341,13 @@ complete provenance, including canonical live workspace and main-repository
 paths; an existing
 symlink alias is equivalent to its resolved path. New imported-worktree
 provenance also carries the durable generation, preventing an old record from
-matching a replacement at the same path. Ordinary worktrees must have
+matching a replacement at the same path. A provenance-backed candidate also
+requires its current alias-connected project registration. Kwt holds that
+project authority while it probes the exact protected tmux endpoint, removes
+the worktree, and compare-and-swap deletes provenance. A live endpoint reports
+`protected_session_live`; an unavailable or indeterminate endpoint reports
+`protected_endpoint_inventory_incomplete`. Both preserve the worktree and
+provenance. Ordinary worktrees must have
 an exact configured upstream repository and branch read from that linked worktree,
 and their current HEAD must exactly match one associated PR head SHA
 with a non-null merged timestamp. GitHub repository redirects are resolved

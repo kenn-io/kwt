@@ -42,7 +42,7 @@ func TestProbeProtectedSessionAgainstRealTmux(t *testing.T) {
 	t.Cleanup(func() { _, _ = runTmux("kill-server") })
 
 	t.Setenv("TMUX_TMPDIR", filepath.Join(t.TempDir(), "probe"))
-	state, err := ProbeProtectedSession(context.Background(), socket, session)
+	state, err := ProbeProtectedSession(context.Background(), socket, session, nil)
 	require.NoError(t, err)
 	assert.Equal(t, ProtectedSessionLive, state, "detached session")
 
@@ -67,7 +67,7 @@ func TestProbeProtectedSessionAgainstRealTmux(t *testing.T) {
 		output, listErr := runTmux("list-sessions", "-F", "#{session_attached}")
 		return listErr == nil && strings.TrimSpace(output) == "1"
 	}, 2*time.Second, 10*time.Millisecond)
-	state, err = ProbeProtectedSession(context.Background(), socket, session)
+	state, err = ProbeProtectedSession(context.Background(), socket, session, nil)
 	require.NoError(t, err)
 	assert.Equal(t, ProtectedSessionLive, state, "attached session")
 
@@ -75,13 +75,13 @@ func TestProbeProtectedSessionAgainstRealTmux(t *testing.T) {
 	require.NoError(t, err)
 	cancelAttach()
 	require.Eventually(t, func() bool {
-		state, err = ProbeProtectedSession(context.Background(), socket, session)
+		state, err = ProbeProtectedSession(context.Background(), socket, session, nil)
 		return err == nil && state == ProtectedSessionAbsent
 	}, 2*time.Second, 10*time.Millisecond)
 	assert.Equal(t, ProtectedSessionAbsent, state, "missing server and session")
 
 	state, err = ProbeProtectedSession(
-		context.Background(), strings.Repeat("x", 200), session,
+		context.Background(), strings.Repeat("x", 200), session, nil,
 	)
 	assert.Equal(t, ProtectedSessionIndeterminate, state)
 	require.Error(t, err)

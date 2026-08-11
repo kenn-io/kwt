@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/discovery"
@@ -16,9 +17,11 @@ import (
 	"go.kenn.io/kwt/internal/prunepolicy"
 	"go.kenn.io/kwt/internal/pullrequest"
 	"go.kenn.io/kwt/internal/registry"
+	"go.kenn.io/kwt/internal/tmux"
 	repositoryurl "go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 )
 
 type pruneMergedRegistry interface {
@@ -44,6 +47,12 @@ type pruneMergedCandidate struct {
 	ProtectedNames   []string
 }
 
+type pruneMergedMutationResult struct {
+	worktreeRemoved bool
+	cleanupProblems []string
+	cleanupMessage  string
+}
+
 var (
 	loadPruneMergedConfig   = config.Load
 	openPruneMergedRegistry = func() (pruneMergedRegistry, error) {
@@ -57,9 +66,205 @@ var (
 	newPruneMergedProvider       = func(ctx context.Context) (prunepolicy.MergedProvider, error) {
 		return pullrequest.NewAuthenticatedGitHubProvider(ctx)
 	}
-	validatePruneMergedWorktree = defaultValidatePruneMergedWorktree
-	removePruneMergedWorktree   = defaultRemovePruneMergedWorktree
+	validatePruneMergedWorktree      = defaultValidatePruneMergedWorktree
+	removePruneMergedWorktree        = defaultRemovePruneMergedWorktree
+	probePruneMergedProtectedSession = tmux.ProbeProtectedSession
+	runPruneMergedProtectedOperation = defaultRunPruneMergedProtectedOperation
 )
+
+func defaultRunPruneMergedProtectedOperation(
+	ctx context.Context,
+	cfg *models.Config,
+	candidate pruneMergedCandidate,
+	operation func() error,
+) error {
+	if candidate.Policy.Provenance == nil {
+		return operation()
+	}
+	record := *candidate.Policy.Provenance
+	expected := pullrequest.ProvenanceRepositoryIdentities(record)
+	if len(expected) == 0 {
+		return service.NewError(
+			service.ProtectedEndpointInventoryIncomplete,
+			"protected endpoint authority is incomplete",
+			false, nil, nil,
+		)
+	}
+	home, err := config.CanonicalHome()
+	if err != nil {
+		return err
+	}
+	expansion, err := kwt.CaptureExpansionContext()
+	if err != nil {
+		return err
+	}
+	guard, err := observeRequiredGuardedProjectOperation(
+		ctx, home, candidate.RepositoryRoot, expansion, expected...,
+	)
+	if err != nil {
+		return err
+	}
+	return guard.run(ctx, func() error {
+		workspace := record.Workspace
+		if workspace.Path == "" || workspace.SessionName == "" ||
+			workspace.Generation == "" {
+			return service.NewError(
+				service.ProtectedEndpointInventoryIncomplete,
+				"protected endpoint authority is incomplete",
+				false, nil, nil,
+			)
+		}
+		socketName := tmux.ProtectedWorkspaceSocketName(
+			workspace.SessionName, workspace.Path,
+		)
+		protectedNames := append(
+			credentials.ProtectedNames(cfg), candidate.ProtectedNames...,
+		)
+		state, probeErr := probePruneMergedProtectedSession(
+			ctx, socketName, workspace.SessionName, protectedNames,
+		)
+		switch state {
+		case tmux.ProtectedSessionAbsent:
+			if probeErr == nil {
+				return operation()
+			}
+		case tmux.ProtectedSessionLive:
+			return service.NewError(
+				service.ProtectedSessionLive,
+				"a protected project session is live",
+				false,
+				map[string]any{
+					"session_name": workspace.SessionName,
+					"socket_name":  socketName,
+					"generation":   workspace.Generation,
+				},
+				nil,
+			)
+		}
+		return service.NewError(
+			service.ProtectedEndpointInventoryIncomplete,
+			"protected session state could not be verified",
+			true, nil, probeErr,
+		)
+	})
+}
+
+func pruneMergedOutcomeForError(
+	candidate pruneMergedCandidate,
+	err error,
+) prunepolicy.Outcome {
+	typed := service.AsError(err)
+	outcome := prunepolicy.Outcome{
+		Path: candidate.Policy.Path, Branch: candidate.Policy.Branch,
+		Evidence: map[string]string{"head_sha": candidate.Policy.Head},
+	}
+	switch typed.Code {
+	case service.ProtectedSessionLive:
+		outcome.Reason = prunepolicy.ProtectedSessionLive
+		outcome.Message = "a protected project session is live"
+		outcome.Remediation = "Detach or end the protected session, then retry."
+		for _, key := range []string{"session_name", "socket_name", "generation"} {
+			if value, ok := typed.Details[key].(string); ok && value != "" {
+				outcome.Evidence[key] = value
+			}
+		}
+		return outcome
+	case service.ProtectedEndpointInventoryIncomplete:
+		outcome.Reason = prunepolicy.ProtectedEndpointIncomplete
+		outcome.Message = "protected endpoint authority could not be verified"
+		outcome.Remediation = "Restore protected endpoint authority and retry."
+		return outcome
+	case service.RegistrationChanged:
+		outcome.Reason = prunepolicy.RegistrationChanged
+		outcome.Message = "the project registration changed before pruning"
+		outcome.Remediation = "Refresh project inventory and retry."
+		return outcome
+	default:
+		return pruneOutcomeForError(
+			candidate.Policy.Path, candidate.Policy.Branch, err,
+		)
+	}
+}
+
+func mergePruneEvidence(
+	outcome *prunepolicy.Outcome,
+	evidence map[string]string,
+) {
+	if outcome.Evidence == nil {
+		outcome.Evidence = make(map[string]string, len(evidence))
+	}
+	for key, value := range evidence {
+		outcome.Evidence[key] = value
+	}
+}
+
+func removePruneMergedCandidate(
+	ctx context.Context,
+	reg pruneMergedRegistry,
+	store pruneMergedProvenanceStore,
+	candidate pruneMergedCandidate,
+) (pruneMergedMutationResult, error) {
+	var result pruneMergedMutationResult
+	var residualWarning error
+	ownershipErr := withPruneMergedOwnershipGuard(
+		ctx, reg, store, candidate,
+		func() error {
+			removed, err := removePruneMergedWorktree(
+				candidate,
+				func(remove func() error) (bool, error) {
+					return reg.RemoveIfMatchAfter(
+						candidate.Policy.Path,
+						candidate.RegistryEntry,
+						func() error {
+							err := remove()
+							if git.WorktreeWasRemoved(err) {
+								residualWarning = err
+								return nil
+							}
+							return err
+						},
+					)
+				},
+			)
+			result.worktreeRemoved = removed
+			if err == nil && !removed {
+				return fmt.Errorf(
+					"worktree ownership changed after inspection for %s",
+					candidate.Policy.Path,
+				)
+			}
+			return err
+		},
+	)
+	if ownershipErr == nil && residualWarning != nil {
+		ownershipErr = residualWarning
+		result.cleanupMessage = residualWarning.Error()
+	}
+	if ownershipErr != nil && !result.worktreeRemoved {
+		return result, ownershipErr
+	}
+	if ownershipErr != nil {
+		result.cleanupProblems = append(
+			result.cleanupProblems, ownershipErr.Error(),
+		)
+	}
+	if candidate.Policy.Provenance == nil {
+		return result, nil
+	}
+	removed, cleanupErr := store.RemoveIfMatch(
+		ctx, candidate.ProvenanceKey, *candidate.Policy.Provenance,
+	)
+	if cleanupErr != nil {
+		result.cleanupProblems = append(
+			result.cleanupProblems, "provenance: "+cleanupErr.Error(),
+		)
+	} else if !removed {
+		result.cleanupProblems = append(
+			result.cleanupProblems, "provenance record changed",
+		)
+	}
+	return result, nil
+}
 
 func runPruneMerged(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
@@ -117,12 +322,20 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 			continue
 		}
 		if pruneDryRun {
-			if err := withPruneMergedOwnershipGuard(ctx, reg, store, candidate, func() error {
-				return validatePruneMergedWorktree(candidate)
-			}); err != nil {
+			if err := runPruneMergedProtectedOperation(
+				ctx, cfg, candidate,
+				func() error {
+					return withPruneMergedOwnershipGuard(
+						ctx, reg, store, candidate,
+						func() error {
+							return validatePruneMergedWorktree(candidate)
+						},
+					)
+				},
+			); err != nil {
 				providerEvidence := outcome.Evidence
-				outcome = pruneOutcomeForError(candidate.Policy.Path, candidate.Policy.Branch, err)
-				outcome.Evidence = providerEvidence
+				outcome = pruneMergedOutcomeForError(candidate, err)
+				mergePruneEvidence(&outcome, providerEvidence)
 				if outcome.Reason == prunepolicy.DirtyWorktree {
 					outcome.Remediation = "Commit or discard the changes, then retry; merged pruning has no force mode."
 				}
@@ -134,72 +347,46 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 			outcomes[index] = outcome
 			continue
 		}
-		worktreeRemoved := false
-		var residualWarning error
-		removeErr := withPruneMergedOwnershipGuard(ctx, reg, store, candidate, func() error {
-			removed, err := removePruneMergedWorktree(
-				candidate,
-				func(remove func() error) (bool, error) {
-					return reg.RemoveIfMatchAfter(
-						candidate.Policy.Path,
-						candidate.RegistryEntry,
-						func() error {
-							err := remove()
-							if git.WorktreeWasRemoved(err) {
-								residualWarning = err
-								return nil
-							}
-							return err
-						},
-					)
-				},
-			)
-			worktreeRemoved = removed
-			if err == nil && !removed {
-				return fmt.Errorf(
-					"worktree ownership changed after inspection for %s",
-					candidate.Policy.Path,
+		var mutation pruneMergedMutationResult
+		removeErr := runPruneMergedProtectedOperation(
+			ctx, cfg, candidate,
+			func() error {
+				var err error
+				mutation, err = removePruneMergedCandidate(
+					ctx, reg, store, candidate,
 				)
-			}
-			return err
-		})
-		if removeErr == nil && residualWarning != nil {
-			removeErr = residualWarning
-		}
-		if removeErr != nil && !worktreeRemoved {
+				return err
+			},
+		)
+		if removeErr != nil && !mutation.worktreeRemoved {
 			providerEvidence := outcome.Evidence
-			outcome = pruneOutcomeForError(candidate.Policy.Path, candidate.Policy.Branch, removeErr)
-			outcome.Evidence = providerEvidence
+			outcome = pruneMergedOutcomeForError(candidate, removeErr)
+			mergePruneEvidence(&outcome, providerEvidence)
 			if outcome.Reason == prunepolicy.DirtyWorktree {
 				outcome.Remediation = "Commit or discard the changes, then retry; merged pruning has no force mode."
 			}
 			outcomes[index] = outcome
 			continue
 		}
-		removedWorktrees++
-		cleanupProblems := make([]string, 0, 2)
 		if removeErr != nil {
-			cleanupProblems = append(cleanupProblems, removeErr.Error())
-		}
-		if candidate.Policy.Provenance != nil {
-			removed, cleanupErr := store.RemoveIfMatch(
-				ctx, candidate.ProvenanceKey, *candidate.Policy.Provenance,
+			mutation.cleanupProblems = append(
+				mutation.cleanupProblems, removeErr.Error(),
 			)
-			if cleanupErr != nil {
-				cleanupProblems = append(cleanupProblems, "provenance: "+cleanupErr.Error())
-			} else if !removed {
-				cleanupProblems = append(cleanupProblems, "provenance record changed")
-			}
 		}
-		if len(cleanupProblems) > 0 {
+		removedWorktrees++
+		if len(mutation.cleanupProblems) > 0 {
 			outcome.Reason = prunepolicy.CleanupIncomplete
 			outcome.Message = "worktree was removed but matching state cleanup did not complete"
-			if removeErr != nil {
+			if mutation.cleanupMessage != "" {
+				outcome.Message = mutation.cleanupMessage
+			} else if removeErr != nil {
 				outcome.Message = removeErr.Error()
 			}
 			outcome.Remediation = "Run kwt doctor --fix and review pull-request provenance before retrying cleanup."
 			outcome.Evidence["worktree_removed"] = "true"
-			outcome.Evidence["cleanup_error"] = strings.Join(cleanupProblems, "; ")
+			outcome.Evidence["cleanup_error"] = strings.Join(
+				mutation.cleanupProblems, "; ",
+			)
 		} else {
 			outcome.Reason = prunepolicy.Removed
 			outcome.Message = "worktree for merged pull request removed"

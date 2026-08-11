@@ -8,6 +8,7 @@ import (
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 )
 
 type guardedProjectOperation struct {
@@ -21,13 +22,38 @@ func observeRequiredGuardedProjectOperation(
 	home string,
 	mainPath string,
 	expansion kwt.ExpansionContext,
+	expectedIdentities ...string,
 ) (*guardedProjectOperation, error) {
 	guard, err := observeGuardedProjectOperation(ctx, home, mainPath, expansion)
 	if err != nil {
 		return nil, err
 	}
+	if guard.claim == nil || !projectClaimHasExpectedIdentity(
+		guard.claim, expectedIdentities,
+	) {
+		return nil, service.NewError(
+			service.RegistrationChanged,
+			"the project registration changed before the operation began",
+			true, nil, nil,
+		)
+	}
 	guard.required = true
 	return guard, nil
+}
+
+func projectClaimHasExpectedIdentity(
+	claim *lifecycle.ProjectClaim,
+	expected []string,
+) bool {
+	if claim == nil || len(expected) == 0 {
+		return false
+	}
+	for _, identity := range expected {
+		if lifecycle.EqualProjectIdentity(claim.Identity, identity) {
+			return true
+		}
+	}
+	return false
 }
 
 var beforeProjectGuardAcquire = func() {}
