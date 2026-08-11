@@ -13,7 +13,7 @@ const (
 	CapabilityStatus         = "daemon.status"
 	CapabilityShutdown       = "daemon.shutdown"
 	CapabilityProjectRemoval = "project.removal.v2"
-	CapabilityInventory      = "worktree.inventory.v1"
+	CapabilityInventory      = "worktree.inventory.v2"
 	CapabilityRemoval        = "worktree.removal.v1"
 )
 

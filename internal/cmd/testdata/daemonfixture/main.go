@@ -77,6 +77,15 @@ func main() {
 		}
 		record.Metadata["capabilities"] = strings.Join(capabilities, ",")
 	}
+	if *mode == "legacy_inventory" {
+		capabilities := strings.Split(record.Metadata["capabilities"], ",")
+		for index, capability := range capabilities {
+			if capability == kwtdaemon.CapabilityInventory {
+				capabilities[index] = "worktree.inventory.v1"
+			}
+		}
+		record.Metadata["capabilities"] = strings.Join(capabilities, ",")
+	}
 	if _, err := kwtdaemon.RuntimeStore(*home).Write(record); err != nil {
 		log.Fatal(err)
 	}

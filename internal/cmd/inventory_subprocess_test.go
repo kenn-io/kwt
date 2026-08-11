@@ -202,6 +202,28 @@ func TestProjectsRemoveRejectsLegacyRemovalCapability(t *testing.T) {
 	assert.Equal(t, service.DaemonIncompatible, envelope.Error.Code)
 }
 
+func TestProjectsRejectsLegacyInventoryCapability(t *testing.T) {
+	binary, _ := buildDaemonTestBinaries(t)
+	fixture := buildDaemonFixture(t)
+	home := newDaemonTestHome(t, `[daemon]
+idle_timeout = "2h"
+auto_restart = "never"
+replacement_grace = "200ms"
+`)
+	startDaemonFixture(t, fixture, home, "legacy_inventory")
+
+	stdout, stderr, err := runInventoryCommand(
+		t, binary, home, t.TempDir(), "projects", "--json",
+	)
+
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr, "stderr=%s", stderr)
+	assert.Equal(t, 1, exitErr.ExitCode())
+	var envelope jsonErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout, &envelope))
+	assert.Equal(t, service.DaemonIncompatible, envelope.Error.Code)
+}
+
 func TestInventorySubprocessDaemonFailuresNeverUseSSHExit255(t *testing.T) {
 	binary, _ := buildDaemonTestBinaries(t)
 	fixture := buildDaemonFixture(t)

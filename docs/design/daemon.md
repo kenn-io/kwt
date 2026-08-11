@@ -49,7 +49,7 @@ The API schema is `1.6.0`. It exposes authenticated status, graceful shutdown,
 worktree inventory, guarded project unregistration, and repository-config
 approval under `/api/v1`, proof-capable liveness at `/api/ping`, and
 credential-free OpenAPI at `/openapi.json`. Inventory clients require the
-`worktree.inventory.v1` capability; guarded unregistration requires
+`worktree.inventory.v2` capability; guarded unregistration requires
 `project.removal.v2`. An operation never has simultaneous direct and HTTP
 execution paths.
 
