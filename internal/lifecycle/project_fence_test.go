@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,6 +42,20 @@ func TestProjectFenceRepositoryCaseVariantsContend(t *testing.T) {
 	_, err = acquireProjectFence(ctx, home, "github.com/acme/widget")
 
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestLocalProjectIdentityPreservesTrailingWhitespace(t *testing.T) {
+	identity := "local/" + filepath.ToSlash(
+		filepath.Join(t.TempDir(), "repo "),
+	)
+
+	validated, err := validateStableProjectIdentity(identity)
+
+	require.NoError(t, err)
+	assert.Equal(t, identity, validated)
+	assert.False(t, EqualProjectIdentity(identity, strings.TrimSuffix(identity, " ")))
+	_, err = validateStableProjectIdentity("github.com/acme/widget ")
+	assert.Error(t, err)
 }
 
 func TestProjectClaimRejectsRegistrationRemovedWhileWaiting(t *testing.T) {

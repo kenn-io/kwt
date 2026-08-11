@@ -627,7 +627,7 @@ func TestPruneMergedRemovesExactProvenance(t *testing.T) {
 func TestPruneMergedProtectedOperationRejectsLiveSession(t *testing.T) {
 	candidate := protectedPruneMergedCandidate(t)
 	probePruneMergedProtectedSession = func(
-		context.Context, string, string, []string,
+		context.Context, string, string, []string, string,
 	) (tmux.ProtectedSessionState, error) {
 		return tmux.ProtectedSessionLive, nil
 	}
@@ -645,7 +645,7 @@ func TestPruneMergedProtectedOperationRejectsLiveSession(t *testing.T) {
 func TestPruneMergedProtectedOperationRejectsIndeterminateSession(t *testing.T) {
 	candidate := protectedPruneMergedCandidate(t)
 	probePruneMergedProtectedSession = func(
-		context.Context, string, string, []string,
+		context.Context, string, string, []string, string,
 	) (tmux.ProtectedSessionState, error) {
 		return tmux.ProtectedSessionIndeterminate, errors.New("permission denied")
 	}
@@ -664,7 +664,7 @@ func TestPruneMergedProtectedOperationRunsWhenSessionIsAbsent(t *testing.T) {
 	candidate := protectedPruneMergedCandidate(t)
 	var protectedNames []string
 	probePruneMergedProtectedSession = func(
-		_ context.Context, _, _ string, names []string,
+		_ context.Context, _, _ string, names []string, _ string,
 	) (tmux.ProtectedSessionState, error) {
 		protectedNames = append([]string(nil), names...)
 		return tmux.ProtectedSessionAbsent, nil
@@ -715,7 +715,7 @@ func TestPruneMergedLiveProtectedSessionPreservesWorktreeAndProvenance(t *testin
 	openPruneMergedProvenanceStore = func() pruneMergedProvenanceStore { return store }
 	runPruneMergedProtectedOperation = defaultRunPruneMergedProtectedOperation
 	probePruneMergedProtectedSession = func(
-		context.Context, string, string, []string,
+		context.Context, string, string, []string, string,
 	) (tmux.ProtectedSessionState, error) {
 		return tmux.ProtectedSessionLive, nil
 	}
@@ -745,6 +745,8 @@ func protectedPruneMergedCandidate(t *testing.T) pruneMergedCandidate {
 	home := t.TempDir()
 	t.Setenv("KWT_HOME", home)
 	candidate := commandMergedCandidate("/worktrees/imported", commandMergedHead)
+	candidate.RepositoryRoot = filepath.Join(t.TempDir(), "widget")
+	candidate.Policy.MainRepositoryPath = candidate.RepositoryRoot
 	record := commandMergedProvenance(candidate)
 	record.Workspace.Generation = candidate.Policy.Generation
 	record.Workspace.SessionName = "widget-pr-17"

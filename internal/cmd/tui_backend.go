@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/fleet"
 	"go.kenn.io/kwt/internal/git"
+	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/status"
 	"go.kenn.io/kwt/internal/tmux"
@@ -1433,12 +1434,10 @@ func (b *tuiBackend) projectForFleetInfo(info *dashboard.FleetInfo) (models.Proj
 // fold. A plain EqualFold would let a case-sensitive server's two repositories
 // match each other, and this decides which checkout a mutation runs against.
 func equalRepositoryIdentity(left string, right string) bool {
-	left = strings.TrimSpace(left)
-	right = strings.TrimSpace(right)
 	if left == "" || right == "" {
 		return false
 	}
-	return url.FoldRepositoryIdentity(left) == url.FoldRepositoryIdentity(right)
+	return lifecycle.EqualProjectIdentity(left, right)
 }
 
 func sameRepositoryIdentity(left string, right string) bool {

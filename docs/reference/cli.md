@@ -347,7 +347,10 @@ project authority while it probes the exact protected tmux endpoint, removes
 the worktree, and compare-and-swap deletes provenance. A live endpoint reports
 `protected_session_live`; an unavailable or indeterminate endpoint reports
 `protected_endpoint_inventory_incomplete`. Both preserve the worktree and
-provenance. Ordinary worktrees must have
+provenance. Protected sessions created by released kwt versions under an
+explicit `TMUX_TMPDIR` remain attachable and continue to block pruning when the
+invoking client supplies that same directory; new sessions use kwt's canonical
+owner-specific socket location. Ordinary worktrees must have
 an exact configured upstream repository and branch read from that linked worktree,
 and their current HEAD must exactly match one associated PR head SHA
 with a non-null merged timestamp. GitHub repository redirects are resolved

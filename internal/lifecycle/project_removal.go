@@ -38,6 +38,7 @@ type protectedSessionProbe func(
 	string,
 	string,
 	[]string,
+	string,
 ) (tmux.ProtectedSessionState, error)
 
 type projectRemovalService struct {
@@ -175,6 +176,7 @@ func (s *projectRemovalService) RemoveProject(
 		)
 	}
 	protectedNames := credentials.ProtectedNames(current.Config)
+	legacyTmuxTempDir := request.Expansion.Environment[normalizedEnvironmentName("TMUX_TMPDIR")]
 	registration = currentRegistration
 	if releaseErr := releaseTransition(); releaseErr != nil {
 		return result, projectRemovalInternal(releaseErr)
@@ -187,6 +189,7 @@ func (s *projectRemovalService) RemoveProject(
 	for _, endpoint := range endpoints {
 		state, probeErr := s.probe(
 			ctx, endpoint.SocketName, endpoint.SessionName, protectedNames,
+			legacyTmuxTempDir,
 		)
 		switch state {
 		case tmux.ProtectedSessionAbsent:

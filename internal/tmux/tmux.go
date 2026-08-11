@@ -38,6 +38,7 @@ type SessionManagerInterface interface {
 type TmuxCommand struct {
 	command         string
 	socketName      string
+	socketTempDir   string
 	extraStripNames map[string]bool
 	attachProcess   attachProcessFunc
 }
@@ -80,6 +81,22 @@ func NewTmuxCommandForSocketWithStripNames(
 		extraStripNames: extra,
 		attachProcess:   replaceAttachProcess,
 	}
+}
+
+// NewTmuxCommandForSocketInTempDirWithStripNames targets a named socket in an
+// explicit legacy TMUX_TMPDIR. The supplied directory replaces, rather than
+// inherits, the caller's ambient value.
+func NewTmuxCommandForSocketInTempDirWithStripNames(
+	command string,
+	socketName string,
+	tempDir string,
+	names []string,
+) *TmuxCommand {
+	tmuxCommand := NewTmuxCommandForSocketWithStripNames(
+		command, socketName, names,
+	)
+	tmuxCommand.socketTempDir = tempDir
+	return tmuxCommand
 }
 
 func (t *TmuxCommand) NewSession(name, workDir string) error {
@@ -395,7 +412,7 @@ func (t *TmuxCommand) globalOption(option string) (string, error) {
 // predate context plumbing pass context.Background().
 func (t *TmuxCommand) newCmd(ctx context.Context, args []string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, t.command, t.socketArgs(args)...)
-	cmd.Env = t.stripExtraNames(SanitizedEnviron(os.Environ()))
+	cmd.Env = t.socketEnvironment(SanitizedEnviron(os.Environ()))
 	return cmd
 }
 
@@ -408,7 +425,7 @@ func (t *TmuxCommand) newCmd(ctx context.Context, args []string) *exec.Cmd {
 // client still carried them.
 func (t *TmuxCommand) newAttachCmd(ctx context.Context, args []string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, t.command, t.socketArgs(args)...)
-	cmd.Env = t.stripExtraNames(AttachSanitizedEnviron(os.Environ()))
+	cmd.Env = t.socketEnvironment(AttachSanitizedEnviron(os.Environ()))
 	return cmd
 }
 
@@ -431,4 +448,12 @@ func (t *TmuxCommand) stripExtraNames(env []string) []string {
 		}
 		return t.extraStripNames[strings.ToLower(name)]
 	})
+}
+
+func (t *TmuxCommand) socketEnvironment(env []string) []string {
+	env = t.stripExtraNames(env)
+	if t.socketName != "" && t.socketTempDir != "" {
+		env = append(env, "TMUX_TMPDIR="+t.socketTempDir)
+	}
+	return env
 }

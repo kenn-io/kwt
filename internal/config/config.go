@@ -841,7 +841,7 @@ func CompareAndSwapProject(
 	expected ProjectRegistration,
 	replacement *models.Project,
 ) (bool, error) {
-	return CompareAndSwapProjectAt(getConfigDir(), expected, replacement)
+	return compareAndSwapProjectAt(getConfigDir(), expected, replacement, true)
 }
 
 // CompareAndSwapProjectAt performs the raw-entry project CAS in an explicit
@@ -850,6 +850,15 @@ func CompareAndSwapProjectAt(
 	home string,
 	expected ProjectRegistration,
 	replacement *models.Project,
+) (bool, error) {
+	return compareAndSwapProjectAt(home, expected, replacement, false)
+}
+
+func compareAndSwapProjectAt(
+	home string,
+	expected ProjectRegistration,
+	replacement *models.Project,
+	updateProcessConfig bool,
 ) (bool, error) {
 	var copiedReplacement *models.Project
 	if replacement != nil {
@@ -912,7 +921,7 @@ func CompareAndSwapProjectAt(
 	if err != nil {
 		return false, err
 	}
-	if changed {
+	if changed && updateProcessConfig {
 		viper.Set("projects", projects)
 	}
 	return changed, nil

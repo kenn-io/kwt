@@ -20,11 +20,12 @@ import (
 const testProjectGeneration = "0123456789abcdef0123456789abcdef"
 
 type projectRemovalProbe struct {
-	mu      sync.Mutex
-	state   tmux.ProtectedSessionState
-	err     error
-	sockets []string
-	names   [][]string
+	mu       sync.Mutex
+	state    tmux.ProtectedSessionState
+	err      error
+	sockets  []string
+	names    [][]string
+	tempDirs []string
 }
 
 func (p *projectRemovalProbe) probe(
@@ -32,11 +33,13 @@ func (p *projectRemovalProbe) probe(
 	socket string,
 	_ string,
 	names []string,
+	tempDir string,
 ) (tmux.ProtectedSessionState, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.sockets = append(p.sockets, socket)
 	p.names = append(p.names, append([]string(nil), names...))
+	p.tempDirs = append(p.tempDirs, tempDir)
 	return p.state, p.err
 }
 
@@ -195,11 +198,14 @@ func TestProjectRemovalProbeStripsConfiguredCredential(t *testing.T) {
 	), 0o600))
 	fixture.writeProvenance()
 
-	_, err := fixture.service.RemoveProject(context.Background(), fixture.request())
+	request := fixture.request()
+	request.Expansion.Environment["TMUX_TMPDIR"] = "/tmp/legacy-tmux"
+	_, err := fixture.service.RemoveProject(context.Background(), request)
 
 	require.NoError(t, err)
 	require.Len(t, fixture.probe.names, 1)
 	assert.Contains(t, fixture.probe.names[0], "GHOSTHUB_AUTH")
+	assert.Equal(t, []string{"/tmp/legacy-tmux"}, fixture.probe.tempDirs)
 }
 
 func TestProjectRemovalRejectsTransferredAliasProtectedEndpoint(t *testing.T) {

@@ -306,6 +306,29 @@ func TestNamedSocketCommandsIgnoreAmbientTmuxTempDirectory(t *testing.T) {
 	}
 }
 
+func TestLegacyNamedSocketCommandUsesExplicitTmuxTempDirectory(t *testing.T) {
+	t.Setenv("TMUX_TMPDIR", "/tmp/unrelated")
+	tempDir := "/tmp/legacy-tmux"
+
+	tc := NewTmuxCommandForSocketInTempDirWithStripNames(
+		"tmux", "kwt-pr-0123456789abcdef", tempDir, nil,
+	)
+	command := tc.newCmd(context.Background(), []string{"list-sessions"})
+
+	found := false
+	for _, entry := range command.Env {
+		if entry == "TMUX_TMPDIR="+tempDir {
+			found = true
+		}
+		if entry == "TMUX_TMPDIR=/tmp/unrelated" {
+			t.Fatalf("legacy socket command inherited ambient TMUX_TMPDIR: %v", command.Env)
+		}
+	}
+	if !found {
+		t.Fatalf("legacy socket command omitted explicit TMUX_TMPDIR: %v", command.Env)
+	}
+}
+
 func TestExternalAttachReplacesCurrentProcess(t *testing.T) {
 	t.Setenv("EDITOR", "vim")
 	t.Setenv("TMUX", "/tmp/tmux-501/default,123,0")

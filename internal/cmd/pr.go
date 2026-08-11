@@ -671,11 +671,16 @@ func defaultStartPRWorkspaceSession(
 		workspace.SessionName,
 		workspace.Path,
 	)
-	tmuxCommand := tmux.NewTmuxCommandForSocketWithStripNames(
-		"",
+	tmuxCommand, _, err := tmux.ResolveProtectedSessionCommand(
+		ctx,
 		socketName,
+		workspace.SessionName,
 		stripNames,
+		os.Getenv("TMUX_TMPDIR"),
 	)
+	if err != nil {
+		return "", err
+	}
 	err = tmux.NewProtectedWorkspaceRunner(
 		tmuxCommand,
 		stripNames,
@@ -728,11 +733,16 @@ func defaultAttachExistingPRWorkspaceSession(
 		return fmt.Errorf("imported workspace has no tmux identity")
 	}
 	stripNames := credentials.ProtectedNames(cfg)
-	tmuxCommand := tmux.NewTmuxCommandForSocketWithStripNames(
-		"",
+	tmuxCommand, _, err := tmux.ResolveProtectedSessionCommand(
+		ctx,
 		socketName,
+		workspace.SessionName,
 		stripNames,
+		os.Getenv("TMUX_TMPDIR"),
 	)
+	if err != nil {
+		return err
+	}
 	return tmuxCommand.AttachSessionWithoutEnvironment(
 		ctx, workspace.SessionName,
 	)

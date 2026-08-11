@@ -70,29 +70,40 @@ func stableProjectIdentity(registration config.ProjectRegistration) (string, err
 }
 
 func validateStableProjectIdentity(identity string) (string, error) {
-	if identity == "" || identity != strings.TrimSpace(identity) {
+	if identity == "" {
+		return "", fmt.Errorf("expected repository identity is invalid")
+	}
+	if isExactLocalProjectIdentity(identity) {
+		return identity, nil
+	}
+	if identity != strings.TrimSpace(identity) {
 		return "", fmt.Errorf("expected repository identity is invalid")
 	}
 	if canonical, ok := repositoryurl.CanonicalRepositoryIdentity(identity); ok && canonical == identity {
 		return identity, nil
 	}
-	if repositoryurl.IsLocalFallbackIdentity(identity) && identity != "local" {
-		return identity, nil
-	}
 	return "", fmt.Errorf("expected repository identity is invalid")
+}
+
+func isExactLocalProjectIdentity(identity string) bool {
+	return strings.HasPrefix(identity, "local/") && len(identity) > len("local/")
 }
 
 // EqualProjectIdentity reports whether two credential-free project identities
 // name the same repository under the canonical host's case rules.
 func EqualProjectIdentity(left, right string) bool {
-	return repositoryurl.FoldRepositoryIdentity(left) ==
-		repositoryurl.FoldRepositoryIdentity(right)
+	left, leftErr := foldProjectIdentity(left)
+	right, rightErr := foldProjectIdentity(right)
+	return leftErr == nil && rightErr == nil && left == right
 }
 
 func foldProjectIdentity(identity string) (string, error) {
 	identity, err := validateStableProjectIdentity(identity)
 	if err != nil {
 		return "", err
+	}
+	if isExactLocalProjectIdentity(identity) {
+		return identity, nil
 	}
 	return repositoryurl.FoldRepositoryIdentity(identity), nil
 }

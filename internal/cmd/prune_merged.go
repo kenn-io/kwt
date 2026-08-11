@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -122,6 +123,7 @@ func defaultRunPruneMergedProtectedOperation(
 		)
 		state, probeErr := probePruneMergedProtectedSession(
 			ctx, socketName, workspace.SessionName, protectedNames,
+			os.Getenv("TMUX_TMPDIR"),
 		)
 		switch state {
 		case tmux.ProtectedSessionAbsent:

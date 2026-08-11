@@ -22,8 +22,45 @@ func ProbeProtectedSession(
 	socketName string,
 	expectedSession string,
 	protectedNames []string,
+	legacyTempDir string,
 ) (ProtectedSessionState, error) {
-	command := newProtectedSessionProbeCommand(socketName, protectedNames)
+	_, state, err := ResolveProtectedSessionCommand(
+		ctx, socketName, expectedSession, protectedNames, legacyTempDir,
+	)
+	return state, err
+}
+
+// ResolveProtectedSessionCommand locates an existing protected session at the
+// canonical socket first, then at the explicit TMUX_TMPDIR used by released
+// kwt versions. New sessions always use the returned canonical command when
+// neither endpoint exists.
+func ResolveProtectedSessionCommand(
+	ctx context.Context,
+	socketName string,
+	expectedSession string,
+	protectedNames []string,
+	legacyTempDir string,
+) (*TmuxCommand, ProtectedSessionState, error) {
+	canonical := newProtectedSessionProbeCommand(socketName, protectedNames)
+	state, err := probeProtectedSessionCommand(ctx, canonical, expectedSession)
+	if state != ProtectedSessionAbsent || err != nil || legacyTempDir == "" {
+		return canonical, state, err
+	}
+	legacy := NewTmuxCommandForSocketInTempDirWithStripNames(
+		"", socketName, legacyTempDir, protectedNames,
+	)
+	state, err = probeProtectedSessionCommand(ctx, legacy, expectedSession)
+	if state == ProtectedSessionAbsent && err == nil {
+		return canonical, state, nil
+	}
+	return legacy, state, err
+}
+
+func probeProtectedSessionCommand(
+	ctx context.Context,
+	command *TmuxCommand,
+	expectedSession string,
+) (ProtectedSessionState, error) {
 	output, stderr, err := command.runCommandOutputContextWithStderr(
 		ctx,
 		"list-sessions",
