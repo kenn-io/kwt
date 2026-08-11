@@ -225,7 +225,7 @@ func (c *Client) reconcileProjectRemoval(
 	if err != nil {
 		return kwt.ProjectRemovalResult{}, false, err
 	}
-	matches := make([]models.Project, 0, 1)
+	matches := make([]kwt.Project, 0, 1)
 	for _, project := range result.Snapshot.Projects {
 		if project.Path == request.Path {
 			matches = append(matches, project)

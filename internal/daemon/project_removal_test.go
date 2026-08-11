@@ -107,7 +107,7 @@ func TestProjectRemovalClientReconcilesLostSuccessfulResponse(t *testing.T) {
 }
 
 func TestProjectRemovalClientPreservesLostResponseWhenRegistrationRemains(t *testing.T) {
-	client, closeServer := lostProjectRemovalClient(t, []models.Project{{
+	client, closeServer := lostProjectRemovalClient(t, []kwt.Project{{
 		Path: "/repo ", Repository: "github.com/acme/widget",
 	}}, false)
 	defer closeServer()
@@ -122,7 +122,7 @@ func TestProjectRemovalClientPreservesLostResponseWhenRegistrationRemains(t *tes
 }
 
 func TestProjectRemovalClientReconcilesEquivalentRepositoryCase(t *testing.T) {
-	client, closeServer := lostProjectRemovalClient(t, []models.Project{{
+	client, closeServer := lostProjectRemovalClient(t, []kwt.Project{{
 		Path: "/repo ", Repository: "github.com/Acme/Widget",
 	}}, false)
 	defer closeServer()
@@ -137,7 +137,7 @@ func TestProjectRemovalClientReconcilesEquivalentRepositoryCase(t *testing.T) {
 }
 
 func TestProjectRemovalClientDistinguishesLocalIdentityTrailingWhitespace(t *testing.T) {
-	client, closeServer := lostProjectRemovalClient(t, []models.Project{{
+	client, closeServer := lostProjectRemovalClient(t, []kwt.Project{{
 		Path: "/repo ", Repository: "local/repo",
 	}}, false)
 	defer closeServer()
@@ -151,7 +151,7 @@ func TestProjectRemovalClientDistinguishesLocalIdentityTrailingWhitespace(t *tes
 }
 
 func TestProjectRemovalClientReportsReplacementAfterLostResponse(t *testing.T) {
-	client, closeServer := lostProjectRemovalClient(t, []models.Project{{
+	client, closeServer := lostProjectRemovalClient(t, []kwt.Project{{
 		Path: "/repo ", Repository: "github.com/acme/replacement",
 	}}, false)
 	defer closeServer()
@@ -179,7 +179,7 @@ func TestProjectRemovalClientMarksUnreconciledResponseLossForRefresh(t *testing.
 
 func lostProjectRemovalClient(
 	t *testing.T,
-	projects []models.Project,
+	projects []kwt.Project,
 	failInventory bool,
 ) (*Client, func()) {
 	t.Helper()

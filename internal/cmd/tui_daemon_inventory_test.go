@@ -113,8 +113,13 @@ func TestTUIBackendDaemonInventoryUsesCacheThenCurrent(t *testing.T) {
 		return kwt.Result{
 			Freshness: freshness,
 			Snapshot: kwt.Snapshot{
-				Config:   effective,
-				Projects: []models.Project{project},
+				Config: effective,
+				Projects: []kwt.Project{{
+					Repository:  project.Repository,
+					Name:        project.Name,
+					Path:        project.Path,
+					LastTouched: project.LastTouched,
+				}},
 				Entries: []kwt.Entry{{
 					Path: path, Branch: "main", Repository: kwt.Repository{FullPath: "github.com/acme/repo", Name: "repo"},
 				}},

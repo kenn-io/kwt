@@ -14,15 +14,18 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
 
-func TestCanonicalProjectsStopsWhenContextIsCanceled(t *testing.T) {
+func TestPublishedProjectRegistrationsStopsWhenContextIsCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := CanonicalProjects(ctx, []models.Project{{Path: t.TempDir()}})
+	_, err := publishedProjectRegistrations(ctx, []config.ProjectRegistration{{
+		Persisted: models.Project{Path: t.TempDir()},
+	}})
 
 	require.ErrorIs(t, err, context.Canceled)
 }
@@ -185,6 +188,37 @@ func TestSourceProjectsRetainsInaccessibleRegistrations(t *testing.T) {
 	require.Len(t, result.Snapshot.Projects, 2)
 	assert.Equal(t, "github.com/acme/repo", result.Snapshot.Projects[0].Repository)
 	assert.Equal(t, "github.com/acme/missing", result.Snapshot.Projects[1].Repository)
+	assert.Regexp(t, `^v1:[0-9a-f]{64}$`, result.Snapshot.Projects[0].RegistrationFingerprint)
+	assert.Regexp(t, `^v1:[0-9a-f]{64}$`, result.Snapshot.Projects[1].RegistrationFingerprint)
+}
+
+func TestSourceProjectFingerprintChangesWithUnknownPersistedField(t *testing.T) {
+	home := t.TempDir()
+	configPath := filepath.Join(home, "config.toml")
+	writeConfig := func(value string) {
+		require.NoError(t, os.WriteFile(configPath, []byte(
+			"[[projects]]\nrepository = 'github.com/acme/repo'\nname = 'repo'\npath = '/missing/repo'\nfuture = '"+value+"'\n",
+		), 0o600))
+	}
+	load := func(view View) InventoryProject {
+		result, err := NewSource(SourceOptions{Home: home}).Load(context.Background(), Request{
+			View: view, Expansion: testExpansion(t), UntrustedConfig: IgnoreUntrustedConfig,
+		})
+		require.NoError(t, err)
+		require.Len(t, result.Snapshot.Projects, 1)
+		return result.Snapshot.Projects[0]
+	}
+
+	writeConfig("one")
+	projectsView := load(ViewProjects)
+	globalView := load(ViewGlobal)
+	assert.Equal(t, projectsView, globalView)
+
+	writeConfig("two")
+	changed := load(ViewProjects)
+	assert.Equal(t, projectsView.Path, changed.Path)
+	assert.Equal(t, projectsView.Repository, changed.Repository)
+	assert.NotEqual(t, projectsView.RegistrationFingerprint, changed.RegistrationFingerprint)
 }
 
 func TestSourceProjectsUsesRequestExpansionForMissingLocalRegistration(t *testing.T) {

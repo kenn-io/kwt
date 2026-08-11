@@ -15,7 +15,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	kwt "go.kenn.io/kwt"
+	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/git"
+	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
@@ -36,12 +38,25 @@ func withProjectsConfig(t *testing.T, projects []models.Project) {
 		bool,
 		io.Writer,
 	) (kwt.Result, error) {
+		published := make([]kwt.Project, 0, len(projects))
+		for _, project := range projects {
+			identity, err := lifecycle.ResolveProjectRegistrationIdentity(
+				context.Background(),
+				config.ProjectRegistration{Persisted: project, Effective: project},
+			)
+			if err != nil {
+				continue
+			}
+			published = append(published, kwt.Project{
+				Repository:              identity,
+				Name:                    project.Name,
+				Path:                    project.Path,
+				LastTouched:             project.LastTouched,
+				RegistrationFingerprint: "v1:0000000000000000000000000000000000000000000000000000000000000000",
+			})
+		}
 		return kwt.Result{Snapshot: kwt.Snapshot{
-			Projects: func() []models.Project {
-				canonical, err := kwt.CanonicalProjects(context.Background(), projects)
-				require.NoError(t, err)
-				return canonical
-			}(),
+			Projects: published,
 		}}, nil
 	}
 }

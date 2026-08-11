@@ -14,7 +14,7 @@ import (
 	"go.kenn.io/kit/safefileio"
 )
 
-const cacheVersion = 1
+const cacheVersion = 2
 
 type Cache interface {
 	Current() (Result, bool)
@@ -39,7 +39,7 @@ func NewFileCache(home string) (*FileCache, *Diagnostic, error) {
 	if err := safefileio.EnsurePrivateDir(dir); err != nil {
 		return nil, nil, fmt.Errorf("secure inventory cache directory: %w", err)
 	}
-	cache := &FileCache{path: filepath.Join(dir, "inventory-v1.json")}
+	cache := &FileCache{path: filepath.Join(dir, "inventory-v2.json")}
 	file, err := safefileio.OpenCurrentUserFile(cache.path)
 	if err != nil {
 		if os.IsNotExist(err) {

@@ -61,30 +61,29 @@ func (s *currentSource) Load(ctx context.Context, request Request) (result Resul
 		Workspaces: append([]models.Workspace(nil), snapshot.Config.Workspaces...),
 	}}
 	protectedNames := credentials.ProtectedNames(snapshot.Config)
+	result.Snapshot.Projects, err = publishedProjectRegistrations(
+		ctx, snapshot.Projects, protectedNames...,
+	)
+	if err != nil {
+		return Result{}, inventorySourceFailure("inspect registered projects", err)
+	}
 
 	switch request.View {
 	case ViewProjects:
-		result.Snapshot.Projects, err = publishedProjectRegistrations(ctx, snapshot.Projects, protectedNames...)
-		return result, inventorySourceFailure("inspect registered projects", err)
+		return result, nil
 	case ViewGlobal:
-		result.Snapshot.Projects, err = publishedProjectRegistrations(ctx, snapshot.Projects, protectedNames...)
-		if err != nil {
-			return Result{}, inventorySourceFailure("inspect registered projects", err)
-		}
 		result.Snapshot.Entries, err = s.loadGlobal(ctx, snapshot.Config)
 		if err != nil {
 			return Result{}, inventorySourceFailure("discover global worktrees", err)
 		}
 	case ViewRepository:
-		result, err = s.loadRepository(ctx, request, snapshot.Config, expansion.expandPath)
+		result, err = s.loadRepository(
+			ctx, request, expansion.expandPath, result.Snapshot.Projects,
+		)
 		if err != nil {
 			return Result{}, inventorySourceFailure("load repository inventory", err)
 		}
 	case ViewDashboard:
-		result.Snapshot.Projects, err = publishedProjectRegistrations(ctx, snapshot.Projects, protectedNames...)
-		if err != nil {
-			return Result{}, inventorySourceFailure("inspect registered projects", err)
-		}
 		result.Snapshot.Entries, result.Snapshot.LaunchEntries, err =
 			s.loadDashboard(ctx, request, snapshot.Config)
 		if err != nil {
@@ -143,8 +142,8 @@ func (s *currentSource) ApproveConfig(_ context.Context, approval ConfigApproval
 func (s *currentSource) loadRepository(
 	ctx context.Context,
 	request Request,
-	global *models.Config,
 	expandPath func(string) (string, error),
+	projects []InventoryProject,
 ) (Result, error) {
 	policy := config.RequireInteraction
 	if request.UntrustedConfig == IgnoreUntrustedConfig {
@@ -173,14 +172,6 @@ func (s *currentSource) loadRepository(
 	}
 	if request.ForceGlobal {
 		entries, loadErr := s.loadGlobal(ctx, resolved.Config)
-		projects, projectsErr := CanonicalProjects(
-			ctx,
-			resolved.Config.Projects,
-			credentials.ProtectedNames(resolved.Config)...,
-		)
-		if loadErr == nil {
-			loadErr = projectsErr
-		}
 		return Result{Snapshot: Snapshot{
 			Projects: projects, Entries: entries,
 			Workspaces: append([]models.Workspace(nil), resolved.Config.Workspaces...),
@@ -197,14 +188,6 @@ func (s *currentSource) loadRepository(
 	}
 	if !isRepository {
 		entries, loadErr := s.loadGlobal(ctx, resolved.Config)
-		projects, projectsErr := CanonicalProjects(
-			ctx,
-			resolved.Config.Projects,
-			credentials.ProtectedNames(resolved.Config)...,
-		)
-		if loadErr == nil {
-			loadErr = projectsErr
-		}
 		return Result{Snapshot: Snapshot{
 			Projects: projects, Entries: entries,
 			Workspaces: append([]models.Workspace(nil), resolved.Config.Workspaces...),
@@ -226,10 +209,6 @@ func (s *currentSource) loadRepository(
 		entries = append(entries, modelEntry(worktree, "", info))
 	}
 	if err := ctx.Err(); err != nil {
-		return Result{}, err
-	}
-	projects, err := CanonicalProjects(ctx, resolved.Config.Projects, protectedNames...)
-	if err != nil {
 		return Result{}, err
 	}
 	return Result{Snapshot: Snapshot{
@@ -426,41 +405,12 @@ func modelEntry(worktree models.Worktree, repositoryURL string, info *repository
 	return entry
 }
 
-// CanonicalProjects returns registrations with stable credential-free
-// identities using the same resolver as project publication and removal.
-func CanonicalProjects(
-	ctx context.Context,
-	projects []models.Project,
-	protectedNames ...string,
-) ([]models.Project, error) {
-	result := make([]models.Project, 0, len(projects))
-	for _, project := range projects {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if strings.TrimSpace(project.Path) == "" {
-			continue
-		}
-		registration := config.ProjectRegistration{Persisted: project, Effective: project}
-		identity, identityErr := resolveProjectIdentity(ctx, registration, protectedNames...)
-		if identityErr != nil {
-			continue
-		}
-		project.Repository = identity
-		result = append(result, project)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
 func publishedProjectRegistrations(
 	ctx context.Context,
 	registrations []config.ProjectRegistration,
 	protectedNames ...string,
-) ([]models.Project, error) {
-	result := make([]models.Project, 0, len(registrations))
+) ([]InventoryProject, error) {
+	result := make([]InventoryProject, 0, len(registrations))
 	for _, registration := range registrations {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -472,9 +422,17 @@ func publishedProjectRegistrations(
 		if err != nil {
 			continue
 		}
-		project := registration.Persisted
-		project.Repository = identity
-		result = append(result, project)
+		fingerprint, err := registration.Fingerprint()
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, InventoryProject{
+			Repository:              identity,
+			Name:                    registration.Persisted.Name,
+			Path:                    registration.Persisted.Path,
+			LastTouched:             registration.Persisted.LastTouched,
+			RegistrationFingerprint: fingerprint,
+		})
 	}
 	return result, ctx.Err()
 }

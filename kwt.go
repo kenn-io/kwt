@@ -1,12 +1,7 @@
 // Package kwt provides embeddable worktree inventory and lifecycle services.
 package kwt
 
-import (
-	"context"
-
-	"go.kenn.io/kwt/internal/lifecycle"
-	"go.kenn.io/kwt/pkg/models"
-)
+import "go.kenn.io/kwt/internal/lifecycle"
 
 type (
 	View                         = lifecycle.View
@@ -18,6 +13,7 @@ type (
 	Entry                        = lifecycle.Entry
 	Note                         = lifecycle.Note
 	Diagnostic                   = lifecycle.Diagnostic
+	Project                      = lifecycle.InventoryProject
 	Snapshot                     = lifecycle.Snapshot
 	Result                       = lifecycle.Result
 	ConfigApproval               = lifecycle.ConfigApproval
@@ -76,12 +72,4 @@ func NewRemovalService(options RemovalServiceOptions) Remover {
 
 func NewProjectRemovalService(options ProjectRemovalServiceOptions) ProjectRemover {
 	return lifecycle.NewProjectRemovalService(options)
-}
-
-func CanonicalProjects(
-	ctx context.Context,
-	projects []models.Project,
-	protectedNames ...string,
-) ([]models.Project, error) {
-	return lifecycle.CanonicalProjects(ctx, projects, protectedNames...)
 }

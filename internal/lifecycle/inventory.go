@@ -202,9 +202,20 @@ type Diagnostic struct {
 	Message string    `json:"message"`
 }
 
+// InventoryProject is the published project-registration contract. It lives
+// outside pkg/models so the observation-only concurrency token cannot be
+// serialized back into the user's configuration.
+type InventoryProject struct {
+	Repository              string `json:"repository"`
+	Name                    string `json:"name"`
+	Path                    string `json:"path"`
+	LastTouched             string `json:"last_touched"`
+	RegistrationFingerprint string `json:"registration_fingerprint"`
+}
+
 type Snapshot struct {
 	Config        *models.Config     `json:"config"`
-	Projects      []models.Project   `json:"projects"`
+	Projects      []InventoryProject `json:"projects"`
 	Entries       []Entry            `json:"entries"`
 	LaunchEntries []Entry            `json:"launch_entries,omitempty"`
 	Workspaces    []models.Workspace `json:"workspaces"`
