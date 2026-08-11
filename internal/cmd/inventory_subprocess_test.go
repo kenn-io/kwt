@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
@@ -154,14 +155,16 @@ path = "`+filepath.ToSlash(repository)+`"
 		t, binary, home, directory, "projects", "--json",
 	)
 	require.NoError(t, err, "stderr=%s", stderr)
-	var projects []models.Project
+	var projects []kwt.Project
 	require.NoError(t, json.Unmarshal(before, &projects))
 	require.Len(t, projects, 1)
 
 	removed, stderr, err := runInventoryCommand(
 		t, binary, home, directory,
 		"projects", "remove", projects[0].Path,
-		"--expected-repository", projects[0].Repository, "--json",
+		"--expected-repository", projects[0].Repository,
+		"--expected-registration", projects[0].RegistrationFingerprint,
+		"--json",
 	)
 	require.NoError(t, err, "stderr=%s", stderr)
 	var response struct {

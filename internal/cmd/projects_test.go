@@ -99,7 +99,7 @@ func TestRunProjectsJSONEmitsRegistry(t *testing.T) {
 
 	out := runProjectsForTest(t, true)
 
-	var got []models.Project
+	var got []kwt.Project
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("unmarshal JSON output: %v (out=%q)", err, out)
 	}
@@ -110,6 +110,7 @@ func TestRunProjectsJSONEmitsRegistry(t *testing.T) {
 		got[0].Path != repoPath || got[0].LastTouched != "2026-07-16T00:00:00Z" {
 		t.Errorf("unexpected project: %+v", got[0])
 	}
+	assert.Equal(t, "v1:0000000000000000000000000000000000000000000000000000000000000000", got[0].RegistrationFingerprint)
 }
 
 func TestRunProjectsRendersTable(t *testing.T) {
@@ -513,6 +514,8 @@ func TestRunProjectsRemoveJSONUnregistersByExactIdentity(t *testing.T) {
 	}
 	projectsExpectedRepository = "github.com/acme/widget"
 	t.Cleanup(func() { projectsExpectedRepository = "" })
+	projectsExpectedRegistration = "v1:1111111111111111111111111111111111111111111111111111111111111111"
+	t.Cleanup(func() { projectsExpectedRegistration = "" })
 	projectsRemoveJSON = true
 	t.Cleanup(func() { projectsRemoveJSON = false })
 	stdout := &bytes.Buffer{}
@@ -527,6 +530,7 @@ func TestRunProjectsRemoveJSONUnregistersByExactIdentity(t *testing.T) {
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &response))
 	assert.Equal(t, "/code/widget ", requested.Path)
 	assert.Equal(t, "github.com/acme/widget", requested.ExpectedRepository)
+	assert.Equal(t, projectsExpectedRegistration, requested.ExpectedRegistration)
 	assert.NotEmpty(t, requested.Expansion.HomeDirectory)
 	assert.Equal(t, "unregistered", response.Status)
 	assert.Equal(t, removed, response.Project)
@@ -545,6 +549,8 @@ func TestRunProjectsRemoveJSONNeverEmitsRegistryCredentials(t *testing.T) {
 	}
 	projectsExpectedRepository = "github.com/acme/widget"
 	t.Cleanup(func() { projectsExpectedRepository = "" })
+	projectsExpectedRegistration = "v1:1111111111111111111111111111111111111111111111111111111111111111"
+	t.Cleanup(func() { projectsExpectedRegistration = "" })
 	projectsRemoveJSON = true
 	t.Cleanup(func() { projectsRemoveJSON = false })
 	stdout := &bytes.Buffer{}
@@ -571,6 +577,8 @@ func TestRunProjectsRemoveJSONReportsMissingProject(t *testing.T) {
 	}
 	projectsExpectedRepository = "github.com/acme/widget"
 	t.Cleanup(func() { projectsExpectedRepository = "" })
+	projectsExpectedRegistration = "v1:1111111111111111111111111111111111111111111111111111111111111111"
+	t.Cleanup(func() { projectsExpectedRegistration = "" })
 	projectsRemoveJSON = true
 	t.Cleanup(func() { projectsRemoveJSON = false })
 	stdout := &bytes.Buffer{}
@@ -588,6 +596,64 @@ func TestRunProjectsRemoveJSONReportsMissingProject(t *testing.T) {
 	assert.Equal(t, service.Code("project_not_found"), response.Error.Code)
 	assert.False(t, response.Error.Retryable)
 	assert.Contains(t, stderr.String(), "project_not_found")
+}
+
+func TestRunProjectsRemoveHumanResolvesCurrentExactRegistration(t *testing.T) {
+	originalQuery := queryProjectsInventory
+	originalRemove := removeProjectThroughDaemon
+	t.Cleanup(func() {
+		queryProjectsInventory = originalQuery
+		removeProjectThroughDaemon = originalRemove
+		projectsExpectedRepository = ""
+		projectsExpectedRegistration = ""
+		projectsRemoveJSON = false
+	})
+	queryProjectsInventory = func(
+		_ context.Context,
+		request kwt.Request,
+		_ bool,
+		_ io.Writer,
+	) (kwt.Result, error) {
+		assert.True(t, request.RequireCurrent)
+		return kwt.Result{Snapshot: kwt.Snapshot{Projects: []kwt.Project{
+			{Path: "/repo", Repository: "github.com/acme/other", RegistrationFingerprint: "v1:2222222222222222222222222222222222222222222222222222222222222222"},
+			{Path: "/repo ", Repository: "github.com/acme/widget", RegistrationFingerprint: "v1:3333333333333333333333333333333333333333333333333333333333333333"},
+		}}}, nil
+	}
+	var requested kwt.ProjectRemovalRequest
+	removeProjectThroughDaemon = func(
+		_ context.Context,
+		request kwt.ProjectRemovalRequest,
+	) (kwt.ProjectRemovalResult, error) {
+		requested = request
+		return kwt.ProjectRemovalResult{Project: models.Project{
+			Path: request.Path, Repository: request.ExpectedRepository, Name: "widget",
+		}}, nil
+	}
+	stdout := &bytes.Buffer{}
+	projectsRemoveCmd.SetOut(stdout)
+
+	require.NoError(t, runProjectsRemove(projectsRemoveCmd, []string{"/repo "}))
+
+	assert.Equal(t, "/repo ", requested.Path)
+	assert.Equal(t, "github.com/acme/widget", requested.ExpectedRepository)
+	assert.Equal(t, "v1:3333333333333333333333333333333333333333333333333333333333333333", requested.ExpectedRegistration)
+	assert.Contains(t, stdout.String(), "unregistered project")
+}
+
+func TestRunProjectsRemoveRejectsPartialExpectedRegistration(t *testing.T) {
+	t.Cleanup(func() {
+		projectsExpectedRepository = ""
+		projectsExpectedRegistration = ""
+		projectsRemoveJSON = false
+	})
+	projectsExpectedRepository = "github.com/acme/widget"
+	stdout := &bytes.Buffer{}
+	projectsRemoveCmd.SetOut(stdout)
+
+	err := runProjectsRemove(projectsRemoveCmd, []string{"/repo"})
+
+	assert.True(t, service.IsCode(err, service.InvalidRequest))
 }
 
 func TestProjectsAddArgumentValidationUsesStructuredErrors(t *testing.T) {

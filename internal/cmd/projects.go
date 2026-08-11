@@ -21,14 +21,15 @@ import (
 )
 
 var (
-	projectsJSON               bool
-	projectsAddJSON            bool
-	projectsRemoveJSON         bool
-	loadProjectsConfig         = config.Load
-	registerProject            = registerProjectWithLifecycle
-	queryProjectsInventory     = queryCLIInventory
-	removeProjectThroughDaemon = removeProjectViaDaemon
-	projectsExpectedRepository string
+	projectsJSON                 bool
+	projectsAddJSON              bool
+	projectsRemoveJSON           bool
+	loadProjectsConfig           = config.Load
+	registerProject              = registerProjectWithLifecycle
+	queryProjectsInventory       = queryCLIInventory
+	removeProjectThroughDaemon   = removeProjectViaDaemon
+	projectsExpectedRepository   string
+	projectsExpectedRegistration string
 )
 
 var projectsCmd = &cobra.Command{
@@ -85,6 +86,12 @@ func init() {
 		"expected-repository",
 		"",
 		"Require the exact credential-free repository identity",
+	)
+	projectsRemoveCmd.Flags().StringVar(
+		&projectsExpectedRegistration,
+		"expected-registration",
+		"",
+		"Require the exact observed registration fingerprint",
 	)
 	projectsCmd.AddCommand(projectsAddCmd, projectsRemoveCmd)
 	projectsCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
@@ -218,12 +225,25 @@ func runProjectsAdd(cmd *cobra.Command, args []string) error {
 }
 
 func runProjectsRemove(cmd *cobra.Command, args []string) error {
-	if projectsExpectedRepository == "" {
+	expectedRepository := projectsExpectedRepository
+	expectedRegistration := projectsExpectedRegistration
+	hasRepository := expectedRepository != ""
+	hasRegistration := expectedRegistration != ""
+	if hasRepository != hasRegistration || (projectsRemoveJSON && !hasRepository) {
 		return writeProjectServiceError(cmd, service.NewError(
 			service.InvalidRequest,
-			"expected repository identity is required",
+			"expected repository identity and registration fingerprint are required together",
 			false, nil, nil,
 		))
+	}
+	if !hasRepository {
+		var err error
+		expectedRepository, expectedRegistration, err = currentProjectRemovalExpectation(
+			cmd, args[0],
+		)
+		if err != nil {
+			return writeProjectServiceError(cmd, service.AsError(err))
+		}
 	}
 	expansion, err := kwt.CaptureExpansionContext()
 	if err != nil {
@@ -234,7 +254,8 @@ func runProjectsRemove(cmd *cobra.Command, args []string) error {
 		))
 	}
 	result, err := removeProjectThroughDaemon(cmd.Context(), kwt.ProjectRemovalRequest{
-		Path: args[0], ExpectedRepository: projectsExpectedRepository, Expansion: expansion,
+		Path: args[0], ExpectedRepository: expectedRepository,
+		ExpectedRegistration: expectedRegistration, Expansion: expansion,
 	})
 	if err != nil {
 		return writeProjectServiceError(cmd, service.AsError(err))
@@ -255,6 +276,50 @@ func runProjectsRemove(cmd *cobra.Command, args []string) error {
 		project.Path,
 	)
 	return err
+}
+
+func currentProjectRemovalExpectation(
+	cmd *cobra.Command,
+	path string,
+) (string, string, error) {
+	result, err := queryProjectsInventory(
+		cmd.Context(),
+		kwt.Request{View: kwt.ViewProjects, RequireCurrent: true},
+		false,
+		cmd.ErrOrStderr(),
+	)
+	if err != nil {
+		return "", "", err
+	}
+	matches := make([]kwt.Project, 0, 1)
+	for _, project := range result.Snapshot.Projects {
+		if project.Path == path {
+			matches = append(matches, project)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", "", service.NewError(
+			service.ProjectNotFound,
+			"no project is registered at the exact path",
+			false, nil, nil,
+		)
+	case 1:
+		if matches[0].RegistrationFingerprint == "" {
+			return "", "", service.NewError(
+				service.Internal,
+				"internal failure",
+				false, nil, nil,
+			)
+		}
+		return matches[0].Repository, matches[0].RegistrationFingerprint, nil
+	default:
+		return "", "", service.NewError(
+			service.UnregistrationFailed,
+			"multiple project registrations use the exact path",
+			false, nil, nil,
+		)
+	}
 }
 
 func writeProjectServiceError(cmd *cobra.Command, typed *service.Error) error {

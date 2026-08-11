@@ -984,6 +984,11 @@ func TestProtectedAttachEstablishesSessionBeforeRemovalProbes(t *testing.T) {
 	<-established
 	expansion, err := kwt.CaptureExpansionContext()
 	require.NoError(t, err)
+	snapshot, err := config.LoadGlobalSnapshotAt(home)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Projects, 1)
+	fingerprint, err := snapshot.Projects[0].Fingerprint()
+	require.NoError(t, err)
 	remover := kwt.NewProjectRemovalService(
 		kwt.ProjectRemovalServiceOptions{Home: home},
 	)
@@ -993,7 +998,7 @@ func TestProtectedAttachEstablishesSessionBeforeRemovalProbes(t *testing.T) {
 			context.Background(),
 			kwt.ProjectRemovalRequest{
 				Path: projectPath, ExpectedRepository: project.Identity,
-				Expansion: expansion,
+				ExpectedRegistration: fingerprint, Expansion: expansion,
 			},
 		)
 		removeDone <- removeErr

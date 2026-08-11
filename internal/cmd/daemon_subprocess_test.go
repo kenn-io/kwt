@@ -15,8 +15,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kwt "go.kenn.io/kwt"
 	kwtdaemon "go.kenn.io/kwt/internal/daemon"
-	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
 
@@ -196,17 +196,20 @@ path = %q
 		home, "projects", "--json",
 	)
 	require.NoError(t, err, "stderr=%s", stderr)
-	var projects []models.Project
+	var projects []kwt.Project
 	require.NoError(t, json.Unmarshal(stdout, &projects))
 	require.Len(t, projects, 1)
 	assert.Equal(t, exactPath, projects[0].Path)
 	assert.Equal(t, "github.com/acme/widget", projects[0].Repository)
 	identity := projects[0].Repository
+	fingerprint := projects[0].RegistrationFingerprint
+	assert.NotEmpty(t, fingerprint)
 
 	stdout, _, err = run(
 		home,
 		"projects", "remove", strings.TrimSuffix(exactPath, " "),
-		"--expected-repository", identity, "--json",
+		"--expected-repository", identity,
+		"--expected-registration", fingerprint, "--json",
 	)
 	require.Error(t, err)
 	var missing jsonErrorEnvelope
@@ -216,7 +219,8 @@ path = %q
 	stdout, _, err = run(
 		home,
 		"projects", "remove", exactPath,
-		"--expected-repository", "github.com/acme/other", "--json",
+		"--expected-repository", "github.com/acme/other",
+		"--expected-registration", fingerprint, "--json",
 	)
 	require.Error(t, err)
 	var changed jsonErrorEnvelope
@@ -226,7 +230,8 @@ path = %q
 	stdout, stderr, err = run(
 		home,
 		"projects", "remove", exactPath,
-		"--expected-repository", identity, "--json",
+		"--expected-repository", identity,
+		"--expected-registration", fingerprint, "--json",
 	)
 	require.NoError(t, err, "stderr=%s", stderr)
 	var removed projectMutationResult
@@ -251,10 +256,17 @@ path = %q
 		filepath.Join(corruptHome, "pull-requests.json"), []byte("{"), 0o600,
 	))
 	registerDaemonCleanup(t, binary, corruptHome)
+	stdout, stderr, err = run(corruptHome, "projects", "--json")
+	require.NoError(t, err, "stderr=%s", stderr)
+	var corruptProjects []kwt.Project
+	require.NoError(t, json.Unmarshal(stdout, &corruptProjects))
+	require.Len(t, corruptProjects, 1)
 	stdout, _, err = run(
 		corruptHome,
 		"projects", "remove", corruptPath,
-		"--expected-repository", "github.com/acme/corrupt", "--json",
+		"--expected-repository", "github.com/acme/corrupt",
+		"--expected-registration", corruptProjects[0].RegistrationFingerprint,
+		"--json",
 	)
 	require.Error(t, err)
 	var incomplete jsonErrorEnvelope
