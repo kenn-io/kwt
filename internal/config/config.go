@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -763,7 +762,7 @@ func (p ProjectRegistration) SamePersistedEntry(other ProjectRegistration) bool 
 	if p.raw == nil && other.raw == nil {
 		return p.Persisted == other.Persisted
 	}
-	return reflect.DeepEqual(p.raw, other.raw)
+	return sameProjectRegistrationRaw(p.raw, other.raw)
 }
 
 // GlobalSnapshot is a fresh global-only configuration view. Projects are
@@ -888,7 +887,7 @@ func compareAndSwapProjectAt(
 			match := -1
 			matches := 0
 			for index := range projects {
-				if reflect.DeepEqual(projects[index], expected.raw) {
+				if sameProjectRegistrationRaw(projects[index], expected.raw) {
 					match = index
 					matches++
 				}

@@ -62,6 +62,71 @@ func ValidProjectRegistrationFingerprint(value string) bool {
 	return true
 }
 
+// sameProjectRegistrationRaw compares decoded project entries using the same
+// floating-point identity that the fingerprint encoder publishes. TOML NaN
+// values are unchanged when their IEEE representation is unchanged, even
+// though reflect.DeepEqual considers every NaN unequal to itself.
+func sameProjectRegistrationRaw(left, right map[string]any) bool {
+	return sameProjectRegistrationValue(
+		reflect.ValueOf(left),
+		reflect.ValueOf(right),
+	)
+}
+
+func sameProjectRegistrationValue(left, right reflect.Value) bool {
+	if !left.IsValid() || !right.IsValid() {
+		return left.IsValid() == right.IsValid()
+	}
+	if left.Type() != right.Type() {
+		return false
+	}
+
+	switch left.Kind() {
+	case reflect.Interface:
+		if left.IsNil() || right.IsNil() {
+			return left.IsNil() == right.IsNil()
+		}
+		return sameProjectRegistrationValue(left.Elem(), right.Elem())
+	case reflect.Float32:
+		return math.Float32bits(float32(left.Float())) ==
+			math.Float32bits(float32(right.Float()))
+	case reflect.Float64:
+		return math.Float64bits(left.Float()) == math.Float64bits(right.Float())
+	case reflect.Array:
+		for index := range left.Len() {
+			if !sameProjectRegistrationValue(left.Index(index), right.Index(index)) {
+				return false
+			}
+		}
+		return true
+	case reflect.Slice:
+		if left.IsNil() != right.IsNil() || left.Len() != right.Len() {
+			return false
+		}
+		for index := range left.Len() {
+			if !sameProjectRegistrationValue(left.Index(index), right.Index(index)) {
+				return false
+			}
+		}
+		return true
+	case reflect.Map:
+		if left.IsNil() != right.IsNil() || left.Len() != right.Len() {
+			return false
+		}
+		for _, key := range left.MapKeys() {
+			leftValue := left.MapIndex(key)
+			rightValue := right.MapIndex(key)
+			if !rightValue.IsValid() ||
+				!sameProjectRegistrationValue(leftValue, rightValue) {
+				return false
+			}
+		}
+		return true
+	default:
+		return reflect.DeepEqual(left.Interface(), right.Interface())
+	}
+}
+
 type projectFingerprintEncoder struct {
 	bytes.Buffer
 }

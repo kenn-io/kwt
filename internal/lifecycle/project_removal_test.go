@@ -161,6 +161,22 @@ func TestProjectRemovalMissingCheckoutWithoutProtectedSessionSucceeds(t *testing
 	assert.Empty(t, remaining.Projects)
 }
 
+func TestProjectRemovalWithNaNRegistrationSucceeds(t *testing.T) {
+	fixture := newProjectRemovalFixture(t, filepath.Join(t.TempDir(), "repo"), "github.com/acme/widget")
+	require.NoError(t, os.WriteFile(filepath.Join(fixture.home, "config.toml"), []byte(
+		"[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'widget'\npath = '"+
+			fixture.path+"'\nfuture_weight = nan\n",
+	), 0o600))
+
+	result, err := fixture.service.RemoveProject(context.Background(), fixture.request())
+
+	require.NoError(t, err)
+	assert.Equal(t, fixture.path, result.Project.Path)
+	remaining, err := configSnapshot(fixture.home, fixture.expansion)
+	require.NoError(t, err)
+	assert.Empty(t, remaining.Projects)
+}
+
 func TestProjectRemovalRequiresExactPathAndRepository(t *testing.T) {
 	fixture := newProjectRemovalFixture(t, "/repo ", "github.com/acme/widget")
 	request := fixture.request()
