@@ -150,6 +150,26 @@ func registerDaemonCleanup(t *testing.T, binary, home string) {
 	})
 }
 
+func TestProjectsRemoveMissingExpectedRepositoryReturnsJSON(t *testing.T) {
+	binary := buildDaemonTestBinary(t, daemonTestBuild{
+		Name: "kwt-project-remove-validation", Version: "v1.5.0",
+		Revision: strings.Repeat("e", 40),
+	})
+	home := newDaemonTestHome(t, validDaemonConfig)
+
+	stdout, stderr, err := runDaemonCommand(
+		t, binary, home,
+		"projects", "remove", filepath.Join(t.TempDir(), "missing"), "--json",
+	)
+
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr, "stderr=%s", stderr)
+	assert.Equal(t, 2, exitErr.ExitCode())
+	var envelope jsonErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout, &envelope))
+	assert.Equal(t, service.InvalidRequest, envelope.Error.Code)
+}
+
 func TestDaemonSubprocessGuardedProjectRemoval(t *testing.T) {
 	binary := buildDaemonTestBinary(t, daemonTestBuild{
 		Name: "kwt-guarded-project", Version: "v1.5.0",

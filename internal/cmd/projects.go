@@ -86,9 +86,6 @@ func init() {
 		"",
 		"Require the exact credential-free repository identity",
 	)
-	if err := projectsRemoveCmd.MarkFlagRequired("expected-repository"); err != nil {
-		panic(err)
-	}
 	projectsCmd.AddCommand(projectsAddCmd, projectsRemoveCmd)
 	projectsCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		return writeProjectCommandError(cmd, "invalid_repository", err.Error(), 2)
@@ -221,6 +218,13 @@ func runProjectsAdd(cmd *cobra.Command, args []string) error {
 }
 
 func runProjectsRemove(cmd *cobra.Command, args []string) error {
+	if projectsExpectedRepository == "" {
+		return writeProjectServiceError(cmd, service.NewError(
+			service.InvalidRequest,
+			"expected repository identity is required",
+			false, nil, nil,
+		))
+	}
 	expansion, err := kwt.CaptureExpansionContext()
 	if err != nil {
 		return writeProjectServiceError(cmd, service.NewError(
