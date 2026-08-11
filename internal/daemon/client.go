@@ -174,6 +174,23 @@ func (c *Client) RemoveWorktree(
 	return result, err
 }
 
+func (c *Client) RemoveProject(
+	ctx context.Context,
+	request kwt.ProjectRemovalRequest,
+) (kwt.ProjectRemovalResult, error) {
+	var result kwt.ProjectRemovalResult
+	err := c.doWith(
+		ctx,
+		c.mutationHTTP,
+		controlResponseLimit,
+		http.MethodPost,
+		"/api/v1/projects/remove",
+		request,
+		&result,
+	)
+	return result, err
+}
+
 func (c *Client) reconcileRemoval(request kwt.RemovalRequest) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), removalReconcileTimeout)
 	defer cancel()
@@ -421,6 +438,11 @@ func problemCode(code service.Code) (service.Code, bool) {
 		service.InventoryTimeout,
 		service.InventoryFailed,
 		service.RemovalFailed,
+		service.ProjectNotFound,
+		service.RegistrationChanged,
+		service.UnregistrationFailed,
+		service.ProtectedSessionLive,
+		service.ProtectedEndpointInventoryIncomplete,
 		service.Internal:
 		return code, true
 	default:

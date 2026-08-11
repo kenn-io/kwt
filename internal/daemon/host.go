@@ -36,6 +36,7 @@ type ServeOptions struct {
 	Stderr            io.Writer
 	Inventory         kwt.Inventory
 	Remover           kwt.Remover
+	ProjectRemover    kwt.ProjectRemover
 }
 
 type hostStatus struct {
@@ -163,6 +164,7 @@ func runHost(
 	gate := NewGate(startedAt)
 	inventory := opts.Inventory
 	remover := opts.Remover
+	projectRemover := opts.ProjectRemover
 	var cacheDiagnostic *kwt.Diagnostic
 	if inventory == nil {
 		cache, diagnostic, cacheErr := kwt.NewFileCache(opts.Home)
@@ -187,6 +189,11 @@ func runHost(
 			Home: opts.Home,
 		})
 	}
+	if projectRemover == nil {
+		projectRemover = kwt.NewProjectRemovalService(kwt.ProjectRemovalServiceOptions{
+			Home: opts.Home,
+		})
+	}
 	status := &hostStatus{
 		base: Status{
 			Service:       ServiceName,
@@ -202,6 +209,7 @@ func runHost(
 			Capabilities: []string{
 				CapabilityShutdown,
 				CapabilityStatus,
+				CapabilityProjectRemoval,
 				CapabilityInventory,
 				CapabilityRemoval,
 			},
@@ -227,16 +235,17 @@ func runHost(
 		configuredFleetTokenEnvironment(opts.Home),
 	)
 	handler := NewServer(ServerOptions{
-		Token:        token,
-		ExpectedHost: ep.Address,
-		Status:       status,
-		Shutdown:     shutdown,
-		Ping:         ping,
-		Touch:        gate.Touch,
-		Now:          opts.Now,
-		Inventory:    inventory,
-		Remover:      remover,
-		Gate:         gate,
+		Token:          token,
+		ExpectedHost:   ep.Address,
+		Status:         status,
+		Shutdown:       shutdown,
+		Ping:           ping,
+		Touch:          gate.Touch,
+		Now:            opts.Now,
+		Inventory:      inventory,
+		Remover:        remover,
+		ProjectRemover: projectRemover,
+		Gate:           gate,
 		ReportError: func(
 			route string,
 			failure *service.Error,

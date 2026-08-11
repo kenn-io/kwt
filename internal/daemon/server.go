@@ -21,18 +21,19 @@ type StatusProvider interface {
 type ShutdownFunc func(context.Context, ShutdownRequest) (Status, error)
 
 type ServerOptions struct {
-	Token        string
-	ExpectedHost string
-	Status       StatusProvider
-	Shutdown     ShutdownFunc
-	Ping         http.Handler
-	Touch        func(time.Time)
-	Now          func() time.Time
-	MaxBodyBytes int64
-	Inventory    kwt.Inventory
-	Remover      kwt.Remover
-	Gate         *Gate
-	ReportError  func(string, *service.Error, kwt.ExpansionContext)
+	Token          string
+	ExpectedHost   string
+	Status         StatusProvider
+	Shutdown       ShutdownFunc
+	Ping           http.Handler
+	Touch          func(time.Time)
+	Now            func() time.Time
+	MaxBodyBytes   int64
+	Inventory      kwt.Inventory
+	Remover        kwt.Remover
+	ProjectRemover kwt.ProjectRemover
+	Gate           *Gate
+	ReportError    func(string, *service.Error, kwt.ExpansionContext)
 }
 
 type emptyInput struct{}
@@ -49,6 +50,8 @@ type configApprovalOutput struct {
 }
 type removalInput struct{ Body kwt.RemovalRequest }
 type removalOutput struct{ Body kwt.RemovalResult }
+type projectRemovalInput struct{ Body kwt.ProjectRemovalRequest }
+type projectRemovalOutput struct{ Body kwt.ProjectRemovalResult }
 
 const defaultMaxBodyBytes = 1 << 20
 
@@ -130,6 +133,29 @@ func NewServer(opts ServerOptions) http.Handler {
 					return nil, reportProblem(opts, "/api/v1/worktrees/remove", err)
 				}
 				return &removalOutput{Body: result}, nil
+			},
+		)
+	}
+	if opts.ProjectRemover != nil {
+		huma.Register(
+			api,
+			huma.Operation{
+				Method: http.MethodPost, Path: "/api/v1/projects/remove",
+				OperationID: "project-remove",
+			},
+			func(ctx context.Context, input *projectRemovalInput) (*projectRemovalOutput, error) {
+				release, err := reserveInventoryWork(opts)
+				if err != nil {
+					return nil, reportProblem(opts, "/api/v1/projects/remove", err)
+				}
+				defer release()
+				result, err := opts.ProjectRemover.RemoveProject(ctx, input.Body)
+				if err != nil {
+					return nil, reportProblemWithExpansion(
+						opts, "/api/v1/projects/remove", err, input.Body.Expansion,
+					)
+				}
+				return &projectRemovalOutput{Body: result}, nil
 			},
 		)
 	}
@@ -287,10 +313,17 @@ func problemFromError(err error) *Problem {
 		status = http.StatusBadRequest
 	case service.PermissionDenied:
 		status = http.StatusForbidden
-	case service.NotFound:
+	case service.NotFound, service.ProjectNotFound:
 		status = http.StatusNotFound
-	case service.Conflict, service.ConnectionChanged:
+	case service.Conflict, service.ConnectionChanged,
+		service.RegistrationChanged, service.ProtectedSessionLive:
 		status = http.StatusConflict
+	case service.ProtectedEndpointInventoryIncomplete:
+		if typed.Retryable {
+			status = http.StatusServiceUnavailable
+		} else {
+			status = http.StatusConflict
+		}
 	case service.DaemonDowngradeRefused, service.DaemonBuildOrderUnknown:
 		status = http.StatusConflict
 	case service.InteractionRequired:
@@ -370,6 +403,10 @@ var allowedProblemDetailTypes = map[service.Code]map[string]problemDetailType{
 	service.RemovalFailed: {
 		"path": detailString, "branch": detailString, "worktree_removed": detailBool,
 		"branch_deleted": detailBool, "registry_unregistered": detailBool,
+	},
+	service.ProtectedSessionLive: {
+		"session_name": detailString, "socket_name": detailString,
+		"generation": detailString,
 	},
 }
 

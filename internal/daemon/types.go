@@ -7,13 +7,14 @@ import (
 )
 
 const (
-	ServiceName         = "kwt"
-	APISchemaMajor      = 1
-	APISchemaVersion    = "1.4.0"
-	CapabilityStatus    = "daemon.status"
-	CapabilityShutdown  = "daemon.shutdown"
-	CapabilityInventory = "worktree.inventory.v1"
-	CapabilityRemoval   = "worktree.removal.v1"
+	ServiceName              = "kwt"
+	APISchemaMajor           = 1
+	APISchemaVersion         = "1.5.0"
+	CapabilityStatus         = "daemon.status"
+	CapabilityShutdown       = "daemon.shutdown"
+	CapabilityProjectRemoval = "project.removal.v1"
+	CapabilityInventory      = "worktree.inventory.v1"
+	CapabilityRemoval        = "worktree.removal.v1"
 )
 
 type State string
