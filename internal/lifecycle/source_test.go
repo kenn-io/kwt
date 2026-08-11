@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -165,7 +166,7 @@ func testExpansion(t *testing.T) ExpansionContext {
 	return expansion
 }
 
-func TestSourceProjectsFiltersInaccessibleRegistrations(t *testing.T) {
+func TestSourceProjectsRetainsInaccessibleRegistrations(t *testing.T) {
 	home := t.TempDir()
 	repository := filepath.Join(t.TempDir(), "repo")
 	require.NoError(t, os.Mkdir(repository, 0o755))
@@ -181,8 +182,30 @@ func TestSourceProjectsFiltersInaccessibleRegistrations(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.Len(t, result.Snapshot.Projects, 1)
+	require.Len(t, result.Snapshot.Projects, 2)
 	assert.Equal(t, "github.com/acme/repo", result.Snapshot.Projects[0].Repository)
+	assert.Equal(t, "github.com/acme/missing", result.Snapshot.Projects[1].Repository)
+}
+
+func TestSourceProjectsUsesRequestExpansionForMissingLocalRegistration(t *testing.T) {
+	home := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
+		"[[projects]]\nname = 'local'\npath = '$PROJECT_ROOT/repo ' \n",
+	), 0o600))
+	expansion := testExpansion(t)
+	expansion.Environment["PROJECT_ROOT"] = filepath.Join(t.TempDir(), "one")
+
+	result, err := NewSource(SourceOptions{Home: home}).Load(context.Background(), Request{
+		View: ViewProjects, Expansion: expansion, UntrustedConfig: IgnoreUntrustedConfig,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Snapshot.Projects, 1)
+	assert.Equal(t, "$PROJECT_ROOT/repo ", result.Snapshot.Projects[0].Path)
+	assert.Equal(t,
+		"local/"+filepath.ToSlash(strings.TrimPrefix(filepath.Join(expansion.Environment["PROJECT_ROOT"], "repo "), string(filepath.Separator))),
+		result.Snapshot.Projects[0].Repository,
+	)
 }
 
 func TestSourceSnapshotIncludesEffectiveGlobalConfig(t *testing.T) {

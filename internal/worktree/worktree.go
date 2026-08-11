@@ -832,7 +832,20 @@ func registeredProjectIdentity(
 // entry point to the same canonical local fallback RepositoryInfoFromGit uses,
 // for callers that hold a directory path rather than a git surface.
 func RepositoryInfoFromLocalPath(repoRoot string) (*url.RepositoryInfo, error) {
-	repoRoot = strings.TrimSpace(repoRoot)
+	return repositoryInfoFromLocalPath(repoRoot, true)
+}
+
+// RepositoryInfoFromExactLocalPath derives a local identity without changing
+// the caller's path spelling. Project registry paths may legitimately end in
+// whitespace, so identity-bound registry operations use this variant.
+func RepositoryInfoFromExactLocalPath(repoRoot string) (*url.RepositoryInfo, error) {
+	return repositoryInfoFromLocalPath(repoRoot, false)
+}
+
+func repositoryInfoFromLocalPath(repoRoot string, trim bool) (*url.RepositoryInfo, error) {
+	if trim {
+		repoRoot = strings.TrimSpace(repoRoot)
+	}
 	if repoRoot == "" {
 		return nil, fmt.Errorf("empty repository path")
 	}
