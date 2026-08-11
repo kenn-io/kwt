@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/credentials"
 	gitadapter "go.kenn.io/kwt/internal/git"
+	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/internal/pullrequest"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/tmux"
@@ -266,12 +267,22 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 		if currentErr != nil {
 			return currentErr
 		}
+		if !provenanceMatchesProjectClaim(current, guard.claim) {
+			return service.NewError(
+				service.RegistrationChanged,
+				"the imported workspace changed projects before attachment",
+				true, nil, nil,
+			)
+		}
 		record = current
 		socketName, currentErr = ensurePRWorkspaceSession(
 			cmd.Context(), record.Workspace, cfg,
 		)
 		return currentErr
 	})
+	if service.IsCode(err, service.RegistrationChanged) {
+		return writePRError(cmd, err)
+	}
 	if err == nil {
 		err = attachExistingPRWorkspaceSession(
 			cmd.Context(), record.Workspace, cfg, socketName,
@@ -291,6 +302,19 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 		))
 	}
 	return nil
+}
+
+func provenanceMatchesProjectClaim(
+	record pullrequest.Provenance,
+	claim *lifecycle.ProjectClaim,
+) bool {
+	if claim == nil || utils.PathKey(record.Project.Path) !=
+		utils.PathKey(claim.Registration.Effective.Path) {
+		return false
+	}
+	return projectClaimHasExpectedIdentity(
+		claim, pullrequest.ProvenanceRepositoryIdentities(record),
+	)
 }
 
 func importedWorkspaceProvenance(

@@ -42,9 +42,10 @@ type protectedSessionProbe func(
 ) (tmux.ProtectedSessionState, error)
 
 type projectRemovalService struct {
-	home      string
-	probe     protectedSessionProbe
-	beforeCAS func()
+	home                 string
+	probe                protectedSessionProbe
+	expectedRegistration *config.ProjectRegistration
+	beforeCAS            func()
 }
 
 type protectedEndpoint struct {
@@ -59,6 +60,30 @@ func NewProjectRemovalService(options ProjectRemovalServiceOptions) ProjectRemov
 
 func newProjectRemovalService(home string, probe protectedSessionProbe) ProjectRemover {
 	return &projectRemovalService{home: home, probe: probe}
+}
+
+// RemoveProjectRegistration removes the inspected registration only while its
+// complete persisted CAS token remains current. A missing or changed entry is
+// a safe no-op for maintenance callers acting on an earlier inspection.
+func RemoveProjectRegistration(
+	ctx context.Context,
+	home string,
+	request ProjectRemovalRequest,
+	expected config.ProjectRegistration,
+) (bool, error) {
+	serviceImpl := &projectRemovalService{
+		home: home, probe: tmux.ProbeProtectedSession,
+		expectedRegistration: &expected,
+	}
+	_, err := serviceImpl.RemoveProject(ctx, request)
+	if err == nil {
+		return true, nil
+	}
+	if service.IsCode(err, service.ProjectNotFound) ||
+		service.IsCode(err, service.RegistrationChanged) {
+		return false, nil
+	}
+	return false, err
 }
 
 func (s *projectRemovalService) RemoveProject(
@@ -121,6 +146,14 @@ func (s *projectRemovalService) RemoveProject(
 			service.UnregistrationFailed,
 			"multiple project registrations use the exact path",
 			false, nil, nil,
+		)
+	}
+	if s.expectedRegistration != nil &&
+		!registration.SamePersistedEntry(*s.expectedRegistration) {
+		return result, projectRemovalError(
+			service.RegistrationChanged,
+			"the project registration changed after it was inspected",
+			true, nil, nil,
 		)
 	}
 	actualIdentity, err := resolveProjectIdentity(

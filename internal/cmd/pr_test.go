@@ -743,6 +743,85 @@ func TestRunPRAttachRejectsRemovedRegistrationBeforeEnsuringSession(t *testing.T
 	assert.Equal(t, service.RegistrationChanged, envelope.Error.Code)
 }
 
+func TestRunPRAttachRejectsProvenanceReplacementWhileWaitingForProjectFence(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("KWT_HOME", home)
+	projectA := pullrequest.Project{
+		Identity: "github.com/acme/widget-a",
+		Name:     "widget-a",
+		Path:     filepath.Join(t.TempDir(), "widget-a"),
+	}
+	projectB := pullrequest.Project{
+		Identity: "github.com/acme/widget-b",
+		Name:     "widget-b",
+		Path:     filepath.Join(t.TempDir(), "widget-b"),
+	}
+	workspace := pullrequest.Workspace{
+		Path:        filepath.Join(t.TempDir(), "reused"),
+		Branch:      "pr-41",
+		Repository:  projectA.Identity,
+		SessionName: "kwt-workspace-pr-41",
+	}
+	recordA := pullrequest.Provenance{Project: projectA, Workspace: workspace}
+	recordB := recordA
+	recordB.Project = projectB
+	recordB.Workspace.Repository = projectB.Identity
+	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
+		context.Background(),
+		func(records map[string]pullrequest.Provenance) error {
+			records["reused"] = recordA
+			return nil
+		},
+	))
+	cfg := &models.Config{Projects: []models.Project{{
+		Repository: projectA.Identity, Name: projectA.Name, Path: projectA.Path,
+	}}}
+	withPRCommandDeps(t, cfg, &fakePRService{})
+	inspectPRProjectClone = func(
+		_ context.Context,
+		got pullrequest.Provenance,
+	) (pullrequest.Project, []pullrequest.Workspace, error) {
+		return got.Project, []pullrequest.Workspace{got.Workspace}, nil
+	}
+	oldBeforeAcquire := beforeProjectGuardAcquire
+	t.Cleanup(func() { beforeProjectGuardAcquire = oldBeforeAcquire })
+	beforeProjectGuardAcquire = func() {
+		require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
+			context.Background(),
+			func(records map[string]pullrequest.Provenance) error {
+				records["reused"] = recordB
+				return nil
+			},
+		))
+	}
+	ensured := false
+	ensurePRWorkspaceSession = func(
+		context.Context,
+		pullrequest.Workspace,
+		*models.Config,
+	) (string, error) {
+		ensured = true
+		return "kwt-pr-protected", nil
+	}
+	attachExistingPRWorkspaceSession = func(
+		context.Context,
+		pullrequest.Workspace,
+		*models.Config,
+		string,
+	) error {
+		return nil
+	}
+	cmd, stdout, _ := prTestCommand()
+
+	err := runPRAttach(cmd, []string{workspace.Path})
+
+	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+	assert.False(t, ensured)
+	var envelope jsonErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	assert.Equal(t, service.RegistrationChanged, envelope.Error.Code)
+}
+
 func TestProtectedAttachReleasesFenceBeforeBlockingClient(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("KWT_HOME", home)

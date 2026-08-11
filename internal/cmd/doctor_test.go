@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -18,18 +19,6 @@ import (
 	"go.kenn.io/kwt/pkg/models"
 )
 
-type doctorProjectRemoverFunc func(
-	context.Context,
-	kwt.ProjectRemovalRequest,
-) (kwt.ProjectRemovalResult, error)
-
-func (f doctorProjectRemoverFunc) RemoveProject(
-	ctx context.Context,
-	request kwt.ProjectRemovalRequest,
-) (kwt.ProjectRemovalResult, error) {
-	return f(ctx, request)
-}
-
 func TestDoctorProjectRemovalUsesGuardedLifecycleService(t *testing.T) {
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
@@ -38,24 +27,25 @@ func TestDoctorProjectRemovalUsesGuardedLifecycleService(t *testing.T) {
 		Path: "/repo ", Repository: "github.com/acme/widget",
 	}}
 	oldResolver := resolveDoctorProjectIdentity
-	oldRemover := newDoctorProjectRemover
+	oldRemover := removeDoctorProjectRegistration
 	t.Cleanup(func() {
 		resolveDoctorProjectIdentity = oldResolver
-		newDoctorProjectRemover = oldRemover
+		removeDoctorProjectRegistration = oldRemover
 	})
 	resolveDoctorProjectIdentity = func(context.Context, config.ProjectRegistration) (string, error) {
 		return "github.com/acme/widget", nil
 	}
 	var request kwt.ProjectRemovalRequest
-	newDoctorProjectRemover = func(gotHome string) kwt.ProjectRemover {
+	removeDoctorProjectRegistration = func(
+		_ context.Context,
+		gotHome string,
+		got kwt.ProjectRemovalRequest,
+		gotExpected config.ProjectRegistration,
+	) (bool, error) {
 		assert.Equal(t, home, gotHome)
-		return doctorProjectRemoverFunc(func(
-			_ context.Context,
-			got kwt.ProjectRemovalRequest,
-		) (kwt.ProjectRemovalResult, error) {
-			request = got
-			return kwt.ProjectRemovalResult{}, nil
-		})
+		assert.True(t, gotExpected.SamePersistedEntry(expected))
+		request = got
+		return true, nil
 	}
 
 	changed, err := (doctorProjectMutator{}).RemoveProject(context.Background(), expected)
@@ -64,6 +54,35 @@ func TestDoctorProjectRemovalUsesGuardedLifecycleService(t *testing.T) {
 	assert.True(t, changed)
 	assert.Equal(t, "/repo ", request.Path)
 	assert.Equal(t, "github.com/acme/widget", request.ExpectedRepository)
+}
+
+func TestDoctorProjectRemovalPreservesChangedRegistration(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("KWT_HOME", home)
+	configPath := filepath.Join(home, "config.toml")
+	path := filepath.Join(t.TempDir(), "widget")
+	require.NoError(t, os.WriteFile(configPath, []byte(
+		"[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'before'\npath = '"+path+"'\n",
+	), 0o600))
+	snapshot, err := config.LoadGlobalSnapshotAt(home)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Projects, 1)
+	expected := snapshot.Projects[0]
+	require.NoError(t, os.WriteFile(configPath, []byte(
+		"[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'after'\npath = '"+path+"'\n",
+	), 0o600))
+
+	changed, err := (doctorProjectMutator{}).RemoveProject(
+		context.Background(), expected,
+	)
+
+	require.NoError(t, err)
+	assert.False(t, changed)
+	current, err := config.LoadGlobalSnapshotAt(home)
+	require.NoError(t, err)
+	require.Len(t, current.Projects, 1)
+	assert.Equal(t, "after", current.Projects[0].Persisted.Name)
 }
 
 func TestDoctorProjectRelocationUsesLifecycleTransition(t *testing.T) {

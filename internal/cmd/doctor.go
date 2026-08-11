@@ -67,9 +67,7 @@ var (
 			credentials.ProtectedNames(snapshot.Config)...,
 		)
 	}
-	newDoctorProjectRemover = func(home string) kwt.ProjectRemover {
-		return kwt.NewProjectRemovalService(kwt.ProjectRemovalServiceOptions{Home: home})
-	}
+	removeDoctorProjectRegistration     = lifecycle.RemoveProjectRegistration
 	transitionDoctorProjectRegistration = lifecycle.TransitionProjectRegistration
 	compareAndSwapDoctorProject         = config.CompareAndSwapProjectAt
 )
@@ -92,13 +90,14 @@ func (doctorProjectMutator) RemoveProject(
 	if err != nil {
 		return false, err
 	}
-	_, err = newDoctorProjectRemover(home).RemoveProject(
+	return removeDoctorProjectRegistration(
 		ctx,
+		home,
 		kwt.ProjectRemovalRequest{
 			Path: expected.Persisted.Path, ExpectedRepository: identity, Expansion: expansion,
 		},
+		expected,
 	)
-	return err == nil, err
 }
 
 func (doctorProjectMutator) RelocateProject(
