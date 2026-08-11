@@ -841,13 +841,23 @@ func CompareAndSwapProject(
 	expected ProjectRegistration,
 	replacement *models.Project,
 ) (bool, error) {
+	return CompareAndSwapProjectAt(getConfigDir(), expected, replacement)
+}
+
+// CompareAndSwapProjectAt performs the raw-entry project CAS in an explicit
+// kwt home. Daemon operations must not depend on process-global KWT_HOME.
+func CompareAndSwapProjectAt(
+	home string,
+	expected ProjectRegistration,
+	replacement *models.Project,
+) (bool, error) {
 	var copiedReplacement *models.Project
 	if replacement != nil {
 		copied := *replacement
 		copiedReplacement = &copied
 	}
 	var projects []map[string]any
-	configPath := filepath.Join(getConfigDir(), configName+"."+configType)
+	configPath := filepath.Join(home, configName+"."+configType)
 	changed, err := (globalConfigStore{path: configPath}).mutate(
 		func(globalViper *viper.Viper) (bool, error) {
 			var err error

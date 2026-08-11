@@ -157,6 +157,29 @@ func TestCompareAndSwapProjectUsesExactPersistedEntry(t *testing.T) {
 	}
 }
 
+func TestCompareAndSwapProjectAtUsesExplicitHome(t *testing.T) {
+	explicitHome := t.TempDir()
+	otherHome := t.TempDir()
+	t.Setenv("KWT_HOME", otherHome)
+	project := models.Project{Repository: "github.com/acme/widget", Name: "widget", Path: "/repo "}
+	writePersistedProjects(t, filepath.Join(explicitHome, "config.toml"), []models.Project{project})
+	writePersistedProjects(t, filepath.Join(otherHome, "config.toml"), []models.Project{project})
+	snapshot, err := LoadGlobalSnapshotAt(explicitHome)
+	require.NoError(t, err)
+
+	changed, err := CompareAndSwapProjectAt(explicitHome, snapshot.Projects[0], nil)
+
+	require.NoError(t, err)
+	assert.True(t, changed)
+	explicit, err := LoadGlobalSnapshotAt(explicitHome)
+	require.NoError(t, err)
+	assert.Empty(t, explicit.Projects)
+	other, err := LoadGlobalSnapshotAt(otherHome)
+	require.NoError(t, err)
+	require.Len(t, other.Projects, 1)
+	assert.Equal(t, "/repo ", other.Projects[0].Persisted.Path)
+}
+
 func TestCompareAndSwapProjectRejectsOccupiedCanonicalTarget(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("KWT_HOME", configHome)
