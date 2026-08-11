@@ -413,10 +413,13 @@ changes with worktree creation, pull-request import, and protected-session
 establishment.
 
 `--json` emits an array of the registered project repositories (`{repository,
-name, path, last_touched}`), so external automation can discover main-repo
-paths that live outside the configured worktree base directory without
-parsing the config file. `repository` uses the same `host/owner/name` slug as
-`kwt list --json`'s `repository` field, so the two surfaces can be joined.
+name, path, last_touched, registration_fingerprint}`), so external automation
+can discover main-repo paths that live outside the configured worktree base
+directory without parsing the config file. `repository` uses the same
+`host/owner/name` slug as `kwt list --json`'s `repository` field, so the two
+surfaces can be joined. `registration_fingerprint` is an opaque observation
+token for the complete persisted entry; callers must not parse or synthesize
+it.
 
 Entries whose configured paths are missing, inaccessible, or no longer Git
 repositories remain visible. Their `path` is the exact persisted value and
@@ -432,15 +435,23 @@ registration, and repeating the command updates the existing entry rather than
 adding a duplicate. Registration changes serialize with protected project
 operations across both the old and new repository identities.
 
-`kwt projects remove <exact-registered-path> --expected-repository <identity>`
-unregisters exactly one project. Supply the path and credential-free identity
-returned by `kwt projects --json`; paths are matched byte-for-byte, including
-trailing whitespace. Canonical stored identities are authoritative; legacy
-registrations use an authoritative live Git identity when available and an
-exact-path local identity otherwise. The checkout may no longer exist. The
-daemon verifies the project's durable protected endpoints, including connected
-repository-transfer aliases, under the shared project fence before performing
-a final registry compare-and-swap. A live protected tmux session or incomplete
+Machine callers use `kwt projects remove <exact-registered-path>
+--expected-repository <identity> --expected-registration <fingerprint> --json`
+to unregister exactly one observed project. Supply all three values from the
+same current `kwt projects --json` entry; paths are matched byte-for-byte,
+including trailing whitespace. A human invocation without `--json` may omit
+both expected flags, in which case kwt performs one current exact-path lookup
+before submitting the removal. Supplying only one flag is invalid. Kwt never
+automatically refreshes and retries a `registration_changed` response.
+
+Canonical stored identities are authoritative; legacy registrations use an
+authoritative live Git identity when available and an exact-path local identity
+otherwise. The checkout may no longer exist. The daemon validates the opaque
+fingerprint before resolving identity, then verifies the project's durable
+protected endpoints, including connected repository-transfer aliases, under
+the shared project fence before performing a final raw registry
+compare-and-swap. Any persisted-field change, including `last_touched`,
+invalidates the fingerprint. A live protected tmux session or incomplete
 endpoint authority fails closed. Ordinary/default-server tmux sessions do not
 block removal and are never killed.
 

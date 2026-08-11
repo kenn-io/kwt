@@ -83,13 +83,18 @@ A remote client reaches inventory by invoking the remote machine's kwt CLI over
 its existing shell boundary; the loopback daemon itself is not remotely
 reachable.
 
-Guarded project unregistration treats the exact persisted path and its
-credential-free repository identity as one compare-and-swap authority. An
-identity-keyed, owner-private project fence serializes removal with operations
-that can create worktrees, provenance, or protected sessions. Pull-request
-provenance is owner-private durable authority: kwt writes it before establishing
-a protected session and rolls an import back if that write fails. Manual
-deletion of this owner-private state is outside the supported integrity model.
+Guarded project unregistration requires the exact persisted path, its
+credential-free repository identity, and an opaque fingerprint of the complete
+decoded registry entry the client observed. The daemon derives and compares
+that token from its own fresh snapshot before identity resolution or endpoint
+inspection; it never treats the client token as a description of trusted state.
+The raw registration comparison and final compare-and-swap remain mutation
+authority. An identity-keyed, owner-private project fence serializes removal
+with operations that can create worktrees, provenance, or protected sessions.
+Pull-request provenance is owner-private durable authority: kwt writes it
+before establishing a protected session and rolls an import back if that write
+fails. Manual deletion of this owner-private state is outside the supported
+integrity model.
 
 The daemon derives protected socket names from durable session and worktree
 identity and probes each endpoint without collapsing operational failures into

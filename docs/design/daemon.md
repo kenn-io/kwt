@@ -45,12 +45,12 @@ immediately, then continues reporting observed drain state while it waits.
 Active work and leases may finish until `daemon.replacement_grace`; the default
 is five minutes.
 
-The API schema is `1.5.0`. It exposes authenticated status, graceful shutdown,
+The API schema is `1.6.0`. It exposes authenticated status, graceful shutdown,
 worktree inventory, guarded project unregistration, and repository-config
 approval under `/api/v1`, proof-capable liveness at `/api/ping`, and
 credential-free OpenAPI at `/openapi.json`. Inventory clients require the
 `worktree.inventory.v1` capability; guarded unregistration requires
-`project.removal.v1`. An operation never has simultaneous direct and HTTP
+`project.removal.v2`. An operation never has simultaneous direct and HTTP
 execution paths.
 
 Service failures cross the in-process, HTTP, and machine-readable CLI
@@ -96,7 +96,7 @@ them.
 `kwt projects` and `kwt list` auto-start or reuse the daemon and require a
 current inventory result. They fail instead of falling back to cached or direct
 filesystem data. The TUI may paint immediately from the derived last-known-good
-cache at `<kwt-home>/cache/inventory-v1.json`, then requests one current
+cache at `<kwt-home>/cache/inventory-v2.json`, then requests one current
 snapshot. Failure to initialize or publish the disposable cache is diagnostic;
 current inventory remains available without it. The cache is never mutation
 authority. Git status and fetch remain in the foreground client so their
@@ -119,9 +119,12 @@ the file before persisting trust; rejection and noninteractive ignore are
 request-local. Noninteractive commands preserve the historical global-only
 fallback and warning.
 
-Project unregistration takes an exact persisted path and the credential-free
-repository identity from current project inventory. A home-scoped transition
-lock hands the exact raw registration from registry writers to its
+Project unregistration takes an exact persisted path, the credential-free
+repository identity, and the opaque registration fingerprint from current
+project inventory. The fingerprint covers the complete decoded raw registry
+entry, including unknown fields and `last_touched`; it is a concurrency token,
+not authorization. A home-scoped transition lock hands the exact raw
+registration from registry writers to its
 identity-keyed project fence: the registration and identity are revalidated
 after that fence is acquired, before the transition lock is released.
 Registration changes acquire both old and new identity fences in deterministic
@@ -133,6 +136,14 @@ a fail-closed three-state tmux probe, and finally compare-and-swaps the raw
 registration. Live sessions block removal; indeterminate probes, disconnected
 same-path provenance, or incomplete authority reject it. The transaction
 mutates only project metadata and never sends a tmux kill command.
+
+The daemon compares the required fingerprint against its own freshly loaded
+exact registration before identity resolution or endpoint inspection. The
+raw-entry revalidation and final compare-and-swap remain mutation authority.
+A mismatch returns retryable `registration_changed`; clients must refresh and
+ask the user to authorize the newly observed entry rather than retrying
+automatically. If a transport response is lost, current inventory distinguishes
+a completed removal, an unchanged registration, and a same-path replacement.
 
 For remote use, including Ghosthub, the remote shell invokes the remote `kwt`
 CLI and that CLI talks only to its same-machine loopback daemon. The daemon is

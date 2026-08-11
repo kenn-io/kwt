@@ -54,7 +54,8 @@ func ValidProjectRegistrationFingerprint(value string) bool {
 		return false
 	}
 	for _, character := range value[len(projectRegistrationFingerprintPrefix):] {
-		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
+		if (character < '0' || character > '9') &&
+			(character < 'a' || character > 'f') {
 			return false
 		}
 	}

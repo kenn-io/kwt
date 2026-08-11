@@ -55,6 +55,11 @@ Notable user-facing changes to kwt, grouped by release.
 
 ### Safety
 
+- Bind project unregistration to the exact registry entry observed through
+  `kwt projects --json`. Machine callers now send its opaque registration
+  fingerprint alongside the exact path and credential-free repository
+  identity; same-path edits or replacements fail with `registration_changed`
+  before protected-session inspection or metadata mutation.
 - Doctor and merged pruning now fail closed when global worktree discovery
   encounters traversal, metadata access, or malformed linked `.git` file
   errors, and linked-only repositories participate in consistency inspection.
