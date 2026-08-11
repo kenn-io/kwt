@@ -59,6 +59,19 @@ func TestNewRuntimeRecordAlwaysAdvertisesRevisionTime(t *testing.T) {
 	assert.Empty(t, value)
 }
 
+func TestNewRuntimeRecordAdvertisesFirstDomainContracts(t *testing.T) {
+	record, _, err := NewRuntimeRecord(
+		t.TempDir(),
+		Build{Version: "development"},
+		kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: "127.0.0.1:1"},
+	)
+	require.NoError(t, err)
+
+	capabilities := strings.Split(record.Metadata[metadataCapabilities], ",")
+	assert.Contains(t, capabilities, "worktree.inventory.v1")
+	assert.Contains(t, capabilities, "project.removal.v1")
+}
+
 func TestParseRuntimeMetadataRevisionTimeCompatibility(t *testing.T) {
 	home := t.TempDir()
 	record := kitdaemon.NewRuntimeRecord(

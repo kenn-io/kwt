@@ -12,8 +12,8 @@ const (
 	APISchemaVersion         = "1.6.0"
 	CapabilityStatus         = "daemon.status"
 	CapabilityShutdown       = "daemon.shutdown"
-	CapabilityProjectRemoval = "project.removal.v2"
-	CapabilityInventory      = "worktree.inventory.v2"
+	CapabilityProjectRemoval = "project.removal.v1"
+	CapabilityInventory      = "worktree.inventory.v1"
 	CapabilityRemoval        = "worktree.removal.v1"
 )
 

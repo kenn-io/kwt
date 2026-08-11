@@ -68,24 +68,6 @@ func main() {
 		record.Metadata["schema_major"] = strconv.Itoa(schemaMajor)
 		record.Metadata["schema_version"] = schemaVersion
 	}
-	if *mode == "legacy_project_removal" {
-		capabilities := strings.Split(record.Metadata["capabilities"], ",")
-		for index, capability := range capabilities {
-			if capability == kwtdaemon.CapabilityProjectRemoval {
-				capabilities[index] = "project.removal.v1"
-			}
-		}
-		record.Metadata["capabilities"] = strings.Join(capabilities, ",")
-	}
-	if *mode == "legacy_inventory" {
-		capabilities := strings.Split(record.Metadata["capabilities"], ",")
-		for index, capability := range capabilities {
-			if capability == kwtdaemon.CapabilityInventory {
-				capabilities[index] = "worktree.inventory.v1"
-			}
-		}
-		record.Metadata["capabilities"] = strings.Join(capabilities, ",")
-	}
 	if _, err := kwtdaemon.RuntimeStore(*home).Write(record); err != nil {
 		log.Fatal(err)
 	}

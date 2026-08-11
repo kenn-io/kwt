@@ -32,30 +32,26 @@ func TestFileCacheRoundTripsSnapshot(t *testing.T) {
 	assert.Equal(t, want.Snapshot, got.Snapshot)
 }
 
+func TestFileCacheUsesFirstInventoryFormat(t *testing.T) {
+	home := t.TempDir()
+	cache, diagnostic, err := NewFileCache(home)
+	require.NoError(t, err)
+	assert.Nil(t, diagnostic)
+	require.NoError(t, cache.Store(Result{ObservedAt: time.Unix(7, 0).UTC()}))
+
+	_, err = os.Stat(filepath.Join(home, "cache", "inventory-v1.json"))
+	require.NoError(t, err)
+}
+
 func TestFileCacheWrongVersionIsDisposable(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, "cache")
 	require.NoError(t, os.Mkdir(dir, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "inventory-v2.json"), []byte(`{"version":99}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "inventory-v1.json"), []byte(`{"version":99}`), 0o600))
 
 	cache, diagnostic, err := NewFileCache(home)
 	require.NoError(t, err)
 	assert.NotNil(t, diagnostic)
-	_, ok := cache.Current()
-	assert.False(t, ok)
-}
-
-func TestFileCacheDoesNotAdoptLegacyInventory(t *testing.T) {
-	home := t.TempDir()
-	dir := filepath.Join(home, "cache")
-	require.NoError(t, os.Mkdir(dir, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "inventory-v1.json"), []byte(
-		`{"version":1,"snapshot":{"projects":[{"repository":"github.com/acme/repo","path":"/repo"}]}}`,
-	), 0o600))
-
-	cache, diagnostic, err := NewFileCache(home)
-	require.NoError(t, err)
-	assert.Nil(t, diagnostic)
 	_, ok := cache.Current()
 	assert.False(t, ok)
 }
