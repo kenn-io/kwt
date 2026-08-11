@@ -236,9 +236,18 @@ func (c *Client) reconcileProjectRemoval(
 			Path: request.Path, Repository: request.ExpectedRepository,
 		}}, true, nil
 	}
-	if len(matches) != 1 || !lifecycle.EqualProjectIdentity(
+	if len(matches) != 1 {
+		return kwt.ProjectRemovalResult{}, false, service.NewError(
+			service.InventoryFailed,
+			"project removal reconciliation is ambiguous",
+			true,
+			nil,
+			nil,
+		)
+	}
+	if !lifecycle.EqualProjectIdentity(
 		matches[0].Repository, request.ExpectedRepository,
-	) {
+	) || matches[0].RegistrationFingerprint != request.ExpectedRegistration {
 		return kwt.ProjectRemovalResult{}, false, service.NewError(
 			service.RegistrationChanged,
 			"the project registration changed while removal was being reconciled",

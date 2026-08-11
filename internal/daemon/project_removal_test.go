@@ -38,7 +38,8 @@ func TestProjectRemovalClientRoundTripsExactRequest(t *testing.T) {
 	defer closeServer()
 	request := kwt.ProjectRemovalRequest{
 		Path: "/repo ", ExpectedRepository: "github.com/acme/widget",
-		Expansion: kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home/user"},
+		ExpectedRegistration: "v1:1111111111111111111111111111111111111111111111111111111111111111",
+		Expansion:            kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home/user"},
 	}
 
 	result, err := client.RemoveProject(context.Background(), request)
@@ -95,7 +96,9 @@ func TestProjectRemovalClientReconcilesLostSuccessfulResponse(t *testing.T) {
 	defer server.Close()
 	client := clientForUnverifiedServer(t, server, "secret")
 	request := kwt.ProjectRemovalRequest{
-		Path: "/repo ", ExpectedRepository: "github.com/acme/widget", Expansion: expansion,
+		Path: "/repo ", ExpectedRepository: "github.com/acme/widget",
+		ExpectedRegistration: "v1:1111111111111111111111111111111111111111111111111111111111111111",
+		Expansion:            expansion,
 	}
 
 	result, err := client.RemoveProject(context.Background(), request)
@@ -109,12 +112,14 @@ func TestProjectRemovalClientReconcilesLostSuccessfulResponse(t *testing.T) {
 func TestProjectRemovalClientPreservesLostResponseWhenRegistrationRemains(t *testing.T) {
 	client, closeServer := lostProjectRemovalClient(t, []kwt.Project{{
 		Path: "/repo ", Repository: "github.com/acme/widget",
+		RegistrationFingerprint: "v1:1111111111111111111111111111111111111111111111111111111111111111",
 	}}, false)
 	defer closeServer()
 
 	_, err := client.RemoveProject(context.Background(), kwt.ProjectRemovalRequest{
 		Path: "/repo ", ExpectedRepository: "github.com/acme/widget",
-		Expansion: kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
+		ExpectedRegistration: "v1:1111111111111111111111111111111111111111111111111111111111111111",
+		Expansion:            kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
 	})
 
 	assert.True(t, service.IsCode(err, service.DaemonTransportFailed))
@@ -124,12 +129,14 @@ func TestProjectRemovalClientPreservesLostResponseWhenRegistrationRemains(t *tes
 func TestProjectRemovalClientReconcilesEquivalentRepositoryCase(t *testing.T) {
 	client, closeServer := lostProjectRemovalClient(t, []kwt.Project{{
 		Path: "/repo ", Repository: "github.com/Acme/Widget",
+		RegistrationFingerprint: "v1:1111111111111111111111111111111111111111111111111111111111111111",
 	}}, false)
 	defer closeServer()
 
 	_, err := client.RemoveProject(context.Background(), kwt.ProjectRemovalRequest{
 		Path: "/repo ", ExpectedRepository: "github.com/acme/widget",
-		Expansion: kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
+		ExpectedRegistration: "v1:1111111111111111111111111111111111111111111111111111111111111111",
+		Expansion:            kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
 	})
 
 	assert.True(t, service.IsCode(err, service.DaemonTransportFailed))
@@ -139,12 +146,14 @@ func TestProjectRemovalClientReconcilesEquivalentRepositoryCase(t *testing.T) {
 func TestProjectRemovalClientDistinguishesLocalIdentityTrailingWhitespace(t *testing.T) {
 	client, closeServer := lostProjectRemovalClient(t, []kwt.Project{{
 		Path: "/repo ", Repository: "local/repo",
+		RegistrationFingerprint: "v1:1111111111111111111111111111111111111111111111111111111111111111",
 	}}, false)
 	defer closeServer()
 
 	_, err := client.RemoveProject(context.Background(), kwt.ProjectRemovalRequest{
 		Path: "/repo ", ExpectedRepository: "local/repo ",
-		Expansion: kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
+		ExpectedRegistration: "v1:1111111111111111111111111111111111111111111111111111111111111111",
+		Expansion:            kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
 	})
 
 	assert.True(t, service.IsCode(err, service.RegistrationChanged))
@@ -153,15 +162,51 @@ func TestProjectRemovalClientDistinguishesLocalIdentityTrailingWhitespace(t *tes
 func TestProjectRemovalClientReportsReplacementAfterLostResponse(t *testing.T) {
 	client, closeServer := lostProjectRemovalClient(t, []kwt.Project{{
 		Path: "/repo ", Repository: "github.com/acme/replacement",
+		RegistrationFingerprint: "v1:2222222222222222222222222222222222222222222222222222222222222222",
 	}}, false)
 	defer closeServer()
 
 	_, err := client.RemoveProject(context.Background(), kwt.ProjectRemovalRequest{
 		Path: "/repo ", ExpectedRepository: "github.com/acme/widget",
-		Expansion: kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
+		ExpectedRegistration: "v1:1111111111111111111111111111111111111111111111111111111111111111",
+		Expansion:            kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
 	})
 
 	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+}
+
+func TestProjectRemovalClientReportsSameRepositoryReplacementAfterLostResponse(t *testing.T) {
+	client, closeServer := lostProjectRemovalClient(t, []kwt.Project{{
+		Path: "/repo ", Repository: "github.com/acme/widget",
+		RegistrationFingerprint: "v1:2222222222222222222222222222222222222222222222222222222222222222",
+	}}, false)
+	defer closeServer()
+
+	_, err := client.RemoveProject(context.Background(), kwt.ProjectRemovalRequest{
+		Path: "/repo ", ExpectedRepository: "github.com/acme/widget",
+		ExpectedRegistration: "v1:1111111111111111111111111111111111111111111111111111111111111111",
+		Expansion:            kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
+	})
+
+	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+}
+
+func TestProjectRemovalClientRequiresRefreshForAmbiguousReconciliation(t *testing.T) {
+	project := kwt.Project{
+		Path: "/repo ", Repository: "github.com/acme/widget",
+		RegistrationFingerprint: "v1:1111111111111111111111111111111111111111111111111111111111111111",
+	}
+	client, closeServer := lostProjectRemovalClient(t, []kwt.Project{project, project}, false)
+	defer closeServer()
+
+	_, err := client.RemoveProject(context.Background(), kwt.ProjectRemovalRequest{
+		Path: "/repo ", ExpectedRepository: "github.com/acme/widget",
+		ExpectedRegistration: project.RegistrationFingerprint,
+		Expansion:            kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
+	})
+
+	assert.True(t, service.IsCode(err, service.DaemonTransportFailed))
+	assert.True(t, RequiresRefresh(err))
 }
 
 func TestProjectRemovalClientMarksUnreconciledResponseLossForRefresh(t *testing.T) {
@@ -170,7 +215,8 @@ func TestProjectRemovalClientMarksUnreconciledResponseLossForRefresh(t *testing.
 
 	_, err := client.RemoveProject(context.Background(), kwt.ProjectRemovalRequest{
 		Path: "/repo ", ExpectedRepository: "github.com/acme/widget",
-		Expansion: kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
+		ExpectedRegistration: "v1:1111111111111111111111111111111111111111111111111111111111111111",
+		Expansion:            kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
 	})
 
 	assert.True(t, service.IsCode(err, service.DaemonTransportFailed))
