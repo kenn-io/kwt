@@ -17,6 +17,40 @@ import (
 var queryCLIInventory = queryInventoryForCLI
 var removeDaemonWorktree = removeWorktreeThroughDaemon
 
+func removeProjectViaDaemon(
+	ctx context.Context,
+	request kwt.ProjectRemovalRequest,
+) (kwt.ProjectRemovalResult, error) {
+	controller, err := newDaemonController()
+	if err != nil {
+		return kwt.ProjectRemovalResult{}, err
+	}
+	for {
+		observation, err := controller.Start(ctx)
+		if err != nil {
+			return kwt.ProjectRemovalResult{}, err
+		}
+		if observation.Client == nil || !slices.Contains(
+			observation.Status.Capabilities,
+			kwtdaemon.CapabilityProjectRemoval,
+		) {
+			return kwt.ProjectRemovalResult{}, service.NewError(
+				service.DaemonIncompatible,
+				"the running kwt daemon does not provide project removal",
+				false, nil, nil,
+			)
+		}
+		result, err := observation.Client.RemoveProject(ctx, request)
+		deadline, draining := inventoryDrainDeadline(err)
+		if !draining {
+			return result, err
+		}
+		if err := waitInventoryRetry(ctx, deadline); err != nil {
+			return kwt.ProjectRemovalResult{}, err
+		}
+	}
+}
+
 func daemonMutationRequiresRefresh(err error) bool {
 	return kwtdaemon.RequiresRefresh(err)
 }
