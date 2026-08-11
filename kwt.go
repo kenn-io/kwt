@@ -9,29 +9,33 @@ import (
 )
 
 type (
-	View                    = lifecycle.View
-	Freshness               = lifecycle.Freshness
-	UntrustedConfigPolicy   = lifecycle.UntrustedConfigPolicy
-	Request                 = lifecycle.Request
-	ExpansionContext        = lifecycle.ExpansionContext
-	Repository              = lifecycle.Repository
-	Entry                   = lifecycle.Entry
-	Note                    = lifecycle.Note
-	Diagnostic              = lifecycle.Diagnostic
-	Snapshot                = lifecycle.Snapshot
-	Result                  = lifecycle.Result
-	ConfigApproval          = lifecycle.ConfigApproval
-	Inventory               = lifecycle.Inventory
-	Source                  = lifecycle.Source
-	Cache                   = lifecycle.Cache
-	FileCache               = lifecycle.FileCache
-	SourceOptions           = lifecycle.SourceOptions
-	InventoryServiceOptions = lifecycle.InventoryServiceOptions
-	InventoryService        = lifecycle.InventoryService
-	RemovalRequest          = lifecycle.RemovalRequest
-	RemovalResult           = lifecycle.RemovalResult
-	Remover                 = lifecycle.Remover
-	RemovalServiceOptions   = lifecycle.RemovalServiceOptions
+	View                         = lifecycle.View
+	Freshness                    = lifecycle.Freshness
+	UntrustedConfigPolicy        = lifecycle.UntrustedConfigPolicy
+	Request                      = lifecycle.Request
+	ExpansionContext             = lifecycle.ExpansionContext
+	Repository                   = lifecycle.Repository
+	Entry                        = lifecycle.Entry
+	Note                         = lifecycle.Note
+	Diagnostic                   = lifecycle.Diagnostic
+	Snapshot                     = lifecycle.Snapshot
+	Result                       = lifecycle.Result
+	ConfigApproval               = lifecycle.ConfigApproval
+	Inventory                    = lifecycle.Inventory
+	Source                       = lifecycle.Source
+	Cache                        = lifecycle.Cache
+	FileCache                    = lifecycle.FileCache
+	SourceOptions                = lifecycle.SourceOptions
+	InventoryServiceOptions      = lifecycle.InventoryServiceOptions
+	InventoryService             = lifecycle.InventoryService
+	RemovalRequest               = lifecycle.RemovalRequest
+	RemovalResult                = lifecycle.RemovalResult
+	Remover                      = lifecycle.Remover
+	RemovalServiceOptions        = lifecycle.RemovalServiceOptions
+	ProjectRemovalRequest        = lifecycle.ProjectRemovalRequest
+	ProjectRemovalResult         = lifecycle.ProjectRemovalResult
+	ProjectRemover               = lifecycle.ProjectRemover
+	ProjectRemovalServiceOptions = lifecycle.ProjectRemovalServiceOptions
 )
 
 const (
@@ -68,6 +72,10 @@ func NewInventoryService(options InventoryServiceOptions) *InventoryService {
 
 func NewRemovalService(options RemovalServiceOptions) Remover {
 	return lifecycle.NewRemovalService(options)
+}
+
+func NewProjectRemovalService(options ProjectRemovalServiceOptions) ProjectRemover {
+	return lifecycle.NewProjectRemovalService(options)
 }
 
 func CanonicalProjects(
