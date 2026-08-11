@@ -67,26 +67,26 @@ deadline.
 
 The daemon and inventory paths currently emit these stable codes:
 
-| Code                         | Meaning                                                           |
-| ---------------------------- | ----------------------------------------------------------------- |
-| `invalid_request`            | The request is structurally invalid.                              |
-| `daemon_start_failed`        | The daemon could not launch or become ready.                      |
-| `daemon_unresponsive`        | A verified owner exists but cannot safely be reused or replaced.  |
-| `daemon_incompatible`        | The owner lacks the required API major or capability.             |
-| `daemon_downgrade_refused`   | An older client attempted replacement.                            |
-| `daemon_build_order_unknown` | Replacement order cannot be proved.                               |
-| `daemon_draining`            | The owner is draining; retry according to its deadline.           |
-| `daemon_transport_failed`    | The verified daemon exchange failed or was not understood.        |
-| `inventory_timeout`          | A current inventory refresh exceeded its bound.                   |
-| `inventory_failed`           | Inventory discovery failed for another known source cause.        |
-| `removal_failed`             | A known worktree removal failure retained safe actionable detail. |
-| `project_not_found`          | No exact persisted project path matched the request.              |
-| `registration_changed`       | Project identity or registry state changed; retry from inventory. |
-| `unregistration_failed`      | Project metadata could not be removed safely.                     |
-| `protected_session_live`     | A live protected tmux endpoint still belongs to the project.      |
-| `protected_endpoint_inventory_incomplete` | Durable endpoint authority could not be verified.     |
-| `interaction_required`       | Repository configuration needs digest-bound approval.             |
-| `internal`                   | An unexpected failure was withheld from the public response.      |
+| Code                                      | Meaning                                                           |
+| ----------------------------------------- | ----------------------------------------------------------------- |
+| `invalid_request`                         | The request is structurally invalid.                              |
+| `daemon_start_failed`                     | The daemon could not launch or become ready.                      |
+| `daemon_unresponsive`                     | A verified owner exists but cannot safely be reused or replaced.  |
+| `daemon_incompatible`                     | The owner lacks the required API major or capability.             |
+| `daemon_downgrade_refused`                | An older client attempted replacement.                            |
+| `daemon_build_order_unknown`              | Replacement order cannot be proved.                               |
+| `daemon_draining`                         | The owner is draining; retry according to its deadline.           |
+| `daemon_transport_failed`                 | The verified daemon exchange failed or was not understood.        |
+| `inventory_timeout`                       | A current inventory refresh exceeded its bound.                   |
+| `inventory_failed`                        | Inventory discovery failed for another known source cause.        |
+| `removal_failed`                          | A known worktree removal failure retained safe actionable detail. |
+| `project_not_found`                       | No exact persisted project path matched the request.              |
+| `registration_changed`                    | Project identity or registry state changed; retry from inventory. |
+| `unregistration_failed`                   | Project metadata could not be removed safely.                     |
+| `protected_session_live`                  | A live protected tmux endpoint still belongs to the project.      |
+| `protected_endpoint_inventory_incomplete` | Durable endpoint authority could not be verified.                 |
+| `interaction_required`                    | Repository configuration needs digest-bound approval.             |
+| `internal`                                | An unexpected failure was withheld from the public response.      |
 
 `operation_id_conflict`, `operation_capacity_exhausted`,
 `operation_journal_unavailable`, and `operation_outcome_unknown` are reserved
