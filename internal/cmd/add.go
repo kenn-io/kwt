@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	kwt "go.kenn.io/kwt"
+	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/duration"
 	"go.kenn.io/kwt/internal/git"
@@ -103,6 +105,10 @@ func init() {
 }
 
 func runAdd(cmd *cobra.Command, args []string) error {
+	commandContext := cmd.Context()
+	if commandContext == nil {
+		commandContext = context.Background()
+	}
 	return ExecuteWithArgs(true, func(ctx *CommandContext, cmd *cobra.Command, args []string) error {
 		var branch string
 		var path string
@@ -207,68 +213,96 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return err
 			}
-			if addExpires != "" {
-				worktreePath, worktreeGeneration, err =
-					ctx.WorktreeManager.AddTrackingWithGeneration(
-						branch,
-						remoteSource,
-						path,
-					)
-			} else {
-				worktreePath, err = ctx.WorktreeManager.AddTracking(
-					branch,
-					remoteSource,
-					path,
-				)
-			}
-		} else {
-			if addExpires != "" {
-				worktreePath, worktreeGeneration, err =
-					ctx.WorktreeManager.AddWithGeneration(
-						branch,
-						path,
-						addBranch,
-						worktree.AddOptions{},
-					)
-			} else {
-				worktreePath, err = ctx.WorktreeManager.Add(
-					branch,
-					path,
-					addBranch,
-				)
-			}
 		}
+		mainPath, err := ctx.Git.GetMainRepositoryPath()
+		if err != nil {
+			return fmt.Errorf("identify main repository: %w", err)
+		}
+		home, err := config.CanonicalHome()
+		if err != nil {
+			return err
+		}
+		expansion, err := kwt.CaptureExpansionContext()
+		if err != nil {
+			return err
+		}
+		guard, err := observeGuardedProjectOperation(
+			commandContext, home, mainPath, expansion,
+		)
 		if err != nil {
 			return err
 		}
 
 		var expiresAt *time.Time
-		if addExpires != "" {
-			reg, err := registry.New()
-			if err != nil {
-				return fmt.Errorf("failed to open registry: %w", err)
+		err = guard.run(commandContext, func() error {
+			var mutationErr error
+			if remoteSource != "" {
+				if addExpires != "" {
+					worktreePath, worktreeGeneration, mutationErr =
+						ctx.WorktreeManager.AddTrackingWithGeneration(
+							branch,
+							remoteSource,
+							path,
+						)
+				} else {
+					worktreePath, mutationErr = ctx.WorktreeManager.AddTracking(
+						branch,
+						remoteSource,
+						path,
+					)
+				}
+			} else {
+				if addExpires != "" {
+					worktreePath, worktreeGeneration, mutationErr =
+						ctx.WorktreeManager.AddWithGeneration(
+							branch,
+							path,
+							addBranch,
+							worktree.AddOptions{},
+						)
+				} else {
+					worktreePath, mutationErr = ctx.WorktreeManager.Add(
+						branch,
+						path,
+						addBranch,
+					)
+				}
+			}
+			if mutationErr != nil {
+				return mutationErr
 			}
 
-			t := time.Now().Add(expiresDuration)
-			expiresAt = &t
+			if addExpires != "" {
+				reg, registryErr := registry.New()
+				if registryErr != nil {
+					return fmt.Errorf("failed to open registry: %w", registryErr)
+				}
 
-			if err := registerWorktreeExpiration(
-				ctx.Git,
-				reg,
-				worktreePath,
-				worktreeGeneration,
-				branch,
-				expiresAt,
-			); err != nil {
-				return fmt.Errorf("failed to register worktree: %w", err)
+				t := time.Now().Add(expiresDuration)
+				expiresAt = &t
+
+				if err := registerWorktreeExpiration(
+					ctx.Git,
+					reg,
+					worktreePath,
+					worktreeGeneration,
+					branch,
+					expiresAt,
+				); err != nil {
+					return fmt.Errorf("failed to register worktree: %w", err)
+				}
 			}
-		}
 
-		printAddResult(os.Stdout, branch, expiresAt)
-		if unreviewedSource {
-			_, _ = fmt.Fprintln(os.Stdout, existingBranchReviewMessage())
+			printAddResult(os.Stdout, branch, expiresAt)
+			if unreviewedSource {
+				_, _ = fmt.Fprintln(os.Stdout, existingBranchReviewMessage())
+			}
+			publishFleetBestEffortForCommand(cmd, ctx.Config)
+			return nil
+		})
+		if err != nil {
+			return err
 		}
-		publishFleetBestEffortForCommand(cmd, ctx.Config)
 
 		if launch {
 			return attachWorkspace(

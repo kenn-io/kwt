@@ -23,7 +23,48 @@ import (
 	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 )
+
+func TestRegisteredAddLosesToProjectRemoval(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetAddCommandFlags(t)
+
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	t.Chdir(repoPath)
+	configPath := filepath.Join(os.Getenv("KWT_HOME"), "config.toml")
+	file, err := os.OpenFile(configPath, os.O_APPEND|os.O_WRONLY, 0)
+	require.NoError(t, err)
+	_, err = fmt.Fprintf(
+		file,
+		"\n[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'widget'\npath = %q\n",
+		repoPath,
+	)
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	oldBeforeAcquire := beforeProjectGuardAcquire
+	t.Cleanup(func() { beforeProjectGuardAcquire = oldBeforeAcquire })
+	beforeProjectGuardAcquire = func() {
+		snapshot, snapshotErr := config.LoadGlobalSnapshotAt(os.Getenv("KWT_HOME"))
+		require.NoError(t, snapshotErr)
+		changed, removeErr := config.CompareAndSwapProjectAt(
+			os.Getenv("KWT_HOME"), snapshot.Projects[0], nil,
+		)
+		require.NoError(t, removeErr)
+		require.True(t, changed)
+	}
+	addBranch = true
+	addNoLaunch = true
+	worktreePath := filepath.Join(t.TempDir(), "feature-guarded")
+	cmd, _, _ := fleetTestCommand()
+
+	err = runAdd(cmd, []string{"feature/guarded", worktreePath})
+
+	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+	assert.NoDirExists(t, worktreePath)
+}
 
 func TestAddPublishesBestEffortAfterSuccessfulCreation(t *testing.T) {
 	resetFleetCommandDeps(t)
