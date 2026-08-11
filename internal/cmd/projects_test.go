@@ -367,7 +367,7 @@ func TestRunProjectsNeverEmitsRegistryCredentials(t *testing.T) {
 	}
 }
 
-func TestRunProjectsOmitsInaccessibleRegistryEntries(t *testing.T) {
+func TestRunProjectsRetainsRegistrationsWithUnavailableCheckouts(t *testing.T) {
 	livePath := newTUITestRepo(t)
 	missingPath := filepath.Join(t.TempDir(), "missing")
 	nestedPath := filepath.Join(livePath, "nested")
@@ -383,9 +383,11 @@ func TestRunProjectsOmitsInaccessibleRegistryEntries(t *testing.T) {
 
 	var got []models.Project
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
-	require.Len(t, got, 1)
-	assert.Equal(t, "live", got[0].Name)
-	assert.Equal(t, livePath, got[0].Path)
+	require.Len(t, got, 3)
+	assert.Equal(t, []string{"live", "missing", "nested"}, []string{
+		got[0].Name, got[1].Name, got[2].Name,
+	})
+	assert.Equal(t, missingPath, got[1].Path)
 }
 
 func TestRunProjectsJSONEmptyIsArray(t *testing.T) {
@@ -403,13 +405,8 @@ func TestRunProjectsJSONEmptyIsArray(t *testing.T) {
 	}
 }
 
-func TestRunProjectsJSONFullyFilteredIsArray(t *testing.T) {
+func TestRunProjectsJSONPathlessRegistrationIsFilteredArray(t *testing.T) {
 	withProjectsConfig(t, []models.Project{
-		{
-			Repository: "github.com/example/missing",
-			Name:       "missing",
-			Path:       filepath.Join(t.TempDir(), "missing"),
-		},
 		{Repository: "local/pathless", Name: "pathless"},
 	})
 

@@ -398,8 +398,10 @@ instead of claiming those paths would be removed.
 ## `kwt projects`
 
 The list action obtains a current inventory snapshot from the same-machine
-daemon. `projects add` and `projects remove` remain direct foreground mutations
-until project mutations migrate to the daemon.
+daemon. `projects add` remains a direct foreground mutation. `projects remove`
+is an authenticated daemon-owned transaction so it can serialize registry
+changes with worktree creation, pull-request import, and protected-session
+establishment.
 
 `--json` emits an array of the registered project repositories (`{repository,
 name, path, last_touched}`), so external automation can discover main-repo
@@ -407,24 +409,36 @@ paths that live outside the configured worktree base directory without
 parsing the config file. `repository` uses the same `host/owner/name` slug as
 `kwt list --json`'s `repository` field, so the two surfaces can be joined.
 
-Entries whose configured paths are missing, inaccessible, not Git repositories,
-or empty are omitted from both table and JSON output. Kwt does not delete those
-registry records or scan for moved checkouts; running kwt in the checkout's new
-location, or using `kwt projects add <new-path>`, updates the existing record by
-repository identity.
+Entries whose configured paths are missing, inaccessible, or no longer Git
+repositories remain visible. Their `path` is the exact persisted value and
+their `repository` is a stable credential-free identity, allowing automation
+to authorize metadata removal without inspecting the checkout. Pathless
+entries are omitted. Kwt does not scan for moved checkouts; running kwt in the
+checkout's new location, or using `kwt projects add <new-path>`, updates the
+existing record by repository identity.
 
 `kwt projects add <path>` registers an existing Git checkout without opening
 the dashboard. A linked-worktree path resolves to its main repository before
 registration, and repeating the command updates the existing entry rather than
 adding a duplicate.
 
-`kwt projects remove <path>` unregisters exactly one project by its configured
-path. The path may name a checkout that no longer exists. Unregistration only
-removes discovery metadata: it never deletes the repository, its worktrees, or
-tmux sessions. A concurrent change to the matched registration is preserved
-and reported as retryable instead of being overwritten.
+`kwt projects remove <exact-registered-path> --expected-repository <identity>`
+unregisters exactly one project. Supply the path and credential-free identity
+returned by `kwt projects --json`; paths are matched byte-for-byte, including
+trailing whitespace. The checkout may no longer exist. The daemon verifies the
+project's durable protected endpoints under the shared project fence before
+performing a final registry compare-and-swap. A live protected tmux session or
+incomplete endpoint authority fails closed. Ordinary/default-server tmux
+sessions do not block removal and are never killed.
 
-With `--json`, success returns:
+Unregistration is metadata-only: it never deletes repositories or worktrees
+and never kills a tmux session. Concurrent registration changes are preserved
+and reported as retryable. Worktree creation and pull-request import keep their
+existing foreground status output; the daemon fence does not make these CLI
+operations asynchronous or hide progress.
+
+With `--json`, `projects add` returns `status: "registered"`; removal uses the
+same project object with `status: "unregistered"`:
 
 ```json
 {
@@ -440,8 +454,11 @@ With `--json`, success returns:
 
 Failures return a stable error envelope on stdout. `invalid_repository` exits
 2; `registration_failed` exits 1. Project removal additionally reports
-`project_not_found` with exit 2, `unregistration_failed` with exit 1, or the
-retryable `registration_changed` with exit 1:
+`project_not_found` with exit 2 and `unregistration_failed`,
+`protected_session_live`, or `protected_endpoint_inventory_incomplete` with
+exit 1. The retryable `registration_changed` also exits 1. Protected-session
+errors expose only the sanitized session and protected-socket identity needed
+to resolve the block:
 
 ```json
 {

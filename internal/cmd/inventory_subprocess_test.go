@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,11 +96,11 @@ func TestInventorySubprocessPreservesGhosthubJSONAndTrustBehavior(t *testing.T) 
 	assert.Equal(t, "[]\n", string(stdout))
 }
 
-func TestInventorySubprocessExpandsGlobalPathsForEachClient(t *testing.T) {
+func TestInventorySubprocessPreservesExactPathWithClientScopedIdentity(t *testing.T) {
 	binary, cleanupBinary := buildDaemonTestBinaries(t)
 	home := newDaemonTestHome(t, validDaemonConfig+`
 [[projects]]
-repository = "github.com/acme/selected"
+repository = ""
 name = "selected"
 path = "$KWT_TEST_PROJECT"
 `)
@@ -127,8 +128,11 @@ path = "$KWT_TEST_PROJECT"
 	require.NoError(t, json.Unmarshal(second, &secondProjects))
 	require.Len(t, firstProjects, 1)
 	require.Len(t, secondProjects, 1)
-	assert.Equal(t, firstRepository, firstProjects[0].Path)
-	assert.Equal(t, secondRepository, secondProjects[0].Path)
+	assert.Equal(t, "$KWT_TEST_PROJECT", firstProjects[0].Path)
+	assert.Equal(t, "$KWT_TEST_PROJECT", secondProjects[0].Path)
+	assert.NotEqual(t, firstProjects[0].Repository, secondProjects[0].Repository)
+	assert.True(t, strings.HasPrefix(firstProjects[0].Repository, "local/"))
+	assert.True(t, strings.HasPrefix(secondProjects[0].Repository, "local/"))
 }
 
 func TestProjectsRemoveIsVisibleToDaemonInventory(t *testing.T) {
@@ -156,7 +160,8 @@ path = "`+filepath.ToSlash(repository)+`"
 
 	removed, stderr, err := runInventoryCommand(
 		t, binary, home, directory,
-		"projects", "remove", repository, "--json",
+		"projects", "remove", repository,
+		"--expected-repository", projects[0].Repository, "--json",
 	)
 	require.NoError(t, err, "stderr=%s", stderr)
 	var response struct {

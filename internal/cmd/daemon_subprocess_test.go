@@ -16,6 +16,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	kwtdaemon "go.kenn.io/kwt/internal/daemon"
+	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 )
 
 const validDaemonConfig = `[daemon]
@@ -146,6 +148,110 @@ func registerDaemonCleanup(t *testing.T, binary, home string) {
 			)
 		}
 	})
+}
+
+func TestDaemonSubprocessGuardedProjectRemoval(t *testing.T) {
+	binary := buildDaemonTestBinary(t, daemonTestBuild{
+		Name: "kwt-guarded-project", Version: "v1.5.0",
+		Revision: strings.Repeat("e", 40),
+	})
+	credentialCanary := "guarded-project-secret"
+	exactPath := filepath.Join(t.TempDir(), "missing ")
+	home := newDaemonTestHome(t, validDaemonConfig+fmt.Sprintf(`
+[[projects]]
+repository = "https://user:%s@github.com/acme/widget.git"
+name = "widget"
+path = %q
+`, credentialCanary, exactPath))
+	registerDaemonCleanup(t, binary, home)
+	var observed strings.Builder
+	run := func(home string, args ...string) ([]byte, []byte, error) {
+		stdout, stderr, err := runDaemonCommand(t, binary, home, args...)
+		observed.Write(stdout)
+		observed.Write(stderr)
+		return stdout, stderr, err
+	}
+
+	stdout, stderr, err := run(
+		home, "projects", "--json",
+	)
+	require.NoError(t, err, "stderr=%s", stderr)
+	var projects []models.Project
+	require.NoError(t, json.Unmarshal(stdout, &projects))
+	require.Len(t, projects, 1)
+	assert.Equal(t, exactPath, projects[0].Path)
+	assert.Equal(t, "github.com/acme/widget", projects[0].Repository)
+	identity := projects[0].Repository
+
+	stdout, _, err = run(
+		home,
+		"projects", "remove", strings.TrimSuffix(exactPath, " "),
+		"--expected-repository", identity, "--json",
+	)
+	require.Error(t, err)
+	var missing jsonErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout, &missing))
+	assert.Equal(t, service.ProjectNotFound, missing.Error.Code)
+
+	stdout, _, err = run(
+		home,
+		"projects", "remove", exactPath,
+		"--expected-repository", "github.com/acme/other", "--json",
+	)
+	require.Error(t, err)
+	var changed jsonErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout, &changed))
+	assert.Equal(t, service.RegistrationChanged, changed.Error.Code)
+
+	stdout, stderr, err = run(
+		home,
+		"projects", "remove", exactPath,
+		"--expected-repository", identity, "--json",
+	)
+	require.NoError(t, err, "stderr=%s", stderr)
+	var removed projectMutationResult
+	require.NoError(t, json.Unmarshal(stdout, &removed))
+	assert.Equal(t, "unregistered", removed.Status)
+	assert.Equal(t, exactPath, removed.Project.Path)
+	stdout, stderr, err = run(
+		home, "projects", "--json",
+	)
+	require.NoError(t, err, "stderr=%s", stderr)
+	require.NoError(t, json.Unmarshal(stdout, &projects))
+	assert.Empty(t, projects)
+
+	corruptPath := filepath.Join(t.TempDir(), "unavailable")
+	corruptHome := newDaemonTestHome(t, validDaemonConfig+fmt.Sprintf(`
+[[projects]]
+repository = "github.com/acme/corrupt"
+name = "corrupt"
+path = %q
+`, corruptPath))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(corruptHome, "pull-requests.json"), []byte("{"), 0o600,
+	))
+	registerDaemonCleanup(t, binary, corruptHome)
+	stdout, _, err = run(
+		corruptHome,
+		"projects", "remove", corruptPath,
+		"--expected-repository", "github.com/acme/corrupt", "--json",
+	)
+	require.Error(t, err)
+	var incomplete jsonErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout, &incomplete))
+	assert.Equal(
+		t, service.ProtectedEndpointInventoryIncomplete, incomplete.Error.Code,
+	)
+
+	for _, daemonHome := range []string{home, corruptHome} {
+		logData, readErr := os.ReadFile(filepath.Join(daemonHome, "daemon.log"))
+		if readErr == nil {
+			observed.Write(logData)
+		} else {
+			require.ErrorIs(t, readErr, os.ErrNotExist)
+		}
+	}
+	assert.NotContains(t, observed.String(), credentialCanary)
 }
 
 func TestDaemonSubprocessConcurrentStartStatusRestartStop(t *testing.T) {

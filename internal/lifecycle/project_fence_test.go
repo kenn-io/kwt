@@ -17,7 +17,7 @@ func TestProjectFenceWaitHonorsCancellation(t *testing.T) {
 	home := t.TempDir()
 	release, err := acquireProjectFence(context.Background(), home, "github.com/acme/widget")
 	require.NoError(t, err)
-	defer release()
+	defer func() { require.NoError(t, release()) }()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 

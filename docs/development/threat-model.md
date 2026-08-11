@@ -83,6 +83,22 @@ A remote client reaches inventory by invoking the remote machine's kwt CLI over
 its existing shell boundary; the loopback daemon itself is not remotely
 reachable.
 
+Guarded project unregistration treats the exact persisted path and its
+credential-free repository identity as one compare-and-swap authority. An
+identity-keyed, owner-private project fence serializes removal with operations
+that can create worktrees, provenance, or protected sessions. Pull-request
+provenance is owner-private durable authority: kwt writes it before establishing
+a protected session and rolls an import back if that write fails. Manual
+deletion of this owner-private state is outside the supported integrity model.
+
+The daemon derives protected socket names from durable session and worktree
+identity and probes each endpoint without collapsing operational failures into
+absence. A live endpoint blocks metadata removal; permission, connection, or
+other indeterminate failures fail closed. Public errors expose only the exact
+protected session and socket identity needed to resolve the block. Ordinary
+tmux-server sessions are outside this authority and are neither probed as
+project endpoints nor killed.
+
 Public service descriptors never contain an unexpected error's private cause.
 HTTP detail keys are selected by stable code and type-checked before
 serialization; arbitrary cause metadata is not forwarded. The owner-private
