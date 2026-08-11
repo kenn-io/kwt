@@ -53,8 +53,8 @@ func TestProbeProtectedSessionAgainstRealTmux(t *testing.T) {
 		_ = attach.Wait()
 	})
 	require.Eventually(t, func() bool {
-		output, listErr := runTmux("list-sessions", "-F", "#{session_name}\t#{session_attached}")
-		return listErr == nil && strings.Contains(output, session+"\t1")
+		output, listErr := runTmux("list-sessions", "-F", "#{session_attached}")
+		return listErr == nil && strings.TrimSpace(output) == "1"
 	}, 2*time.Second, 10*time.Millisecond)
 	state, err = ProbeProtectedSession(context.Background(), socket, session)
 	require.NoError(t, err)

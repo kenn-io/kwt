@@ -23,15 +23,14 @@ func TestClassifyProtectedSessionProbe(t *testing.T) {
 		want    ProtectedSessionState
 		wantErr bool
 	}{
-		{name: "attached", output: "expected\t1\n", want: ProtectedSessionLive},
-		{name: "detached", output: "expected\t0\n", want: ProtectedSessionLive},
+		{name: "matching session", output: "expected\n", want: ProtectedSessionLive},
 		{name: "no server", stderr: "no server running on /tmp/tmux/socket\n", err: fakeProbeExitError(1), want: ProtectedSessionAbsent},
 		{name: "missing socket", stderr: "error connecting to /tmp/tmux/socket (No such file or directory)\n", err: fakeProbeExitError(1), want: ProtectedSessionAbsent},
 		{name: "missing session", stderr: "can't find session: expected\n", err: fakeProbeExitError(1), want: ProtectedSessionAbsent},
 		{name: "permission failure", stderr: "error connecting to /tmp/tmux/socket (Permission denied)\n", err: fakeProbeExitError(1), want: ProtectedSessionIndeterminate, wantErr: true},
-		{name: "unexpected session", output: "other\t0\n", want: ProtectedSessionIndeterminate, wantErr: true},
-		{name: "multiple sessions", output: "expected\t0\nother\t0\n", want: ProtectedSessionIndeterminate, wantErr: true},
-		{name: "malformed", output: "expected\n", want: ProtectedSessionIndeterminate, wantErr: true},
+		{name: "unexpected session", output: "other\n", want: ProtectedSessionIndeterminate, wantErr: true},
+		{name: "multiple sessions", output: "expected\nother\n", want: ProtectedSessionIndeterminate, wantErr: true},
+		{name: "empty output", want: ProtectedSessionIndeterminate, wantErr: true},
 		{name: "command failure", err: fakeProbeExitError(2), want: ProtectedSessionIndeterminate, wantErr: true},
 	}
 	for _, test := range tests {

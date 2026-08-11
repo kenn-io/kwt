@@ -27,7 +27,7 @@ func ProbeProtectedSession(
 		ctx,
 		"list-sessions",
 		"-F",
-		"#{session_name}\t#{session_attached}",
+		"#{session_name}",
 	)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		err = errors.Join(ctxErr, err)
@@ -60,9 +60,7 @@ func classifyProtectedSessionProbe(
 	if len(lines) != 1 {
 		return ProtectedSessionIndeterminate, fmt.Errorf("protected tmux server contains unexpected sessions")
 	}
-	fields := strings.Split(lines[0], "\t")
-	if len(fields) != 2 || fields[0] != expectedSession ||
-		(fields[1] != "0" && fields[1] != "1") {
+	if lines[0] != expectedSession {
 		return ProtectedSessionIndeterminate, fmt.Errorf("protected tmux server state is unexpected")
 	}
 	return ProtectedSessionLive, nil

@@ -160,7 +160,7 @@ path = "`+filepath.ToSlash(repository)+`"
 
 	removed, stderr, err := runInventoryCommand(
 		t, binary, home, directory,
-		"projects", "remove", repository,
+		"projects", "remove", projects[0].Path,
 		"--expected-repository", projects[0].Repository, "--json",
 	)
 	require.NoError(t, err, "stderr=%s", stderr)
