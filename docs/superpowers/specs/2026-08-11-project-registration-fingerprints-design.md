@@ -80,9 +80,13 @@ before hashing. Its encoding is injective for every supported dynamic value:
 - Map keys are string values, sorted by their exact UTF-8 bytes, and encoded
   with their values recursively.
 - Arrays preserve element order and encode every element recursively.
-- Integers preserve their concrete signedness and width. Floating-point values
-  preserve their IEEE representation; NaN values are rejected because
-  `reflect.DeepEqual` cannot treat a NaN-bearing entry as equal to itself.
+- Integers preserve their concrete signedness and width. Floating-point values,
+  including signed NaNs and their payloads, preserve their IEEE bit pattern.
+  A NaN-bearing entry may pass the fingerprint comparison while the
+  authoritative raw-entry comparison or final CAS loses because
+  `reflect.DeepEqual` does not treat NaN as equal to itself. That direction is
+  safe and retains the existing `registration_changed` behavior instead of
+  making legal TOML data disable inventory.
 - TOML datetime representations preserve every distinction relevant to the
   decoded value. A `time.Time` encodes its concrete type, wall-clock fields,
   nanoseconds, zone name, and UTC offset. It is never normalized to UTC.
@@ -111,11 +115,11 @@ same fail-closed boundary. If any registered project cannot be encoded, the
 entire inventory query fails; the project is not published without a token and
 the TUI does not receive a partially authoritative project list.
 
-This broad failure is deliberate. Supported TOML values have canonical
-encodings, so a derivation failure indicates an implementation invariant or
-unsupported decoder change rather than ordinary user data. The private cause
-is logged through existing redaction; the public response remains a sanitized
-stable error.
+This broad failure is deliberate. All legal TOML values, including NaN, have
+canonical encodings, so a derivation failure indicates an implementation
+invariant or unsupported decoder change rather than ordinary user data. The
+private cause is logged through existing redaction; the public response remains
+a sanitized stable error.
 
 ## Published project model
 
@@ -163,6 +167,13 @@ The fingerprint is enforced in
 `projectRemovalService.RemoveProject`, making the behavior identical for the
 daemon endpoint and embeddable Go callers. The HTTP handler only decodes the
 request and maps the service result.
+
+The maintenance/doctor path already retains the inspected
+`config.ProjectRegistration` as its private raw CAS token. Before calling the
+same removal service, it derives `expected_registration` from that entry. The
+derivation is tautological for its immediate inspection, but it preserves one
+unconditional lifecycle request contract and leaves the later raw-entry
+revalidation authoritative.
 
 The service performs these checks in order:
 
@@ -308,11 +319,13 @@ Behavioral coverage must establish:
 
 1. Reordered raw map keys produce the same fingerprint.
 2. Distinct supported dynamic types, nested values, array order, unknown
-   fields, and scalar values produce different fingerprints.
+   fields, and scalar values produce different fingerprints. Bounded generated
+   supported value graphs additionally check that fingerprint equality tracks
+   `reflect.DeepEqual`, subject only to the documented NaN behavior.
 3. Datetimes representing the same instant with different wall offsets produce
    different fingerprints; datetime encoding never normalizes to UTC.
-4. Unsupported values and NaNs fail fingerprint derivation and fail inventory
-   closed.
+4. NaN sign and payload bits are encoded deterministically; unsupported
+   non-TOML values still fail fingerprint derivation and fail inventory closed.
 5. A `last_touched` change after observation returns retryable
    `registration_changed` without probing protected endpoints or changing the
    registry.
