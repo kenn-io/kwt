@@ -17,9 +17,9 @@ This change combines two requirements in one delivery:
 2. one daemon-owned transaction verifies protected endpoint authority and
    removes the registration only when no protected session is live.
 
-The daemon implementation has not shipped. The change evolves it directly and
-does not retain a legacy route, path-only fallback, or direct project-removal
-execution path.
+No daemon project-mutation route has shipped. The change adds the sustainable
+daemon contract directly and does not retain a legacy route, path-only
+fallback, or direct project-removal execution path.
 
 ## User Contract
 
@@ -41,9 +41,18 @@ expansion context. The service uses that context only to derive the selected
 registration's effective clone path for provenance association; it never
 changes the exact persisted path used for selection or CAS.
 
-The expected repository uses the same canonical, credential-free identity
-emitted by `kwt projects --json`. Removal never accepts or returns a
-credential-bearing repository URL.
+The expected repository uses the same stable, credential-free project identity
+emitted by `kwt projects --json`. A project identity is either a canonical
+remote identity or kwt's deterministic `local/...` fallback derived from the
+effective registered path. Empty identities are invalid. Removal never accepts
+or returns a credential-bearing repository URL.
+
+`kwt projects --json` remains the live source for this value when a checkout is
+missing or inaccessible. Project inventory keeps emitting the registration: it
+uses the pinned canonical remote identity when one is stored, otherwise it
+derives `local/...` from the effective registered path without inspecting Git.
+Ghosthub therefore does not need to authorize removal from a stale previously
+observed identity.
 
 Successful JSON retains the existing shape:
 
@@ -69,12 +78,12 @@ branch, sentinel file, provenance record, tmux server, or tmux session.
 `projects remove` becomes a client of a project-removal service hosted at
 `POST /api/v1/projects/remove`. The service owns the full transaction:
 
-1. validate the request structure and canonical expected repository;
+1. validate the request structure and stable expected project identity;
 2. acquire the project lifecycle fence;
 3. reload the global project snapshot;
 4. find exactly one entry whose persisted path equals the request path byte for
-   byte;
-5. compare its publishable canonical repository identity with the expected
+   byte; duplicate exact paths fail as non-retryable `unregistration_failed`;
+5. compare its stable credential-free project identity with the expected
    identity;
 6. load and validate the complete durable protected-endpoint authority for that
    project clone;
@@ -93,17 +102,28 @@ command path and its path-only config helper are removed in the same change.
 ### Project lifecycle fence
 
 A cross-process project fence lives under KWT_HOME and is keyed by a SHA-256
-digest of the canonical credential-free repository identity. The digest avoids
-putting repository names or credentials in filenames. Lock ordering is:
+digest of the validated credential-free project identity. The digest avoids
+putting repository names or credentials in filenames and an empty identity is
+rejected before a lock path is derived.
+
+The project fence is the outermost mutation lock. Existing downstream lock
+relationships remain explicit:
 
 ```text
-project lifecycle fence
-  -> repository worktree mutation or creation lock
-  -> pull-request provenance lock
-  -> global configuration lock
+repository-local config and trust resolution completes before the project fence
+
+project lifecycle fence (KWT_HOME)
+  -> per-path registry creation ownership (KWT_HOME), when used
+  -> pull-request provenance lock (KWT_HOME), when used
+  -> Git common-dir worktree mutation lock
+       -> Git common-dir worktree creation reservation
+  -> global configuration lock (KWT_HOME), during the final CAS
 ```
 
-Code must not acquire the project fence while holding a downstream lock.
+The provenance read lock is released before the final configuration CAS; those
+locks are not co-held. The trust-store lock is also never acquired while the
+project fence is held. Code must not acquire the project fence while holding a
+downstream lock.
 
 The fence is shared by:
 
@@ -141,9 +161,11 @@ Every selected record must provide and validate:
 - project identity and project path;
 - worktree path;
 - durable worktree generation;
-- exact tmux session name;
-- deterministic protected socket name derived from session name and worktree
-  path.
+- exact tmux session name.
+
+The protected socket name is not persisted. It must be deterministically
+derivable from the record's validated session name and worktree path using
+`tmux.ProtectedWorkspaceSocketName`.
 
 The service reads the complete provenance snapshot under its existing lock.
 Unreadable, undecodable, unsupported, ambiguous, or incomplete authority fails
@@ -175,14 +197,14 @@ must not be collapsed into absence.
 The project command continues to use the shared machine-readable error
 envelope established by kwt #72.
 
-| Code                                      | Retryable      | Meaning                                                                                         |
-| ----------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------- |
-| `project_not_found`                       | no             | No persisted path matches exactly.                                                              |
-| `registration_changed`                    | yes            | Repository identity differs, CAS lost, or an in-flight mutation lost registration revalidation. |
-| `protected_session_live`                  | no             | The exact protected endpoint has a live tmux session.                                           |
-| `protected_endpoint_inventory_incomplete` | cause-specific | Endpoint authority or liveness cannot be proved complete.                                       |
-| `unregistration_failed`                   | no             | A known project-unregistration failure occurred outside the states above.                       |
-| `internal`                                | no             | An unexpected private cause was withheld.                                                       |
+| Code                                      | Retryable      | Meaning                                                                                                     |
+| ----------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------- |
+| `project_not_found`                       | no             | No persisted path matches exactly.                                                                          |
+| `registration_changed`                    | yes            | Repository identity differs, CAS lost, or an in-flight mutation lost registration revalidation.             |
+| `protected_session_live`                  | no             | The exact protected endpoint has a live tmux session.                                                       |
+| `protected_endpoint_inventory_incomplete` | cause-specific | Endpoint authority or liveness cannot be proved complete.                                                   |
+| `unregistration_failed`                   | no             | A known project-unregistration failure, including duplicate exact paths, occurred outside the states above. |
+| `internal`                                | no             | An unexpected private cause was withheld.                                                                   |
 
 `protected_session_live` details contain only sanitized `session_name`,
 `socket_name`, and opaque `generation`. The incomplete code is retryable for a
@@ -210,7 +232,8 @@ Behavioral coverage must prove:
 1. `/repo ` is removable only with the exact `/repo ` argument; `/repo` is
    distinct, and the CLI preserves trailing whitespace.
 2. Matching path and repository identity succeeds; mismatched identity and CAS
-   replacement return `registration_changed` and preserve the entry.
+   replacement return `registration_changed` and preserve the entry; duplicate
+   exact paths return non-retryable `unregistration_failed`.
 3. A missing checkout with an attached protected session rejects removal.
 4. A missing checkout with a detached-but-live protected session rejects
    removal.
@@ -227,6 +250,8 @@ Behavioral coverage must prove:
 10. Daemon HTTP and CLI JSON preserve codes, messages, retryability, safe
     details, and the existing success shape without exposing repository
     credentials.
+11. `projects --json` retains missing and inaccessible registrations with a
+    pinned canonical remote identity or deterministic `local/...` fallback.
 
 Tests exercise owned behavior at configuration, fence, service, daemon HTTP,
 and CLI subprocess boundaries. They do not duplicate filesystem-lock or tmux
