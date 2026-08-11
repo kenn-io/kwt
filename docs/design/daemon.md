@@ -120,14 +120,19 @@ request-local. Noninteractive commands preserve the historical global-only
 fallback and warning.
 
 Project unregistration takes an exact persisted path and the credential-free
-repository identity from current project inventory. The daemon acquires an
-owner-private, identity-keyed project fence shared with registered worktree
-creation, pull-request import, and protected attach establishment. Under that
-fence it reads durable pull-request provenance, derives each protected socket,
-performs a fail-closed three-state tmux probe, and finally compare-and-swaps the
-raw registration. Live sessions block removal; indeterminate probes or
-incomplete provenance reject it. The transaction mutates only project metadata
-and never sends a tmux kill command.
+repository identity from current project inventory. A home-scoped transition
+lock hands the exact raw registration from registry writers to its
+identity-keyed project fence: the registration and identity are revalidated
+after that fence is acquired, before the transition lock is released.
+Registration changes acquire both old and new identity fences in deterministic
+order. Worktree creation may remain unregistered, but pull-request import and
+protected attach require a current registration. Under the identity fence,
+removal reads durable pull-request provenance, follows repository-transfer
+alias history across clone-path drift, derives each protected socket, performs
+a fail-closed three-state tmux probe, and finally compare-and-swaps the raw
+registration. Live sessions block removal; indeterminate probes, disconnected
+same-path provenance, or incomplete authority reject it. The transaction
+mutates only project metadata and never sends a tmux kill command.
 
 For remote use, including Ghosthub, the remote shell invokes the remote `kwt`
 CLI and that CLI talks only to its same-machine loopback daemon. The daemon is

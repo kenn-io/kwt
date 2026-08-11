@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/pullrequest"
 	"go.kenn.io/kwt/internal/tmux"
@@ -81,13 +82,19 @@ func (s *projectRemovalService) RemoveProject(
 			err,
 		)
 	}
-	release, err := acquireProjectFence(ctx, s.home, identity)
+	releaseTransition, err := acquireProjectTransitionFence(ctx, s.home)
 	if err != nil {
 		return result, classifyProjectRemovalFailure(err)
 	}
+	transitionHeld := true
 	defer func() {
-		if releaseErr := release(); releaseErr != nil {
-			resultErr = errors.Join(resultErr, projectRemovalInternal(releaseErr))
+		if transitionHeld {
+			if releaseErr := releaseTransition(); releaseErr != nil {
+				resultErr = errors.Join(
+					resultErr,
+					projectRemovalInternal(releaseErr),
+				)
+			}
 		}
 	}()
 
@@ -114,7 +121,11 @@ func (s *projectRemovalService) RemoveProject(
 			false, nil, nil,
 		)
 	}
-	actualIdentity, err := stableProjectIdentity(registration)
+	actualIdentity, err := resolveProjectIdentity(
+		ctx,
+		registration,
+		credentials.ProtectedNames(snapshot.Config)...,
+	)
 	if err != nil || actualIdentity != identity {
 		return result, projectRemovalError(
 			service.RegistrationChanged,
@@ -122,6 +133,51 @@ func (s *projectRemovalService) RemoveProject(
 			true, nil, err,
 		)
 	}
+	release, err := acquireProjectFence(ctx, s.home, identity)
+	if err != nil {
+		return result, classifyProjectRemovalFailure(err)
+	}
+	defer func() {
+		if releaseErr := release(); releaseErr != nil {
+			resultErr = errors.Join(resultErr, projectRemovalInternal(releaseErr))
+		}
+	}()
+
+	current, err := config.LoadGlobalSnapshotAtWithExpansion(
+		s.home,
+		request.Expansion.expandPath,
+	)
+	if err != nil {
+		return result, projectRemovalInternal(err)
+	}
+	currentRegistration, currentMatches := findExactProjectRegistration(
+		current.Projects, request.Path,
+	)
+	if currentMatches != 1 ||
+		!currentRegistration.SamePersistedEntry(registration) {
+		return result, projectRemovalError(
+			service.RegistrationChanged,
+			"the project registration no longer matches the expected repository",
+			true, nil, nil,
+		)
+	}
+	currentIdentity, identityErr := resolveProjectIdentity(
+		ctx,
+		currentRegistration,
+		credentials.ProtectedNames(current.Config)...,
+	)
+	if identityErr != nil || currentIdentity != identity {
+		return result, projectRemovalError(
+			service.RegistrationChanged,
+			"the project registration no longer matches the expected repository",
+			true, nil, identityErr,
+		)
+	}
+	registration = currentRegistration
+	if releaseErr := releaseTransition(); releaseErr != nil {
+		return result, projectRemovalInternal(releaseErr)
+	}
+	transitionHeld = false
 	endpoints, err := s.loadProtectedEndpoints(ctx, registration, identity)
 	if err != nil {
 		return result, err
@@ -214,22 +270,25 @@ func (s *projectRemovalService) loadProtectedEndpoints(
 	endpoints := make([]protectedEndpoint, 0)
 	seen := make(map[string]protectedEndpoint)
 	for _, record := range records {
-		recordIdentity, identityErr := validateStableProjectIdentity(record.Project.Identity)
-		if identityErr != nil {
-			if record.Project.Path != "" &&
-				utils.PathKey(record.Project.Path) == utils.PathKey(registration.Effective.Path) {
-				return nil, incompleteProtectedAuthority(identityErr)
+		samePath := record.Project.Path != "" &&
+			utils.PathKey(record.Project.Path) == utils.PathKey(registration.Effective.Path)
+		if !pullrequest.ProvenanceHasRepositoryIdentity(record, identity) {
+			if samePath {
+				return nil, incompleteProtectedAuthority(
+					fmt.Errorf("project identity is disconnected from its provenance"),
+				)
 			}
 			continue
 		}
-		if recordIdentity != identity {
-			continue
+		recordIdentity, identityErr := validateStableProjectIdentity(record.Project.Identity)
+		if identityErr != nil ||
+			!pullrequest.ProvenanceHasRepositoryIdentity(record, recordIdentity) {
+			return nil, incompleteProtectedAuthority(
+				errors.Join(identityErr, fmt.Errorf("project identity is disconnected from its provenance")),
+			)
 		}
 		if record.Project.Path == "" {
 			return nil, incompleteProtectedAuthority(fmt.Errorf("project path is missing"))
-		}
-		if utils.PathKey(record.Project.Path) != utils.PathKey(registration.Effective.Path) {
-			continue
 		}
 		workspace := record.Workspace
 		if workspace.Path == "" || workspace.SessionName == "" ||

@@ -427,8 +427,7 @@ func modelEntry(worktree models.Worktree, repositoryURL string, info *repository
 }
 
 // CanonicalProjects returns registrations with stable credential-free
-// identities. Accessible repositories may enrich the stored identity, while
-// inaccessible registrations retain a canonical stored or local identity.
+// identities using the same resolver as project publication and removal.
 func CanonicalProjects(
 	ctx context.Context,
 	projects []models.Project,
@@ -442,21 +441,8 @@ func CanonicalProjects(
 		if strings.TrimSpace(project.Path) == "" {
 			continue
 		}
-		g := internalworktree.NewCachedIdentityGit(
-			git.NewForInventory(ctx, project.Path, protectedNames),
-		)
-		mainPath, mainErr := g.GetMainRepositoryPath()
-		if mainErr == nil && utils.PathKey(mainPath) == utils.PathKey(project.Path) {
-			if info, infoErr := internalworktree.RepositoryInfoWithProjects(
-				g, []models.Project{project},
-			); infoErr == nil {
-				project.Repository = info.FullPath
-				result = append(result, project)
-				continue
-			}
-		}
 		registration := config.ProjectRegistration{Persisted: project, Effective: project}
-		identity, identityErr := stableProjectIdentity(registration)
+		identity, identityErr := resolveProjectIdentity(ctx, registration, protectedNames...)
 		if identityErr != nil {
 			continue
 		}
@@ -482,20 +468,9 @@ func publishedProjectRegistrations(
 		if registration.Persisted.Path == "" || registration.Effective.Path == "" {
 			continue
 		}
-		identity, err := stableProjectIdentity(registration)
+		identity, err := resolveProjectIdentity(ctx, registration, protectedNames...)
 		if err != nil {
 			continue
-		}
-		g := internalworktree.NewCachedIdentityGit(
-			git.NewForInventory(ctx, registration.Effective.Path, protectedNames),
-		)
-		if mainPath, mainErr := g.GetMainRepositoryPath(); mainErr == nil &&
-			utils.PathKey(mainPath) == utils.PathKey(registration.Effective.Path) {
-			if info, infoErr := internalworktree.RepositoryInfoWithProjects(
-				g, []models.Project{registration.Effective},
-			); infoErr == nil {
-				identity = info.FullPath
-			}
 		}
 		project := registration.Persisted
 		project.Repository = identity

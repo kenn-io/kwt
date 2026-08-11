@@ -1185,7 +1185,7 @@ func TestTUIBackendListRegistersLaunchRepositoryBestEffort(t *testing.T) {
 	backend.discoverLaunchWorktrees = func(launchDir string) ([]*discovery.GlobalWorktreeEntry, error) {
 		return []*discovery.GlobalWorktreeEntry{launchEntry}, nil
 	}
-	backend.registerProject = func(project models.Project) error {
+	backend.registerProject = func(_ context.Context, project models.Project) error {
 		registered = append(registered, project)
 		return errors.New("read-only config")
 	}
@@ -1231,7 +1231,7 @@ func TestTUIBackendRegistersLaunchRepositoryOnceAcrossStagedLoad(t *testing.T) {
 		return []*discovery.GlobalWorktreeEntry{launchEntry}, nil
 	}
 	registrations := 0
-	backend.registerProject = func(models.Project) error {
+	backend.registerProject = func(context.Context, models.Project) error {
 		registrations++
 		return nil
 	}
@@ -1275,7 +1275,7 @@ func TestTUIBackendListAddsLaunchRepositoryToInMemoryProjects(t *testing.T) {
 	backend.discoverLaunchWorktrees = func(launchDir string) ([]*discovery.GlobalWorktreeEntry, error) {
 		return []*discovery.GlobalWorktreeEntry{launchEntry}, nil
 	}
-	backend.registerProject = func(project models.Project) error {
+	backend.registerProject = func(_ context.Context, project models.Project) error {
 		return nil
 	}
 	backend.collectStatuses = func(
@@ -1326,7 +1326,7 @@ func TestTUIBackendLaunchRegistrationReusesExistingProjectByPath(t *testing.T) {
 	backend.discoverLaunchWorktrees = func(launchDir string) ([]*discovery.GlobalWorktreeEntry, error) {
 		return []*discovery.GlobalWorktreeEntry{launchEntry}, nil
 	}
-	backend.registerProject = func(project models.Project) error {
+	backend.registerProject = func(_ context.Context, project models.Project) error {
 		registered = append(registered, project)
 		return nil
 	}
@@ -1377,12 +1377,12 @@ func TestTUIBackendLaunchRegistrationUpgradesPathFallbackToRemoteIdentity(t *tes
 	}
 	var registered []models.Project
 	backend := newTUIBackendWithLaunchDir(cfg, repoPath)
-	backend.registerProject = func(project models.Project) error {
+	backend.registerProject = func(_ context.Context, project models.Project) error {
 		registered = append(registered, project)
 		return nil
 	}
 
-	backend.registerLaunchProject([]*discovery.GlobalWorktreeEntry{launchEntry})
+	backend.registerLaunchProject(context.Background(), []*discovery.GlobalWorktreeEntry{launchEntry})
 
 	require.Len(t, registered, 1)
 	assert.Equal(t, "github.com/example/service-api", registered[0].Repository)
@@ -1416,12 +1416,12 @@ func TestTUIBackendLaunchRegistrationKeepsConfiguredIdentityOverForkOrigin(t *te
 	}
 	var registered []models.Project
 	backend := newTUIBackendWithLaunchDir(cfg, repoPath)
-	backend.registerProject = func(project models.Project) error {
+	backend.registerProject = func(_ context.Context, project models.Project) error {
 		registered = append(registered, project)
 		return nil
 	}
 
-	backend.registerLaunchProject([]*discovery.GlobalWorktreeEntry{launchEntry})
+	backend.registerLaunchProject(context.Background(), []*discovery.GlobalWorktreeEntry{launchEntry})
 
 	require.Len(t, registered, 1)
 	assert.Equal(t, "github.com/kenn-io/service-api", registered[0].Repository,
@@ -1567,12 +1567,12 @@ func TestTUIBackendLaunchRegistrationUpgradesLocalPathLikeIdentityToOrigin(t *te
 	}
 	var registered []models.Project
 	backend := newTUIBackendWithLaunchDir(cfg, repoPath)
-	backend.registerProject = func(project models.Project) error {
+	backend.registerProject = func(_ context.Context, project models.Project) error {
 		registered = append(registered, project)
 		return nil
 	}
 
-	backend.registerLaunchProject([]*discovery.GlobalWorktreeEntry{launchEntry})
+	backend.registerLaunchProject(context.Background(), []*discovery.GlobalWorktreeEntry{launchEntry})
 
 	require.Len(t, registered, 1)
 	assert.Equal(t, "github.com/example/service-api", registered[0].Repository,
@@ -1601,12 +1601,12 @@ func TestTUIBackendLaunchRegistrationRejectsRelativeRemoteIdentity(t *testing.T)
 	}
 	var registered []models.Project
 	backend := newTUIBackendWithLaunchDir(cfg, repoPath)
-	backend.registerProject = func(project models.Project) error {
+	backend.registerProject = func(_ context.Context, project models.Project) error {
 		registered = append(registered, project)
 		return nil
 	}
 
-	backend.registerLaunchProject([]*discovery.GlobalWorktreeEntry{launchEntry})
+	backend.registerLaunchProject(context.Background(), []*discovery.GlobalWorktreeEntry{launchEntry})
 
 	localIdentity := repositoryInfoFromRootPath(repoPath)
 	require.NotNil(t, localIdentity)
@@ -1634,9 +1634,9 @@ func TestTUIBackendAutoRegisteredRelativeRemoteNeverReachesManifest(t *testing.T
 		Worktree: models.WorktreeConfig{BaseDir: filepath.Join(t.TempDir(), "global")},
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, repoPath)
-	backend.registerProject = func(models.Project) error { return nil }
+	backend.registerProject = func(context.Context, models.Project) error { return nil }
 
-	backend.registerLaunchProject(launchEntries)
+	backend.registerLaunchProject(context.Background(), launchEntries)
 	require.Len(t, cfg.Projects, 1)
 
 	builder := fleet.NewManifestBuilder(fleet.ManifestBuilderOptions{
@@ -3104,7 +3104,7 @@ func TestTUIBackendRemovesLaunchWorktreeOutsideGlobalBase(t *testing.T) {
 	backend := newTUIBackendWithLaunchDir(cfg, repoPath)
 	useInProcessTUIRemoval(t, backend)
 	backend.listSessions = func() ([]string, error) { return nil, nil }
-	backend.registerProject = func(models.Project) error { return nil }
+	backend.registerProject = func(context.Context, models.Project) error { return nil }
 	backend.registerWorkspace = func(
 		workspace models.Workspace,
 	) (models.Workspace, error) {
@@ -3202,7 +3202,7 @@ func tuiTestWorktreeGeneration(
 }
 
 func stubTUIProjectRegistration(backend *tuiBackend) {
-	backend.registerProject = func(models.Project) error { return nil }
+	backend.registerProject = func(context.Context, models.Project) error { return nil }
 	backend.registerWorkspace = func(workspace models.Workspace) (models.Workspace, error) {
 		return workspace, nil
 	}

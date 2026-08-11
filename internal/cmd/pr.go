@@ -172,7 +172,7 @@ func runPRImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return writePRError(cmd, err)
 	}
-	guard, err := observeGuardedProjectOperation(
+	guard, err := observeRequiredGuardedProjectOperation(
 		cmd.Context(), home, project.Path, expansion,
 	)
 	if err != nil {
@@ -250,7 +250,7 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return writePRError(cmd, err)
 	}
-	guard, err := observeGuardedProjectOperation(
+	guard, err := observeRequiredGuardedProjectOperation(
 		cmd.Context(), home, record.Project.Path, expansion,
 	)
 	if err != nil {

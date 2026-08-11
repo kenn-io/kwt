@@ -3,8 +3,11 @@ package lifecycle
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,6 +20,7 @@ import (
 const testProjectGeneration = "0123456789abcdef0123456789abcdef"
 
 type projectRemovalProbe struct {
+	mu      sync.Mutex
 	state   tmux.ProtectedSessionState
 	err     error
 	sockets []string
@@ -27,8 +31,16 @@ func (p *projectRemovalProbe) probe(
 	socket string,
 	_ string,
 ) (tmux.ProtectedSessionState, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.sockets = append(p.sockets, socket)
 	return p.state, p.err
+}
+
+func (p *projectRemovalProbe) setState(state tmux.ProtectedSessionState) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.state = state
 }
 
 type projectRemovalFixture struct {
@@ -61,7 +73,8 @@ func (f *projectRemovalFixture) writeProvenance() {
 	f.t.Helper()
 	err := f.provenance.Update(context.Background(), func(records map[string]pullrequest.Provenance) error {
 		records["github:acme/widget#1"] = pullrequest.Provenance{
-			Project: pullrequest.Project{Identity: f.identity, Name: "widget", Path: f.path},
+			Repository: f.identity,
+			Project:    pullrequest.Project{Identity: f.identity, Name: "widget", Path: f.path},
 			Workspace: pullrequest.Workspace{
 				Path:        filepath.Join(filepath.Dir(f.path), "worktree"),
 				Generation:  testProjectGeneration,
@@ -105,10 +118,46 @@ func TestProjectRemovalRequiresExactPathAndRepository(t *testing.T) {
 	assert.True(t, service.IsCode(err, service.RegistrationChanged))
 }
 
+func TestProjectRemovalAcceptsPublishedLiveIdentityForLegacyRegistration(t *testing.T) {
+	home := t.TempDir()
+	repository := t.TempDir()
+	command := exec.Command("git", "init", "-b", "main", repository)
+	require.NoError(t, command.Run())
+	command = exec.Command(
+		"git", "-C", repository, "remote", "add", "origin",
+		"git@github.com:acme/widget.git",
+	)
+	require.NoError(t, command.Run())
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
+		"[[projects]]\nrepository = 'legacy identity'\nname = 'widget'\npath = '"+repository+"'\n",
+	), 0o600))
+	expansion := testExpansion(t)
+	inventory, err := NewSource(SourceOptions{Home: home}).Load(
+		context.Background(),
+		Request{
+			View: ViewProjects, Expansion: expansion,
+			UntrustedConfig: IgnoreUntrustedConfig,
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, inventory.Snapshot.Projects, 1)
+	assert.Equal(t, "github.com/acme/widget", inventory.Snapshot.Projects[0].Repository)
+	probe := &projectRemovalProbe{state: tmux.ProtectedSessionAbsent}
+	remover := newProjectRemovalService(home, probe.probe)
+
+	result, err := remover.RemoveProject(context.Background(), ProjectRemovalRequest{
+		Path: repository, ExpectedRepository: inventory.Snapshot.Projects[0].Repository,
+		Expansion: expansion,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "github.com/acme/widget", result.Project.Repository)
+}
+
 func TestProjectRemovalRejectsLiveProtectedSession(t *testing.T) {
 	fixture := newProjectRemovalFixture(t, filepath.Join(t.TempDir(), "missing"), "github.com/acme/widget")
 	fixture.writeProvenance()
-	fixture.probe.state = tmux.ProtectedSessionLive
+	fixture.probe.setState(tmux.ProtectedSessionLive)
 
 	_, err := fixture.service.RemoveProject(context.Background(), fixture.request())
 
@@ -117,6 +166,130 @@ func TestProjectRemovalRejectsLiveProtectedSession(t *testing.T) {
 	assert.False(t, typed.Retryable)
 	assert.Equal(t, "widget-pr-1", typed.Details["session_name"])
 	require.Len(t, fixture.probe.sockets, 1)
+	remaining, loadErr := configSnapshot(fixture.home, fixture.expansion)
+	require.NoError(t, loadErr)
+	require.Len(t, remaining.Projects, 1)
+}
+
+func TestProjectRemovalRejectsTransferredAliasProtectedEndpoint(t *testing.T) {
+	fixture := newProjectRemovalFixture(
+		t,
+		filepath.Join(t.TempDir(), "registered"),
+		"github.com/legacy/widget",
+	)
+	workspacePath := filepath.Join(t.TempDir(), "moved-clone", "pr-7")
+	require.NoError(t, fixture.provenance.Update(
+		context.Background(),
+		func(records map[string]pullrequest.Provenance) error {
+			records["github:current/widget#7"] = pullrequest.Provenance{
+				Repository: "github.com/current/widget",
+				RepositoryAliases: []string{
+					"github.com/legacy/widget",
+					"github.com/current/widget",
+				},
+				Project: pullrequest.Project{
+					Identity: "github.com/current/widget",
+					Path:     filepath.Join(t.TempDir(), "moved-clone"),
+				},
+				Workspace: pullrequest.Workspace{
+					Path: workspacePath, Generation: testProjectGeneration,
+					SessionName: "widget-pr-7",
+				},
+			}
+			return nil
+		},
+	))
+	fixture.probe.setState(tmux.ProtectedSessionLive)
+
+	_, err := fixture.service.RemoveProject(context.Background(), fixture.request())
+
+	assert.True(t, service.IsCode(err, service.ProtectedSessionLive))
+	require.Len(t, fixture.probe.sockets, 1)
+	assert.Equal(
+		t,
+		tmux.ProtectedWorkspaceSocketName("widget-pr-7", workspacePath),
+		fixture.probe.sockets[0],
+	)
+}
+
+func TestProjectRemovalRejectsDisconnectedSamePathProvenance(t *testing.T) {
+	fixture := newProjectRemovalFixture(
+		t,
+		filepath.Join(t.TempDir(), "registered"),
+		"github.com/acme/widget",
+	)
+	require.NoError(t, fixture.provenance.Update(
+		context.Background(),
+		func(records map[string]pullrequest.Provenance) error {
+			records["github:other/widget#8"] = pullrequest.Provenance{
+				Repository: "github.com/other/widget",
+				Project: pullrequest.Project{
+					Identity: "github.com/other/widget",
+					Path:     fixture.path,
+				},
+				Workspace: pullrequest.Workspace{
+					Path:       filepath.Join(t.TempDir(), "pr-8"),
+					Generation: testProjectGeneration, SessionName: "widget-pr-8",
+				},
+			}
+			return nil
+		},
+	))
+
+	_, err := fixture.service.RemoveProject(context.Background(), fixture.request())
+
+	assert.True(t, service.IsCode(err, service.ProtectedEndpointInventoryIncomplete))
+	remaining, loadErr := configSnapshot(fixture.home, fixture.expansion)
+	require.NoError(t, loadErr)
+	require.Len(t, remaining.Projects, 1)
+}
+
+func TestProtectedEstablishmentWinsBeforeProjectRemoval(t *testing.T) {
+	fixture := newProjectRemovalFixture(
+		t,
+		filepath.Join(t.TempDir(), "registered"),
+		"github.com/acme/widget",
+	)
+	fixture.writeProvenance()
+	claim, err := ObserveProjectClaim(
+		context.Background(), fixture.home, fixture.path, fixture.expansion,
+	)
+	require.NoError(t, err)
+	operationStarted := make(chan struct{})
+	finishEstablishment := make(chan struct{})
+	operationDone := make(chan error, 1)
+	go func() {
+		release, acquireErr := AcquireRequiredProjectClaim(
+			context.Background(), fixture.home, claim,
+		)
+		if acquireErr != nil {
+			operationDone <- acquireErr
+			return
+		}
+		close(operationStarted)
+		<-finishEstablishment
+		fixture.probe.setState(tmux.ProtectedSessionLive)
+		operationDone <- release()
+	}()
+	<-operationStarted
+	removalDone := make(chan error, 1)
+	go func() {
+		_, removeErr := fixture.service.RemoveProject(
+			context.Background(), fixture.request(),
+		)
+		removalDone <- removeErr
+	}()
+	select {
+	case err := <-removalDone:
+		t.Fatalf("removal completed before protected establishment: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(finishEstablishment)
+	require.NoError(t, <-operationDone)
+
+	err = <-removalDone
+
+	assert.True(t, service.IsCode(err, service.ProtectedSessionLive))
 	remaining, loadErr := configSnapshot(fixture.home, fixture.expansion)
 	require.NoError(t, loadErr)
 	require.Len(t, remaining.Projects, 1)

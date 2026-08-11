@@ -1,13 +1,47 @@
 package lifecycle
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/git"
 	repositoryurl "go.kenn.io/kwt/internal/url"
+	"go.kenn.io/kwt/internal/utils"
 	internalworktree "go.kenn.io/kwt/internal/worktree"
+	"go.kenn.io/kwt/pkg/models"
 )
+
+func resolveProjectIdentity(
+	ctx context.Context,
+	registration config.ProjectRegistration,
+	protectedNames ...string,
+) (string, error) {
+	if identity, ok := repositoryurl.CanonicalRepositoryIdentity(
+		registration.Persisted.Repository,
+	); ok {
+		return identity, nil
+	}
+	g := internalworktree.NewCachedIdentityGit(
+		git.NewForInventory(ctx, registration.Effective.Path, protectedNames),
+	)
+	mainPath, mainErr := g.GetMainRepositoryPath()
+	if mainErr == nil &&
+		utils.PathKey(mainPath) == utils.PathKey(registration.Effective.Path) {
+		if info, infoErr := internalworktree.RepositoryInfoWithProjects(
+			g, []models.Project{registration.Effective},
+		); infoErr == nil {
+			if identity, ok := repositoryurl.CanonicalRepositoryIdentity(info.FullPath); ok {
+				return identity, nil
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return stableProjectIdentity(registration)
+}
 
 func stableProjectIdentity(registration config.ProjectRegistration) (string, error) {
 	if identity, ok := repositoryurl.CanonicalRepositoryIdentity(

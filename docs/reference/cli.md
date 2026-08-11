@@ -420,16 +420,20 @@ existing record by repository identity.
 `kwt projects add <path>` registers an existing Git checkout without opening
 the dashboard. A linked-worktree path resolves to its main repository before
 registration, and repeating the command updates the existing entry rather than
-adding a duplicate.
+adding a duplicate. Registration changes serialize with protected project
+operations across both the old and new repository identities.
 
 `kwt projects remove <exact-registered-path> --expected-repository <identity>`
 unregisters exactly one project. Supply the path and credential-free identity
 returned by `kwt projects --json`; paths are matched byte-for-byte, including
-trailing whitespace. The checkout may no longer exist. The daemon verifies the
-project's durable protected endpoints under the shared project fence before
-performing a final registry compare-and-swap. A live protected tmux session or
-incomplete endpoint authority fails closed. Ordinary/default-server tmux
-sessions do not block removal and are never killed.
+trailing whitespace. Canonical stored identities are authoritative; legacy
+registrations use an authoritative live Git identity when available and an
+exact-path local identity otherwise. The checkout may no longer exist. The
+daemon verifies the project's durable protected endpoints, including connected
+repository-transfer aliases, under the shared project fence before performing
+a final registry compare-and-swap. A live protected tmux session or incomplete
+endpoint authority fails closed. Ordinary/default-server tmux sessions do not
+block removal and are never killed.
 
 Unregistration is metadata-only: it never deletes repositories or worktrees
 and never kills a tmux session. Concurrent registration changes are preserved

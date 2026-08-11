@@ -48,7 +48,7 @@ type tuiBackend struct {
 	collectStatuses           func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error)
 	listSessions              func() ([]string, error)
 	ensureAndAttach           func(context.Context, string, string, models.Layout, bool) error
-	registerProject           func(models.Project) error
+	registerProject           func(context.Context, models.Project) error
 	registerWorkspace         func(models.Workspace) (models.Workspace, error)
 	unregisterWorkspace       func(name string) error
 	readFleetState            func(context.Context, *models.Config) (fleet.FleetState, error)
@@ -87,7 +87,7 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 			tmuxCmd,
 			protectedNames,
 		).EnsureAndAttach,
-		registerProject:         config.RegisterProject,
+		registerProject:         registerProjectWithLifecycle,
 		registerWorkspace:       config.RegisterWorkspace,
 		unregisterWorkspace:     config.UnregisterWorkspace,
 		readFleetState:          readTUIFleetState,
@@ -169,7 +169,7 @@ func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboar
 	}
 
 	entries = mergeTUIEntries(entries, registeredEntries)
-	b.registerLaunchProject(launchEntries)
+	b.registerLaunchProject(ctx, launchEntries)
 	b.registerLaunchWorkspace(launchEntries)
 	entries = mergeTUIEntries(entries, launchEntries)
 
@@ -232,7 +232,7 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 		for _, entry := range result.Snapshot.LaunchEntries {
 			launchEntries = append(launchEntries, dashboardInventoryEntry(entry))
 		}
-		b.registerLaunchProject(launchEntries)
+		b.registerLaunchProject(ctx, launchEntries)
 		b.registerLaunchWorkspace(launchEntries)
 		renderWorkspaces = append([]models.Workspace(nil), b.cfg.Workspaces...)
 	}
@@ -464,7 +464,10 @@ func (b *tuiBackend) loadRegisteredProjectInventory() (
 // registerLaunchProject persists the launch repository at most once per TUI
 // run. Both stages discover it, but rewriting config during each load would
 // put bookkeeping back on the startup and refresh paths.
-func (b *tuiBackend) registerLaunchProject(entries []*discovery.GlobalWorktreeEntry) {
+func (b *tuiBackend) registerLaunchProject(
+	ctx context.Context,
+	entries []*discovery.GlobalWorktreeEntry,
+) {
 	if b.launchProjectRegistered || b.registerProject == nil {
 		return
 	}
@@ -478,7 +481,7 @@ func (b *tuiBackend) registerLaunchProject(entries []*discovery.GlobalWorktreeEn
 			project = reusable
 		}
 	}
-	if err := b.registerProject(project); err != nil {
+	if err := b.registerProject(ctx, project); err != nil {
 		return
 	}
 	b.upsertProject(project)

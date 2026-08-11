@@ -25,7 +25,7 @@ var (
 	projectsAddJSON            bool
 	projectsRemoveJSON         bool
 	loadProjectsConfig         = config.Load
-	registerProject            = config.RegisterProject
+	registerProject            = registerProjectWithLifecycle
 	queryProjectsInventory     = queryCLIInventory
 	removeProjectThroughDaemon = removeProjectViaDaemon
 	projectsExpectedRepository string
@@ -194,7 +194,7 @@ func runProjectsAdd(cmd *cobra.Command, args []string) error {
 		break
 	}
 	project.LastTouched = time.Now().UTC().Format(time.RFC3339)
-	if err := registerProject(project); err != nil {
+	if err := registerProject(cmd.Context(), project); err != nil {
 		return writeProjectCommandError(
 			cmd,
 			"registration_failed",

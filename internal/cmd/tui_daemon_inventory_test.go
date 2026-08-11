@@ -152,7 +152,7 @@ func TestTUIBackendRegistersOnlyCurrentLaunchInventory(t *testing.T) {
 	}
 	backend.registerWorkspace = nil
 	var registered []models.Project
-	backend.registerProject = func(project models.Project) error {
+	backend.registerProject = func(_ context.Context, project models.Project) error {
 		registered = append(registered, project)
 		return nil
 	}

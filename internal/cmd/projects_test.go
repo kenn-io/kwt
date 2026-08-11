@@ -419,6 +419,7 @@ func TestRunProjectsJSONPathlessRegistrationIsFilteredArray(t *testing.T) {
 }
 
 func TestRunProjectsAddJSONRegistersCanonicalProject(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
 	repoPath := newTUITestRepo(t)
 	canonicalRepoPath, err := filepath.EvalSymlinks(repoPath)
 	require.NoError(t, err)
@@ -429,7 +430,7 @@ func TestRunProjectsAddJSONRegistersCanonicalProject(t *testing.T) {
 	originalRegister := registerProject
 	t.Cleanup(func() { registerProject = originalRegister })
 	var registered models.Project
-	registerProject = func(project models.Project) error {
+	registerProject = func(_ context.Context, project models.Project) error {
 		registered = project
 		return nil
 	}
