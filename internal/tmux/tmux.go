@@ -311,14 +311,25 @@ func (t *TmuxCommand) RunCommandContext(ctx context.Context, args ...string) err
 // returns its stdout — used to capture the pane ID printed by
 // new-session/split-window with -P -F '#{pane_id}'.
 func (t *TmuxCommand) RunCommandOutputContext(ctx context.Context, args ...string) (string, error) {
+	stdout, stderr, err := t.runCommandOutputContextWithStderr(ctx, args...)
+	if err != nil {
+		return "", fmt.Errorf("tmux command failed: %w, stderr: %s", err, stderr)
+	}
+	return stdout, nil
+}
+
+func (t *TmuxCommand) runCommandOutputContextWithStderr(
+	ctx context.Context,
+	args ...string,
+) (string, string, error) {
 	cmd := t.newCmd(ctx, args)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("tmux command failed: %w, stderr: %s", err, stderr.String())
+		return stdout.String(), stderr.String(), err
 	}
-	return stdout.String(), nil
+	return stdout.String(), stderr.String(), nil
 }
 
 // GlobalEnvironment returns the tmux server's global environment table, one

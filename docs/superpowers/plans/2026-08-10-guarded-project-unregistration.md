@@ -326,7 +326,7 @@ git commit -m 'Add exact project lifecycle fencing'
 
 - [ ] **Step 1: Write parser and runner contract tests**
 
-Use a fake context runner rather than a real tmux server. Cover exact attached and detached sessions as live, exit status 1 as absent, missing binary/context cancellation/other exit as indeterminate, and successful output containing no exact session, malformed rows, or extra sessions as indeterminate:
+Use unit classification tests plus a focused real-tmux integration test. Cover exact attached and detached sessions as live; recognize absence only when exit status 1 carries tmux's explicit no-server/no-session stderr; classify permission, connection, missing-binary, cancellation, and every other failure as indeterminate; and classify successful output containing no exact session, malformed rows, or extra sessions as indeterminate:
 
 ```go
 func TestProbeProtectedSessionClassifiesExactSession(t *testing.T) {
@@ -338,7 +338,8 @@ func TestProbeProtectedSessionClassifiesExactSession(t *testing.T) {
 	}{
 		{"attached", "expected\t1\n", nil, ProtectedSessionLive},
 		{"detached", "expected\t0\n", nil, ProtectedSessionLive},
-		{"no server", "", fakeExitError(1), ProtectedSessionAbsent},
+		{"no server", "", "no server running on /tmp/tmux/socket", fakeExitError(1), ProtectedSessionAbsent},
+		{"permission failure", "", "error connecting to /tmp/tmux/socket (Permission denied)", fakeExitError(1), ProtectedSessionIndeterminate},
 		{"unexpected session", "other\t0\n", nil, ProtectedSessionIndeterminate},
 	}
 	// Assert state and whether an error is retained.
@@ -372,14 +373,14 @@ func ProbeProtectedSession(
 	ctx context.Context, socketName, expectedSession string,
 ) (ProtectedSessionState, error) {
 	command := NewTmuxCommandForSocket("", socketName)
-	output, err := command.RunCommandOutputContext(
-		ctx, "list-sessions", "-F", "#{session_name}\\t#{session_attached}",
-	)
-	return classifyProtectedSessionProbe(expectedSession, output, err)
+output, stderr, err := command.RunCommandOutputContextWithStderr(
+	ctx, "list-sessions", "-F", "#{session_name}\\t#{session_attached}",
+)
+return classifyProtectedSessionProbe(expectedSession, output, stderr, err)
 }
 ```
 
-Classify only tmux's documented no-server/no-session exit as absent. Preserve `ctx.Err()` with `errors.Join` when canceled. Require exactly one valid row naming the expected session on a successful command; unexpected successful server state is indeterminate.
+Classify only tmux's documented no-server/no-session exit-1 diagnostics as absent. Exit status alone is never proof of absence. Preserve `ctx.Err()` with `errors.Join` when canceled. Require exactly one valid row naming the expected session on a successful command; unexpected successful server state is indeterminate. Add a real-tmux integration test that creates a protected server, proves both detached and control-client-attached sessions are live, proves a missing server/session is absent, and forces an exit-1 operational failure (for example an unusable `TMUX_TMPDIR`) that must remain indeterminate.
 
 Define `fakeExitError` in the test as a tiny `error` plus `ExitCode() int` implementation. In production, classify through that interface so the real `*exec.ExitError` remains the implementation detail.
 
@@ -547,7 +548,7 @@ func (s *projectRemovalService) RemoveProject(
 }
 ```
 
-`loadProtectedEndpoints` must copy the entire provenance map while its file lock is held, release that lock, then validate every relevant record. A missing store is an empty valid snapshot. Matching records require canonical project identity, effective clone path, nonempty workspace path, 32-character worktree generation, and nonempty exact session name; derive the socket with `tmux.ProtectedWorkspaceSocketName`. Malformed/unsupported/ambiguous records return non-retryable `protected_endpoint_inventory_incomplete`; lock/read failures and probe failures return the same code with `Retryable: true`. The live error details may contain only `session_name`, `socket_name`, and `generation`.
+`loadProtectedEndpoints` must copy the entire provenance map while its file lock is held, release that lock, then validate every relevant record. A missing store is an empty valid snapshot. This is safe because kwt commits provenance before establishing a protected session and rolls an import back if the provenance commit fails; manual deletion of kwt's owner-private provenance is outside the supported integrity model. Matching records require canonical project identity, effective clone path, nonempty workspace path, 32-character worktree generation, and nonempty exact session name; derive the socket with `tmux.ProtectedWorkspaceSocketName`. Malformed/unsupported/ambiguous records return non-retryable `protected_endpoint_inventory_incomplete`; lock/read failures and probe failures return the same code with `Retryable: true`. The live error details may contain only `session_name`, `socket_name`, and `generation`.
 
 - [ ] **Step 6: Run service tests and the race suite**
 

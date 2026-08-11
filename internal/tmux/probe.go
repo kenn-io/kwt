@@ -23,7 +23,7 @@ func ProbeProtectedSession(
 	expectedSession string,
 ) (ProtectedSessionState, error) {
 	command := NewTmuxCommandForSocketWithStripNames("", socketName, nil)
-	output, err := command.RunCommandOutputContext(
+	output, stderr, err := command.runCommandOutputContextWithStderr(
 		ctx,
 		"list-sessions",
 		"-F",
@@ -32,12 +32,13 @@ func ProbeProtectedSession(
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		err = errors.Join(ctxErr, err)
 	}
-	return classifyProtectedSessionProbe(expectedSession, output, err)
+	return classifyProtectedSessionProbe(expectedSession, output, stderr, err)
 }
 
 func classifyProtectedSessionProbe(
 	expectedSession string,
 	output string,
+	stderr string,
 	err error,
 ) (ProtectedSessionState, error) {
 	if err != nil {
@@ -45,10 +46,15 @@ func classifyProtectedSessionProbe(
 			return ProtectedSessionIndeterminate, err
 		}
 		var exited exitCoder
-		if errors.As(err, &exited) && exited.ExitCode() == 1 {
+		if errors.As(err, &exited) && exited.ExitCode() == 1 &&
+			isExplicitlyAbsentTmuxDiagnostic(stderr) {
 			return ProtectedSessionAbsent, nil
 		}
-		return ProtectedSessionIndeterminate, err
+		return ProtectedSessionIndeterminate, fmt.Errorf(
+			"protected tmux probe failed: %w, stderr: %s",
+			err,
+			strings.TrimSpace(stderr),
+		)
 	}
 	lines := strings.Split(strings.TrimSuffix(output, "\n"), "\n")
 	if len(lines) != 1 {
@@ -60,4 +66,14 @@ func classifyProtectedSessionProbe(
 		return ProtectedSessionIndeterminate, fmt.Errorf("protected tmux server state is unexpected")
 	}
 	return ProtectedSessionLive, nil
+}
+
+func isExplicitlyAbsentTmuxDiagnostic(stderr string) bool {
+	diagnostic := strings.TrimSpace(stderr)
+	if strings.HasPrefix(diagnostic, "no server running on ") ||
+		strings.HasPrefix(diagnostic, "can't find session: ") {
+		return true
+	}
+	return strings.HasPrefix(diagnostic, "error connecting to ") &&
+		strings.HasSuffix(diagnostic, "(No such file or directory)")
 }
