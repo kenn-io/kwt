@@ -392,7 +392,7 @@ Replacement follows the existing daemon drain contract:
 1. Stop accepting new SSH operations and leases.
 2. Publish the drain deadline and active lease count.
 3. Allow existing leases to continue until `daemon.replacement_grace`.
-4. At the deadline, emit `connection_changed` for remaining generations.
+4. At the deadline, emit `ssh_connection_changed` for remaining generations.
 5. Terminate every master through kit before releasing daemon ownership.
 6. Start the replacement only after the old owner exits.
 
@@ -582,19 +582,25 @@ details. "Looks equivalent" is not acceptance evidence.
 
 1. Complete kata `jkzd`: ordered daemon progress, prompt-capable duplex control,
    bounded backpressure, cancellation, and loss-of-stream semantics.
-2. Add the public kwt resolution service, daemon route, CLI command, stable
+2. Prove that the complete resolution parity matrix can replay normalized
+   `ssh -G` output under an empty base configuration with equivalent behavior,
+   including repeated values, quoting-sensitive values, forwards, identity
+   files, and token-expanded paths. If equivalence cannot be proved, revise the
+   snapshot binding model before connection, lease, trust, or authentication
+   implementation begins.
+3. Add the public kwt resolution service, daemon route, CLI command, stable
    errors, and Go/subprocess tests.
-3. Cut Ghosthub Stage 1 to the pinned resolver contract and delete
+4. Cut Ghosthub Stage 1 to the pinned resolver contract and delete
    `SSHConfigurationResolver.swift`.
-4. Add kwt connection leases, forced askpass trust/authentication, multi-round
+5. Add kwt connection leases, forced askpass trust/authentication, multi-round
    prompts, replacement/crash behavior, and the initial parity corpus.
-5. Cut Ghosthub Stage 2 atomically, deleting its pool, trust manager, and
+6. Cut Ghosthub Stage 2 atomically, deleting its pool, trust manager, and
    authentication session implementations while retaining thin native UI.
-6. Migrate Forge's direct kit adapter to the public kwt service without moving
+7. Migrate Forge's direct kit adapter to the public kwt service without moving
    Forge terminal or persistent fleet ownership.
-7. Audit and migrate every residual Ghosthub consumer and argument builder in
+8. Audit and migrate every residual Ghosthub consumer and argument builder in
    Stage 3.
-8. Run sustained replacement, idle, reconnect, failure, and upgrade evidence;
+9. Run sustained replacement, idle, reconnect, failure, and upgrade evidence;
    update both products' architecture/threat/release documentation; close kata
    `9565` only with the final evidence.
 
