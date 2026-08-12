@@ -3,8 +3,10 @@
 package ssh
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
@@ -25,7 +27,7 @@ func TestResolverPOSIXUsesLoginShellFrameAndExplicitTarget(t *testing.T) {
 			"KWT_GITHUB_TOKEN=github-secret", "GHOSTHUB_AUTH=fleet-secret",
 		},
 		ProtectedNames: []string{"GHOSTHUB_AUTH"},
-		Run: func(_ context.Context, argv, environment []string) ([]byte, []byte, int, error) {
+		Run: func(_ context.Context, argv, environment []string, _ []byte) ([]byte, []byte, int, error) {
 			gotArgv = append([]string(nil), argv...)
 			gotEnvironment = append([]string(nil), environment...)
 			return []byte("banner\nKWT_SSH_CONFIG_START_nonce\n" +
@@ -41,9 +43,82 @@ func TestResolverPOSIXUsesLoginShellFrameAndExplicitTarget(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, observation.route, 1)
 	assert.Equal(t, "build.internal", observation.route[0].Config.Hostname)
-	assert.Equal(t, []string{"/bin/zsh", "-lc"}, gotArgv[:2])
-	assert.Contains(t, gotArgv[2], "'/usr/bin/ssh' '-G' '-l' 'deploy' '-p' '2200' '--' 'build.example.test'")
-	assert.Equal(t, []string{"HOME=/Users/operator", "PATH=/usr/bin:/bin"}, gotEnvironment)
+	assert.Equal(t, []string{"/bin/zsh", "-l", "-c"}, gotArgv[:3])
+	assert.Equal(t, `exec /bin/sh -c "$KWT_SSH_RESOLVE_COMMAND"`, gotArgv[3])
+	assert.Contains(t, resolveCommandFromEnvironment(t, gotEnvironment),
+		"'/usr/bin/ssh' '-G' '-l' 'deploy' '-p' '2200' '--' 'build.example.test'")
+	assert.Contains(t, gotEnvironment, "HOME=/Users/operator")
+	assert.Contains(t, gotEnvironment, "PATH=/usr/bin:/bin")
+	assert.NotContains(t, gotEnvironment, "KWT_GITHUB_TOKEN=github-secret")
+	assert.NotContains(t, gotEnvironment, "GHOSTHUB_AUTH=fleet-secret")
+}
+
+func TestResolverPOSIXDelegatesResolveScriptThroughPOSIXShellForFish(t *testing.T) {
+	var gotArgv []string
+	resolver := NewResolver(ResolverOptions{
+		LoginShell: func() (string, error) { return "/usr/local/bin/fish", nil },
+		Nonce:      func() (string, error) { return "nonce", nil },
+		Run: func(_ context.Context, argv, _ []string, _ []byte) ([]byte, []byte, int, error) {
+			gotArgv = append([]string(nil), argv...)
+			return framedResolverOutput("nonce", "hostname build.internal\n"), nil, 0, nil
+		},
+	})
+
+	_, err := resolver.Resolve(context.Background(), ResolveRequest{
+		Target: Target{Hostname: "build.example.test"},
+	})
+	require.NoError(t, err)
+	require.Len(t, gotArgv, 4)
+	assert.Equal(t, []string{"/usr/local/bin/fish", "-l", "-c"}, gotArgv[:3])
+	assert.Equal(t, `exec /bin/sh -c "$KWT_SSH_RESOLVE_COMMAND"`, gotArgv[3])
+}
+
+func TestResolverPOSIXDelegatesResolveScriptThroughPOSIXShellForTcsh(t *testing.T) {
+	var gotArgv, gotStandardInput []string
+	resolver := NewResolver(ResolverOptions{
+		LoginShell: func() (string, error) { return "/bin/tcsh", nil },
+		Nonce:      func() (string, error) { return "nonce", nil },
+		Run: func(_ context.Context, argv, _ []string, standardInput []byte) ([]byte, []byte, int, error) {
+			gotArgv = append([]string(nil), argv...)
+			gotStandardInput = append(gotStandardInput, string(standardInput))
+			return framedResolverOutput("nonce", "hostname build.internal\n"), nil, 0, nil
+		},
+	})
+
+	_, err := resolver.Resolve(context.Background(), ResolveRequest{
+		Target: Target{Hostname: "build.example.test"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/bin/tcsh", "-l"}, gotArgv)
+	assert.Equal(t, []string{`exec /bin/sh -c "$KWT_SSH_RESOLVE_COMMAND:q"` + "\n"}, gotStandardInput)
+}
+
+func TestResolverPOSIXRunsThroughAvailableNonPOSIXShells(t *testing.T) {
+	for _, shellName := range []string{"fish", "tcsh"} {
+		t.Run(shellName, func(t *testing.T) {
+			shell, err := exec.LookPath(shellName)
+			if err != nil {
+				t.Skipf("%s is unavailable", shellName)
+			}
+			command := renderFramedResolveCommand(
+				[]string{"/usr/bin/printf", "%s\\n", "hostname build.internal"},
+				"START",
+				"END",
+			)
+			arguments, standardInput := loginShellInvocation(shell)
+			process := exec.Command(arguments[0], arguments[1:]...)
+			process.Stdin = bytes.NewReader(standardInput)
+			process.Env = resolveEnvironment([]string{
+				"HOME=" + t.TempDir(),
+				"PATH=/usr/bin:/bin",
+			}, command)
+			output, err := process.CombinedOutput()
+			require.NoError(t, err, string(output))
+			framed, err := framedOutput(output, "START", "END")
+			require.NoError(t, err)
+			assert.Equal(t, "hostname build.internal\n", string(framed))
+		})
+	}
 }
 
 func TestResolverPOSIXResolvesProxyJumpInConnectionOrder(t *testing.T) {
@@ -52,8 +127,8 @@ func TestResolverPOSIXResolvesProxyJumpInConnectionOrder(t *testing.T) {
 	resolver := NewResolver(ResolverOptions{
 		LoginShell: func() (string, error) { return "/bin/sh", nil },
 		Nonce:      func() (string, error) { return "nonce", nil },
-		Run: func(_ context.Context, argv, _ []string) ([]byte, []byte, int, error) {
-			command := argv[2]
+		Run: func(_ context.Context, _, environment []string, _ []byte) ([]byte, []byte, int, error) {
+			command := resolveCommandFromEnvironment(t, environment)
 			mu.Lock()
 			commands = append(commands, command)
 			mu.Unlock()
@@ -94,8 +169,9 @@ func TestResolverPOSIXFailsClosedForUnreviewableRoutes(t *testing.T) {
 			resolver := NewResolver(ResolverOptions{
 				LoginShell: func() (string, error) { return "/bin/sh", nil },
 				Nonce:      func() (string, error) { return "nonce", nil },
-				Run: func(_ context.Context, argv, _ []string) ([]byte, []byte, int, error) {
-					if test.name == "nested jump" && strings.Contains(argv[2], "'relay.example.test'") {
+				Run: func(_ context.Context, _, environment []string, _ []byte) ([]byte, []byte, int, error) {
+					command := resolveCommandFromEnvironment(t, environment)
+					if test.name == "nested jump" && strings.Contains(command, "'relay.example.test'") {
 						return framedResolverOutput("nonce", "hostname relay.internal\nproxyjump edge.example.test\n"), nil, 0, nil
 					}
 					return framedResolverOutput("nonce", test.config), nil, 0, nil
@@ -113,7 +189,7 @@ func TestResolverPOSIXFailsClosedForUnreviewableRoutes(t *testing.T) {
 func TestResolverPOSIXRejectsTargetBeforeInvocation(t *testing.T) {
 	invoked := false
 	resolver := NewResolver(ResolverOptions{
-		Run: func(context.Context, []string, []string) ([]byte, []byte, int, error) {
+		Run: func(context.Context, []string, []string, []byte) ([]byte, []byte, int, error) {
 			invoked = true
 			return nil, nil, 0, nil
 		},
@@ -131,7 +207,7 @@ func TestResolverPOSIXPreservesCancellationAndRejectsMalformedFrames(t *testing.
 		resolver := NewResolver(ResolverOptions{
 			LoginShell: func() (string, error) { return "/bin/sh", nil },
 			Nonce:      func() (string, error) { return "nonce", nil },
-			Run: func(context.Context, []string, []string) ([]byte, []byte, int, error) {
+			Run: func(context.Context, []string, []string, []byte) ([]byte, []byte, int, error) {
 				return nil, nil, -1, context.Canceled
 			},
 		})
@@ -147,7 +223,7 @@ func TestResolverPOSIXPreservesCancellationAndRejectsMalformedFrames(t *testing.
 		resolver := NewResolver(ResolverOptions{
 			LoginShell: func() (string, error) { return "/bin/sh", nil },
 			Nonce:      func() (string, error) { return "nonce", nil },
-			Run: func(context.Context, []string, []string) ([]byte, []byte, int, error) {
+			Run: func(context.Context, []string, []string, []byte) ([]byte, []byte, int, error) {
 				return []byte("hostname build.internal\n"), nil, 0, nil
 			},
 		})
@@ -163,7 +239,7 @@ func TestResolverPOSIXPreservesDeadlineCause(t *testing.T) {
 	resolver := NewResolver(ResolverOptions{
 		LoginShell: func() (string, error) { return "/bin/sh", nil },
 		Nonce:      func() (string, error) { return "nonce", nil },
-		Run: func(context.Context, []string, []string) ([]byte, []byte, int, error) {
+		Run: func(context.Context, []string, []string, []byte) ([]byte, []byte, int, error) {
 			return nil, nil, -1, context.DeadlineExceeded
 		},
 	})
@@ -177,4 +253,16 @@ func TestResolverPOSIXPreservesDeadlineCause(t *testing.T) {
 func framedResolverOutput(nonce, config string) []byte {
 	return []byte("KWT_SSH_CONFIG_START_" + nonce + "\n" + config +
 		"KWT_SSH_CONFIG_END_" + nonce + "\n")
+}
+
+func resolveCommandFromEnvironment(t *testing.T, environment []string) string {
+	t.Helper()
+	for _, entry := range environment {
+		name, value, ok := strings.Cut(entry, "=")
+		if ok && name == resolveCommandEnvironment {
+			return value
+		}
+	}
+	require.FailNow(t, "resolve command environment is missing")
+	return ""
 }

@@ -1,6 +1,7 @@
 package ssh
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -16,6 +17,7 @@ type OutputRunner func(
 	ctx context.Context,
 	argv []string,
 	environment []string,
+	standardInput []byte,
 ) (stdout, stderr []byte, exitCode int, err error)
 
 type ResolverOptions struct {
@@ -92,12 +94,14 @@ func runOutput(
 	ctx context.Context,
 	argv []string,
 	environment []string,
+	standardInput []byte,
 ) ([]byte, []byte, int, error) {
 	if len(argv) == 0 {
 		return nil, nil, -1, errors.New("empty process arguments")
 	}
 	command := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	command.Env = environment
+	command.Stdin = bytes.NewReader(standardInput)
 	var stdout, stderr []byte
 	command.Stdout = byteSliceWriter{target: &stdout}
 	command.Stderr = byteSliceWriter{target: &stderr}

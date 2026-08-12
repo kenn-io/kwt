@@ -14,7 +14,7 @@ func TestResolverWindowsInvokesOpenSSHDirectly(t *testing.T) {
 	var gotArgv []string
 	resolver := NewResolver(ResolverOptions{
 		Executable: "ssh.exe",
-		Run: func(_ context.Context, argv, _ []string) ([]byte, []byte, int, error) {
+		Run: func(_ context.Context, argv, _ []string, _ []byte) ([]byte, []byte, int, error) {
 			gotArgv = append([]string(nil), argv...)
 			return []byte("user deploy\nhostname build.internal\nport 2200\n"), nil, 0, nil
 		},

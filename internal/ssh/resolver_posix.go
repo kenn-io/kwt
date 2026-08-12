@@ -9,11 +9,15 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"runtime"
 	"strings"
 
 	"go.kenn.io/kit/openssh"
+	"go.kenn.io/kwt/internal/credentials"
 )
+
+const resolveCommandEnvironment = "KWT_SSH_RESOLVE_COMMAND"
 
 func (r *Resolver) resolveConfig(
 	ctx context.Context,
@@ -43,11 +47,14 @@ func (r *Resolver) resolveConfig(
 			}
 			start := "KWT_SSH_CONFIG_START_" + nonce
 			end := "KWT_SSH_CONFIG_END_" + nonce
-			command := renderFramedResolveCommand(argv, start, end)
+			command := "unset " + resolveCommandEnvironment + "\n" +
+				renderFramedResolveCommand(argv, start, end)
+			arguments, standardInput := loginShellInvocation(shell)
 			stdout, stderr, exitCode, runErr := r.run(
 				ctx,
-				[]string{shell, "-lc", command},
-				r.environment,
+				arguments,
+				resolveEnvironment(r.environment, command),
+				standardInput,
 			)
 			if runErr != nil {
 				return nil, stderr, exitCode, runErr
@@ -60,6 +67,30 @@ func (r *Resolver) resolveConfig(
 		},
 	}
 	return resolver.Resolve(ctx, target)
+}
+
+func loginShellInvocation(shell string) ([]string, []byte) {
+	switch strings.ToLower(filepath.Base(shell)) {
+	case "csh", "tcsh":
+		return []string{shell, "-l"}, []byte(
+			"exec /bin/sh -c \"$" + resolveCommandEnvironment + ":q\"\n",
+		)
+	default:
+		return []string{
+			shell,
+			"-l",
+			"-c",
+			"exec /bin/sh -c \"$" + resolveCommandEnvironment + "\"",
+		}, nil
+	}
+}
+
+func resolveEnvironment(environment []string, command string) []string {
+	filtered := credentials.StripEnvironment(
+		environment,
+		[]string{resolveCommandEnvironment},
+	)
+	return append(filtered, resolveCommandEnvironment+"="+command)
 }
 
 func renderFramedResolveCommand(argv []string, start, end string) string {

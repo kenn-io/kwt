@@ -89,6 +89,9 @@ func (c *Client) followOperationAttempt(
 			return nil, afterSequence, errors.Join(errOperationStreamInterrupted, readErr)
 		}
 		problemErr := decodeProblem(response.StatusCode, bytes.NewReader(encoded))
+		if service.IsCode(problemErr, service.DaemonTransportFailed) {
+			return nil, afterSequence, errors.Join(errOperationStreamInterrupted, problemErr)
+		}
 		if service.IsCode(problemErr, service.NotFound) ||
 			service.IsCode(problemErr, service.OperationOutcomeUnknown) {
 			return nil, afterSequence, operationOutcomeUnknown(

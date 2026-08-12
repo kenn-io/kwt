@@ -15,7 +15,7 @@ func (r *Resolver) resolveConfig(
 	resolver := openssh.Resolver{
 		Executable: r.executable,
 		Run: func(ctx context.Context, argv []string) ([]byte, []byte, int, error) {
-			return r.run(ctx, argv, r.environment)
+			return r.run(ctx, argv, r.environment, nil)
 		},
 	}
 	return resolver.Resolve(ctx, target)

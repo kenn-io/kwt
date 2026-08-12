@@ -191,6 +191,21 @@ func TestOperationClientMapsEndpointLossToUnknownOutcome(t *testing.T) {
 	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
 }
 
+func TestOperationClientRetriesMalformedFailureThenReportsUnknownOutcome(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"code":`)
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+
+	_, err := client.FollowOperation(context.Background(), "operation-1", 0, OperationCallbacks{})
+	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
+	assert.Equal(t, int32(2), requests.Load())
+}
+
 func TestOperationClientCancelsOperation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodDelete, r.Method)
