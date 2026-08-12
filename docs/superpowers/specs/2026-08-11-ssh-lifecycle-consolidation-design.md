@@ -187,11 +187,12 @@ resolver invokes system OpenSSH directly with the request-scoped client
 environment and the same target validation and output parsing.
 
 The resolver preserves explicit target user and port precedence, IPv6 command
-grammar, all normalized `ssh -G` options, known-hosts policy, cryptographic
-algorithm constraints, ProxyJump, ProxyCommand, and host-key alias. Direct
-ProxyJump hops are resolved independently in connection order. Opaque
-ProxyCommand routes and jump hosts that introduce another proxy route fail
-closed because kwt cannot independently bind trust policy to every hop.
+grammar, all normalized `ssh -G` options as route-identity input, known-hosts
+policy, cryptographic algorithm constraints, ProxyJump, ProxyCommand, and
+host-key alias. Direct ProxyJump hops are resolved independently in connection
+order. Opaque ProxyCommand routes and jump hosts that introduce another proxy
+route fail closed because kwt cannot independently bind trust policy to every
+hop.
 
 ### Route snapshot
 
@@ -200,19 +201,75 @@ A successful result is an immutable observed snapshot containing:
 - the logical endpoint;
 - each route target in connection order;
 - the effective user, hostname, port, host-key alias, host-key policy, proxy
-  policy, and complete canonical option stream for each target;
+  policy, and versioned execution projection for each target;
 - a cryptographic route identity derived through kit;
 - `observed_at` in UTC;
 - a credential-free display projection for native UI.
 
-The complete option stream may include local configuration paths required for
-later exact replay. It never includes prompt responses or daemon credentials,
-and only the credential-free display projection is copied into human-facing
-diagnostics.
+The daemon retains the complete canonical option stream only long enough to
+derive and revalidate route identity. The public snapshot does not expose that
+raw stream. It exposes the bounded execution projection and a separate
+credential-free display projection. Prompt responses and daemon credentials
+belong to neither projection and never participate in diagnostics.
 
 The route identity is a conditional token, not authorization. It binds the
 logical destination, every resolved target, and the complete normalized
-effective configuration. The client treats it as opaque.
+effective configuration and the execution-projection policy version. The
+client treats it as opaque. A kwt upgrade that changes projection policy
+therefore invalidates outstanding snapshots rather than executing them under a
+different policy.
+
+### Execution projection policy v1
+
+OpenSSH does not accept every `ssh -G` directive through `-o`; for example,
+OpenSSH 10.2 rejects the emitted `Host` directive as a command-line option.
+Kwt therefore does not claim that the normalized stream can be replayed in
+full. Execution uses the enumerated positive policy
+`kwt.openssh.projection.v1` under `-F /dev/null`.
+
+The v1 projection contains these semantic endpoint fields, emitted by kwt in a
+fixed order rather than copied as arbitrary directives:
+
+- `CanonicalizeHostname=no`;
+- `HostName`, `User`, `Port`, and `HostKeyAlias` when resolved;
+- the kwt-generated, independently resolved route for supported ProxyJump
+  chains.
+
+It may replay only the following effective directives, retaining repeated
+values and their order where OpenSSH defines them as multi-valued:
+
+- host trust and crypto: `UserKnownHostsFile`, `GlobalKnownHostsFile`,
+  `KnownHostsCommand`, `RevokedHostKeys`, `HostKeyAlgorithms`,
+  `KexAlgorithms`, `Ciphers`, `MACs`, `RequiredRSASize`,
+  `CASignatureAlgorithms`, `CheckHostIP`, `HashKnownHosts`,
+  `VerifyHostKeyDNS`, `VisualHostKey`, and `FingerprintHash`;
+- network selection: `AddressFamily`, `BindAddress`, and `BindInterface`;
+- authentication: `AddKeysToAgent`, `CertificateFile`, `EnableSSHKeysign`,
+  `ForwardAgent`, `GSSAPIAuthentication`, `GSSAPIDelegateCredentials`,
+  `HostbasedAcceptedAlgorithms`, `HostbasedAuthentication`, `IdentitiesOnly`,
+  `IdentityAgent`, `IdentityFile`, `KbdInteractiveAuthentication`,
+  `PasswordAuthentication`, `PKCS11Provider`, `PreferredAuthentications`,
+  `PubkeyAcceptedAlgorithms`, `PubkeyAuthentication`,
+  `SecurityKeyProvider`, and `UseKeychain`;
+- environment and client behavior: `EscapeChar`, `SendEnv`, and
+  `SetEnv`. `SetEnv` values are written only to an owner-private ephemeral
+  configuration file and never placed in argv or diagnostics.
+
+Kwt supplies reviewed `StrictHostKeyChecking`, `UpdateHostKeys`, askpass,
+ControlMaster, liveness, timeout, and generated proxy settings itself. The v1
+projection deliberately excludes local and remote forwards, arbitrary
+`ProxyCommand`, `LocalCommand`, `RemoteCommand`, `PermitLocalCommand`,
+user-supplied ControlMaster settings, and every other directive not listed
+above.
+
+The default rule is strict: an effective directive absent from this allowlist
+still participates in route identity but is never replayed for execution. This
+can over-detect harmless configuration changes, which is safe. Its residual
+risk is omission: a future OpenSSH release may add a security-relevant
+directive that kwt does not apply. Every supported OpenSSH version change in CI
+therefore triggers an explicit projection review. Adding, removing, or changing
+the handling of any directive requires a new projection-policy version and new
+Ghosthub parity evidence; it is never folded silently into v1.
 
 Before acquiring a lease or beginning trust/authentication, kwt resolves the
 route again through the same platform-specific execution boundary and compares
@@ -339,9 +396,9 @@ Configured `no` or `off` remains the user's OpenSSH policy. Review-managed
 `UpdateHostKeys` for that reviewed connection so unreviewed additional keys
 cannot be persisted.
 
-Host-key replay uses the route snapshot's known-hosts and cryptographic
-constraints under an empty base SSH configuration. ProxyJump route keys are
-reviewed sequentially. When a preceding hop requires authentication, kwt
+Host-key replay uses the route snapshot's v1 trust/crypto projection under
+`-F /dev/null`, plus kwt's reviewed host-key overrides. ProxyJump route keys
+are reviewed sequentially. When a preceding hop requires authentication, kwt
 prepares that reviewed hop first and uses its same-daemon control connection to
 reach the next route target.
 
@@ -522,7 +579,11 @@ proves the following observable cases.
 - account-login-shell invocation and nonce-framed banner rejection;
 - aliases, explicit user/port precedence, IPv4, raw command IPv6, and safe
   display formatting;
-- complete normalized option retention and deterministic identity;
+- complete normalized option retention as route-identity input and
+  deterministic identity;
+- v1 allowlisted execution projection, including repeated and
+  quoting-sensitive values, verified against Ghosthub's Swift selective
+  argument matrix;
 - direct and multi-hop ProxyJump expansion;
 - rejection of opaque ProxyCommand and nested proxy routes;
 - host-key alias and strict-host-key policy preservation;
@@ -582,12 +643,13 @@ details. "Looks equivalent" is not acceptance evidence.
 
 1. Complete kata `jkzd`: ordered daemon progress, prompt-capable duplex control,
    bounded backpressure, cancellation, and loss-of-stream semantics.
-2. Prove that the complete resolution parity matrix can replay normalized
-   `ssh -G` output under an empty base configuration with equivalent behavior,
-   including repeated values, quoting-sensitive values, forwards, identity
-   files, and token-expanded paths. If equivalence cannot be proved, revise the
-   snapshot binding model before connection, lease, trust, or authentication
-   implementation begins.
+2. Prove the projection model before connection, lease, trust, or
+   authentication implementation begins: retain the complete normalized
+   `ssh -G` stream as route-identity input, project only the enumerated v1
+   directives, and verify the projected process invocation against Ghosthub's
+   proven selective matrix for repeated values, quoting-sensitive values,
+   identity files, private `SetEnv`, token-expanded paths, and explicit
+   exclusion of forwards and command/lifecycle directives.
 3. Add the public kwt resolution service, daemon route, CLI command, stable
    errors, and Go/subprocess tests.
 4. Cut Ghosthub Stage 1 to the pinned resolver contract and delete
