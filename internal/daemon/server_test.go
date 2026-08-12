@@ -366,6 +366,40 @@ func TestOperationRoutesRequireAuthenticationAndStableNotFoundProblem(t *testing
 	assert.Equal(t, service.NotFound, problem.Code)
 }
 
+func TestDrainingServerKeepsExistingOperationControlReachable(t *testing.T) {
+	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	operation, _, err := hub.Start(OperationStart{
+		ID: "operation-1", RequestDigest: "request-1",
+		Run: func(_ context.Context, operation *Operation) (json.RawMessage, error) {
+			return json.RawMessage(`{}`), operation.Progress("finishing")
+		},
+	})
+	require.NoError(t, err)
+	deadline := time.Now().Add(time.Minute)
+	server := httptest.NewUnstartedServer(nil)
+	server.Config.Handler = NewServer(ServerOptions{
+		Token:        "secret",
+		ExpectedHost: server.Listener.Addr().String(),
+		Status: &testStatusProvider{status: Status{
+			Service: ServiceName, State: StateDraining, DrainDeadline: &deadline,
+		}},
+		Operations: hub,
+	})
+	server.Start()
+	defer server.Close()
+	request, err := http.NewRequest(
+		http.MethodGet,
+		server.URL+"/api/v1/operations/"+operation.ID()+"/events",
+		nil,
+	)
+	require.NoError(t, err)
+	request.Header.Set("Authorization", "Bearer secret")
+	response, err := server.Client().Do(request)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+}
+
 func newOperationHTTPTestServer(
 	t *testing.T,
 	hub *OperationHub,

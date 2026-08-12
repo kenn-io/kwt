@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -165,6 +166,8 @@ func TestServePublishesReadyRuntimeAndRemovesItOnShutdown(t *testing.T) {
 	assert.Equal(t, RuntimeReady, observation.State)
 	assert.Equal(t, home, observation.Status.Home)
 	assert.Contains(t, observation.Status.Endpoint, "127.0.0.1:")
+	assert.Contains(t, observation.Status.Capabilities, CapabilityOperationStream)
+	assert.True(t, slices.IsSorted(observation.Status.Capabilities))
 
 	_, err := observation.Client.Shutdown(context.Background(), "stop")
 	require.NoError(t, err)

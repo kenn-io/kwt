@@ -162,6 +162,12 @@ func runHost(
 
 	startedAt := opts.Now()
 	gate := NewGate(startedAt)
+	operations := NewOperationHub(ctx, OperationHubOptions{
+		Now: opts.Now,
+		Reserve: func() (func(), error) {
+			return gate.Reserve(ReservationWork, opts.Now())
+		},
+	})
 	inventory := opts.Inventory
 	remover := opts.Remover
 	projectRemover := opts.ProjectRemover
@@ -209,6 +215,7 @@ func runHost(
 			Capabilities: []string{
 				CapabilityShutdown,
 				CapabilityStatus,
+				CapabilityOperationStream,
 				CapabilityProjectRemoval,
 				CapabilityInventory,
 				CapabilityRemoval,
@@ -224,6 +231,7 @@ func runHost(
 	shutdown := func(_ context.Context, request ShutdownRequest) (Status, error) {
 		deadline := opts.Now().Add(opts.Config.ReplacementGrace)
 		gate.BeginDrain(deadline)
+		operations.BeginDrain(deadline)
 		select {
 		case shutdownRequested <- request.Reason:
 		default:
@@ -245,6 +253,7 @@ func runHost(
 		Inventory:      inventory,
 		Remover:        remover,
 		ProjectRemover: projectRemover,
+		Operations:     operations,
 		Gate:           gate,
 		ReportError: func(
 			route string,
@@ -312,8 +321,12 @@ func runHost(
 	}
 
 	drain := gate.BeginDrain(opts.Now().Add(opts.Config.ReplacementGrace))
+	operations.BeginDrain(drain.DrainDeadline)
 	logLifecycle(logger, "draining", status.Status(opts.Now()), runErr)
 	drainResult := gate.WaitForDrain(context.Background(), opts.Now())
+	if drainResult != DrainReleased {
+		operations.CancelActiveForDrain()
+	}
 	shutdownErr := shutdownHTTPServer(httpServer, drain.DrainDeadline, drainResult)
 	_ = listener.Close()
 	removeErr := removeOwnedRuntime(runtimePath, store, record.PID)

@@ -340,6 +340,83 @@ func TestOperationHubRejectsNewWorkAtActiveCapacity(t *testing.T) {
 	close(release)
 }
 
+func TestOperationHubReservesDaemonWorkUntilTerminalCompletion(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	gate := NewGate(now)
+	releaseWorker := make(chan struct{})
+	hub := NewOperationHub(context.Background(), OperationHubOptions{
+		Reserve: func() (func(), error) {
+			return gate.Reserve(ReservationWork, now)
+		},
+	})
+	operation, _, err := hub.Start(OperationStart{
+		ID: "operation-1", RequestDigest: "request-1",
+		Run: func(context.Context, *Operation) (json.RawMessage, error) {
+			<-releaseWorker
+			return json.RawMessage(`{}`), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active := gate.Snapshot().ActiveWork; active != 1 {
+		t.Fatalf("active work during operation = %d", active)
+	}
+	close(releaseWorker)
+	_ = collectOperationEvents(t, hub, operation.ID(), 0)
+	if active := gate.Snapshot().ActiveWork; active != 0 {
+		t.Fatalf("active work after completion = %d", active)
+	}
+}
+
+func TestOperationHubDrainRefusesNewWorkAndTerminatesActiveStreams(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	gate := NewGate(now)
+	started := make(chan struct{})
+	hub := NewOperationHub(context.Background(), OperationHubOptions{
+		Reserve: func() (func(), error) {
+			return gate.Reserve(ReservationWork, now)
+		},
+	})
+	operation, _, err := hub.Start(OperationStart{
+		ID: "operation-1", RequestDigest: "request-1",
+		Run: func(ctx context.Context, _ *Operation) (json.RawMessage, error) {
+			close(started)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	subscription, err := hub.Subscribe(operation.ID(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscription.Close()
+	deadline := now.Add(time.Minute)
+	gate.BeginDrain(deadline)
+	hub.BeginDrain(deadline)
+	_, _, err = hub.Start(OperationStart{
+		ID: "operation-2", RequestDigest: "request-2",
+		Run: func(context.Context, *Operation) (json.RawMessage, error) {
+			return json.RawMessage(`{}`), nil
+		},
+	})
+	if !service.IsCode(err, service.DaemonDraining) {
+		t.Fatalf("new operation while draining = %v", err)
+	}
+	hub.CancelActiveForDrain()
+	event := receiveOperationEvent(t, subscription.Events())
+	if event.Kind != service.OperationEventComplete || event.Failure == nil || event.Failure.Code != service.OperationOutcomeUnknown {
+		t.Fatalf("unexpected drain event: %#v", event)
+	}
+	if active := gate.Snapshot().ActiveWork; active != 0 {
+		t.Fatalf("active work after forced drain = %d", active)
+	}
+}
+
 func collectOperationEvents(
 	t *testing.T,
 	hub *OperationHub,

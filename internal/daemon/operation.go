@@ -27,6 +27,7 @@ const (
 type OperationHubOptions struct {
 	Now                    func() time.Time
 	IDSource               func() (string, error)
+	Reserve                func() (func(), error)
 	MaxEvents              int
 	MaxBytes               int
 	MaxActiveOperations    int
@@ -46,9 +47,11 @@ type OperationHub struct {
 	context context.Context
 	options OperationHubOptions
 
-	mu         sync.Mutex
-	operations map[string]*operationEntry
-	active     int
+	mu            sync.Mutex
+	operations    map[string]*operationEntry
+	active        int
+	draining      bool
+	drainDeadline time.Time
 }
 
 type operationEntry struct {
@@ -66,6 +69,7 @@ type operationEntry struct {
 	subscribers    map[*OperationSubscription]chan service.OperationEvent
 	everSubscribed bool
 	lossTimer      *time.Timer
+	release        func()
 }
 
 type operationPromptState struct {
@@ -181,6 +185,17 @@ func (h *OperationHub) Start(start OperationStart) (*Operation, bool, error) {
 				nil,
 			)
 		}
+		if h.draining {
+			deadline := h.drainDeadline
+			h.mu.Unlock()
+			return nil, false, service.NewError(
+				service.DaemonDraining,
+				"daemon is draining",
+				true,
+				map[string]any{"drain_deadline": deadline},
+				nil,
+			)
+		}
 		if h.active >= h.options.MaxActiveOperations {
 			h.mu.Unlock()
 			return nil, false, service.NewError(
@@ -191,10 +206,22 @@ func (h *OperationHub) Start(start OperationStart) (*Operation, bool, error) {
 				nil,
 			)
 		}
+		var release func()
+		if h.options.Reserve != nil {
+			var reserveErr error
+			release, reserveErr = h.options.Reserve()
+			if reserveErr != nil {
+				h.mu.Unlock()
+				return nil, false, reserveErr
+			}
+		}
 		workerContext, cancel := context.WithCancel(h.context)
 		validator, err := service.NewOperationStreamValidator(id, 0)
 		if err != nil {
 			cancel()
+			if release != nil {
+				release()
+			}
 			h.mu.Unlock()
 			return nil, false, err
 		}
@@ -205,6 +232,7 @@ func (h *OperationHub) Start(start OperationStart) (*Operation, bool, error) {
 			cancel:        cancel,
 			validator:     validator,
 			subscribers:   make(map[*OperationSubscription]chan service.OperationEvent),
+			release:       release,
 		}
 		entry.operation = &Operation{hub: h, entry: entry}
 		h.operations[id] = entry
@@ -348,6 +376,35 @@ func (h *OperationHub) Cancel(operationID string) error {
 		entry.cancel()
 	}
 	return nil
+}
+
+func (h *OperationHub) BeginDrain(deadline time.Time) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.draining {
+		return
+	}
+	h.draining = true
+	h.drainDeadline = deadline
+}
+
+func (h *OperationHub) CancelActiveForDrain() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, entry := range h.operations {
+		if entry.terminal {
+			continue
+		}
+		failure := service.Descriptor{
+			Code: service.OperationOutcomeUnknown, Message: "daemon drain deadline expired", Retryable: true,
+		}
+		_ = h.appendLocked(entry, service.OperationEvent{
+			Kind: service.OperationEventComplete, Failure: &failure,
+		})
+		if !entry.terminal {
+			h.markTerminalLocked(entry)
+		}
+	}
 }
 
 func (h *OperationHub) Subscribe(
@@ -570,6 +627,10 @@ func (h *OperationHub) markTerminalLocked(entry *operationEntry) {
 	entry.prompt = nil
 	entry.cancel()
 	h.active--
+	if entry.release != nil {
+		entry.release()
+		entry.release = nil
+	}
 	if entry.lossTimer != nil {
 		entry.lossTimer.Stop()
 		entry.lossTimer = nil

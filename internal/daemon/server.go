@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -231,11 +232,12 @@ func secureLocalHandler(next http.Handler, opts ServerOptions) http.Handler {
 		now := opts.Now()
 		status := opts.Status.Status(now)
 		shutdownPath := r.URL.Path == "/api/v1/daemon/shutdown"
+		operationPath := strings.HasPrefix(r.URL.Path, operationRoutePrefix)
 		if opts.Touch != nil && (!shutdownPath || status.State != StateDraining) {
 			opts.Touch(now)
 		}
 		if status.State == StateDraining &&
-			r.URL.Path != "/api/v1/status" && !shutdownPath {
+			r.URL.Path != "/api/v1/status" && !shutdownPath && !operationPath {
 			if status.DrainDeadline != nil {
 				retryAfter := status.DrainDeadline.Sub(now)
 				seconds := int64(retryAfter / time.Second)
