@@ -276,6 +276,9 @@ func (h *OperationHub) releaseWorker(entry *operationEntry) {
 	if release != nil {
 		release()
 	}
+	h.mu.Lock()
+	h.active--
+	h.mu.Unlock()
 }
 
 func (o *Operation) ID() string {
@@ -654,7 +657,12 @@ func (h *OperationHub) finish(
 		event.Failure = &failure
 	}
 	if appendErr := h.appendLocked(entry, event); appendErr != nil && !entry.terminal {
-		h.terminateCapacityLocked(entry)
+		failure := publicErrorDescriptor(fmt.Errorf("publish operation completion: %w", appendErr))
+		if fallbackErr := h.appendLocked(entry, service.OperationEvent{
+			Kind: service.OperationEventComplete, Failure: &failure,
+		}); fallbackErr != nil && !entry.terminal {
+			h.terminateCapacityLocked(entry)
+		}
 	}
 	if !entry.terminal {
 		h.markTerminalLocked(entry)
@@ -678,7 +686,6 @@ func (h *OperationHub) markTerminalLocked(entry *operationEntry) {
 	entry.completedAt = h.options.Now()
 	entry.prompt = nil
 	entry.cancel()
-	h.active--
 	if entry.lossTimer != nil {
 		entry.lossTimer.Stop()
 		entry.lossTimer = nil

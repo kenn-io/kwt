@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"reflect"
 	"unicode/utf8"
@@ -10,7 +11,10 @@ import (
 	"go.kenn.io/kwt/service"
 )
 
-var errOperationEventTooLarge = errors.New("operation event exceeds retained byte capacity")
+var (
+	errOperationEventInvalid  = errors.New("operation event payload is invalid")
+	errOperationEventTooLarge = errors.New("operation event exceeds retained byte capacity")
+)
 
 const maxOperationDetailDepth = 64
 
@@ -24,12 +28,15 @@ func encodeRetainedOperationEvent(
 	event service.OperationEvent,
 	remaining int,
 ) (retainedOperationEvent, error) {
+	if event.Result != nil && !json.Valid(event.Result) {
+		return retainedOperationEvent{}, fmt.Errorf("%w: result is not valid JSON", errOperationEventInvalid)
+	}
 	if remaining < 0 || !operationEventPayloadFits(event, remaining) {
 		return retainedOperationEvent{}, errOperationEventTooLarge
 	}
 	encoded, err := json.Marshal(event)
 	if err != nil {
-		return retainedOperationEvent{}, err
+		return retainedOperationEvent{}, errors.Join(errOperationEventInvalid, err)
 	}
 	if len(encoded) > remaining {
 		return retainedOperationEvent{}, errOperationEventTooLarge

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +74,27 @@ func TestOperationHubPublishesSanitizedTerminalFailure(t *testing.T) {
 	}
 	if len(failure.Details) != 1 || failure.Details["path"] != "/safe/path" {
 		t.Fatalf("failure details = %#v", failure.Details)
+	}
+}
+
+func TestOperationHubPublishesInternalFailureForMalformedResult(t *testing.T) {
+	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	operation, _, err := hub.Start(OperationStart{
+		RequestDigest: "request-1",
+		Run: func(context.Context, *Operation) (json.RawMessage, error) {
+			return json.RawMessage(`{"incomplete":`), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := collectOperationEvents(t, hub, operation.ID(), 0)
+	if len(events) != 1 || events[0].Failure == nil {
+		t.Fatalf("unexpected operation events: %#v", events)
+	}
+	failure := events[0].Failure
+	if failure.Code != service.Internal || failure.Message != "internal failure" || failure.Retryable {
+		t.Fatalf("malformed-result failure = %#v", failure)
 	}
 }
 
@@ -410,6 +432,59 @@ func TestOperationHubRejectsNewWorkAtActiveCapacity(t *testing.T) {
 		t.Fatalf("capacity error = %v", err)
 	}
 	close(release)
+}
+
+func TestOperationHubRetainsWorkerCapacityUntilCleanupReturns(t *testing.T) {
+	cleanup := make(chan struct{})
+	workerStarted := make(chan struct{})
+	hub := NewOperationHub(context.Background(), OperationHubOptions{
+		MaxActiveOperations: 1,
+		MaxBytes:            256,
+	})
+	first, _, err := hub.Start(OperationStart{
+		ID: "operation-1", RequestDigest: "request-1",
+		Run: func(context.Context, *Operation) (json.RawMessage, error) {
+			close(workerStarted)
+			<-cleanup
+			return json.RawMessage(`{}`), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-workerStarted
+	if progressErr := first.Progress(strings.Repeat("x", 256)); !service.IsCode(progressErr, service.OperationCapacityExhausted) {
+		t.Fatalf("capacity-terminating progress = %v", progressErr)
+	}
+
+	_, _, err = hub.Start(OperationStart{
+		ID: "operation-2", RequestDigest: "request-2",
+		Run: func(context.Context, *Operation) (json.RawMessage, error) {
+			return json.RawMessage(`{}`), nil
+		},
+	})
+	if !service.IsCode(err, service.OperationCapacityExhausted) {
+		t.Fatalf("new operation while terminal worker cleans up = %v", err)
+	}
+	close(cleanup)
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		second, _, startErr := hub.Start(OperationStart{
+			ID: "operation-2", RequestDigest: "request-2",
+			Run: func(context.Context, *Operation) (json.RawMessage, error) {
+				return json.RawMessage(`{}`), nil
+			},
+		})
+		if startErr == nil {
+			_ = collectOperationEvents(t, hub, second.ID(), 0)
+			break
+		}
+		if !service.IsCode(startErr, service.OperationCapacityExhausted) || time.Now().After(deadline) {
+			t.Fatalf("operation after worker cleanup = %v", startErr)
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func TestOperationHubBoundsSubscribersPerOperationAndGlobally(t *testing.T) {

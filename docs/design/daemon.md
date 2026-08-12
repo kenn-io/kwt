@@ -120,7 +120,9 @@ admits at most 128 active operations and retains at most 128 completed
 operations for five minutes. An operation admits at most eight subscribers,
 with at most 128 live subscribers across the daemon. Retained terminal replays
 and streams detached after queue overflow count against both limits until the
-HTTP subscriber closes. Each response write has a five-second deadline. Replay
+HTTP subscriber closes. Publishing a terminal event does not release an active
+operation slot until its worker cleanup returns. Each response write has a
+five-second deadline. Replay
 queues reserve a slot that progress and warning events cannot consume; prompts
 and terminal completion remain replayable when noncritical delivery saturates.
 The daemon rejects excess work or subscriptions instead of dropping a prompt
