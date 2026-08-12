@@ -9,6 +9,7 @@ import (
 	"os/exec"
 
 	"go.kenn.io/kit/openssh"
+	"go.kenn.io/kwt/internal/credentials"
 )
 
 type OutputRunner func(
@@ -23,6 +24,8 @@ type ResolverOptions struct {
 	LoginShell  func() (string, error)
 	Nonce       func() (string, error)
 	Environment []string
+	// ProtectedNames extends kwt's built-in credential environment names.
+	ProtectedNames []string
 }
 
 type Resolver struct {
@@ -50,6 +53,8 @@ func NewResolver(options ResolverOptions) *Resolver {
 	if environment == nil {
 		environment = os.Environ()
 	}
+	protectedNames := append(credentials.ProtectedNames(nil), options.ProtectedNames...)
+	environment = credentials.StripEnvironment(environment, protectedNames)
 	return &Resolver{
 		executable:  executable,
 		run:         run,

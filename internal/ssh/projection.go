@@ -10,6 +10,8 @@ import (
 
 const projectionPolicyV1 = "kwt.openssh.projection.v1"
 
+const ProjectionPolicyV1 = projectionPolicyV1
+
 type projection struct {
 	PolicyVersion string
 	Arguments     []string

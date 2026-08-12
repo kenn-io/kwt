@@ -1,6 +1,7 @@
 package kwt_test
 
 import (
+	"context"
 	"testing"
 
 	kwt "go.kenn.io/kwt"
@@ -12,5 +13,18 @@ func TestRootPackageExposesWorktreeServices(t *testing.T) {
 	}
 	if kwt.NewRemovalService(kwt.RemovalServiceOptions{}) == nil {
 		t.Fatal("removal service is unavailable from the root package")
+	}
+}
+
+func TestRootPackageExposesSSHResolutionService(t *testing.T) {
+	service := kwt.NewSSHService()
+	if service == nil {
+		t.Fatal("SSH resolution service is unavailable from the root package")
+	}
+	var _ interface {
+		Resolve(context.Context, kwt.SSHResolveRequest) (kwt.SSHRouteSnapshot, error)
+	} = service
+	if kwt.SSHProjectionPolicyV1 == "" {
+		t.Fatal("SSH projection policy is unavailable from the root package")
 	}
 }

@@ -22,7 +22,9 @@ func TestResolverPOSIXUsesLoginShellFrameAndExplicitTarget(t *testing.T) {
 		Nonce:      func() (string, error) { return "nonce", nil },
 		Environment: []string{
 			"HOME=/Users/operator", "PATH=/usr/bin:/bin",
+			"KWT_GITHUB_TOKEN=github-secret", "GHOSTHUB_AUTH=fleet-secret",
 		},
+		ProtectedNames: []string{"GHOSTHUB_AUTH"},
 		Run: func(_ context.Context, argv, environment []string) ([]byte, []byte, int, error) {
 			gotArgv = append([]string(nil), argv...)
 			gotEnvironment = append([]string(nil), environment...)
