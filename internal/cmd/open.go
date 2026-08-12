@@ -6,19 +6,28 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/git"
+	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 )
 
 var (
-	openLayout       string
-	openSelectLayout bool
-	openStartSession bool
+	openLayout               string
+	openSelectLayout         bool
+	openStartSession         bool
+	openExpectedRepository   string
+	openExpectedRegistration string
+	openExpectedGeneration   string
+	openExpectedSession      string
+
+	discoverOpenWorktree = discovery.DiscoverWorktree
 
 	newOpenWorkspaceRunner = func(names []string) openWorkspaceRunner {
 		tmuxCommand := tmux.NewTmuxCommandWithStripNames("", names)
@@ -28,6 +37,7 @@ var (
 
 type openWorkspaceRunner interface {
 	Ensure(context.Context, string, string, models.Layout) error
+	Attach(string, bool) error
 	EnsureAndAttach(
 		context.Context,
 		string,
@@ -81,6 +91,10 @@ func init() {
 		false,
 		"ensure an exact workspace exists without attaching",
 	)
+	openCmd.Flags().StringVar(&openExpectedRepository, "expected-repository", "", "require this registered repository identity before opening")
+	openCmd.Flags().StringVar(&openExpectedRegistration, "expected-registration", "", "require this project registration fingerprint before opening")
+	openCmd.Flags().StringVar(&openExpectedGeneration, "expected-generation", "", "require this exact worktree generation before opening")
+	openCmd.Flags().StringVar(&openExpectedSession, "expected-session", "", "require this exact tmux session identity before opening")
 	openCmd.MarkFlagsMutuallyExclusive("layout", "select-layout")
 	openCmd.MarkFlagsMutuallyExclusive("start-session", "select-layout")
 }
@@ -96,6 +110,10 @@ func runOpenWithContext(
 	args []string,
 	ctx *CommandContext,
 ) error {
+	guardedOpen, err := validateExpectedOpenFlags(args)
+	if err != nil {
+		return err
+	}
 	if err := tmux.ValidateLayouts(ctx.Config.Layouts, ctx.Config.Agents); err != nil {
 		return err
 	}
@@ -143,6 +161,13 @@ func runOpenWithContext(
 			requestedPath,
 		)
 	}
+	if guardedOpen && utils.PathKey(entry.Path) != utils.PathKey(args[0]) {
+		return service.NewError(
+			service.RegistrationChanged,
+			"the worktree path changed before it was opened",
+			true, nil, nil,
+		)
+	}
 	return openSelectedWorktree(
 		cmd.Context(),
 		ctx,
@@ -153,6 +178,46 @@ func runOpenWithContext(
 	)
 }
 
+func validateExpectedOpenFlags(args []string) (bool, error) {
+	values := []string{
+		openExpectedRepository,
+		openExpectedRegistration,
+		openExpectedGeneration,
+		openExpectedSession,
+	}
+	set := 0
+	for _, value := range values {
+		if value != "" {
+			set++
+		}
+	}
+	if set == 0 {
+		return false, nil
+	}
+	if set != len(values) {
+		return false, service.NewError(
+			service.InvalidRequest,
+			"expected repository, registration, generation, and session must be provided together",
+			false, nil, nil,
+		)
+	}
+	if len(args) != 1 {
+		return false, service.NewError(
+			service.InvalidRequest,
+			"guarded open requires one exact worktree path",
+			false, nil, nil,
+		)
+	}
+	if err := git.ValidateWorktreeGeneration(openExpectedGeneration); err != nil {
+		return false, service.NewError(
+			service.InvalidRequest,
+			"expected worktree generation is invalid",
+			false, nil, err,
+		)
+	}
+	return true, nil
+}
+
 func resolveOpenWorktree(
 	ctx *CommandContext,
 	args []string,
@@ -161,7 +226,7 @@ func resolveOpenWorktree(
 	requestedPath := ""
 	if startSession {
 		requestedPath = args[0]
-		entry, err := discovery.DiscoverWorktree(
+		entry, err := discoverOpenWorktree(
 			requestedPath,
 			ctx.Config.Projects,
 		)
@@ -177,7 +242,7 @@ func resolveOpenWorktree(
 
 	if len(args) == 1 {
 		requestedPath = args[0]
-		if entry, err := discovery.DiscoverWorktree(
+		if entry, err := discoverOpenWorktree(
 			requestedPath,
 			ctx.Config.Projects,
 		); err == nil {
@@ -305,11 +370,93 @@ func openSelectedWorktree(
 
 	session := tmux.WorkspaceSessionName(entry.RepositoryInfo, entry.Branch, entry.Path)
 	runner := newOpenWorkspaceRunner(credentials.ProtectedNames(ctx.Config))
+	if openExpectedRepository != "" {
+		return openExpectedWorktree(
+			commandCtx,
+			entry,
+			layout,
+			runner,
+			startSession,
+			os.Getenv("TMUX") != "",
+		)
+	}
 	if startSession {
 		return runner.Ensure(commandCtx, session, entry.Path, layout)
 	}
 	return runner.EnsureAndAttach(
 		commandCtx, session, entry.Path, layout, os.Getenv("TMUX") != "",
+	)
+}
+
+func openExpectedWorktree(
+	ctx context.Context,
+	entry *discovery.GlobalWorktreeEntry,
+	layout models.Layout,
+	runner openWorkspaceRunner,
+	startSession bool,
+	insideTmux bool,
+) error {
+	mainPath, err := git.New(entry.Path).GetMainRepositoryPath()
+	if err != nil {
+		return fmt.Errorf("failed to find repository root: %w", err)
+	}
+	home, err := config.CanonicalHome()
+	if err != nil {
+		return err
+	}
+	expansion, err := kwt.CaptureExpansionContext()
+	if err != nil {
+		return err
+	}
+	guard, err := observeExpectedGuardedProjectOperation(
+		ctx,
+		home,
+		mainPath,
+		expansion,
+		openExpectedRepository,
+		openExpectedRegistration,
+	)
+	if err != nil {
+		return err
+	}
+
+	err = guard.run(ctx, func() error {
+		current, discoverErr := discoverOpenWorktree(
+			entry.Path,
+			[]models.Project{guard.claim.Registration.Effective},
+		)
+		if discoverErr != nil || current == nil || current.RepositoryInfo == nil {
+			return registrationChangedOpenError(discoverErr)
+		}
+		currentSession := tmux.WorkspaceSessionName(
+			current.RepositoryInfo,
+			current.Branch,
+			current.Path,
+		)
+		if utils.PathKey(current.Path) != utils.PathKey(entry.Path) ||
+			!lifecycle.EqualProjectIdentity(current.RepositoryInfo.FullPath, openExpectedRepository) ||
+			current.Generation != openExpectedGeneration ||
+			currentSession != openExpectedSession {
+			return registrationChangedOpenError(nil)
+		}
+		return runner.Ensure(
+			ctx,
+			openExpectedSession,
+			current.Path,
+			layout,
+		)
+	})
+	if err != nil || startSession {
+		return err
+	}
+	return runner.Attach(openExpectedSession, insideTmux)
+}
+
+func registrationChangedOpenError(cause error) error {
+	return service.NewError(
+		service.RegistrationChanged,
+		"the worktree changed before it was opened",
+		true, nil, cause,
 	)
 }
 

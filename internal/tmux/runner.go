@@ -117,6 +117,13 @@ func (r *WorkspaceRunner) EnsureAndAttach(
 	return r.attach(session, insideTmux)
 }
 
+// Attach presents an already-established workspace session. Callers that
+// guard Ensure with a lifecycle lock can release that lock before the ordinary
+// tmux client occupies the foreground.
+func (r *WorkspaceRunner) Attach(session string, insideTmux bool) error {
+	return r.attach(session, insideTmux)
+}
+
 // Ensure creates or repairs the workspace session without attaching a client.
 // Automation callers can use this to establish kwt's canonical layout and
 // bootstrap before handing presentation to another ordinary tmux client.

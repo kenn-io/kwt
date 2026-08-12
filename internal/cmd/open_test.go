@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 )
 
 type recordingOpenWorkspaceRunner struct {
@@ -463,6 +465,105 @@ func TestOpenSelectedWorktreeStartsSessionWithoutAttaching(t *testing.T) {
 		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN", "CUSTOM_FLEET_TOKEN"},
 		protectedNames,
 	)
+}
+
+func (r *recordingOpenWorkspaceRunner) Attach(
+	sessionName string,
+	insideTmux bool,
+) error {
+	r.attached = true
+	r.sessionName = sessionName
+	r.insideTmux = insideTmux
+	return nil
+}
+
+func TestExpectedOpenRejectsReplacementBeforeSessionEnsure(t *testing.T) {
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	configPath := filepath.Join(os.Getenv("KWT_HOME"), "config.toml")
+	file, err := os.OpenFile(configPath, os.O_APPEND|os.O_WRONLY, 0)
+	require.NoError(t, err)
+	_, err = fmt.Fprintf(
+		file,
+		"\n[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'widget'\npath = %q\n",
+		repoPath,
+	)
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	snapshot, err := config.LoadGlobalSnapshotAt(os.Getenv("KWT_HOME"))
+	require.NoError(t, err)
+	require.Len(t, snapshot.Projects, 1)
+	fingerprint, err := snapshot.Projects[0].Fingerprint()
+	require.NoError(t, err)
+
+	const originalGeneration = "0123456789abcdef0123456789abcdef"
+	const replacementGeneration = "fedcba9876543210fedcba9876543210"
+	entry := &discovery.GlobalWorktreeEntry{
+		Path:       repoPath,
+		Branch:     "main",
+		Generation: originalGeneration,
+		RepositoryInfo: &url.RepositoryInfo{
+			FullPath: "github.com/acme/widget",
+		},
+	}
+	expectedSession := tmux.WorkspaceSessionName(
+		entry.RepositoryInfo,
+		entry.Branch,
+		entry.Path,
+	)
+	runner := &recordingOpenWorkspaceRunner{}
+	originalRunner := newOpenWorkspaceRunner
+	originalDiscover := discoverOpenWorktree
+	originalBeforeAcquire := beforeProjectGuardAcquire
+	originalLayout := openLayout
+	originalExpectedRepository := openExpectedRepository
+	originalExpectedRegistration := openExpectedRegistration
+	originalExpectedGeneration := openExpectedGeneration
+	originalExpectedSession := openExpectedSession
+	t.Cleanup(func() {
+		newOpenWorkspaceRunner = originalRunner
+		discoverOpenWorktree = originalDiscover
+		beforeProjectGuardAcquire = originalBeforeAcquire
+		openLayout = originalLayout
+		openExpectedRepository = originalExpectedRepository
+		openExpectedRegistration = originalExpectedRegistration
+		openExpectedGeneration = originalExpectedGeneration
+		openExpectedSession = originalExpectedSession
+	})
+	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	openLayout = tmux.BlankLayoutName
+	openExpectedRepository = "github.com/acme/widget"
+	openExpectedRegistration = fingerprint
+	openExpectedGeneration = originalGeneration
+	openExpectedSession = expectedSession
+	replaced := false
+	beforeProjectGuardAcquire = func() { replaced = true }
+	discoverOpenWorktree = func(path string, projects []models.Project) (*discovery.GlobalWorktreeEntry, error) {
+		assert.True(t, replaced)
+		assert.Equal(t, repoPath, path)
+		require.Len(t, projects, 1)
+		return &discovery.GlobalWorktreeEntry{
+			Path:       repoPath,
+			Branch:     "main",
+			Generation: replacementGeneration,
+			RepositoryInfo: &url.RepositoryInfo{
+				FullPath: "github.com/acme/widget",
+			},
+		}, nil
+	}
+
+	err = openSelectedWorktree(
+		context.Background(),
+		&CommandContext{Config: &models.Config{}},
+		entry,
+		nil,
+		true,
+		false,
+	)
+
+	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+	assert.False(t, runner.ensured)
+	assert.False(t, runner.attached)
 }
 
 func TestOpenSelectedWorktreeAcknowledgesPersistedRemoteSource(t *testing.T) {
