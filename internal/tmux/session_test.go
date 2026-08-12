@@ -60,13 +60,14 @@ func TestWorkspaceSessionName(t *testing.T) {
 	// Golden value pins field order, the worktreePath hash basis, and
 	// sanitization at once — a swapped/dropped field or a narrowed hash input
 	// trips this where the structural checks below would not.
-	assert.Equal(t, "kwt-workspace-github-com-wesm-kwt-feature-foo-9cc4e551", name)
+	assert.Equal(t, "kwt-kwt-feature-foo-9cc4e551", name)
 
-	assert.True(t, strings.HasPrefix(name, "kwt-workspace-"), "must carry the kwt- prefix")
+	assert.True(t, strings.HasPrefix(name, "kwt-"), "must carry the kwt- prefix")
 	assert.NotContains(t, name, ".", "tmux names cannot contain '.'")
 	assert.NotContains(t, name, ":", "tmux names cannot contain ':'")
 	assert.NotContains(t, name, "/", "slashes must be sanitized")
-	assert.Contains(t, name, "github-com")
+	assert.NotContains(t, name, "github-com")
+	assert.NotContains(t, name, "wesm")
 
 	// Stable across calls for the same (info, branch, worktreePath).
 	assert.Equal(t, name, WorkspaceSessionName(info, "feature/foo", worktreePath))
@@ -77,6 +78,31 @@ func TestWorkspaceSessionName(t *testing.T) {
 	detached1 := WorkspaceSessionName(info, "HEAD", "/home/u/worktrees/github.com/wesm/kwt/wt1")
 	detached2 := WorkspaceSessionName(info, "HEAD", "/home/u/worktrees/github.com/wesm/kwt/wt2")
 	assert.NotEqual(t, detached1, detached2)
+}
+
+func TestMatchesWorkspaceSessionName(t *testing.T) {
+	info := &url.RepositoryInfo{
+		Host: "github.com", Owner: "wesm", Repository: "kwt",
+		FullPath: "github.com/wesm/kwt",
+	}
+	branch := "feature/foo"
+	path := "/home/u/worktrees/github.com/wesm/kwt/feature/foo"
+
+	assert.True(t, MatchesWorkspaceSessionName(
+		"kwt-kwt-feature-foo-9cc4e551", info, branch, path,
+	))
+	assert.True(t, MatchesWorkspaceSessionName(
+		"kwt-workspace-github-com-wesm-kwt-feature-foo-9cc4e551",
+		info,
+		branch,
+		path,
+	))
+	assert.False(t, MatchesWorkspaceSessionName(
+		"arbitrary-session", info, branch, path,
+	))
+	assert.False(t, MatchesWorkspaceSessionName(
+		"kwt-kwt-feature-foo-9cc4e551", info, branch, "/another/path",
+	))
 }
 
 func TestDirWorkspaceSessionName(t *testing.T) {

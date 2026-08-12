@@ -44,11 +44,31 @@ func DefaultSessionConfig() *SessionConfig {
 }
 
 // WorkspaceSessionName returns a stable, collision-resistant, tmux-safe session
-// name for a worktree workspace: kwt-workspace-{host}-{owner}-{repo}-{branch}-{hash}.
+// name for a worktree workspace: kwt-{repo}-{branch}-{hash}.
 // The hash is computed over worktreePath, which is globally unique per worktree
 // (unlike info+branch: two detached-HEAD worktrees of the same repo both report
 // branch "HEAD" and would otherwise collide on the same session name).
 func WorkspaceSessionName(info *url.RepositoryInfo, branch, worktreePath string) string {
+	hash := template.ShortHash(worktreePath)
+	raw := fmt.Sprintf("kwt-%s-%s-%s", info.Repository, branch, hash)
+	return sanitizeTmuxName(raw)
+}
+
+// MatchesWorkspaceSessionName verifies the deterministic session identities
+// used by current and previously imported protected pull-request workspaces.
+func MatchesWorkspaceSessionName(
+	name string,
+	info *url.RepositoryInfo,
+	branch, worktreePath string,
+) bool {
+	return name == WorkspaceSessionName(info, branch, worktreePath) ||
+		name == previousWorkspaceSessionName(info, branch, worktreePath)
+}
+
+func previousWorkspaceSessionName(
+	info *url.RepositoryInfo,
+	branch, worktreePath string,
+) string {
 	hash := template.ShortHash(worktreePath)
 	raw := fmt.Sprintf("kwt-workspace-%s-%s-%s-%s-%s",
 		info.Host, info.Owner, info.Repository, branch, hash)

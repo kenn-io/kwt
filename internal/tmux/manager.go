@@ -12,8 +12,9 @@ import (
 )
 
 var (
-	workspaceSessionRe = regexp.MustCompile(`^kwt-workspace-(.+)-([0-9a-f]{8})$`)
-	legacySessionRe    = regexp.MustCompile(`^kwt-([^-]+)-(.+)-(\d{14})$`)
+	workspaceSessionRe    = regexp.MustCompile(`^kwt-(.+)-([0-9a-f]{8})$`)
+	dirWorkspaceSessionRe = regexp.MustCompile(`^kwt-workspace-(dir-.+)-([0-9a-f]{8})$`)
+	legacySessionRe       = regexp.MustCompile(`^kwt-([^-]+)-(.+)-(\d{14})$`)
 )
 
 type SessionManager struct {
@@ -91,13 +92,42 @@ func (sm *SessionManager) ListSessions() ([]*Session, error) {
 }
 
 func (sm *SessionManager) parseSessionFromTmux(info *SessionInfo) *Session {
-	// Parse session name format: kwt-workspace-{identifier}-{hash8}
-	if m := workspaceSessionRe.FindStringSubmatch(info.Name); len(m) == 3 {
+	// Parse the timestamped run format before the broad eight-hex workspace
+	// suffix, because the last eight decimal timestamp digits are also hex.
+	if matches := legacySessionRe.FindStringSubmatch(info.Name); len(matches) == 4 {
+		startTime, err := time.Parse("20060102150405", matches[3])
+		if err != nil {
+			startTime = time.Now()
+		}
+		command := info.CurrentCommand
+		if command == "bash" || command == "zsh" || command == "sh" {
+			command = "Shell session (original command completed)"
+		}
+		return &Session{
+			ID:          utils.GenerateShortID(),
+			SessionName: info.Name,
+			Context:     matches[1],
+			Identifier:  matches[2],
+			WorkingDir:  info.WorkingDir,
+			Command:     command,
+			StartTime:   startTime,
+			HistorySize: sm.config.HistoryLimit,
+			Metadata:    map[string]string{},
+		}
+	}
+
+	// Preserve the directory-workspace identifier before parsing the broad
+	// standard-worktree format.
+	workspaceMatch := dirWorkspaceSessionRe.FindStringSubmatch(info.Name)
+	if len(workspaceMatch) != 3 {
+		workspaceMatch = workspaceSessionRe.FindStringSubmatch(info.Name)
+	}
+	if len(workspaceMatch) == 3 {
 		return &Session{
 			ID:          utils.GenerateShortID(),
 			SessionName: info.Name,
 			Context:     "workspace",
-			Identifier:  m[1],
+			Identifier:  workspaceMatch[1],
 			WorkingDir:  info.WorkingDir,
 			Command:     info.CurrentCommand,
 			StartTime:   parseCreated(info.Created),
@@ -105,41 +135,7 @@ func (sm *SessionManager) parseSessionFromTmux(info *SessionInfo) *Session {
 			Metadata:    map[string]string{},
 		}
 	}
-
-	// Parse session name format: kwt-{context}-{identifier}-{timestamp}
-	matches := legacySessionRe.FindStringSubmatch(info.Name)
-	if len(matches) != 4 {
-		return nil
-	}
-
-	context := matches[1]
-	identifier := matches[2]
-	timestamp := matches[3]
-
-	startTime, err := time.Parse("20060102150405", timestamp)
-	if err != nil {
-		startTime = time.Now()
-	}
-
-	// Determine command from session name or current command
-	command := info.CurrentCommand
-
-	if command == "bash" || command == "zsh" || command == "sh" {
-		// If shell is running, the original command likely finished but session is still active
-		command = "Shell session (original command completed)"
-	}
-
-	return &Session{
-		ID:          utils.GenerateShortID(),
-		SessionName: info.Name,
-		Context:     context,
-		Identifier:  identifier,
-		WorkingDir:  info.WorkingDir,
-		Command:     command,
-		StartTime:   startTime,
-		HistorySize: sm.config.HistoryLimit,
-		Metadata:    map[string]string{},
-	}
+	return nil
 }
 
 // parseCreated converts a tmux #{session_created} unix-seconds string to a

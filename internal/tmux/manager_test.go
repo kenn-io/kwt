@@ -11,7 +11,7 @@ import (
 func TestParseWorkspaceSession(t *testing.T) {
 	sm := NewSessionManager(nil)
 	info := &SessionInfo{
-		Name:           "kwt-workspace-github-com-wesm-kwt-feature-foo-abcd1234",
+		Name:           "kwt-kwt-feature-foo-abcd1234",
 		Created:        "1700000000",
 		WorkingDir:     "/wt",
 		CurrentCommand: "zsh",
@@ -19,11 +19,25 @@ func TestParseWorkspaceSession(t *testing.T) {
 	got := sm.parseSessionFromTmux(info)
 	require.NotNil(t, got)
 	assert.Equal(t, "workspace", got.Context)
-	assert.Equal(t, "github-com-wesm-kwt-feature-foo", got.Identifier)
+	assert.Equal(t, "kwt-feature-foo", got.Identifier)
 	assert.Equal(t, info.Name, got.SessionName)
 	assert.Equal(t, "/wt", got.WorkingDir)
 	// StartTime comes from tmux's #{session_created}, parsed by parseCreated.
 	assert.Equal(t, time.Unix(1700000000, 0), got.StartTime)
+}
+
+func TestParseDirWorkspaceSession(t *testing.T) {
+	sm := NewSessionManager(nil)
+	info := &SessionInfo{
+		Name:    "kwt-workspace-dir-notes-abcd1234",
+		Created: "1700000000",
+	}
+
+	got := sm.parseSessionFromTmux(info)
+
+	require.NotNil(t, got)
+	assert.Equal(t, "workspace", got.Context)
+	assert.Equal(t, "dir-notes", got.Identifier)
 }
 
 func TestParseLegacySessionStillWorks(t *testing.T) {
