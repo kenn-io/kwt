@@ -336,8 +336,10 @@ func openSelectedWorktree(
 	); err != nil {
 		return err
 	}
-	if err := acknowledgeRemoteSourcePath(entry.Path); err != nil {
-		return err
+	if openExpectedRepository == "" {
+		if err := acknowledgeRemoteSourcePath(entry.Path); err != nil {
+			return err
+		}
 	}
 
 	// Only resolve the target repo's default layout (which requires
@@ -445,6 +447,9 @@ func openExpectedWorktree(
 			current.Generation != openExpectedGeneration ||
 			currentSession != openExpectedSession {
 			return registrationChangedOpenError(nil)
+		}
+		if err := acknowledgeRemoteSourcePath(current.Path); err != nil {
+			return err
 		}
 		return runner.Ensure(
 			ctx,

@@ -537,6 +537,13 @@ func TestExpectedOpenRejectsReplacementBeforeSessionEnsure(t *testing.T) {
 			FullPath: "github.com/acme/widget",
 		},
 	}
+	reg, err := registry.New()
+	require.NoError(t, err)
+	require.NoError(t, reg.Register(&registry.WorktreeEntry{
+		Path:                   repoPath,
+		Branch:                 "main",
+		UnreviewedRemoteSource: true,
+	}))
 	expectedSession := tmux.WorkspaceSessionName(
 		entry.RepositoryInfo,
 		entry.Branch,
@@ -595,6 +602,9 @@ func TestExpectedOpenRejectsReplacementBeforeSessionEnsure(t *testing.T) {
 	assert.True(t, service.IsCode(err, service.RegistrationChanged))
 	assert.False(t, runner.ensured)
 	assert.False(t, runner.attached)
+	reloaded, err := registry.New()
+	require.NoError(t, err)
+	assert.True(t, reloaded.IsUnreviewedRemoteSource(repoPath))
 }
 
 func TestOpenSelectedWorktreeAcknowledgesPersistedRemoteSource(t *testing.T) {
