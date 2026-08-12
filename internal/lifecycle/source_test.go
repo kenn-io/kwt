@@ -15,6 +15,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/pullrequest"
+	"go.kenn.io/kwt/internal/template"
+	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
@@ -369,6 +372,68 @@ func TestSourceReadsProvenanceOnlyWhenRequested(t *testing.T) {
 		IncludeProtectedSockets: true,
 	})
 	require.ErrorContains(t, err, "failed to read pull-request provenance")
+}
+
+func TestAnnotateProtectedSocketsPreservesVerifiedPersistedEndpoint(t *testing.T) {
+	path := "/worktrees/widget/main"
+	branch := "main"
+	generation := "0123456789abcdef0123456789abcdef"
+	derived := "kwt-widget-main-" + template.ShortHash(path)
+	previous := "kwt-workspace-github-com-acme-widget-main-" +
+		template.ShortHash(path)
+
+	for _, test := range []struct {
+		name       string
+		persisted  string
+		wantName   string
+		wantSocket string
+	}{
+		{
+			name:       "previous deterministic name",
+			persisted:  previous,
+			wantName:   previous,
+			wantSocket: tmux.ProtectedWorkspaceSocketName(previous, path),
+		},
+		{
+			name:      "arbitrary name",
+			persisted: "arbitrary-session",
+			wantName:  derived,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			record := pullrequest.Provenance{
+				Repository: "github.com/acme/widget",
+				Project: pullrequest.Project{
+					Identity: "github.com/acme/widget",
+				},
+				Workspace: pullrequest.Workspace{
+					Repository: "github.com/acme/widget",
+					Path:       path, Branch: branch, Generation: generation,
+					SessionName: test.persisted,
+				},
+			}
+			require.NoError(t, pullrequest.NewFileStore(
+				filepath.Join(home, "pull-requests.json"),
+			).Update(context.Background(), func(records map[string]pullrequest.Provenance) error {
+				records["github:github.com/acme/widget#1"] = record
+				return nil
+			}))
+			entries := []Entry{{
+				Path: path, Branch: branch, Generation: generation,
+				Repository:  Repository{FullPath: "github.com/acme/widget"},
+				SessionName: derived,
+			}}
+
+			err := (&currentSource{home: home}).annotateProtectedSockets(
+				context.Background(), entries,
+			)
+
+			require.NoError(t, err)
+			assert.Equal(t, test.wantName, entries[0].SessionName)
+			assert.Equal(t, test.wantSocket, entries[0].TmuxSocketName)
+		})
+	}
 }
 
 func TestSourceSeparatesLaunchInventoryFromDashboardEntries(t *testing.T) {

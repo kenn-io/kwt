@@ -485,13 +485,34 @@ func (s *currentSource) annotateProtectedSockets(ctx context.Context, entries []
 			}
 			if utils.PathKey(workspace.Path) != utils.PathKey(entries[index].Path) ||
 				workspace.Branch != entries[index].Branch ||
-				workspace.SessionName != entries[index].SessionName ||
-				pullrequest.NormalizeRepositoryIdentity(repository) != pullrequest.NormalizeRepositoryIdentity(entries[index].Repository.FullPath) {
+				(!pullrequest.EqualRepositoryIdentity(repository, entries[index].Repository.FullPath) &&
+					(!pullrequest.ProvenanceHasRepositoryIdentity(record, repository) ||
+						!pullrequest.ProvenanceHasRepositoryIdentity(
+							record,
+							entries[index].Repository.FullPath,
+						))) {
 				continue
 			}
 			if workspace.Generation != "" && workspace.Generation != entries[index].Generation {
 				continue
 			}
+			verifiedSession := false
+			for _, identity := range pullrequest.ProvenanceRepositoryIdentities(record) {
+				info, ok := repositoryurl.CanonicalRepositoryInfo(identity)
+				if ok && tmux.MatchesWorkspaceSessionName(
+					workspace.SessionName,
+					info,
+					workspace.Branch,
+					workspace.Path,
+				) {
+					verifiedSession = true
+					break
+				}
+			}
+			if !verifiedSession {
+				continue
+			}
+			entries[index].SessionName = workspace.SessionName
 			entries[index].TmuxSocketName = tmux.ProtectedWorkspaceSocketName(workspace.SessionName, workspace.Path)
 			break
 		}

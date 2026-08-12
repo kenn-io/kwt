@@ -613,32 +613,32 @@ func prWorkspaceIdentityMatches(
 	live pullrequest.Workspace,
 	recorded pullrequest.Provenance,
 ) bool {
-	if pullrequest.EqualRepositoryIdentity(
+	sameRepository := pullrequest.EqualRepositoryIdentity(
 		live.Repository,
 		recorded.Workspace.Repository,
-	) {
-		return live.SessionName == recorded.Workspace.SessionName
+	)
+	if sameRepository && live.SessionName == recorded.Workspace.SessionName {
+		return true
 	}
-	if !pullrequest.ProvenanceHasRepositoryIdentity(
-		recorded,
-		live.Repository,
-	) || !pullrequest.ProvenanceHasRepositoryIdentity(
-		recorded,
-		recorded.Workspace.Repository,
-	) {
+	if !sameRepository && (!pullrequest.ProvenanceHasRepositoryIdentity(recorded, live.Repository) ||
+		!pullrequest.ProvenanceHasRepositoryIdentity(
+			recorded,
+			recorded.Workspace.Repository,
+		)) {
 		return false
 	}
-	info, ok := urlutil.CanonicalRepositoryInfo(
-		recorded.Workspace.Repository,
-	)
-	if !ok {
-		return false
+	for _, identity := range pullrequest.ProvenanceRepositoryIdentities(recorded) {
+		info, ok := urlutil.CanonicalRepositoryInfo(identity)
+		if ok && tmux.MatchesWorkspaceSessionName(
+			recorded.Workspace.SessionName,
+			info,
+			recorded.Workspace.Branch,
+			recorded.Workspace.Path,
+		) {
+			return true
+		}
 	}
-	return recorded.Workspace.SessionName == tmux.WorkspaceSessionName(
-		info,
-		recorded.Workspace.Branch,
-		recorded.Workspace.Path,
-	)
+	return false
 }
 
 func preparePRProject() (pullrequest.Project, error) {

@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/internal/pullrequest"
+	"go.kenn.io/kwt/internal/template"
 	"go.kenn.io/kwt/internal/tmux"
 	urlutil "go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/pkg/models"
@@ -1442,10 +1443,6 @@ func TestTransferredProvenanceMatchesLiveWorkspaceAcrossAliases(
 ) {
 	path := "/worktrees/pr-32"
 	branch := "pr-32"
-	recordedInfo, ok := urlutil.CanonicalRepositoryInfo(
-		"github.com/current/widget",
-	)
-	require.True(t, ok)
 	liveInfo, ok := urlutil.CanonicalRepositoryInfo(
 		"github.com/legacy/widget",
 	)
@@ -1465,11 +1462,8 @@ func TestTransferredProvenanceMatchesLiveWorkspaceAcrossAliases(
 			Repository: "github.com/current/widget",
 			Branch:     branch,
 			Path:       path,
-			SessionName: tmux.WorkspaceSessionName(
-				recordedInfo,
-				branch,
-				path,
-			),
+			SessionName: "kwt-workspace-github-com-current-widget-pr-32-" +
+				template.ShortHash(path),
 		},
 	}
 	liveProject := pullrequest.Project{
