@@ -41,6 +41,38 @@ func observeRequiredGuardedProjectOperation(
 	return guard, nil
 }
 
+func observeExpectedGuardedProjectOperation(
+	ctx context.Context,
+	home string,
+	mainPath string,
+	expansion kwt.ExpansionContext,
+	expectedIdentity string,
+	expectedRegistration string,
+) (*guardedProjectOperation, error) {
+	if !config.ValidProjectRegistrationFingerprint(expectedRegistration) {
+		return nil, service.NewError(
+			service.InvalidRequest,
+			"expected project registration fingerprint is invalid",
+			false, nil, nil,
+		)
+	}
+	guard, err := observeRequiredGuardedProjectOperation(
+		ctx, home, mainPath, expansion, expectedIdentity,
+	)
+	if err != nil {
+		return nil, err
+	}
+	actualRegistration, err := guard.claim.Registration.Fingerprint()
+	if err != nil || actualRegistration != expectedRegistration {
+		return nil, service.NewError(
+			service.RegistrationChanged,
+			"the project registration changed before the operation began",
+			true, nil, err,
+		)
+	}
+	return guard, nil
+}
+
 func projectClaimHasExpectedIdentity(
 	claim *lifecycle.ProjectClaim,
 	expected []string,
