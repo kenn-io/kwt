@@ -1,0 +1,209 @@
+package daemon
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	kitdaemon "go.kenn.io/kit/daemon"
+	"go.kenn.io/kwt/service"
+)
+
+func TestOperationClientResumesInterruptedStreamFromLastSequence(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "Bearer secret", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		sequence := requests.Add(1)
+		switch sequence {
+		case 1:
+			assert.Equal(t, "0", r.URL.Query().Get("after_sequence"))
+			_ = json.NewEncoder(w).Encode(service.OperationEvent{
+				OperationID: "operation-1", Sequence: 1,
+				Kind: service.OperationEventProgress, Message: "started",
+			})
+		case 2:
+			assert.Equal(t, "1", r.URL.Query().Get("after_sequence"))
+			_ = json.NewEncoder(w).Encode(service.OperationEvent{
+				OperationID: "operation-1", Sequence: 2,
+				Kind: service.OperationEventComplete, Result: json.RawMessage(`{"status":"ready"}`),
+			})
+		default:
+			t.Fatalf("unexpected stream request %d", sequence)
+		}
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+	var messages []string
+	result, err := client.FollowOperation(
+		context.Background(),
+		"operation-1",
+		0,
+		OperationCallbacks{Event: func(event service.OperationEvent) error {
+			if event.Message != "" {
+				messages = append(messages, event.Message)
+			}
+			return nil
+		}},
+	)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"status":"ready"}`, string(result))
+	assert.Equal(t, []string{"started"}, messages)
+	assert.Equal(t, int32(2), requests.Load())
+}
+
+func TestOperationClientHandlesMultipleBoundPromptRounds(t *testing.T) {
+	responses := make(chan service.OperationResponse, 2)
+	answered := make(chan struct{}, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/events"):
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			flusher := w.(http.Flusher)
+			encoder := json.NewEncoder(w)
+			for sequence, promptID := range []string{"prompt-1", "prompt-2"} {
+				_ = encoder.Encode(service.OperationEvent{
+					OperationID: "operation-1", Sequence: uint64(sequence + 1),
+					Kind: service.OperationEventPrompt,
+					Prompt: &service.OperationPrompt{
+						ID: promptID, Kind: "password", Message: "Password:", Sensitive: true,
+					},
+				})
+				flusher.Flush()
+				<-answered
+			}
+			_ = encoder.Encode(service.OperationEvent{
+				OperationID: "operation-1", Sequence: 3,
+				Kind: service.OperationEventComplete, Result: json.RawMessage(`{}`),
+			})
+			flusher.Flush()
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/responses"):
+			var response service.OperationResponse
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&response))
+			responses <- response
+			answered <- struct{}{}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+	var promptIDs []string
+	_, err := client.FollowOperation(
+		context.Background(), "operation-1", 0,
+		OperationCallbacks{Prompt: func(
+			_ context.Context,
+			prompt service.OperationPrompt,
+		) (string, error) {
+			promptIDs = append(promptIDs, prompt.ID)
+			if prompt.ID == "prompt-2" {
+				return "", nil
+			}
+			return "wrong", nil
+		}},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"prompt-1", "prompt-2"}, promptIDs)
+	first := <-responses
+	second := <-responses
+	assert.Equal(t, service.OperationResponse{PromptID: "prompt-1", Value: "wrong"}, first)
+	assert.Equal(t, service.OperationResponse{PromptID: "prompt-2"}, second)
+}
+
+func TestOperationClientRejectsInvalidSequenceAsUnknownOutcome(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_ = json.NewEncoder(w).Encode(service.OperationEvent{
+			OperationID: "operation-1", Sequence: 2,
+			Kind: service.OperationEventComplete, Result: json.RawMessage(`{}`),
+		})
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+	_, err := client.FollowOperation(context.Background(), "operation-1", 0, OperationCallbacks{})
+	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
+}
+
+func TestOperationClientPreservesTerminalServiceFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_ = json.NewEncoder(w).Encode(service.OperationEvent{
+			OperationID: "operation-1", Sequence: 1,
+			Kind: service.OperationEventComplete,
+			Failure: &service.Descriptor{
+				Code: service.Conflict, Message: "target changed", Retryable: true,
+			},
+		})
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+	_, err := client.FollowOperation(context.Background(), "operation-1", 0, OperationCallbacks{})
+	assert.True(t, service.IsCode(err, service.Conflict), err)
+}
+
+func TestOperationClientPreservesInteractionRequired(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_ = json.NewEncoder(w).Encode(service.OperationEvent{
+			OperationID: "operation-1", Sequence: 1,
+			Kind: service.OperationEventPrompt,
+			Prompt: &service.OperationPrompt{
+				ID: "prompt-1", Kind: "password", Message: "Password:", Sensitive: true,
+			},
+		})
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+	_, err := client.FollowOperation(context.Background(), "operation-1", 0, OperationCallbacks{})
+	assert.True(t, service.IsCode(err, service.InteractionRequired), err)
+}
+
+func TestOperationClientBoundsStreamResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = io.WriteString(w, `{"operation_id":"operation-1","sequence":1,"kind":"progress","message":"`)
+		_, _ = io.WriteString(w, strings.Repeat("x", int(operationStreamResponseLimit)))
+		_, _ = io.WriteString(w, `"}`+"\n")
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+	_, err := client.FollowOperation(context.Background(), "operation-1", 0, OperationCallbacks{})
+	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
+	assert.ErrorIs(t, err, ErrResponseTooLarge)
+}
+
+func TestOperationClientMapsEndpointLossToUnknownOutcome(t *testing.T) {
+	client := newClient(
+		kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: "127.0.0.1:1"},
+		"secret",
+		&http.Client{Transport: failingRoundTripper{}},
+	)
+	_, err := client.FollowOperation(context.Background(), "operation-1", 0, OperationCallbacks{})
+	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
+}
+
+func TestOperationClientCancelsOperation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodDelete, r.Method)
+		assert.Equal(t, "/api/v1/operations/operation-1", r.URL.Path)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+	require.NoError(t, client.CancelOperation(context.Background(), "operation-1"))
+}
+
+type failingRoundTripper struct{}
+
+func (failingRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("endpoint lost")
+}

@@ -25,6 +25,7 @@ type Client struct {
 	controlHTTP   *http.Client
 	inventoryHTTP *http.Client
 	mutationHTTP  *http.Client
+	streamHTTP    *http.Client
 }
 
 type worktreeRemovedError struct {
@@ -113,6 +114,7 @@ func NewVerifiedClient(
 			ResponseHeaderTimeout: inventoryRequestTimeout,
 		}),
 		mutationHTTP: ep.HTTPClient(kitdaemon.HTTPClientOptions{}),
+		streamHTTP:   ep.HTTPClient(kitdaemon.HTTPClientOptions{}),
 	}, nil
 }
 
@@ -308,7 +310,7 @@ func detailBoolValue(details map[string]any, key string) bool {
 func newClient(ep kitdaemon.Endpoint, token string, client *http.Client) *Client {
 	return &Client{
 		endpoint: ep, token: token, controlHTTP: client, inventoryHTTP: client,
-		mutationHTTP: client,
+		mutationHTTP: client, streamHTTP: client,
 	}
 }
 
@@ -511,6 +513,10 @@ func problemCode(code service.Code) (service.Code, bool) {
 		service.UnregistrationFailed,
 		service.ProtectedSessionLive,
 		service.ProtectedEndpointInventoryIncomplete,
+		service.OperationIDConflict,
+		service.OperationCapacityExhausted,
+		service.OperationJournalUnavailable,
+		service.OperationOutcomeUnknown,
 		service.Internal:
 		return code, true
 	default:
