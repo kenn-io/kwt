@@ -90,13 +90,13 @@ The daemon and inventory paths currently emit these stable codes:
 | `protected_session_live`                  | A live protected tmux endpoint still belongs to the project.      |
 | `protected_endpoint_inventory_incomplete` | Durable endpoint authority could not be verified.                 |
 | `interaction_required`                    | Repository configuration needs digest-bound approval.             |
-| `operation_id_conflict`                   | An operation identifier was reused for a different request.        |
-| `operation_capacity_exhausted`            | Bounded operation capacity was exhausted.                          |
-| `operation_outcome_unknown`               | The operation's terminal outcome can no longer be proved.          |
-| `ssh_invalid_target`                      | Structured SSH target validation failed.                           |
-| `ssh_resolution_failed`                   | Effective OpenSSH configuration could not be observed.             |
-| `ssh_route_unreviewable`                  | A proxy route cannot be bound to independently reviewed hops.      |
-| `ssh_configuration_changed`               | A later lifecycle request observed a different route identity.     |
+| `operation_id_conflict`                   | An operation identifier was reused for a different request.       |
+| `operation_capacity_exhausted`            | Bounded operation capacity was exhausted.                         |
+| `operation_outcome_unknown`               | The operation's terminal outcome can no longer be proved.         |
+| `ssh_invalid_target`                      | Structured SSH target validation failed.                          |
+| `ssh_resolution_failed`                   | Effective OpenSSH configuration could not be observed.            |
+| `ssh_route_unreviewable`                  | A proxy route cannot be bound to independently reviewed hops.     |
+| `ssh_configuration_changed`               | A later lifecycle request observed a different route identity.    |
 | `internal`                                | An unexpected failure was withheld from the public response.      |
 
 `operation_journal_unavailable` remains reserved until kwt has a durable
