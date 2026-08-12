@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -248,6 +249,60 @@ func TestOperationClientMapsEndpointLossToUnknownOutcome(t *testing.T) {
 	)
 	_, err := client.FollowOperation(context.Background(), "operation-1", 0, OperationCallbacks{})
 	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
+}
+
+func TestVerifiedOperationClientBoundsStreamHeaderWait(t *testing.T) {
+	t.Parallel()
+	token := "test-secret"
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	record := runtimeRecordForServer(t, server, token)
+	proof, err := kitdaemon.NewProof([]byte(token))
+	require.NoError(t, err)
+	ping, err := proof.NewPingHandler(record)
+	require.NoError(t, err)
+	mux.Handle("/api/ping", ping)
+	mux.HandleFunc("/api/v1/operations/operation-1/events", func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	})
+	client, err := NewVerifiedClient(context.Background(), record, token)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, _, err = client.followOperationAttempt(ctx, "operation-1", 0, OperationCallbacks{})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errOperationStreamInterrupted)
+	assert.NoError(t, ctx.Err(), "stream header wait reached the caller deadline")
+}
+
+func TestVerifiedOperationClientBoundsPromptResponse(t *testing.T) {
+	t.Parallel()
+	token := "test-secret"
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	record := runtimeRecordForServer(t, server, token)
+	proof, err := kitdaemon.NewProof([]byte(token))
+	require.NoError(t, err)
+	ping, err := proof.NewPingHandler(record)
+	require.NoError(t, err)
+	mux.Handle("/api/ping", ping)
+	mux.HandleFunc("/api/v1/operations/operation-1/responses", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "2")
+		_, _ = io.WriteString(w, "{")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	})
+	client, err := NewVerifiedClient(context.Background(), record, token)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	err = client.sendOperationResponse(ctx, "operation-1", service.OperationResponse{PromptID: "prompt-1"})
+	require.Error(t, err)
+	assert.NoError(t, ctx.Err(), "prompt response reached the caller deadline")
 }
 
 func TestOperationClientMapsReplacementAuthenticationFailureToUnknownOutcome(t *testing.T) {

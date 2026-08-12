@@ -204,7 +204,7 @@ func runHost(
 		})
 	}
 	if sshResolver == nil {
-		sshResolver = newConfiguredSSHResolver(opts.Home, opts.Now)
+		sshResolver = kwt.NewSSHService(kwt.SSHServiceOptions{Home: opts.Home, Now: opts.Now})
 	}
 	status := &hostStatus{
 		base: Status{

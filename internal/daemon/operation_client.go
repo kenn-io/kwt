@@ -189,9 +189,11 @@ func (c *Client) sendOperationResponse(
 	operationID string,
 	response service.OperationResponse,
 ) error {
+	responseContext, cancel := context.WithTimeout(ctx, operationResponseTimeout)
+	defer cancel()
 	return c.doWith(
-		ctx,
-		c.streamHTTP,
+		responseContext,
+		c.operationHTTP,
 		controlResponseLimit,
 		http.MethodPost,
 		operationRoutePrefix+url.PathEscape(operationID)+"/responses",

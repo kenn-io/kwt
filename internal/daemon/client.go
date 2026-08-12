@@ -27,6 +27,7 @@ type Client struct {
 	mutationHTTP  *http.Client
 	sshHTTP       *http.Client
 	streamHTTP    *http.Client
+	operationHTTP *http.Client
 }
 
 type worktreeRemovedError struct {
@@ -72,13 +73,15 @@ func RequiresRefresh(err error) bool {
 var ErrResponseTooLarge = errors.New("kwt daemon response is too large")
 
 const (
-	controlRequestTimeout           = 2 * time.Second
-	inventoryResponseHeadroom       = 5 * time.Second
-	inventoryRequestTimeout         = kwt.DefaultRefreshTimeout + inventoryResponseHeadroom
-	sshResolveRequestTimeout        = 30 * time.Second
-	removalReconcileTimeout         = 5 * time.Second
-	controlResponseLimit      int64 = 1 << 20
-	inventoryResponseLimit          = 64 << 20
+	controlRequestTimeout              = 2 * time.Second
+	inventoryResponseHeadroom          = 5 * time.Second
+	inventoryRequestTimeout            = kwt.DefaultRefreshTimeout + inventoryResponseHeadroom
+	sshResolveRequestTimeout           = 30 * time.Second
+	operationStreamHeaderTimeout       = 2 * time.Second
+	operationResponseTimeout           = 2 * time.Second
+	removalReconcileTimeout            = 5 * time.Second
+	controlResponseLimit         int64 = 1 << 20
+	inventoryResponseLimit             = 64 << 20
 )
 
 func NewVerifiedClient(
@@ -120,7 +123,13 @@ func NewVerifiedClient(
 			Timeout:               sshResolveRequestTimeout,
 			ResponseHeaderTimeout: sshResolveRequestTimeout,
 		}),
-		streamHTTP: ep.HTTPClient(kitdaemon.HTTPClientOptions{}),
+		streamHTTP: ep.HTTPClient(kitdaemon.HTTPClientOptions{
+			ResponseHeaderTimeout: operationStreamHeaderTimeout,
+		}),
+		operationHTTP: ep.HTTPClient(kitdaemon.HTTPClientOptions{
+			Timeout:               operationResponseTimeout,
+			ResponseHeaderTimeout: operationResponseTimeout,
+		}),
 	}, nil
 }
 
@@ -333,7 +342,7 @@ func detailBoolValue(details map[string]any, key string) bool {
 func newClient(ep kitdaemon.Endpoint, token string, client *http.Client) *Client {
 	return &Client{
 		endpoint: ep, token: token, controlHTTP: client, inventoryHTTP: client,
-		mutationHTTP: client, sshHTTP: client, streamHTTP: client,
+		mutationHTTP: client, sshHTTP: client, streamHTTP: client, operationHTTP: client,
 	}
 }
 

@@ -122,14 +122,16 @@ with at most 128 live subscribers across the daemon. Retained terminal replays
 and streams detached after queue overflow count against both limits until the
 HTTP subscriber closes. Publishing a terminal event does not release an active
 operation slot until its worker cleanup returns. Each response write has a
-five-second deadline. Replay
-queues reserve a slot that progress and warning events cannot consume; prompts
-and terminal completion remain replayable when noncritical delivery saturates.
-The daemon rejects excess work or subscriptions instead of dropping a prompt
-or terminal result. A new operation has five seconds to gain its first
-subscriber. Afterward, losing the final subscriber starts the same five-second
-reconnect grace before the worker is canceled. A client retries one interrupted
-stream against the same proof-verified daemon. Daemon loss, retention loss, or
+five-second deadline. Clients wait at most two seconds for event-stream headers
+and for a prompt-response exchange; after event headers arrive, the stream body
+lifetime follows the caller's operation context. Replay queues reserve a slot
+that progress and warning events cannot consume; prompts and terminal
+completion remain replayable when noncritical delivery saturates. The daemon
+rejects excess work or subscriptions instead of dropping a prompt or terminal
+result. A new operation has five seconds to gain its first subscriber.
+Afterward, losing the final subscriber starts the same five-second reconnect
+grace before the worker is canceled. A client retries one interrupted stream
+against the same proof-verified daemon. Daemon loss, retention loss, or
 replacement of the runtime owner returns
 `operation_outcome_unknown`; the client never repeats the domain mutation to
 guess its result.

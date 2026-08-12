@@ -17,7 +17,7 @@ func TestRootPackageExposesWorktreeServices(t *testing.T) {
 }
 
 func TestRootPackageExposesSSHResolutionService(t *testing.T) {
-	service := kwt.NewSSHService()
+	service := kwt.NewSSHService(kwt.SSHServiceOptions{})
 	if service == nil {
 		t.Fatal("SSH resolution service is unavailable from the root package")
 	}
