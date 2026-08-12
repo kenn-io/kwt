@@ -45,12 +45,13 @@ immediately, then continues reporting observed drain state while it waits.
 Active work and leases may finish until `daemon.replacement_grace`; the default
 is five minutes.
 
-The API schema is `1.7.0`. It exposes authenticated status, graceful shutdown,
+The API schema is `1.8.0`. It exposes authenticated status, graceful shutdown,
 worktree inventory, guarded project unregistration, and repository-config
 approval under `/api/v1`, proof-capable liveness at `/api/ping`, and
 credential-free OpenAPI at `/openapi.json`. Inventory clients require the
 `worktree.inventory.v1` capability; guarded unregistration requires
-`project.removal.v1`. Daemons advertise `operation.stream.v1` when they can
+`project.removal.v1`, and SSH route resolution requires `ssh.resolve.v1`.
+Daemons advertise `operation.stream.v1` when they can
 carry ordered domain-operation events and bound prompt responses. Advertising
 that transport capability does not start a domain operation or move any
 existing command behind the daemon. An operation never has simultaneous direct
@@ -92,6 +93,10 @@ The daemon and inventory paths currently emit these stable codes:
 | `operation_id_conflict`                   | An operation identifier was reused for a different request.        |
 | `operation_capacity_exhausted`            | Bounded operation capacity was exhausted.                          |
 | `operation_outcome_unknown`               | The operation's terminal outcome can no longer be proved.          |
+| `ssh_invalid_target`                      | Structured SSH target validation failed.                           |
+| `ssh_resolution_failed`                   | Effective OpenSSH configuration could not be observed.             |
+| `ssh_route_unreviewable`                  | A proxy route cannot be bound to independently reviewed hops.      |
+| `ssh_configuration_changed`               | A later lifecycle request observed a different route identity.     |
 | `internal`                                | An unexpected failure was withheld from the public response.      |
 
 `operation_journal_unavailable` remains reserved until kwt has a durable
@@ -119,6 +124,16 @@ Operations reserve daemon work for their lifetime. Draining refuses new
 operations, lets admitted work run until the published replacement deadline,
 then publishes a terminal unknown-outcome event and cancels remaining workers
 before the HTTP server closes.
+
+`POST /api/v1/ssh/resolve` evaluates system OpenSSH configuration through one
+daemon-owned service and returns an immutable route snapshot. On POSIX, the
+service runs nonce-framed `ssh -G` inside the account's configured login shell
+so shell startup banners cannot become configuration. Windows invokes system
+OpenSSH directly. Direct ProxyJump hops are resolved in connection order;
+opaque ProxyCommand and nested proxy routes fail closed. The complete
+normalized option stream contributes to route identity but never crosses the
+HTTP boundary. This resolution route does not create a connection, control
+socket, trust decision, credential prompt, or lease.
 
 `kwt projects` and `kwt list` auto-start or reuse the daemon and require a
 current inventory result. They fail instead of falling back to cached or direct

@@ -32,16 +32,6 @@ func routeUnreviewable(cause error) *service.Error {
 	)
 }
 
-func configurationChanged(cause error) *service.Error {
-	return service.NewError(
-		service.SSHConfigurationChanged,
-		"SSH configuration changed",
-		true,
-		nil,
-		cause,
-	)
-}
-
 func normalizeSSHError(err error) *service.Error {
 	return service.AsError(err)
 }

@@ -50,6 +50,21 @@ go test ./internal/tui
 go test ./internal/config ./internal/cmd ./internal/tui
 ```
 
+## OpenSSH projection maintenance
+
+Kwt's route identity retains every normalized `ssh -G` directive, but
+execution replays only the positive policy documented as
+`kwt.openssh.projection.v1`. Total replay is not valid: supported OpenSSH
+versions emit entries such as `Host` that are not accepted as command-line
+options.
+
+Whenever CI's supported OpenSSH version changes, review new and changed
+`ssh -G` directives against `internal/ssh/testdata/projection_v1.json` and the
+pinned Ghosthub parity matrix. A directive absent from the positive set remains
+identity-only. Adding, removing, or changing projection handling requires a
+new policy version and matching Ghosthub parity evidence; never change v1
+silently. Do not pin tests to an incidental vendor version string.
+
 ## Docs
 
 Install the docs toolchain:

@@ -98,6 +98,22 @@ retains it in memory. Neither an operation ID nor a request digest authorizes a
 new daemon to adopt or replay work. Loss of that authority is reported as an
 unknown outcome rather than causing an automatic retry of a mutation.
 
+SSH route resolution validates user, hostname, and port before invoking
+OpenSSH. POSIX resolution quotes the validated argv into the account login
+shell and accepts stdout only between unpredictable, exact nonce markers;
+startup output and marker-like stderr are not configuration. Windows avoids a
+shell boundary and invokes OpenSSH directly. Kwt's built-in credential
+environment variables and the configured fleet-token variable are removed
+before either process boundary.
+
+The daemon retains the complete normalized `ssh -G` stream only as private
+route-identity input. Authenticated responses expose semantic targets and the
+reviewed execution projection, never arbitrary directives. Opaque
+ProxyCommand and nested proxy routes are rejected because kwt cannot bind
+independent trust policy to every hop. Stage 1 resolution does not authorize a
+host key, authenticate, create a master, or make the returned route identity
+an authorization credential.
+
 Guarded project unregistration requires the exact persisted path, its
 credential-free repository identity, and an opaque fingerprint of the complete
 decoded registry entry the client observed. The daemon derives and compares

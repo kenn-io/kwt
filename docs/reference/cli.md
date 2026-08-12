@@ -76,8 +76,9 @@ or reuse a compatible local daemon. CLI inventory requires a current refresh
 and fails if one cannot complete; it never prints cached data. The TUI may
 paint from the daemon's last-known-good cache while requesting one current
 snapshot. Other worktree mutations, Git status collection, tmux attachment,
-and SSH remain on their existing paths until their complete service
-migrations.
+and SSH connection lifecycle remain on their existing paths until their
+complete service migrations. `kwt ssh resolve` is the non-connecting Stage 1
+exception described below.
 
 Successful `kwt list --json` and `kwt projects --json` output remains a bare
 top-level array. A daemon or inventory failure instead writes this shared
@@ -119,6 +120,52 @@ An interrupted client may resume one retained stream from its last accepted
 event sequence on the same daemon. If the daemon or retained result is gone,
 kwt reports `operation_outcome_unknown`; it does not repeat the domain command
 and risk duplicating a mutation.
+
+## SSH route resolution
+
+```sh
+kwt ssh resolve build.example.com --json
+kwt ssh resolve 2001:db8::42 --user deploy --port 2200 --json
+```
+
+`kwt ssh resolve <hostname> [--user USER] [--port PORT]` asks the same-machine
+daemon for the effective OpenSSH route. JSON is the native-consumer contract;
+human output prints only credential-free targets in connection order. Stable
+kwt domain failures use the shared error envelope and exits `1` or `2`, never
+SSH's reserved exit `255`.
+
+Resolution preserves explicit user and port precedence, aliases, raw IPv6
+command grammar, and direct ProxyJump order. POSIX hosts evaluate `ssh -G`
+inside the account login shell with nonce-framed stdout; Windows invokes
+system OpenSSH directly. Opaque ProxyCommand routes and a jump host that adds
+another proxy route return `ssh_route_unreviewable`. The command only observes
+configuration: it does not connect, approve trust, prompt for credentials, or
+create a ControlMaster.
+
+Execution policy `kwt.openssh.projection.v1` emits
+`CanonicalizeHostname=no` and resolved `HostName`, `User`, `Port`,
+`HostKeyAlias`, and generated proxy semantics in fixed order. Its positive
+directive set is:
+
+- trust and crypto: `UserKnownHostsFile`, `GlobalKnownHostsFile`,
+  `KnownHostsCommand`, `RevokedHostKeys`, `HostKeyAlgorithms`,
+  `KexAlgorithms`, `Ciphers`, `MACs`, `RequiredRSASize`,
+  `CASignatureAlgorithms`, `CheckHostIP`, `HashKnownHosts`,
+  `VerifyHostKeyDNS`, `VisualHostKey`, and `FingerprintHash`;
+- network selection: `AddressFamily`, `BindAddress`, and `BindInterface`;
+- authentication: `AddKeysToAgent`, `CertificateFile`, `EnableSSHKeysign`,
+  `ForwardAgent`, `GSSAPIAuthentication`, `GSSAPIDelegateCredentials`,
+  `HostbasedAcceptedAlgorithms`, `HostbasedAuthentication`, `IdentitiesOnly`,
+  `IdentityAgent`, `IdentityFile`, `KbdInteractiveAuthentication`,
+  `PasswordAuthentication`, `PKCS11Provider`, `PreferredAuthentications`,
+  `PubkeyAcceptedAlgorithms`, `PubkeyAuthentication`, `SecurityKeyProvider`,
+  and `UseKeychain`;
+- client environment and behavior: `EscapeChar`, `SendEnv`, and `SetEnv`.
+
+Path-bearing authentication values and `SetEnv` are represented only as
+owner-private ephemeral configuration lines, not argv or diagnostics. Every
+unlisted directive—including forwards, commands, and user ControlMaster
+settings—still changes route identity but is never replayed for execution.
 
 When `kwt add -b` creates a branch, it fetches `origin` and starts from its
 default branch. If that remote base is unavailable, it falls back to local
