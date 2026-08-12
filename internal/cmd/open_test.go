@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -358,6 +359,58 @@ func TestRunOpenWithContextRejectsExplicitEmptyExpectedFlags(t *testing.T) {
 	)
 
 	assert.True(t, service.IsCode(err, service.InvalidRequest))
+}
+
+func TestRunOpenWithContextReportsGuardedDisappearanceAsRegistrationChanged(
+	t *testing.T,
+) {
+	for _, startSession := range []bool{false, true} {
+		t.Run(map[bool]string{false: "attach", true: "start only"}[startSession], func(t *testing.T) {
+			worktreePath := filepath.Join(t.TempDir(), "disappeared-worktree")
+			originalDiscover := discoverOpenWorktree
+			originalStartSession := openStartSession
+			originalRepository := openExpectedRepository
+			originalRegistration := openExpectedRegistration
+			originalGeneration := openExpectedGeneration
+			originalSession := openExpectedSession
+			t.Cleanup(func() {
+				discoverOpenWorktree = originalDiscover
+				openStartSession = originalStartSession
+				openExpectedRepository = originalRepository
+				openExpectedRegistration = originalRegistration
+				openExpectedGeneration = originalGeneration
+				openExpectedSession = originalSession
+			})
+			discoverOpenWorktree = func(path string, _ []models.Project) (*discovery.GlobalWorktreeEntry, error) {
+				assert.Equal(t, worktreePath, path)
+				return nil, errors.New("worktree disappeared")
+			}
+			openStartSession = startSession
+			openExpectedRepository = "github.com/acme/widget"
+			openExpectedRegistration = "v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+			openExpectedGeneration = "0123456789abcdef0123456789abcdef"
+			openExpectedSession = "widget-topic"
+			cmd, _, _ := fleetTestCommand()
+			markCommandFlagsChanged(
+				t,
+				cmd,
+				"expected-repository",
+				"expected-registration",
+				"expected-generation",
+				"expected-session",
+			)
+			cmd.SetContext(context.Background())
+
+			err := runOpenWithContext(
+				cmd,
+				[]string{worktreePath},
+				&CommandContext{Config: &models.Config{}},
+			)
+
+			assert.True(t, service.IsCode(err, service.RegistrationChanged))
+			assert.ErrorContains(t, err, "worktree changed before it was opened")
+		})
+	}
 }
 
 func TestOpenStartSessionRequiresExactWorkspacePath(t *testing.T) {

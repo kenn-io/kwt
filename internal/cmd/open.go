@@ -152,11 +152,17 @@ func runOpenWithContext(
 		}
 	}
 
-	entry, requestedPath, err := resolveOpenWorktree(
-		ctx,
-		args,
-		openStartSession,
-	)
+	var entry *discovery.GlobalWorktreeEntry
+	requestedPath := args[0]
+	if guardedOpen {
+		entry, err = resolveExpectedOpenWorktree(ctx, requestedPath)
+	} else {
+		entry, requestedPath, err = resolveOpenWorktree(
+			ctx,
+			args,
+			openStartSession,
+		)
+	}
 	if err != nil {
 		return err
 	}
@@ -169,13 +175,6 @@ func runOpenWithContext(
 			requestedPath,
 		)
 	}
-	if guardedOpen && utils.PathKey(entry.Path) != utils.PathKey(args[0]) {
-		return service.NewError(
-			service.RegistrationChanged,
-			"the worktree path changed before it was opened",
-			true, nil, nil,
-		)
-	}
 	return openSelectedWorktree(
 		cmd.Context(),
 		ctx,
@@ -184,6 +183,18 @@ func runOpenWithContext(
 		openStartSession,
 		config.StdinInteractive(),
 	)
+}
+
+func resolveExpectedOpenWorktree(
+	ctx *CommandContext,
+	path string,
+) (*discovery.GlobalWorktreeEntry, error) {
+	entry, err := discoverOpenWorktree(path, ctx.Config.Projects)
+	if err != nil || entry == nil || entry.RepositoryInfo == nil ||
+		utils.PathKey(entry.Path) != utils.PathKey(path) {
+		return nil, registrationChangedOpenError(err)
+	}
+	return entry, nil
 }
 
 func validateExpectedOpenFlags(cmd *cobra.Command, args []string) (bool, error) {
