@@ -17,6 +17,49 @@ import (
 var queryCLIInventory = queryInventoryForCLI
 var removeDaemonWorktree = removeWorktreeThroughDaemon
 
+func resolveSSHViaDaemon(
+	ctx context.Context,
+	request kwt.SSHResolveRequest,
+) (kwt.SSHRouteSnapshot, error) {
+	controller, err := newDaemonController()
+	if err != nil {
+		return kwt.SSHRouteSnapshot{}, err
+	}
+	for {
+		observation, err := controller.Start(ctx)
+		if err != nil {
+			return kwt.SSHRouteSnapshot{}, err
+		}
+		if err := requireSSHResolveCapability(observation); err != nil {
+			return kwt.SSHRouteSnapshot{}, err
+		}
+		result, err := observation.Client.ResolveSSH(ctx, request)
+		deadline, draining := inventoryDrainDeadline(err)
+		if !draining {
+			return result, err
+		}
+		if err := waitInventoryRetry(ctx, deadline); err != nil {
+			return kwt.SSHRouteSnapshot{}, err
+		}
+	}
+}
+
+func requireSSHResolveCapability(observation kwtdaemon.Observation) error {
+	if observation.Client == nil || !slices.Contains(
+		observation.Status.Capabilities,
+		kwtdaemon.CapabilitySSHResolve,
+	) {
+		return service.NewError(
+			service.DaemonIncompatible,
+			"the running kwt daemon does not provide SSH route resolution",
+			false,
+			nil,
+			nil,
+		)
+	}
+	return nil
+}
+
 func removeProjectViaDaemon(
 	ctx context.Context,
 	request kwt.ProjectRemovalRequest,
