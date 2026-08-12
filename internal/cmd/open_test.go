@@ -288,6 +288,37 @@ func TestRunOpenWithContextChoosesRegisteredDirectory(t *testing.T) {
 	}
 }
 
+func TestRunOpenWithContextRejectsGuardedDirectoryWorkspace(t *testing.T) {
+	workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
+	originalRepository := openExpectedRepository
+	originalRegistration := openExpectedRegistration
+	originalGeneration := openExpectedGeneration
+	originalSession := openExpectedSession
+	openExpectedRepository = "github.com/acme/widget"
+	openExpectedRegistration = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	openExpectedGeneration = "0123456789abcdef0123456789abcdef"
+	openExpectedSession = "widget-topic"
+	t.Cleanup(func() {
+		openExpectedRepository = originalRepository
+		openExpectedRegistration = originalRegistration
+		openExpectedGeneration = originalGeneration
+		openExpectedSession = originalSession
+	})
+	cmd, _, _ := fleetTestCommand()
+	cmd.SetContext(context.Background())
+
+	err := runOpenWithContext(
+		cmd,
+		[]string{workspace.Path},
+		&CommandContext{Config: &models.Config{
+			Workspaces: []models.Workspace{workspace},
+		}},
+	)
+
+	assert.True(t, service.IsCode(err, service.InvalidRequest))
+	assert.Contains(t, err.Error(), "registered Git worktrees")
+}
+
 func TestOpenStartSessionRequiresExactWorkspacePath(t *testing.T) {
 	originalStartSession := openStartSession
 	openStartSession = true

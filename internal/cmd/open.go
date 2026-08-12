@@ -133,6 +133,13 @@ func runOpenWithContext(
 			ctx.Config.Workspaces,
 			args[0],
 		); ok {
+			if guardedOpen {
+				return service.NewError(
+					service.InvalidRequest,
+					"guarded open applies only to registered Git worktrees",
+					false, nil, nil,
+				)
+			}
 			return openSelectedDirectoryWorkspace(
 				cmd.Context(),
 				ctx,
