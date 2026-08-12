@@ -114,37 +114,37 @@ func (c *Client) followOperationAttempt(
 	}
 	limited := &io.LimitedReader{R: response.Body, N: operationStreamResponseLimit + 1}
 	decoder := json.NewDecoder(limited)
-	sequence := afterSequence
+	acknowledgedSequence := afterSequence
 	for {
 		var event service.OperationEvent
 		if err := decoder.Decode(&event); err != nil {
 			if limited.N == 0 {
-				return nil, sequence, operationOutcomeUnknown(
+				return nil, acknowledgedSequence, operationOutcomeUnknown(
 					"operation stream response is too large",
 					ErrResponseTooLarge,
 				)
 			}
 			if errors.Is(err, io.EOF) {
-				return nil, sequence, errOperationStreamInterrupted
+				return nil, acknowledgedSequence, errOperationStreamInterrupted
 			}
-			return nil, sequence, errors.Join(errOperationStreamInterrupted, err)
+			return nil, acknowledgedSequence, errors.Join(errOperationStreamInterrupted, err)
 		}
 		if err := validator.Accept(event); err != nil {
-			return nil, sequence, operationOutcomeUnknown(
+			return nil, acknowledgedSequence, operationOutcomeUnknown(
 				"daemon returned an invalid operation sequence",
 				err,
 			)
 		}
-		sequence = event.Sequence
+		sequence := event.Sequence
 		if callbacks.Event != nil {
 			if err := callbacks.Event(event); err != nil {
-				return nil, sequence, err
+				return nil, acknowledgedSequence, err
 			}
 		}
 		switch event.Kind {
 		case service.OperationEventPrompt:
 			if callbacks.Prompt == nil {
-				return nil, sequence, service.NewError(
+				return nil, acknowledgedSequence, service.NewError(
 					service.InteractionRequired,
 					"operation requires interactive input",
 					false,
@@ -154,22 +154,26 @@ func (c *Client) followOperationAttempt(
 			}
 			value, err := callbacks.Prompt(ctx, *event.Prompt)
 			if err != nil {
-				return nil, sequence, err
+				return nil, acknowledgedSequence, err
 			}
 			if err := c.sendOperationResponse(ctx, operationID, service.OperationResponse{
 				PromptID: event.Prompt.ID,
 				Value:    value,
 			}); err != nil {
-				return nil, sequence, operationOutcomeUnknown(
+				return nil, acknowledgedSequence, operationOutcomeUnknown(
 					"operation prompt response outcome is unknown",
 					err,
 				)
 			}
+			acknowledgedSequence = sequence
 		case service.OperationEventComplete:
+			acknowledgedSequence = sequence
 			if event.Failure != nil {
-				return nil, sequence, service.NewDescriptorError(*event.Failure, nil)
+				return nil, acknowledgedSequence, service.NewDescriptorError(*event.Failure, nil)
 			}
-			return event.Result, sequence, nil
+			return event.Result, acknowledgedSequence, nil
+		default:
+			acknowledgedSequence = sequence
 		}
 	}
 }

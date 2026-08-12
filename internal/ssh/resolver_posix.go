@@ -24,10 +24,13 @@ func (r *Resolver) resolveConfig(
 	target openssh.Target,
 ) (openssh.EffectiveConfig, error) {
 	loginShell := r.loginShell
+	var shell string
+	var err error
 	if loginShell == nil {
-		loginShell = accountLoginShell
+		shell, err = accountLoginShell(ctx)
+	} else {
+		shell, err = loginShell()
 	}
-	shell, err := loginShell()
 	if err != nil {
 		return openssh.EffectiveConfig{}, err
 	}
@@ -129,13 +132,17 @@ func framedOutput(output []byte, start, end string) ([]byte, error) {
 	return nil, errors.New("account login shell omitted SSH configuration end marker")
 }
 
-func accountLoginShell() (string, error) {
+func accountLoginShell(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	current, err := user.Current()
 	if err != nil {
 		return "", fmt.Errorf("resolve current account: %w", err)
 	}
 	if runtime.GOOS == "darwin" {
-		output, commandErr := exec.Command(
+		output, commandErr := exec.CommandContext(
+			ctx,
 			"/usr/bin/dscl", ".", "-read", "/Users/"+current.Username, "UserShell",
 		).Output()
 		if commandErr == nil {
@@ -147,12 +154,15 @@ func accountLoginShell() (string, error) {
 		}
 	}
 	if runtime.GOOS == "linux" {
-		output, commandErr := exec.Command("getent", "passwd", current.Uid).Output()
+		output, commandErr := exec.CommandContext(ctx, "getent", "passwd", current.Uid).Output()
 		if commandErr == nil {
 			if shell := passwdShell(string(output)); shell != "" {
 				return shell, nil
 			}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	contents, readErr := os.ReadFile("/etc/passwd")
 	if readErr == nil {

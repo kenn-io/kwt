@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -338,6 +339,78 @@ func TestOperationHubRejectsNewWorkAtActiveCapacity(t *testing.T) {
 		t.Fatalf("capacity error = %v", err)
 	}
 	close(release)
+}
+
+func TestOperationHubBoundsSubscribersPerOperationAndGlobally(t *testing.T) {
+	t.Run("per operation", func(t *testing.T) {
+		release := make(chan struct{})
+		hub := NewOperationHub(context.Background(), OperationHubOptions{
+			MaxSubscribersPerOperation: 1,
+			MaxSubscribers:             2,
+		})
+		operation, _, err := hub.Start(OperationStart{
+			RequestDigest: "request-1",
+			Run: func(context.Context, *Operation) (json.RawMessage, error) {
+				<-release
+				return json.RawMessage(`{}`), nil
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		subscription, err := hub.Subscribe(operation.ID(), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer subscription.Close()
+		if _, err := hub.Subscribe(operation.ID(), 0); !service.IsCode(err, service.OperationCapacityExhausted) {
+			t.Fatalf("second operation subscriber error = %v", err)
+		}
+		subscription.Close()
+		replacement, err := hub.Subscribe(operation.ID(), 0)
+		if err != nil {
+			t.Fatalf("replacement subscriber after close: %v", err)
+		}
+		replacement.Close()
+		close(release)
+	})
+
+	t.Run("global", func(t *testing.T) {
+		release := make(chan struct{})
+		hub := NewOperationHub(context.Background(), OperationHubOptions{
+			MaxSubscribersPerOperation: 2,
+			MaxSubscribers:             1,
+		})
+		operations := make([]*Operation, 0, 2)
+		for index := range 2 {
+			operation, _, err := hub.Start(OperationStart{
+				RequestDigest: fmt.Sprintf("request-%d", index),
+				Run: func(context.Context, *Operation) (json.RawMessage, error) {
+					<-release
+					return json.RawMessage(`{}`), nil
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			operations = append(operations, operation)
+		}
+		subscription, err := hub.Subscribe(operations[0].ID(), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer subscription.Close()
+		if _, err := hub.Subscribe(operations[1].ID(), 0); !service.IsCode(err, service.OperationCapacityExhausted) {
+			t.Fatalf("global subscriber error = %v", err)
+		}
+		subscription.Close()
+		replacement, err := hub.Subscribe(operations[1].ID(), 0)
+		if err != nil {
+			t.Fatalf("global subscriber after capacity release: %v", err)
+		}
+		replacement.Close()
+		close(release)
+	})
 }
 
 func TestOperationHubReservesDaemonWorkUntilTerminalCompletion(t *testing.T) {

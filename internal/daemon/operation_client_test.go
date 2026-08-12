@@ -119,6 +119,65 @@ func TestOperationClientHandlesMultipleBoundPromptRounds(t *testing.T) {
 	assert.Equal(t, service.OperationResponse{PromptID: "prompt-2"}, second)
 }
 
+func TestOperationClientReconnectReplaysUnansweredPrompt(t *testing.T) {
+	var streamRequests atomic.Int32
+	var promptCalls atomic.Int32
+	answered := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/events"):
+			request := streamRequests.Add(1)
+			if after := r.URL.Query().Get("after_sequence"); after != "0" {
+				assert.Equal(t, "0", after)
+				http.Error(w, "unexpected cursor", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			encoder := json.NewEncoder(w)
+			_ = encoder.Encode(service.OperationEvent{
+				OperationID: "operation-1", Sequence: 1,
+				Kind: service.OperationEventPrompt,
+				Prompt: &service.OperationPrompt{
+					ID: "prompt-1", Kind: "password", Message: "Password:", Sensitive: true,
+				},
+			})
+			w.(http.Flusher).Flush()
+			if request == 1 {
+				return
+			}
+			select {
+			case <-answered:
+			case <-r.Context().Done():
+				return
+			}
+			_ = encoder.Encode(service.OperationEvent{
+				OperationID: "operation-1", Sequence: 2,
+				Kind: service.OperationEventComplete, Result: json.RawMessage(`{}`),
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/responses"):
+			close(answered)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+
+	_, err := client.FollowOperation(
+		context.Background(), "operation-1", 0,
+		OperationCallbacks{Prompt: func(context.Context, service.OperationPrompt) (string, error) {
+			if promptCalls.Add(1) == 1 {
+				return "", errOperationStreamInterrupted
+			}
+			return "secret", nil
+		}},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), streamRequests.Load())
+	assert.Equal(t, int32(2), promptCalls.Load())
+}
+
 func TestOperationClientRejectsInvalidSequenceAsUnknownOutcome(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")

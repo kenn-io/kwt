@@ -108,12 +108,16 @@ sequence number. A reconnect sends its last accepted sequence and receives
 retained later events before live events. One operation may carry multiple
 prompt rounds; each response is accepted only for the exact current prompt ID,
 including an intentionally empty response. Stale, duplicate, and
-cross-operation responses fail closed.
+cross-operation responses fail closed. A client acknowledges a prompt sequence
+only after its bound response succeeds, so reconnect replays an unanswered
+prompt.
 
 Each operation retains at most 256 events and 1 MiB of event payload. The
 daemon admits at most 128 active operations and retains at most 128 completed
-operations for five minutes. It rejects excess work instead of dropping a
-prompt or terminal result. If the final subscriber disappears, the operation
+operations for five minutes. An active operation admits at most eight
+subscribers, with at most 128 active subscribers across the daemon. It rejects
+excess work or subscriptions instead of dropping a prompt or terminal result.
+If the final subscriber disappears, the operation
 has five seconds to reconnect before its worker is canceled. A client retries
 one interrupted stream against the same proof-verified daemon. Daemon loss,
 retention loss, or replacement of the runtime owner returns

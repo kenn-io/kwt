@@ -14,27 +14,31 @@ import (
 )
 
 const (
-	defaultMaxOperationEvents       = 256
-	defaultMaxOperationBytes        = 1 << 20
-	defaultMaxActiveOperations      = 128
-	defaultMaxCompletedOperations   = 128
-	defaultOperationRetention       = 5 * time.Minute
-	defaultOperationSubscriberGrace = 5 * time.Second
-	defaultOperationSubscriberQueue = 32
-	operationCompletionReserveBytes = 16 << 10
+	defaultMaxOperationEvents         = 256
+	defaultMaxOperationBytes          = 1 << 20
+	defaultMaxActiveOperations        = 128
+	defaultMaxCompletedOperations     = 128
+	defaultOperationRetention         = 5 * time.Minute
+	defaultOperationSubscriberGrace   = 5 * time.Second
+	defaultOperationSubscriberQueue   = 32
+	defaultMaxSubscribersPerOperation = 8
+	defaultMaxOperationSubscribers    = 128
+	operationCompletionReserveBytes   = 16 << 10
 )
 
 type OperationHubOptions struct {
-	Now                    func() time.Time
-	IDSource               func() (string, error)
-	Reserve                func() (func(), error)
-	MaxEvents              int
-	MaxBytes               int
-	MaxActiveOperations    int
-	MaxCompletedOperations int
-	CompletedRetention     time.Duration
-	SubscriberGrace        time.Duration
-	SubscriberQueue        int
+	Now                        func() time.Time
+	IDSource                   func() (string, error)
+	Reserve                    func() (func(), error)
+	MaxEvents                  int
+	MaxBytes                   int
+	MaxActiveOperations        int
+	MaxCompletedOperations     int
+	CompletedRetention         time.Duration
+	SubscriberGrace            time.Duration
+	SubscriberQueue            int
+	MaxSubscribersPerOperation int
+	MaxSubscribers             int
 }
 
 type OperationStart struct {
@@ -50,6 +54,7 @@ type OperationHub struct {
 	mu            sync.Mutex
 	operations    map[string]*operationEntry
 	active        int
+	subscribers   int
 	draining      bool
 	drainDeadline time.Time
 }
@@ -123,6 +128,12 @@ func NewOperationHub(ctx context.Context, options OperationHubOptions) *Operatio
 	}
 	if options.SubscriberQueue <= 0 {
 		options.SubscriberQueue = defaultOperationSubscriberQueue
+	}
+	if options.MaxSubscribersPerOperation <= 0 {
+		options.MaxSubscribersPerOperation = defaultMaxSubscribersPerOperation
+	}
+	if options.MaxSubscribers <= 0 {
+		options.MaxSubscribers = defaultMaxOperationSubscribers
 	}
 	return &OperationHub{
 		context:    ctx,
@@ -440,6 +451,16 @@ func (h *OperationHub) Subscribe(
 			nil,
 		)
 	}
+	if !entry.terminal && (len(entry.subscribers) >= h.options.MaxSubscribersPerOperation ||
+		h.subscribers >= h.options.MaxSubscribers) {
+		return nil, service.NewError(
+			service.OperationCapacityExhausted,
+			"daemon operation subscriber capacity is exhausted",
+			true,
+			nil,
+			nil,
+		)
+	}
 	replay := make([]service.OperationEvent, 0, len(entry.events))
 	for _, event := range entry.events {
 		if event.Sequence > afterSequence {
@@ -466,6 +487,7 @@ func (h *OperationHub) Subscribe(
 		close(events)
 	} else {
 		entry.subscribers[subscription] = events
+		h.subscribers++
 	}
 	return subscription, nil
 }
@@ -489,6 +511,7 @@ func (h *OperationHub) removeSubscriber(subscription *OperationSubscription) {
 		return
 	}
 	delete(entry.subscribers, subscription)
+	h.subscribers--
 	close(events)
 	h.scheduleSubscriberLossLocked(entry)
 }
@@ -637,6 +660,7 @@ func (h *OperationHub) markTerminalLocked(entry *operationEntry) {
 	}
 	for subscription, events := range entry.subscribers {
 		delete(entry.subscribers, subscription)
+		h.subscribers--
 		close(events)
 	}
 	h.pruneCompletedLocked()
@@ -651,6 +675,7 @@ func (h *OperationHub) dispatchLocked(
 		case events <- event:
 		default:
 			delete(entry.subscribers, subscription)
+			h.subscribers--
 			close(events)
 		}
 	}

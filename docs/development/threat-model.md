@@ -89,9 +89,10 @@ credential and the daemon's loopback host checks. Prompt responses are accepted
 only on the authenticated response endpoint and only for the operation's exact
 current prompt ID. They are held only for the active prompt round and are not
 rendered, logged, or persisted. Event and response payloads, subscriber queues,
-active operations, and retained completed operations are bounded so an
-authenticated or same-user local client cannot create unbounded daemon memory
-growth. The same operating-system user remains the trust boundary.
+per-operation and daemon-wide subscriber counts, active operations, and
+retained completed operations are bounded so an authenticated or same-user
+local client cannot create unbounded daemon memory growth. The same
+operating-system user remains the trust boundary.
 
 The operation stream is reconnectable only while the same verified daemon
 retains it in memory. Neither an operation ID nor a request digest authorizes a

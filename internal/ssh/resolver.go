@@ -100,6 +100,7 @@ func runOutput(
 		return nil, nil, -1, errors.New("empty process arguments")
 	}
 	command := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	configureResolverCommand(command)
 	command.Env = environment
 	command.Stdin = bytes.NewReader(standardInput)
 	var stdout, stderr []byte
