@@ -1,0 +1,55 @@
+[
+  {
+    "name": "ghosthub-selective-replay",
+    "config": {
+      "user": "deploy",
+      "hostname": "build.internal",
+      "port": 2200,
+      "host_key_alias": "build-key.example.test",
+      "options": [
+        { "name": "sendenv", "value": "LANG" },
+        { "name": "identityfile", "value": "/credentials/id one" },
+        { "name": "localforward", "value": "8080 localhost:80" },
+        { "name": "certificatefile", "value": "/credentials/client cert.pub" },
+        { "name": "setenv", "value": "CHANNEL=alpha beta" },
+        { "name": "identityfile", "value": "~/.ssh/id_two" },
+        { "name": "sendenv", "value": "LC_*" },
+        { "name": "ciphers", "value": "aes256-gcm@openssh.com" },
+        { "name": "kexalgorithms", "value": "curve25519-sha256" },
+        { "name": "macs", "value": "hmac-sha2-512-etm@openssh.com" },
+        { "name": "requiredrsasize", "value": "4096" },
+        { "name": "controlmaster", "value": "auto" },
+        { "name": "proxycommand", "value": "ssh relay -W %h:%p" },
+        { "name": "futuresecurityoption", "value": "enabled" },
+        { "name": "remotecommand", "value": "dangerous command" }
+      ]
+    },
+    "arguments": [
+      "-F", "/dev/null",
+      "-o", "CanonicalizeHostname=no",
+      "-o", "HostName=build.internal",
+      "-o", "User=deploy",
+      "-p", "2200",
+      "-o", "HostKeyAlias=build-key.example.test",
+      "-o", "KexAlgorithms=curve25519-sha256",
+      "-o", "Ciphers=aes256-gcm@openssh.com",
+      "-o", "MACs=hmac-sha2-512-etm@openssh.com",
+      "-o", "RequiredRSASize=4096",
+      "-o", "SendEnv=LANG",
+      "-o", "SendEnv=LC_*"
+    ],
+    "private_config": [
+      "CertificateFile \"/credentials/client cert.pub\"",
+      "IdentityFile \"/credentials/id one\"",
+      "IdentityFile \"~/.ssh/id_two\"",
+      "SetEnv \"CHANNEL=alpha beta\""
+    ],
+    "excluded": [
+      "LocalForward",
+      "ControlMaster",
+      "ProxyCommand",
+      "FutureSecurityOption",
+      "RemoteCommand"
+    ]
+  }
+]
