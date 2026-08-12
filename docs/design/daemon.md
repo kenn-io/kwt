@@ -45,13 +45,16 @@ immediately, then continues reporting observed drain state while it waits.
 Active work and leases may finish until `daemon.replacement_grace`; the default
 is five minutes.
 
-The API schema is `1.6.0`. It exposes authenticated status, graceful shutdown,
+The API schema is `1.7.0`. It exposes authenticated status, graceful shutdown,
 worktree inventory, guarded project unregistration, and repository-config
 approval under `/api/v1`, proof-capable liveness at `/api/ping`, and
 credential-free OpenAPI at `/openapi.json`. Inventory clients require the
 `worktree.inventory.v1` capability; guarded unregistration requires
-`project.removal.v1`. An operation never has simultaneous direct and HTTP
-execution paths.
+`project.removal.v1`. Daemons advertise `operation.stream.v1` when they can
+carry ordered domain-operation events and bound prompt responses. Advertising
+that transport capability does not start a domain operation or move any
+existing command behind the daemon. An operation never has simultaneous direct
+and HTTP execution paths.
 
 Service failures cross the in-process, HTTP, and machine-readable CLI
 boundaries as one descriptor with `code`, human-facing `message`, `retryable`,
@@ -86,12 +89,36 @@ The daemon and inventory paths currently emit these stable codes:
 | `protected_session_live`                  | A live protected tmux endpoint still belongs to the project.      |
 | `protected_endpoint_inventory_incomplete` | Durable endpoint authority could not be verified.                 |
 | `interaction_required`                    | Repository configuration needs digest-bound approval.             |
+| `operation_id_conflict`                   | An operation identifier was reused for a different request.        |
+| `operation_capacity_exhausted`            | Bounded operation capacity was exhausted.                          |
+| `operation_outcome_unknown`               | The operation's terminal outcome can no longer be proved.          |
 | `internal`                                | An unexpected failure was withheld from the public response.      |
 
-`operation_id_conflict`, `operation_capacity_exhausted`,
-`operation_journal_unavailable`, and `operation_outcome_unknown` are reserved
-for the API-major-2 durable-operation protocol. No current endpoint emits
-them.
+`operation_journal_unavailable` remains reserved until kwt has a durable
+operation journal. The current operation stream is deliberately in-memory and
+same-daemon only.
+
+Operation events carry an opaque operation ID and a strictly increasing
+sequence number. A reconnect sends its last accepted sequence and receives
+retained later events before live events. One operation may carry multiple
+prompt rounds; each response is accepted only for the exact current prompt ID,
+including an intentionally empty response. Stale, duplicate, and
+cross-operation responses fail closed.
+
+Each operation retains at most 256 events and 1 MiB of event payload. The
+daemon admits at most 128 active operations and retains at most 128 completed
+operations for five minutes. It rejects excess work instead of dropping a
+prompt or terminal result. If the final subscriber disappears, the operation
+has five seconds to reconnect before its worker is canceled. A client retries
+one interrupted stream against the same proof-verified daemon. Daemon loss,
+retention loss, or replacement of the runtime owner returns
+`operation_outcome_unknown`; the client never repeats the domain mutation to
+guess its result.
+
+Operations reserve daemon work for their lifetime. Draining refuses new
+operations, lets admitted work run until the published replacement deadline,
+then publishes a terminal unknown-outcome event and cancels remaining workers
+before the HTTP server closes.
 
 `kwt projects` and `kwt list` auto-start or reuse the daemon and require a
 current inventory result. They fail instead of falling back to cached or direct

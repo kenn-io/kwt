@@ -83,6 +83,21 @@ A remote client reaches inventory by invoking the remote machine's kwt CLI over
 its existing shell boundary; the loopback daemon itself is not remotely
 reachable.
 
+An operation ID is a routing handle, not an authorization credential. Every
+event, response, and cancellation request still requires the owner-only bearer
+credential and the daemon's loopback host checks. Prompt responses are accepted
+only on the authenticated response endpoint and only for the operation's exact
+current prompt ID. They are held only for the active prompt round and are not
+rendered, logged, or persisted. Event and response payloads, subscriber queues,
+active operations, and retained completed operations are bounded so an
+authenticated or same-user local client cannot create unbounded daemon memory
+growth. The same operating-system user remains the trust boundary.
+
+The operation stream is reconnectable only while the same verified daemon
+retains it in memory. Neither an operation ID nor a request digest authorizes a
+new daemon to adopt or replay work. Loss of that authority is reported as an
+unknown outcome rather than causing an automatic retry of a mutation.
+
 Guarded project unregistration requires the exact persisted path, its
 credential-free repository identity, and an opaque fingerprint of the complete
 decoded registry entry the client observed. The daemon derives and compares

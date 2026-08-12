@@ -237,7 +237,7 @@ func TestOperationEventRouteReplaysThenStreamsLiveEvents(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer secret")
 	response, err := server.Client().Do(request)
 	require.NoError(t, err)
-	defer response.Body.Close()
+	defer func() { require.NoError(t, response.Body.Close()) }()
 	require.Equal(t, http.StatusOK, response.StatusCode)
 	assert.Equal(t, "application/x-ndjson", response.Header.Get("Content-Type"))
 
@@ -290,7 +290,7 @@ func TestOperationResponseRouteBindsCurrentPrompt(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 	response, err := server.Client().Do(request)
 	require.NoError(t, err)
-	response.Body.Close()
+	require.NoError(t, response.Body.Close())
 	assert.Equal(t, http.StatusNoContent, response.StatusCode)
 
 	completion := receiveOperationEvent(t, subscription.Events())
@@ -325,7 +325,7 @@ func TestOperationCancelRouteCancelsWorker(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer secret")
 	response, err := server.Client().Do(request)
 	require.NoError(t, err)
-	response.Body.Close()
+	require.NoError(t, response.Body.Close())
 	assert.Equal(t, http.StatusNoContent, response.StatusCode)
 	select {
 	case <-canceled:
@@ -347,7 +347,7 @@ func TestOperationRoutesRequireAuthenticationAndStableNotFoundProblem(t *testing
 	require.NoError(t, err)
 	response, err := server.Client().Do(request)
 	require.NoError(t, err)
-	response.Body.Close()
+	require.NoError(t, response.Body.Close())
 	assert.Equal(t, http.StatusUnauthorized, response.StatusCode)
 
 	request, err = http.NewRequest(
@@ -359,7 +359,7 @@ func TestOperationRoutesRequireAuthenticationAndStableNotFoundProblem(t *testing
 	request.Header.Set("Authorization", "Bearer secret")
 	response, err = server.Client().Do(request)
 	require.NoError(t, err)
-	defer response.Body.Close()
+	defer func() { require.NoError(t, response.Body.Close()) }()
 	assert.Equal(t, http.StatusNotFound, response.StatusCode)
 	var problem Problem
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&problem))
@@ -396,7 +396,7 @@ func TestDrainingServerKeepsExistingOperationControlReachable(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer secret")
 	response, err := server.Client().Do(request)
 	require.NoError(t, err)
-	defer response.Body.Close()
+	defer func() { require.NoError(t, response.Body.Close()) }()
 	assert.Equal(t, http.StatusOK, response.StatusCode)
 }
 

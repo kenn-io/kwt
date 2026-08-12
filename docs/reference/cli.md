@@ -108,7 +108,17 @@ continues to print each selected worktree's result as soon as that target
 finishes. Before longer mutations such as add, pull-request import, doctor,
 prune, or SSH lifecycle move behind the daemon, their ordered status events
 must stream to CLI stderr as they occur; machine-readable stdout and established
-exit codes remain unchanged.
+exit codes remain unchanged. The daemon now provides the bounded
+`operation.stream.v1` transport for that migration: progress and warnings are
+flushed to stderr, prompt responses are bound to the prompt that requested
+them, and only the owning command writes its final stdout result. This
+capability alone does not change any command's execution owner or user-facing
+behavior.
+
+An interrupted client may resume one retained stream from its last accepted
+event sequence on the same daemon. If the daemon or retained result is gone,
+kwt reports `operation_outcome_unknown`; it does not repeat the domain command
+and risk duplicating a mutation.
 
 When `kwt add -b` creates a branch, it fetches `origin` and starts from its
 default branch. If that remote base is unavailable, it falls back to local
