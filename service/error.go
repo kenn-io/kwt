@@ -38,6 +38,10 @@ const (
 	// daemon process.
 	OperationJournalUnavailable Code = "operation_journal_unavailable"
 	OperationOutcomeUnknown     Code = "operation_outcome_unknown"
+	SSHInvalidTarget            Code = "ssh_invalid_target"
+	SSHResolutionFailed         Code = "ssh_resolution_failed"
+	SSHRouteUnreviewable        Code = "ssh_route_unreviewable"
+	SSHConfigurationChanged     Code = "ssh_configuration_changed"
 	Internal                    Code = "internal"
 )
 

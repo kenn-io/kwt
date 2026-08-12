@@ -48,3 +48,10 @@ func TestIsCodeMatchesWrappedTypedErrors(t *testing.T) {
 	assert.True(t, service.IsCode(err, service.Busy))
 	assert.False(t, service.IsCode(err, service.Conflict))
 }
+
+func TestSSHErrorCodesAreStable(t *testing.T) {
+	assert.Equal(t, service.Code("ssh_invalid_target"), service.SSHInvalidTarget)
+	assert.Equal(t, service.Code("ssh_resolution_failed"), service.SSHResolutionFailed)
+	assert.Equal(t, service.Code("ssh_route_unreviewable"), service.SSHRouteUnreviewable)
+	assert.Equal(t, service.Code("ssh_configuration_changed"), service.SSHConfigurationChanged)
+}
