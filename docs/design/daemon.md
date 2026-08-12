@@ -114,13 +114,16 @@ prompt.
 
 Each operation retains at most 256 events and 1 MiB of event payload. The
 daemon admits at most 128 active operations and retains at most 128 completed
-operations for five minutes. An active operation admits at most eight
-subscribers, with at most 128 active subscribers across the daemon. It rejects
+operations for five minutes. An operation admits at most eight subscribers,
+with at most 128 live subscribers across the daemon. Retained terminal replays
+count against both limits until the subscriber closes. Replay queues reserve
+bounded capacity for live events and terminal completion. The daemon rejects
 excess work or subscriptions instead of dropping a prompt or terminal result.
-If the final subscriber disappears, the operation
-has five seconds to reconnect before its worker is canceled. A client retries
-one interrupted stream against the same proof-verified daemon. Daemon loss,
-retention loss, or replacement of the runtime owner returns
+A new operation has five seconds to gain its first subscriber. Afterward,
+losing the final subscriber starts the same five-second reconnect grace before
+the worker is canceled. A client retries one interrupted stream against the
+same proof-verified daemon. Daemon loss, retention loss, or replacement of the
+runtime owner returns
 `operation_outcome_unknown`; the client never repeats the domain mutation to
 guess its result.
 

@@ -413,6 +413,108 @@ func TestOperationHubBoundsSubscribersPerOperationAndGlobally(t *testing.T) {
 	})
 }
 
+func TestOperationHubCountsTerminalReplaySubscribersUntilClose(t *testing.T) {
+	hub := NewOperationHub(context.Background(), OperationHubOptions{
+		MaxSubscribersPerOperation: 1,
+		MaxSubscribers:             1,
+	})
+	operation, _, err := hub.Start(OperationStart{
+		RequestDigest: "request-1",
+		Run: func(context.Context, *Operation) (json.RawMessage, error) {
+			return json.RawMessage(`{}`), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = collectOperationEvents(t, hub, operation.ID(), 0)
+
+	first, err := hub.Subscribe(operation.ID(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.Subscribe(operation.ID(), 0); !service.IsCode(err, service.OperationCapacityExhausted) {
+		t.Fatalf("second terminal subscriber error = %v", err)
+	}
+	first.Close()
+	replacement, err := hub.Subscribe(operation.ID(), 0)
+	if err != nil {
+		t.Fatalf("terminal subscriber after close: %v", err)
+	}
+	replacement.Close()
+}
+
+func TestOperationHubReservesLiveHeadroomAfterReplay(t *testing.T) {
+	replayReady := make(chan struct{})
+	emitLive := make(chan struct{})
+	liveEmitted := make(chan struct{})
+	hub := NewOperationHub(context.Background(), OperationHubOptions{
+		SubscriberQueue: 1,
+	})
+	operation, _, err := hub.Start(OperationStart{
+		RequestDigest: "request-1",
+		Run: func(_ context.Context, operation *Operation) (json.RawMessage, error) {
+			if err := operation.Progress("one"); err != nil {
+				return nil, err
+			}
+			if err := operation.Progress("two"); err != nil {
+				return nil, err
+			}
+			close(replayReady)
+			<-emitLive
+			if err := operation.Progress("live"); err != nil {
+				return nil, err
+			}
+			close(liveEmitted)
+			return json.RawMessage(`{}`), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-replayReady
+	subscription, err := hub.Subscribe(operation.ID(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscription.Close()
+	close(emitLive)
+	<-liveEmitted
+
+	for _, message := range []string{"one", "two", "live"} {
+		event := receiveOperationEvent(t, subscription.Events())
+		if event.Message != message {
+			t.Fatalf("event message = %q, want %q", event.Message, message)
+		}
+	}
+	if event := receiveOperationEvent(t, subscription.Events()); event.Kind != service.OperationEventComplete {
+		t.Fatalf("terminal event kind = %q", event.Kind)
+	}
+}
+
+func TestOperationHubCancelsWhenInitialSubscriberGraceExpires(t *testing.T) {
+	canceled := make(chan struct{})
+	hub := NewOperationHub(context.Background(), OperationHubOptions{
+		SubscriberGrace: time.Millisecond,
+	})
+	_, _, err := hub.Start(OperationStart{
+		RequestDigest: "request-1",
+		Run: func(ctx context.Context, _ *Operation) (json.RawMessage, error) {
+			<-ctx.Done()
+			close(canceled)
+			return nil, ctx.Err()
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("operation survived initial subscriber grace")
+	}
+}
+
 func TestOperationHubReservesDaemonWorkUntilTerminalCompletion(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	gate := NewGate(now)

@@ -60,21 +60,20 @@ type OperationHub struct {
 }
 
 type operationEntry struct {
-	id             string
-	requestDigest  string
-	operation      *Operation
-	context        context.Context
-	cancel         context.CancelFunc
-	validator      *service.OperationStreamValidator
-	events         []service.OperationEvent
-	eventBytes     int
-	terminal       bool
-	completedAt    time.Time
-	prompt         *operationPromptState
-	subscribers    map[*OperationSubscription]chan service.OperationEvent
-	everSubscribed bool
-	lossTimer      *time.Timer
-	release        func()
+	id            string
+	requestDigest string
+	operation     *Operation
+	context       context.Context
+	cancel        context.CancelFunc
+	validator     *service.OperationStreamValidator
+	events        []service.OperationEvent
+	eventBytes    int
+	terminal      bool
+	completedAt   time.Time
+	prompt        *operationPromptState
+	subscribers   map[*OperationSubscription]chan service.OperationEvent
+	lossTimer     *time.Timer
+	release       func()
 }
 
 type operationPromptState struct {
@@ -248,6 +247,7 @@ func (h *OperationHub) Start(start OperationStart) (*Operation, bool, error) {
 		entry.operation = &Operation{hub: h, entry: entry}
 		h.operations[id] = entry
 		h.active++
+		h.scheduleSubscriberLossLocked(entry)
 		h.mu.Unlock()
 
 		go h.run(entry, start.Run)
@@ -451,8 +451,8 @@ func (h *OperationHub) Subscribe(
 			nil,
 		)
 	}
-	if !entry.terminal && (len(entry.subscribers) >= h.options.MaxSubscribersPerOperation ||
-		h.subscribers >= h.options.MaxSubscribers) {
+	if len(entry.subscribers) >= h.options.MaxSubscribersPerOperation ||
+		h.subscribers >= h.options.MaxSubscribers {
 		return nil, service.NewError(
 			service.OperationCapacityExhausted,
 			"daemon operation subscriber capacity is exhausted",
@@ -467,10 +467,7 @@ func (h *OperationHub) Subscribe(
 			replay = append(replay, event)
 		}
 	}
-	queueSize := h.options.SubscriberQueue
-	if len(replay) > queueSize {
-		queueSize = len(replay)
-	}
+	queueSize := len(replay) + h.options.SubscriberQueue + 1
 	events := make(chan service.OperationEvent, queueSize)
 	for _, event := range replay {
 		events <- event
@@ -478,16 +475,14 @@ func (h *OperationHub) Subscribe(
 	subscription := &OperationSubscription{
 		hub: h, entry: entry, events: events,
 	}
-	entry.everSubscribed = true
 	if entry.lossTimer != nil {
 		entry.lossTimer.Stop()
 		entry.lossTimer = nil
 	}
+	entry.subscribers[subscription] = events
+	h.subscribers++
 	if entry.terminal {
 		close(events)
-	} else {
-		entry.subscribers[subscription] = events
-		h.subscribers++
 	}
 	return subscription, nil
 }
@@ -512,12 +507,14 @@ func (h *OperationHub) removeSubscriber(subscription *OperationSubscription) {
 	}
 	delete(entry.subscribers, subscription)
 	h.subscribers--
-	close(events)
+	if !entry.terminal {
+		close(events)
+	}
 	h.scheduleSubscriberLossLocked(entry)
 }
 
 func (h *OperationHub) scheduleSubscriberLossLocked(entry *operationEntry) {
-	if entry.terminal || !entry.everSubscribed || len(entry.subscribers) != 0 || entry.lossTimer != nil {
+	if entry.terminal || len(entry.subscribers) != 0 || entry.lossTimer != nil {
 		return
 	}
 	entry.lossTimer = time.AfterFunc(h.options.SubscriberGrace, func() {
@@ -658,9 +655,7 @@ func (h *OperationHub) markTerminalLocked(entry *operationEntry) {
 		entry.lossTimer.Stop()
 		entry.lossTimer = nil
 	}
-	for subscription, events := range entry.subscribers {
-		delete(entry.subscribers, subscription)
-		h.subscribers--
+	for _, events := range entry.subscribers {
 		close(events)
 	}
 	h.pruneCompletedLocked()
