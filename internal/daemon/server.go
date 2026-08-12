@@ -32,6 +32,7 @@ type ServerOptions struct {
 	Inventory      kwt.Inventory
 	Remover        kwt.Remover
 	ProjectRemover kwt.ProjectRemover
+	Operations     *OperationHub
 	Gate           *Gate
 	ReportError    func(string, *service.Error, kwt.ExpansionContext)
 }
@@ -63,6 +64,7 @@ func NewServer(opts ServerOptions) http.Handler {
 		opts.MaxBodyBytes = defaultMaxBodyBytes
 	}
 	mux := http.NewServeMux()
+	registerOperationRoutes(mux, opts.Operations, opts)
 	config := huma.DefaultConfig("kwt daemon API", APISchemaVersion)
 	config.OpenAPIPath = "/openapi"
 	config.DocsPath = ""
@@ -315,7 +317,7 @@ func problemFromError(err error) *Problem {
 		status = http.StatusForbidden
 	case service.NotFound, service.ProjectNotFound:
 		status = http.StatusNotFound
-	case service.Conflict, service.ConnectionChanged,
+	case service.Conflict, service.ConnectionChanged, service.OperationIDConflict,
 		service.RegistrationChanged, service.ProtectedSessionLive:
 		status = http.StatusConflict
 	case service.ProtectedEndpointInventoryIncomplete:
@@ -329,8 +331,11 @@ func problemFromError(err error) *Problem {
 	case service.InteractionRequired:
 		status = http.StatusPreconditionRequired
 	case service.Busy, service.DaemonStartFailed, service.DaemonUnresponsive,
-		service.DaemonDraining, service.InventoryTimeout:
+		service.DaemonDraining, service.InventoryTimeout,
+		service.OperationCapacityExhausted:
 		status = http.StatusServiceUnavailable
+	case service.OperationOutcomeUnknown:
+		status = http.StatusConflict
 	case service.Unsupported:
 		status = http.StatusNotImplemented
 	case service.DaemonIncompatible:

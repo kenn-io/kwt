@@ -204,3 +204,185 @@ func TestProblemRoundTripsServiceDescriptor(t *testing.T) {
 	assert.Equal(t, descriptor.Details, typed.Details)
 	assert.NotContains(t, string(encoded), "private cause")
 }
+
+func TestOperationEventRouteReplaysThenStreamsLiveEvents(t *testing.T) {
+	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	replayed := make(chan struct{})
+	release := make(chan struct{})
+	operation, _, err := hub.Start(OperationStart{
+		ID: "operation-1", RequestDigest: "request-1",
+		Run: func(_ context.Context, operation *Operation) (json.RawMessage, error) {
+			if err := operation.Progress("replayed"); err != nil {
+				return nil, err
+			}
+			close(replayed)
+			<-release
+			if err := operation.Progress("live"); err != nil {
+				return nil, err
+			}
+			return json.RawMessage(`{"status":"ready"}`), nil
+		},
+	})
+	require.NoError(t, err)
+	<-replayed
+
+	server := newOperationHTTPTestServer(t, hub)
+	defer server.Close()
+	request, err := http.NewRequest(
+		http.MethodGet,
+		server.URL+"/api/v1/operations/"+operation.ID()+"/events?after_sequence=0",
+		nil,
+	)
+	require.NoError(t, err)
+	request.Header.Set("Authorization", "Bearer secret")
+	response, err := server.Client().Do(request)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	assert.Equal(t, "application/x-ndjson", response.Header.Get("Content-Type"))
+
+	decoder := json.NewDecoder(response.Body)
+	var event service.OperationEvent
+	require.NoError(t, decoder.Decode(&event))
+	assert.Equal(t, "replayed", event.Message)
+	close(release)
+	require.NoError(t, decoder.Decode(&event))
+	assert.Equal(t, "live", event.Message)
+	require.NoError(t, decoder.Decode(&event))
+	assert.Equal(t, service.OperationEventComplete, event.Kind)
+}
+
+func TestOperationResponseRouteBindsCurrentPrompt(t *testing.T) {
+	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	operation, _, err := hub.Start(OperationStart{
+		ID: "operation-1", RequestDigest: "request-1",
+		Run: func(ctx context.Context, operation *Operation) (json.RawMessage, error) {
+			value, err := operation.Prompt(ctx, service.OperationPrompt{
+				Kind: "password", Message: "Password:", Sensitive: true,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(map[string]string{"value": value})
+		},
+	})
+	require.NoError(t, err)
+	subscription, err := hub.Subscribe(operation.ID(), 0)
+	require.NoError(t, err)
+	defer subscription.Close()
+	prompt := receiveOperationEvent(t, subscription.Events())
+	require.NotNil(t, prompt.Prompt)
+
+	server := newOperationHTTPTestServer(t, hub)
+	defer server.Close()
+	body, err := json.Marshal(service.OperationResponse{
+		PromptID: prompt.Prompt.ID,
+		Value:    "fleet secret",
+	})
+	require.NoError(t, err)
+	request, err := http.NewRequest(
+		http.MethodPost,
+		server.URL+"/api/v1/operations/"+operation.ID()+"/responses",
+		bytes.NewReader(body),
+	)
+	require.NoError(t, err)
+	request.Header.Set("Authorization", "Bearer secret")
+	request.Header.Set("Content-Type", "application/json")
+	response, err := server.Client().Do(request)
+	require.NoError(t, err)
+	response.Body.Close()
+	assert.Equal(t, http.StatusNoContent, response.StatusCode)
+
+	completion := receiveOperationEvent(t, subscription.Events())
+	require.Equal(t, service.OperationEventComplete, completion.Kind)
+	assert.JSONEq(t, `{"value":"fleet secret"}`, string(completion.Result))
+}
+
+func TestOperationCancelRouteCancelsWorker(t *testing.T) {
+	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	operation, _, err := hub.Start(OperationStart{
+		ID: "operation-1", RequestDigest: "request-1",
+		Run: func(ctx context.Context, _ *Operation) (json.RawMessage, error) {
+			close(started)
+			<-ctx.Done()
+			close(canceled)
+			return nil, ctx.Err()
+		},
+	})
+	require.NoError(t, err)
+	<-started
+
+	server := newOperationHTTPTestServer(t, hub)
+	defer server.Close()
+	request, err := http.NewRequest(
+		http.MethodDelete,
+		server.URL+"/api/v1/operations/"+operation.ID(),
+		nil,
+	)
+	require.NoError(t, err)
+	request.Header.Set("Authorization", "Bearer secret")
+	response, err := server.Client().Do(request)
+	require.NoError(t, err)
+	response.Body.Close()
+	assert.Equal(t, http.StatusNoContent, response.StatusCode)
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("operation worker was not canceled")
+	}
+}
+
+func TestOperationRoutesRequireAuthenticationAndStableNotFoundProblem(t *testing.T) {
+	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	server := newOperationHTTPTestServer(t, hub)
+	defer server.Close()
+
+	request, err := http.NewRequest(
+		http.MethodGet,
+		server.URL+"/api/v1/operations/missing/events",
+		nil,
+	)
+	require.NoError(t, err)
+	response, err := server.Client().Do(request)
+	require.NoError(t, err)
+	response.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, response.StatusCode)
+
+	request, err = http.NewRequest(
+		http.MethodGet,
+		server.URL+"/api/v1/operations/missing/events",
+		nil,
+	)
+	require.NoError(t, err)
+	request.Header.Set("Authorization", "Bearer secret")
+	response, err = server.Client().Do(request)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	assert.Equal(t, http.StatusNotFound, response.StatusCode)
+	var problem Problem
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&problem))
+	assert.Equal(t, service.NotFound, problem.Code)
+}
+
+func newOperationHTTPTestServer(
+	t *testing.T,
+	hub *OperationHub,
+) *httptest.Server {
+	t.Helper()
+	server := httptest.NewUnstartedServer(nil)
+	server.Config.Handler = NewServer(ServerOptions{
+		Token:        "secret",
+		ExpectedHost: server.Listener.Addr().String(),
+		Status: &testStatusProvider{status: Status{
+			Service: ServiceName, State: StateReady,
+		}},
+		Shutdown: func(context.Context, ShutdownRequest) (Status, error) {
+			return Status{Service: ServiceName, State: StateReady}, nil
+		},
+		Operations: hub,
+	})
+	server.Start()
+	return server
+}
