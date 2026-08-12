@@ -170,3 +170,20 @@ func (g *Gate) WaitForDrain(ctx context.Context, now time.Time) DrainResult {
 		}
 	}
 }
+
+func (g *Gate) WaitForRelease(ctx context.Context) bool {
+	for {
+		g.mu.Lock()
+		if g.activeWork == 0 && g.activeLeases == 0 {
+			g.mu.Unlock()
+			return true
+		}
+		changed := g.changed
+		g.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return false
+		case <-changed:
+		}
+	}
+}

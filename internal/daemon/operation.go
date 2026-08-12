@@ -24,6 +24,7 @@ const (
 	defaultMaxSubscribersPerOperation = 8
 	defaultMaxOperationSubscribers    = 128
 	operationCompletionReserveBytes   = 16 << 10
+	operationCriticalQueueReserve     = 1
 )
 
 type OperationHubOptions struct {
@@ -264,6 +265,17 @@ func (h *OperationHub) run(
 ) {
 	result, err := run(entry.context, entry.operation)
 	h.finish(entry, result, err)
+	h.releaseWorker(entry)
+}
+
+func (h *OperationHub) releaseWorker(entry *operationEntry) {
+	h.mu.Lock()
+	release := entry.release
+	entry.release = nil
+	h.mu.Unlock()
+	if release != nil {
+		release()
+	}
 }
 
 func (o *Operation) ID() string {
@@ -469,7 +481,7 @@ func (h *OperationHub) Subscribe(
 			replay = append(replay, event)
 		}
 	}
-	queueSize := len(replay) + h.options.SubscriberQueue + 1
+	queueSize := len(replay) + h.options.SubscriberQueue + operationCriticalQueueReserve
 	events := make(chan service.OperationEvent, queueSize)
 	for _, event := range replay {
 		events <- event
@@ -655,10 +667,6 @@ func (h *OperationHub) markTerminalLocked(entry *operationEntry) {
 	entry.prompt = nil
 	entry.cancel()
 	h.active--
-	if entry.release != nil {
-		entry.release()
-		entry.release = nil
-	}
 	if entry.lossTimer != nil {
 		entry.lossTimer.Stop()
 		entry.lossTimer = nil
@@ -674,6 +682,15 @@ func (h *OperationHub) dispatchLocked(
 	event service.OperationEvent,
 ) {
 	for subscription, events := range entry.subscribers {
+		limit := cap(events)
+		if event.Kind != service.OperationEventPrompt && event.Kind != service.OperationEventComplete {
+			limit -= operationCriticalQueueReserve
+		}
+		if len(events) >= limit {
+			delete(entry.subscribers, subscription)
+			close(events)
+			continue
+		}
 		select {
 		case events <- event:
 		default:

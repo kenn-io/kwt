@@ -530,6 +530,100 @@ func TestOperationHubReservesLiveHeadroomAfterReplay(t *testing.T) {
 	}
 }
 
+func TestOperationHubReservesCriticalCapacityAfterLiveQueueSaturates(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		run  func(context.Context, *Operation) (json.RawMessage, error)
+	}{
+		{
+			name: "prompt",
+			run: func(ctx context.Context, operation *Operation) (json.RawMessage, error) {
+				value, err := operation.Prompt(ctx, service.OperationPrompt{
+					Kind: "password", Message: "Password:", Sensitive: true,
+				})
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(map[string]string{"value": value})
+			},
+		},
+		{
+			name: "completion",
+			run: func(context.Context, *Operation) (json.RawMessage, error) {
+				return json.RawMessage(`{}`), nil
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			startWork := make(chan struct{})
+			startCritical := make(chan struct{})
+			queueSaturated := make(chan struct{})
+			hub := NewOperationHub(context.Background(), OperationHubOptions{SubscriberQueue: 1})
+			operation, _, err := hub.Start(OperationStart{
+				RequestDigest: "request-1",
+				Run: func(ctx context.Context, operation *Operation) (json.RawMessage, error) {
+					<-startWork
+					if err := operation.Progress("one"); err != nil {
+						return nil, err
+					}
+					if err := operation.Warning("two"); err != nil {
+						return nil, err
+					}
+					close(queueSaturated)
+					<-startCritical
+					return test.run(ctx, operation)
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			subscription, err := hub.Subscribe(operation.ID(), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer subscription.Close()
+			close(startWork)
+			<-queueSaturated
+			receiveOperationEvent(t, subscription.Events())
+			select {
+			case _, open := <-subscription.Events():
+				if open {
+					t.Fatal("noncritical saturation must detach before critical delivery")
+				}
+			case <-time.After(time.Second):
+				t.Fatal("noncritical events consumed critical queue capacity")
+			}
+
+			replacement, err := hub.Subscribe(operation.ID(), 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer replacement.Close()
+			event := receiveOperationEvent(t, replacement.Events())
+			if event.Kind != service.OperationEventWarning {
+				t.Fatalf("replayed event kind = %q", event.Kind)
+			}
+			close(startCritical)
+			event = receiveOperationEvent(t, replacement.Events())
+			if test.name == "prompt" {
+				if event.Prompt == nil {
+					t.Fatal("prompt event omitted prompt")
+				}
+				if err := hub.Respond(operation.ID(), service.OperationResponse{
+					PromptID: event.Prompt.ID,
+					Value:    "secret",
+				}); err != nil {
+					t.Fatal(err)
+				}
+				event = receiveOperationEvent(t, replacement.Events())
+			}
+			if event.Kind != service.OperationEventComplete {
+				t.Fatalf("critical event kind = %q", event.Kind)
+			}
+		})
+	}
+}
+
 func TestOperationHubCancelsWhenInitialSubscriberGraceExpires(t *testing.T) {
 	canceled := make(chan struct{})
 	hub := NewOperationHub(context.Background(), OperationHubOptions{
@@ -586,6 +680,7 @@ func TestOperationHubDrainRefusesNewWorkAndTerminatesActiveStreams(t *testing.T)
 	now := time.Unix(1_700_000_000, 0)
 	gate := NewGate(now)
 	started := make(chan struct{})
+	cleanup := make(chan struct{})
 	hub := NewOperationHub(context.Background(), OperationHubOptions{
 		Reserve: func() (func(), error) {
 			return gate.Reserve(ReservationWork, now)
@@ -596,6 +691,7 @@ func TestOperationHubDrainRefusesNewWorkAndTerminatesActiveStreams(t *testing.T)
 		Run: func(ctx context.Context, _ *Operation) (json.RawMessage, error) {
 			close(started)
 			<-ctx.Done()
+			<-cleanup
 			return nil, ctx.Err()
 		},
 	})
@@ -625,8 +721,16 @@ func TestOperationHubDrainRefusesNewWorkAndTerminatesActiveStreams(t *testing.T)
 	if event.Kind != service.OperationEventComplete || event.Failure == nil || event.Failure.Code != service.OperationOutcomeUnknown {
 		t.Fatalf("unexpected drain event: %#v", event)
 	}
+	if active := gate.Snapshot().ActiveWork; active != 1 {
+		t.Fatalf("active work before worker cleanup = %d", active)
+	}
+	close(cleanup)
+	deadline = time.Now().Add(time.Second)
+	for gate.Snapshot().ActiveWork != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
 	if active := gate.Snapshot().ActiveWork; active != 0 {
-		t.Fatalf("active work after forced drain = %d", active)
+		t.Fatalf("active work after worker cleanup = %d", active)
 	}
 }
 

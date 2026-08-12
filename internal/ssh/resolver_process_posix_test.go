@@ -64,6 +64,40 @@ func TestRunOutputCancellationTerminatesDescendantProcessGroup(t *testing.T) {
 	t.Fatal("resolver descendant survived cancellation")
 }
 
+func TestRunOutputBoundsOutputAndCancelsResolverProcess(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		script string
+		stream func([]byte, []byte) []byte
+	}{
+		{
+			name:   "stdout",
+			script: "dd if=/dev/zero bs=1048577 count=1 2>/dev/null; sleep 30",
+			stream: func(stdout, _ []byte) []byte { return stdout },
+		},
+		{
+			name:   "stderr",
+			script: "dd if=/dev/zero bs=1048577 count=1 2>/dev/null | cat >&2; sleep 30",
+			stream: func(_, stderr []byte) []byte { return stderr },
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			started := time.Now()
+			stdout, stderr, _, err := runOutput(
+				ctx,
+				[]string{"/bin/sh", "-c", test.script},
+				os.Environ(),
+				nil,
+			)
+			require.Error(t, err)
+			assert.LessOrEqual(t, len(test.stream(stdout, stderr)), 1<<20)
+			assert.Less(t, time.Since(started), 2*time.Second)
+		})
+	}
+}
+
 func TestAccountLoginShellHonorsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

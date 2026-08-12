@@ -92,7 +92,8 @@ rendered, logged, or persisted. Event and response payloads, replay and live
 subscriber queues, every live subscription including terminal replay, active
 operations, and retained completed operations are bounded so an authenticated
 or same-user local client cannot create unbounded daemon memory growth. The
-same operating-system user remains the trust boundary.
+live queue reserves critical-event capacity that noncritical progress cannot
+consume. The same operating-system user remains the trust boundary.
 
 The operation stream is reconnectable only while the same verified daemon
 retains it in memory. Neither an operation ID nor a request digest authorizes a
@@ -110,7 +111,9 @@ name and sanitizes a fresh process environment for every resolution, so a
 compatible daemon cannot retain stale credential policy after configuration
 changes. Cancellation terminates the complete resolver process tree through a
 POSIX process group or a Windows Job Object, so an OpenSSH configuration
-command cannot survive daemon drain while retaining its output handles.
+command cannot survive daemon drain while retaining its output handles. Stdout
+and stderr are each capped at 1 MiB; exceeding either cap cancels that same
+owned process tree.
 
 The daemon retains the complete normalized `ssh -G` stream only as private
 route-identity input. Authenticated responses expose semantic targets and the

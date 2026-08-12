@@ -6,7 +6,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -248,6 +250,24 @@ func TestResolverPOSIXPreservesDeadlineCause(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, context.DeadlineExceeded))
+}
+
+func TestResolverPOSIXReportsBoundedOutputAsStableFailure(t *testing.T) {
+	executable := filepath.Join(t.TempDir(), "ssh")
+	require.NoError(t, os.WriteFile(executable, []byte(
+		"#!/bin/sh\ndd if=/dev/zero bs=1048577 count=1 2>/dev/null\nsleep 30\n",
+	), 0o700))
+	resolver := NewResolver(ResolverOptions{
+		Executable: executable,
+		LoginShell: func() (string, error) { return "/bin/sh", nil },
+		Nonce:      func() (string, error) { return "nonce", nil },
+	})
+
+	_, err := resolver.Resolve(context.Background(), ResolveRequest{
+		Target: Target{Hostname: "build.example.test"},
+	})
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.SSHResolutionFailed))
 }
 
 func framedResolverOutput(nonce, config string) []byte {

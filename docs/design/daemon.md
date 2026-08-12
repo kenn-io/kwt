@@ -118,20 +118,22 @@ operations for five minutes. An operation admits at most eight subscribers,
 with at most 128 live subscribers across the daemon. Retained terminal replays
 and streams detached after queue overflow count against both limits until the
 HTTP subscriber closes. Each response write has a five-second deadline. Replay
-queues reserve bounded capacity for live events and terminal completion. The
-daemon rejects excess work or subscriptions instead of dropping a prompt or
-terminal result. A new operation has five seconds to gain its first subscriber.
-Afterward, losing the final subscriber starts the same five-second reconnect
-grace before the worker is canceled. A client retries one interrupted stream
-against the same proof-verified daemon. Daemon loss, retention loss, or
+queues reserve a slot that progress and warning events cannot consume; prompts
+and terminal completion remain replayable when noncritical delivery saturates.
+The daemon rejects excess work or subscriptions instead of dropping a prompt
+or terminal result. A new operation has five seconds to gain its first
+subscriber. Afterward, losing the final subscriber starts the same five-second
+reconnect grace before the worker is canceled. A client retries one interrupted
+stream against the same proof-verified daemon. Daemon loss, retention loss, or
 replacement of the runtime owner returns
 `operation_outcome_unknown`; the client never repeats the domain mutation to
 guess its result.
 
-Operations reserve daemon work for their lifetime. Draining refuses new
-operations, lets admitted work run until the published replacement deadline,
-then publishes a terminal unknown-outcome event and cancels remaining workers
-before the HTTP server closes.
+Operations reserve daemon work until their workers return, including cleanup
+after a terminal outcome is published. Draining refuses new operations and lets
+admitted work run until the published replacement deadline. At the deadline it
+publishes an unknown terminal outcome, cancels remaining workers and HTTP
+handlers, then waits up to five seconds for their reservations to release.
 
 `POST /api/v1/ssh/resolve` evaluates system OpenSSH configuration through one
 daemon-owned service and returns an immutable route snapshot. On POSIX, the
@@ -142,8 +144,9 @@ and sanitizes a fresh process environment before crossing either boundary.
 Direct ProxyJump hops are resolved in connection order; opaque ProxyCommand and
 nested proxy routes fail closed. The complete normalized option stream
 contributes to route identity but never crosses the HTTP boundary. This
-resolution route does not create a connection, control socket, trust decision,
-credential prompt, or lease.
+resolution route caps stdout and stderr at 1 MiB each and cancels the complete
+resolver process tree when either bound is exceeded. It does not create a
+connection, control socket, trust decision, credential prompt, or lease.
 
 `kwt projects` and `kwt list` auto-start or reuse the daemon and require a
 current inventory result. They fail instead of falling back to cached or direct

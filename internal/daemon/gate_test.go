@@ -51,6 +51,27 @@ func TestGateDeadlineInvalidatesReservations(t *testing.T) {
 	assert.Equal(t, DrainDeadline, gate.WaitForDrain(context.Background(), now))
 }
 
+func TestGateWaitForReleaseContinuesAfterDrainDeadline(t *testing.T) {
+	now := time.Now()
+	gate := NewGate(now)
+	release, err := gate.Reserve(ReservationWork, now)
+	require.NoError(t, err)
+	gate.BeginDrain(now.Add(-time.Millisecond))
+	assert.Equal(t, DrainDeadline, gate.WaitForDrain(context.Background(), now))
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	result := make(chan bool, 1)
+	go func() { result <- gate.WaitForRelease(ctx) }()
+	select {
+	case <-result:
+		t.Fatal("cleanup wait returned while work remained active")
+	case <-time.After(20 * time.Millisecond):
+	}
+	release()
+	assert.True(t, <-result)
+}
+
 func TestGateIdleDecisionIgnoresHealthAndWarmResources(t *testing.T) {
 	now := time.Now()
 	gate := NewGate(now)

@@ -23,6 +23,7 @@ const (
 	httpReadTimeout       = 2 * time.Second
 	httpIdleTimeout       = 30 * time.Second
 	httpMaxHeaderBytes    = 16 << 10
+	forcedDrainCleanup    = 5 * time.Second
 )
 
 type ServeOptions struct {
@@ -335,10 +336,19 @@ func runHost(
 		operations.CancelActiveForDrain()
 	}
 	shutdownErr := shutdownHTTPServer(httpServer, drain.DrainDeadline, drainResult)
+	var cleanupErr error
+	if drainResult != DrainReleased {
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), forcedDrainCleanup)
+		if !gate.WaitForRelease(cleanupCtx) {
+			cleanupErr = errors.New("daemon cleanup deadline expired")
+		}
+		cancelCleanup()
+	}
 	_ = listener.Close()
 	removeErr := removeOwnedRuntime(runtimePath, store, record.PID)
-	logLifecycle(logger, "stopped", status.Status(opts.Now()), errors.Join(runErr, shutdownErr, removeErr))
-	return errors.Join(runErr, shutdownErr, removeErr)
+	stopErr := errors.Join(runErr, shutdownErr, cleanupErr, removeErr)
+	logLifecycle(logger, "stopped", status.Status(opts.Now()), stopErr)
+	return stopErr
 }
 
 func newHTTPServer(handler http.Handler) *http.Server {

@@ -13,6 +13,10 @@ import (
 	"go.kenn.io/kwt/internal/credentials"
 )
 
+const resolverOutputLimit = 1 << 20
+
+var errResolverOutputLimit = errors.New("SSH resolver output exceeds limit")
+
 type OutputRunner func(
 	ctx context.Context,
 	argv []string,
@@ -99,15 +103,23 @@ func runOutput(
 	if len(argv) == 0 {
 		return nil, nil, -1, errors.New("empty process arguments")
 	}
-	command := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	processContext, cancelProcess := context.WithCancelCause(ctx)
+	defer cancelProcess(nil)
+	command := exec.CommandContext(processContext, argv[0], argv[1:]...)
 	command.Env = environment
 	command.Stdin = bytes.NewReader(standardInput)
 	var stdout, stderr []byte
-	command.Stdout = byteSliceWriter{target: &stdout}
-	command.Stderr = byteSliceWriter{target: &stderr}
+	command.Stdout = byteSliceWriter{
+		target: &stdout, limit: resolverOutputLimit, cancel: cancelProcess,
+	}
+	command.Stderr = byteSliceWriter{
+		target: &stderr, limit: resolverOutputLimit, cancel: cancelProcess,
+	}
 	err := runResolverCommand(command)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		err = errors.Join(ctxErr, err)
+	} else if processErr := context.Cause(processContext); processErr != nil {
+		err = errors.Join(processErr, err)
 	}
 	exitCode := 0
 	if err != nil {
@@ -122,9 +134,19 @@ func runOutput(
 
 type byteSliceWriter struct {
 	target *[]byte
+	limit  int
+	cancel context.CancelCauseFunc
 }
 
 func (w byteSliceWriter) Write(value []byte) (int, error) {
+	remaining := w.limit - len(*w.target)
+	if remaining < len(value) {
+		if remaining > 0 {
+			*w.target = append(*w.target, value[:remaining]...)
+		}
+		w.cancel(errResolverOutputLimit)
+		return max(remaining, 0), errResolverOutputLimit
+	}
 	*w.target = append(*w.target, value...)
 	return len(value), nil
 }
