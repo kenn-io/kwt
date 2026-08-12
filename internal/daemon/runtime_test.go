@@ -6,6 +6,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -57,6 +58,52 @@ func TestNewRuntimeRecordAlwaysAdvertisesRevisionTime(t *testing.T) {
 	value, present = record.Metadata[metadataRevisionTime]
 	assert.True(t, present)
 	assert.Empty(t, value)
+}
+
+func TestInspectUsesStableProcessIdentityAcrossLegacyClockDrift(t *testing.T) {
+	if _, ok := readStableProcessIdentity(os.Getpid()); !ok {
+		t.Skip("platform does not expose a stable process identity")
+	}
+	home := t.TempDir()
+	store := RuntimeStore(home)
+	record, _, err := NewRuntimeRecord(
+		home,
+		Build{Version: "development"},
+		kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: "127.0.0.1:1"},
+	)
+	require.NoError(t, err)
+	require.NotEmpty(t, record.Metadata[metadataProcessIdentity])
+	assert.Empty(t, record.ProcessIdentity)
+	record.ProcessIdentity = "legacy-wall-clock-shifted"
+	path, err := store.Write(record)
+	require.NoError(t, err)
+
+	observation, err := Inspect(context.Background(), store, home)
+	require.NoError(t, err)
+	assert.Equal(t, RuntimeUnresponsive, observation.State)
+	assert.FileExists(t, path)
+}
+
+func TestInspectRemovesMismatchedStableProcessIdentity(t *testing.T) {
+	if _, ok := readStableProcessIdentity(os.Getpid()); !ok {
+		t.Skip("platform does not expose a stable process identity")
+	}
+	home := t.TempDir()
+	store := RuntimeStore(home)
+	record, _, err := NewRuntimeRecord(
+		home,
+		Build{Version: "development"},
+		kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: "127.0.0.1:1"},
+	)
+	require.NoError(t, err)
+	record.Metadata[metadataProcessIdentity] = "different-runtime:1:1"
+	path, err := store.Write(record)
+	require.NoError(t, err)
+
+	observation, err := Inspect(context.Background(), store, home)
+	require.NoError(t, err)
+	assert.Equal(t, RuntimeAbsent, observation.State)
+	assert.NoFileExists(t, path)
 }
 
 func TestNewRuntimeRecordAdvertisesFirstDomainContracts(t *testing.T) {
