@@ -1,0 +1,22 @@
+//go:build windows
+
+package ssh
+
+import (
+	"context"
+
+	"go.kenn.io/kit/openssh"
+)
+
+func (r *Resolver) resolveConfig(
+	ctx context.Context,
+	target openssh.Target,
+) (openssh.EffectiveConfig, error) {
+	resolver := openssh.Resolver{
+		Executable: r.executable,
+		Run: func(ctx context.Context, argv []string) ([]byte, []byte, int, error) {
+			return r.run(ctx, argv, r.environment)
+		},
+	}
+	return resolver.Resolve(ctx, target)
+}
