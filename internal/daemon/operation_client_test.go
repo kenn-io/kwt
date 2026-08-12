@@ -250,6 +250,22 @@ func TestOperationClientMapsEndpointLossToUnknownOutcome(t *testing.T) {
 	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
 }
 
+func TestOperationClientMapsReplacementAuthenticationFailureToUnknownOutcome(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		writeProblem(w, newProblem(http.StatusUnauthorized, service.Descriptor{
+			Code: service.PermissionDenied, Message: "a valid daemon bearer token is required",
+		}))
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "stale-secret")
+
+	_, err := client.FollowOperation(context.Background(), "operation-1", 0, OperationCallbacks{})
+	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
+	assert.Equal(t, int32(1), requests.Load())
+}
+
 func TestOperationClientRetriesMalformedFailureThenReportsUnknownOutcome(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

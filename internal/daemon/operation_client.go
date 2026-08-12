@@ -99,6 +99,12 @@ func (c *Client) followOperationAttempt(
 				problemErr,
 			)
 		}
+		if service.IsCode(problemErr, service.PermissionDenied) {
+			return nil, afterSequence, operationOutcomeUnknown(
+				"operation daemon identity is no longer valid",
+				problemErr,
+			)
+		}
 		return nil, afterSequence, problemErr
 	}
 	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
