@@ -95,6 +95,7 @@ func NewRuntimeRecord(
 			CapabilityStatus,
 			CapabilityOperationStream,
 			CapabilityProjectRemoval,
+			CapabilitySSHResolve,
 			CapabilityInventory,
 			CapabilityRemoval,
 		}, ","),

@@ -14,6 +14,7 @@ import (
 
 	kitdaemon "go.kenn.io/kit/daemon"
 	kwt "go.kenn.io/kwt"
+	internalssh "go.kenn.io/kwt/internal/ssh"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
@@ -37,6 +38,7 @@ type ServeOptions struct {
 	Inventory         kwt.Inventory
 	Remover           kwt.Remover
 	ProjectRemover    kwt.ProjectRemover
+	SSHResolver       SSHResolver
 }
 
 type hostStatus struct {
@@ -171,6 +173,7 @@ func runHost(
 	inventory := opts.Inventory
 	remover := opts.Remover
 	projectRemover := opts.ProjectRemover
+	sshResolver := opts.SSHResolver
 	var cacheDiagnostic *kwt.Diagnostic
 	if inventory == nil {
 		cache, diagnostic, cacheErr := kwt.NewFileCache(opts.Home)
@@ -200,6 +203,14 @@ func runHost(
 			Home: opts.Home,
 		})
 	}
+	if sshResolver == nil {
+		sshResolver = internalssh.NewService(internalssh.ServiceOptions{
+			Resolver: internalssh.NewResolver(internalssh.ResolverOptions{
+				ProtectedNames: []string{configuredFleetTokenEnvironment(opts.Home)},
+			}),
+			Now: opts.Now,
+		})
+	}
 	status := &hostStatus{
 		base: Status{
 			Service:       ServiceName,
@@ -217,6 +228,7 @@ func runHost(
 				CapabilityStatus,
 				CapabilityOperationStream,
 				CapabilityProjectRemoval,
+				CapabilitySSHResolve,
 				CapabilityInventory,
 				CapabilityRemoval,
 			},
@@ -254,6 +266,7 @@ func runHost(
 		Remover:        remover,
 		ProjectRemover: projectRemover,
 		Operations:     operations,
+		SSHResolver:    sshResolver,
 		Gate:           gate,
 		ReportError: func(
 			route string,

@@ -9,13 +9,14 @@ import (
 const (
 	ServiceName               = "kwt"
 	APISchemaMajor            = 1
-	APISchemaVersion          = "1.7.0"
+	APISchemaVersion          = "1.8.0"
 	CapabilityStatus          = "daemon.status"
 	CapabilityShutdown        = "daemon.shutdown"
 	CapabilityProjectRemoval  = "project.removal.v1"
 	CapabilityInventory       = "worktree.inventory.v1"
 	CapabilityRemoval         = "worktree.removal.v1"
 	CapabilityOperationStream = "operation.stream.v1"
+	CapabilitySSHResolve      = "ssh.resolve.v1"
 )
 
 type State string

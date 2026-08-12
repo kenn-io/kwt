@@ -25,6 +25,7 @@ type Client struct {
 	controlHTTP   *http.Client
 	inventoryHTTP *http.Client
 	mutationHTTP  *http.Client
+	sshHTTP       *http.Client
 	streamHTTP    *http.Client
 }
 
@@ -74,6 +75,7 @@ const (
 	controlRequestTimeout           = 2 * time.Second
 	inventoryResponseHeadroom       = 5 * time.Second
 	inventoryRequestTimeout         = kwt.DefaultRefreshTimeout + inventoryResponseHeadroom
+	sshResolveRequestTimeout        = 30 * time.Second
 	removalReconcileTimeout         = 5 * time.Second
 	controlResponseLimit      int64 = 1 << 20
 	inventoryResponseLimit          = 64 << 20
@@ -114,7 +116,11 @@ func NewVerifiedClient(
 			ResponseHeaderTimeout: inventoryRequestTimeout,
 		}),
 		mutationHTTP: ep.HTTPClient(kitdaemon.HTTPClientOptions{}),
-		streamHTTP:   ep.HTTPClient(kitdaemon.HTTPClientOptions{}),
+		sshHTTP: ep.HTTPClient(kitdaemon.HTTPClientOptions{
+			Timeout:               sshResolveRequestTimeout,
+			ResponseHeaderTimeout: sshResolveRequestTimeout,
+		}),
+		streamHTTP: ep.HTTPClient(kitdaemon.HTTPClientOptions{}),
 	}, nil
 }
 
@@ -143,6 +149,23 @@ func (c *Client) inventory(ctx context.Context, request kwt.Request) (kwt.Result
 
 func (c *Client) ApproveConfig(ctx context.Context, approval kwt.ConfigApproval) error {
 	return c.do(ctx, http.MethodPost, "/api/v1/config/trust", approval, nil)
+}
+
+func (c *Client) ResolveSSH(
+	ctx context.Context,
+	request kwt.SSHResolveRequest,
+) (kwt.SSHRouteSnapshot, error) {
+	var result kwt.SSHRouteSnapshot
+	err := c.doWith(
+		ctx,
+		c.sshHTTP,
+		controlResponseLimit,
+		http.MethodPost,
+		"/api/v1/ssh/resolve",
+		request,
+		&result,
+	)
+	return result, err
 }
 
 func (c *Client) RemoveWorktree(
@@ -310,7 +333,7 @@ func detailBoolValue(details map[string]any, key string) bool {
 func newClient(ep kitdaemon.Endpoint, token string, client *http.Client) *Client {
 	return &Client{
 		endpoint: ep, token: token, controlHTTP: client, inventoryHTTP: client,
-		mutationHTTP: client, streamHTTP: client,
+		mutationHTTP: client, sshHTTP: client, streamHTTP: client,
 	}
 }
 
@@ -517,6 +540,10 @@ func problemCode(code service.Code) (service.Code, bool) {
 		service.OperationCapacityExhausted,
 		service.OperationJournalUnavailable,
 		service.OperationOutcomeUnknown,
+		service.SSHInvalidTarget,
+		service.SSHResolutionFailed,
+		service.SSHRouteUnreviewable,
+		service.SSHConfigurationChanged,
 		service.Internal:
 		return code, true
 	default:

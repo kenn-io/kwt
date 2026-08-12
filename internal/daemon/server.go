@@ -21,6 +21,10 @@ type StatusProvider interface {
 
 type ShutdownFunc func(context.Context, ShutdownRequest) (Status, error)
 
+type SSHResolver interface {
+	Resolve(context.Context, kwt.SSHResolveRequest) (kwt.SSHRouteSnapshot, error)
+}
+
 type ServerOptions struct {
 	Token          string
 	ExpectedHost   string
@@ -34,6 +38,7 @@ type ServerOptions struct {
 	Remover        kwt.Remover
 	ProjectRemover kwt.ProjectRemover
 	Operations     *OperationHub
+	SSHResolver    SSHResolver
 	Gate           *Gate
 	ReportError    func(string, *service.Error, kwt.ExpansionContext)
 }
@@ -54,6 +59,8 @@ type removalInput struct{ Body kwt.RemovalRequest }
 type removalOutput struct{ Body kwt.RemovalResult }
 type projectRemovalInput struct{ Body kwt.ProjectRemovalRequest }
 type projectRemovalOutput struct{ Body kwt.ProjectRemovalResult }
+type sshResolveInput struct{ Body kwt.SSHResolveRequest }
+type sshResolveOutput struct{ Body kwt.SSHRouteSnapshot }
 
 const defaultMaxBodyBytes = 1 << 20
 
@@ -159,6 +166,27 @@ func NewServer(opts ServerOptions) http.Handler {
 					)
 				}
 				return &projectRemovalOutput{Body: result}, nil
+			},
+		)
+	}
+	if opts.SSHResolver != nil {
+		huma.Register(
+			api,
+			huma.Operation{
+				Method: http.MethodPost, Path: "/api/v1/ssh/resolve",
+				OperationID: "ssh-resolve",
+			},
+			func(ctx context.Context, input *sshResolveInput) (*sshResolveOutput, error) {
+				release, err := reserveInventoryWork(opts)
+				if err != nil {
+					return nil, reportProblem(opts, "/api/v1/ssh/resolve", err)
+				}
+				defer release()
+				result, err := opts.SSHResolver.Resolve(ctx, input.Body)
+				if err != nil {
+					return nil, reportProblem(opts, "/api/v1/ssh/resolve", err)
+				}
+				return &sshResolveOutput{Body: result}, nil
 			},
 		)
 	}
@@ -313,14 +341,15 @@ func problemFromError(err error) *Problem {
 	typed := service.AsError(err)
 	status := http.StatusInternalServerError
 	switch typed.Code {
-	case service.InvalidRequest:
+	case service.InvalidRequest, service.SSHInvalidTarget:
 		status = http.StatusBadRequest
 	case service.PermissionDenied:
 		status = http.StatusForbidden
 	case service.NotFound, service.ProjectNotFound:
 		status = http.StatusNotFound
 	case service.Conflict, service.ConnectionChanged, service.OperationIDConflict,
-		service.RegistrationChanged, service.ProtectedSessionLive:
+		service.RegistrationChanged, service.ProtectedSessionLive,
+		service.SSHRouteUnreviewable, service.SSHConfigurationChanged:
 		status = http.StatusConflict
 	case service.ProtectedEndpointInventoryIncomplete:
 		if typed.Retryable {
@@ -334,7 +363,7 @@ func problemFromError(err error) *Problem {
 		status = http.StatusPreconditionRequired
 	case service.Busy, service.DaemonStartFailed, service.DaemonUnresponsive,
 		service.DaemonDraining, service.InventoryTimeout,
-		service.OperationCapacityExhausted:
+		service.OperationCapacityExhausted, service.SSHResolutionFailed:
 		status = http.StatusServiceUnavailable
 	case service.OperationOutcomeUnknown:
 		status = http.StatusConflict
