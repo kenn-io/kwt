@@ -90,10 +90,30 @@ func TestRegisteredAddRequiresExactExpectedRegistration(t *testing.T) {
 	addExpectedRegistration = "v1:0000000000000000000000000000000000000000000000000000000000000000"
 	worktreePath := filepath.Join(t.TempDir(), "feature-guarded")
 	cmd, _, _ := fleetTestCommand()
+	markCommandFlagsChanged(t, cmd, "expected-repository", "expected-registration")
 
 	err = runAdd(cmd, []string{"feature/guarded", worktreePath})
 
 	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+	assert.NoDirExists(t, worktreePath)
+}
+
+func TestRegisteredAddRejectsExplicitEmptyExpectedFlags(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetAddCommandFlags(t)
+
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	t.Chdir(repoPath)
+	addBranch = true
+	addNoLaunch = true
+	worktreePath := filepath.Join(t.TempDir(), "feature-empty-guard")
+	cmd, _, _ := fleetTestCommand()
+	markCommandFlagsChanged(t, cmd, "expected-repository", "expected-registration")
+
+	err := runAdd(cmd, []string{"feature/empty-guard", worktreePath})
+
+	assert.True(t, service.IsCode(err, service.InvalidRequest))
 	assert.NoDirExists(t, worktreePath)
 }
 

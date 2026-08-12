@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/config"
@@ -30,6 +31,16 @@ type recordingOpenWorkspaceRunner struct {
 	workingDirectory string
 	layout           models.Layout
 	insideTmux       bool
+}
+
+func markCommandFlagsChanged(t *testing.T, cmd *cobra.Command, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		if cmd.Flags().Lookup(name) == nil {
+			cmd.Flags().String(name, "", "")
+		}
+		cmd.Flags().Lookup(name).Changed = true
+	}
 }
 
 func (r *recordingOpenWorkspaceRunner) Ensure(
@@ -295,7 +306,7 @@ func TestRunOpenWithContextRejectsGuardedDirectoryWorkspace(t *testing.T) {
 	originalGeneration := openExpectedGeneration
 	originalSession := openExpectedSession
 	openExpectedRepository = "github.com/acme/widget"
-	openExpectedRegistration = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	openExpectedRegistration = "v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	openExpectedGeneration = "0123456789abcdef0123456789abcdef"
 	openExpectedSession = "widget-topic"
 	t.Cleanup(func() {
@@ -305,6 +316,14 @@ func TestRunOpenWithContextRejectsGuardedDirectoryWorkspace(t *testing.T) {
 		openExpectedSession = originalSession
 	})
 	cmd, _, _ := fleetTestCommand()
+	markCommandFlagsChanged(
+		t,
+		cmd,
+		"expected-repository",
+		"expected-registration",
+		"expected-generation",
+		"expected-session",
+	)
 	cmd.SetContext(context.Background())
 
 	err := runOpenWithContext(
@@ -317,6 +336,28 @@ func TestRunOpenWithContextRejectsGuardedDirectoryWorkspace(t *testing.T) {
 
 	assert.True(t, service.IsCode(err, service.InvalidRequest))
 	assert.Contains(t, err.Error(), "registered Git worktrees")
+}
+
+func TestRunOpenWithContextRejectsExplicitEmptyExpectedFlags(t *testing.T) {
+	workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
+	cmd, _, _ := fleetTestCommand()
+	markCommandFlagsChanged(
+		t,
+		cmd,
+		"expected-repository",
+		"expected-registration",
+		"expected-generation",
+		"expected-session",
+	)
+	cmd.SetContext(context.Background())
+
+	err := runOpenWithContext(
+		cmd,
+		[]string{workspace.Path},
+		&CommandContext{Config: &models.Config{Workspaces: []models.Workspace{workspace}}},
+	)
+
+	assert.True(t, service.IsCode(err, service.InvalidRequest))
 }
 
 func TestOpenStartSessionRequiresExactWorkspacePath(t *testing.T) {
@@ -605,6 +646,85 @@ func TestExpectedOpenRejectsReplacementBeforeSessionEnsure(t *testing.T) {
 	reloaded, err := registry.New()
 	require.NoError(t, err)
 	assert.True(t, reloaded.IsUnreviewedRemoteSource(repoPath))
+}
+
+func TestExpectedOpenRejectsStaleDiscoveryAfterWorktreeReplacement(t *testing.T) {
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "guarded-worktree")
+	runTUITestGit(t, repoPath, "worktree", "add", "-b", "feature/original", worktreePath)
+	initCommandTestConfig(t, t.TempDir())
+	configPath := filepath.Join(os.Getenv("KWT_HOME"), "config.toml")
+	file, err := os.OpenFile(configPath, os.O_APPEND|os.O_WRONLY, 0)
+	require.NoError(t, err)
+	_, err = fmt.Fprintf(
+		file,
+		"\n[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'widget'\npath = %q\n",
+		repoPath,
+	)
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	snapshot, err := config.LoadGlobalSnapshotAt(os.Getenv("KWT_HOME"))
+	require.NoError(t, err)
+	require.Len(t, snapshot.Projects, 1)
+	fingerprint, err := snapshot.Projects[0].Fingerprint()
+	require.NoError(t, err)
+
+	entry := &discovery.GlobalWorktreeEntry{
+		Path:       worktreePath,
+		Branch:     "feature/original",
+		Generation: tuiTestWorktreeGeneration(t, repoPath, worktreePath),
+		RepositoryInfo: &url.RepositoryInfo{
+			FullPath: "github.com/acme/widget",
+		},
+	}
+	expectedSession := tmux.WorkspaceSessionName(
+		entry.RepositoryInfo,
+		entry.Branch,
+		entry.Path,
+	)
+	runner := &recordingOpenWorkspaceRunner{}
+	originalRunner := newOpenWorkspaceRunner
+	originalDiscover := discoverOpenWorktree
+	originalLayout := openLayout
+	originalExpectedRepository := openExpectedRepository
+	originalExpectedRegistration := openExpectedRegistration
+	originalExpectedGeneration := openExpectedGeneration
+	originalExpectedSession := openExpectedSession
+	t.Cleanup(func() {
+		newOpenWorkspaceRunner = originalRunner
+		discoverOpenWorktree = originalDiscover
+		openLayout = originalLayout
+		openExpectedRepository = originalExpectedRepository
+		openExpectedRegistration = originalExpectedRegistration
+		openExpectedGeneration = originalExpectedGeneration
+		openExpectedSession = originalExpectedSession
+	})
+	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	discoverOpenWorktree = func(string, []models.Project) (*discovery.GlobalWorktreeEntry, error) {
+		return entry, nil
+	}
+	openLayout = tmux.BlankLayoutName
+	openExpectedRepository = "github.com/acme/widget"
+	openExpectedRegistration = fingerprint
+	openExpectedGeneration = entry.Generation
+	openExpectedSession = expectedSession
+
+	runTUITestGit(t, repoPath, "worktree", "remove", "--force", worktreePath)
+	runTUITestGit(t, repoPath, "worktree", "add", "-b", "feature/replacement", worktreePath)
+	replacementGeneration := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
+	require.NotEqual(t, entry.Generation, replacementGeneration)
+
+	err = openSelectedWorktree(
+		context.Background(),
+		&CommandContext{Config: &models.Config{}},
+		entry,
+		nil,
+		true,
+		false,
+	)
+
+	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+	assert.False(t, runner.ensured)
 }
 
 func TestOpenSelectedWorktreeAcknowledgesPersistedRemoteSource(t *testing.T) {

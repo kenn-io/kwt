@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -110,7 +111,7 @@ func runOpenWithContext(
 	args []string,
 	ctx *CommandContext,
 ) error {
-	guardedOpen, err := validateExpectedOpenFlags(args)
+	guardedOpen, err := validateExpectedOpenFlags(cmd, args)
 	if err != nil {
 		return err
 	}
@@ -185,7 +186,13 @@ func runOpenWithContext(
 	)
 }
 
-func validateExpectedOpenFlags(args []string) (bool, error) {
+func validateExpectedOpenFlags(cmd *cobra.Command, args []string) (bool, error) {
+	names := []string{
+		"expected-repository",
+		"expected-registration",
+		"expected-generation",
+		"expected-session",
+	}
 	values := []string{
 		openExpectedRepository,
 		openExpectedRegistration,
@@ -193,8 +200,8 @@ func validateExpectedOpenFlags(args []string) (bool, error) {
 		openExpectedSession,
 	}
 	set := 0
-	for _, value := range values {
-		if value != "" {
+	for _, name := range names {
+		if commandFlagChanged(cmd, name) {
 			set++
 		}
 	}
@@ -205,6 +212,29 @@ func validateExpectedOpenFlags(args []string) (bool, error) {
 		return false, service.NewError(
 			service.InvalidRequest,
 			"expected repository, registration, generation, and session must be provided together",
+			false, nil, nil,
+		)
+	}
+	for _, value := range values {
+		if value == "" {
+			return false, service.NewError(
+				service.InvalidRequest,
+				"expected repository, registration, generation, and session must be nonempty",
+				false, nil, nil,
+			)
+		}
+	}
+	if !lifecycle.EqualProjectIdentity(openExpectedRepository, openExpectedRepository) {
+		return false, service.NewError(
+			service.InvalidRequest,
+			"expected repository identity is invalid",
+			false, nil, nil,
+		)
+	}
+	if !config.ValidProjectRegistrationFingerprint(openExpectedRegistration) {
+		return false, service.NewError(
+			service.InvalidRequest,
+			"expected project registration fingerprint is invalid",
 			false, nil, nil,
 		)
 	}
@@ -448,15 +478,27 @@ func openExpectedWorktree(
 			currentSession != openExpectedSession {
 			return registrationChangedOpenError(nil)
 		}
-		if err := acknowledgeRemoteSourcePath(current.Path); err != nil {
-			return err
-		}
-		return runner.Ensure(
-			ctx,
-			openExpectedSession,
+		generationErr := git.New(mainPath).WithWorktreeGeneration(
 			current.Path,
-			layout,
+			openExpectedGeneration,
+			func() error {
+				if err := acknowledgeRemoteSourcePath(current.Path); err != nil {
+					return err
+				}
+				return runner.Ensure(
+					ctx,
+					openExpectedSession,
+					current.Path,
+					layout,
+				)
+			},
 		)
+		var conditionErr *git.ConditionError
+		if errors.As(generationErr, &conditionErr) &&
+			conditionErr.Reason == git.ReasonGenerationChanged {
+			return registrationChangedOpenError(generationErr)
+		}
+		return generationErr
 	})
 	if err != nil || startSession {
 		return err

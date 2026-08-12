@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/duration"
 	"go.kenn.io/kwt/internal/git"
+	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/url"
@@ -125,12 +126,33 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		commandContext = context.Background()
 	}
 	return ExecuteWithArgs(true, func(ctx *CommandContext, cmd *cobra.Command, args []string) error {
-		hasExpectedRepository := addExpectedRepository != ""
-		hasExpectedRegistration := addExpectedRegistration != ""
-		if hasExpectedRepository != hasExpectedRegistration {
+		hasExpectedRepository := commandFlagChanged(cmd, "expected-repository")
+		hasExpectedRegistration := commandFlagChanged(cmd, "expected-registration")
+		guardedAdd := hasExpectedRepository || hasExpectedRegistration
+		if hasExpectedRepository != hasExpectedRegistration ||
+			(guardedAdd && (addExpectedRepository == "" || addExpectedRegistration == "")) {
 			return service.NewError(
 				service.InvalidRequest,
 				"expected repository identity and registration fingerprint are required together",
+				false, nil, nil,
+			)
+		}
+		if guardedAdd && !lifecycle.EqualProjectIdentity(
+			addExpectedRepository,
+			addExpectedRepository,
+		) {
+			return service.NewError(
+				service.InvalidRequest,
+				"expected repository identity is invalid",
+				false, nil, nil,
+			)
+		}
+		if guardedAdd && !config.ValidProjectRegistrationFingerprint(
+			addExpectedRegistration,
+		) {
+			return service.NewError(
+				service.InvalidRequest,
+				"expected project registration fingerprint is invalid",
 				false, nil, nil,
 			)
 		}
@@ -252,7 +274,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		var guard *guardedProjectOperation
-		if hasExpectedRepository {
+		if guardedAdd {
 			guard, err = observeExpectedGuardedProjectOperation(
 				commandContext,
 				home,

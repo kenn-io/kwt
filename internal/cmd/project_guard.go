@@ -4,12 +4,21 @@ import (
 	"context"
 	"errors"
 
+	"github.com/spf13/cobra"
 	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
+
+func commandFlagChanged(cmd *cobra.Command, name string) bool {
+	if cmd == nil {
+		return false
+	}
+	flag := cmd.Flags().Lookup(name)
+	return flag != nil && flag.Changed
+}
 
 type guardedProjectOperation struct {
 	home     string
