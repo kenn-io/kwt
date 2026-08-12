@@ -46,6 +46,77 @@ func TestOperationHubReplaysOrderedCompletion(t *testing.T) {
 	}
 }
 
+func TestOperationHubPublishesSanitizedTerminalFailure(t *testing.T) {
+	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	operation, _, err := hub.Start(OperationStart{
+		RequestDigest: "request-1",
+		Run: func(context.Context, *Operation) (json.RawMessage, error) {
+			return nil, service.NewError(
+				service.Internal,
+				"private diagnostic",
+				false,
+				map[string]any{"path": "/safe/path", "private": "secret"},
+				errors.New("private cause"),
+			)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := collectOperationEvents(t, hub, operation.ID(), 0)
+	if len(events) != 1 || events[0].Failure == nil {
+		t.Fatalf("unexpected operation events: %#v", events)
+	}
+	failure := events[0].Failure
+	if failure.Message != "internal failure" {
+		t.Fatalf("failure message = %q", failure.Message)
+	}
+	if len(failure.Details) != 1 || failure.Details["path"] != "/safe/path" {
+		t.Fatalf("failure details = %#v", failure.Details)
+	}
+}
+
+func TestOperationHubRetainsImmutablePromptPayload(t *testing.T) {
+	details := map[string]any{"host": "original.example"}
+	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	operation, _, err := hub.Start(OperationStart{
+		RequestDigest: "request-1",
+		Run: func(ctx context.Context, operation *Operation) (json.RawMessage, error) {
+			_, promptErr := operation.Prompt(ctx, service.OperationPrompt{
+				Kind: "password", Message: "Password:", Sensitive: true, Details: details,
+			})
+			return json.RawMessage(`{}`), promptErr
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := hub.Subscribe(operation.ID(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	prompt := receiveOperationEvent(t, first.Events())
+	if prompt.Prompt == nil {
+		t.Fatalf("unexpected prompt event: %#v", prompt)
+	}
+	details["host"] = "replacement.example"
+
+	replay, err := hub.Subscribe(operation.ID(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replay.Close()
+	replayed := receiveOperationEvent(t, replay.Events())
+	if replayed.Prompt == nil || replayed.Prompt.Details["host"] != "original.example" {
+		t.Fatalf("replayed prompt = %#v", replayed.Prompt)
+	}
+	if err := hub.Respond(operation.ID(), service.OperationResponse{PromptID: prompt.Prompt.ID}); err != nil {
+		t.Fatal(err)
+	}
+	_ = receiveOperationEvent(t, first.Events())
+}
+
 func TestOperationHubResumesAfterSequence(t *testing.T) {
 	hub := NewOperationHub(context.Background(), OperationHubOptions{})
 	op, _, err := hub.Start(OperationStart{
@@ -747,7 +818,11 @@ func collectOperationEvents(
 	}
 	defer subscription.Close()
 	var events []service.OperationEvent
-	for event := range subscription.Events() {
+	for retained := range subscription.Events() {
+		var event service.OperationEvent
+		if err := json.Unmarshal([]byte(retained.encoded), &event); err != nil {
+			t.Fatal(err)
+		}
 		events = append(events, event)
 	}
 	return events
@@ -755,13 +830,17 @@ func collectOperationEvents(
 
 func receiveOperationEvent(
 	t *testing.T,
-	events <-chan service.OperationEvent,
+	events <-chan retainedOperationEvent,
 ) service.OperationEvent {
 	t.Helper()
 	select {
-	case event, ok := <-events:
+	case retained, ok := <-events:
 		if !ok {
 			t.Fatal("operation event stream closed")
+		}
+		var event service.OperationEvent
+		if err := json.Unmarshal([]byte(retained.encoded), &event); err != nil {
+			t.Fatal(err)
 		}
 		return event
 	case <-time.After(time.Second):

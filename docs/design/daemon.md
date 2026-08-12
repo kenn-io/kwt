@@ -112,8 +112,11 @@ cross-operation responses fail closed. A client acknowledges a prompt sequence
 only after its bound response succeeds, so reconnect replays an unanswered
 prompt.
 
-Each operation retains at most 256 events and 1 MiB of event payload. The
-daemon admits at most 128 active operations and retains at most 128 completed
+Each operation retains at most 256 events and 1 MiB of event payload. Public
+failure sanitization happens before admission, and each admitted event is
+retained and replayed from one immutable encoded representation so later
+caller mutation cannot change the stream or its byte accounting. The daemon
+admits at most 128 active operations and retains at most 128 completed
 operations for five minutes. An operation admits at most eight subscribers,
 with at most 128 live subscribers across the daemon. Retained terminal replays
 and streams detached after queue overflow count against both limits until the

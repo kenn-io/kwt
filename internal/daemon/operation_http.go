@@ -94,7 +94,6 @@ func serveOperationEvents(
 	}); err != nil {
 		return
 	}
-	encoder := json.NewEncoder(w)
 	for {
 		select {
 		case <-r.Context().Done():
@@ -104,7 +103,10 @@ func serveOperationEvents(
 				return
 			}
 			if err := withOperationWriteDeadline(w, func() error {
-				if err := encoder.Encode(event); err != nil {
+				if _, err := io.WriteString(w, event.encoded); err != nil {
+					return err
+				}
+				if _, err := io.WriteString(w, "\n"); err != nil {
 					return err
 				}
 				flusher.Flush()

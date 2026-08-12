@@ -67,12 +67,12 @@ type operationEntry struct {
 	context         context.Context
 	cancel          context.CancelFunc
 	validator       *service.OperationStreamValidator
-	events          []service.OperationEvent
+	events          []retainedOperationEvent
 	eventBytes      int
 	terminal        bool
 	completedAt     time.Time
 	prompt          *operationPromptState
-	subscribers     map[*OperationSubscription]chan service.OperationEvent
+	subscribers     map[*OperationSubscription]chan retainedOperationEvent
 	subscriberCount int
 	lossTimer       *time.Timer
 	release         func()
@@ -92,7 +92,7 @@ type Operation struct {
 type OperationSubscription struct {
 	hub     *OperationHub
 	entry   *operationEntry
-	events  <-chan service.OperationEvent
+	events  <-chan retainedOperationEvent
 	counted bool
 	once    sync.Once
 }
@@ -244,7 +244,7 @@ func (h *OperationHub) Start(start OperationStart) (*Operation, bool, error) {
 			context:       workerContext,
 			cancel:        cancel,
 			validator:     validator,
-			subscribers:   make(map[*OperationSubscription]chan service.OperationEvent),
+			subscribers:   make(map[*OperationSubscription]chan retainedOperationEvent),
 			release:       release,
 		}
 		entry.operation = &Operation{hub: h, entry: entry}
@@ -445,7 +445,7 @@ func (h *OperationHub) Subscribe(
 	}
 	lastSequence := uint64(0)
 	if len(entry.events) > 0 {
-		lastSequence = entry.events[len(entry.events)-1].Sequence
+		lastSequence = entry.events[len(entry.events)-1].sequence
 	}
 	if afterSequence > lastSequence {
 		return nil, service.NewError(
@@ -456,7 +456,7 @@ func (h *OperationHub) Subscribe(
 			nil,
 		)
 	}
-	if len(entry.events) > 0 && afterSequence+1 < entry.events[0].Sequence {
+	if len(entry.events) > 0 && afterSequence+1 < entry.events[0].sequence {
 		return nil, service.NewError(
 			service.OperationOutcomeUnknown,
 			"operation events are no longer retained",
@@ -475,14 +475,14 @@ func (h *OperationHub) Subscribe(
 			nil,
 		)
 	}
-	replay := make([]service.OperationEvent, 0, len(entry.events))
+	replay := make([]retainedOperationEvent, 0, len(entry.events))
 	for _, event := range entry.events {
-		if event.Sequence > afterSequence {
+		if event.sequence > afterSequence {
 			replay = append(replay, event)
 		}
 	}
 	queueSize := len(replay) + h.options.SubscriberQueue + operationCriticalQueueReserve
-	events := make(chan service.OperationEvent, queueSize)
+	events := make(chan retainedOperationEvent, queueSize)
 	for _, event := range replay {
 		events <- event
 	}
@@ -503,7 +503,7 @@ func (h *OperationHub) Subscribe(
 	return subscription, nil
 }
 
-func (s *OperationSubscription) Events() <-chan service.OperationEvent {
+func (s *OperationSubscription) Events() <-chan retainedOperationEvent {
 	return s.events
 }
 
@@ -553,12 +553,11 @@ func (h *OperationHub) appendLocked(
 ) error {
 	event.OperationID = entry.id
 	event.Sequence = uint64(len(entry.events) + 1)
-	encoded, err := json.Marshal(event)
-	if err != nil {
-		return fmt.Errorf("encode operation event: %w", err)
+	limit := h.options.MaxBytes
+	if event.Kind != service.OperationEventComplete {
+		limit = h.nonterminalByteLimit()
 	}
-	if event.Kind != service.OperationEventComplete && (len(entry.events) >= h.options.MaxEvents-1 ||
-		entry.eventBytes+len(encoded) > h.nonterminalByteLimit()) {
+	if event.Kind != service.OperationEventComplete && len(entry.events) >= h.options.MaxEvents-1 {
 		h.terminateCapacityLocked(entry)
 		return service.NewError(
 			service.OperationCapacityExhausted,
@@ -568,8 +567,7 @@ func (h *OperationHub) appendLocked(
 			nil,
 		)
 	}
-	if event.Kind == service.OperationEventComplete && (len(entry.events) >= h.options.MaxEvents ||
-		entry.eventBytes+len(encoded) > h.options.MaxBytes) {
+	if event.Kind == service.OperationEventComplete && len(entry.events) >= h.options.MaxEvents {
 		h.terminateCapacityLocked(entry)
 		return service.NewError(
 			service.OperationCapacityExhausted,
@@ -579,12 +577,26 @@ func (h *OperationHub) appendLocked(
 			nil,
 		)
 	}
+	encoded, err := encodeRetainedOperationEvent(event, limit-entry.eventBytes)
+	if err != nil {
+		if errors.Is(err, errOperationEventTooLarge) {
+			h.terminateCapacityLocked(entry)
+			return service.NewError(
+				service.OperationCapacityExhausted,
+				"operation event capacity is exhausted",
+				true,
+				nil,
+				err,
+			)
+		}
+		return fmt.Errorf("encode operation event: %w", err)
+	}
 	if err := entry.validator.Accept(event); err != nil {
 		return fmt.Errorf("validate operation event: %w", err)
 	}
-	entry.events = append(entry.events, event)
-	entry.eventBytes += len(encoded)
-	h.dispatchLocked(entry, event)
+	entry.events = append(entry.events, encoded)
+	entry.eventBytes += len(encoded.encoded)
+	h.dispatchLocked(entry, encoded)
 	return nil
 }
 
@@ -611,12 +623,12 @@ func (h *OperationHub) terminateCapacityLocked(entry *operationEntry) {
 		Kind:        service.OperationEventComplete,
 		Failure:     &failure,
 	}
-	encoded, err := json.Marshal(event)
-	if err == nil && len(entry.events) < h.options.MaxEvents && entry.eventBytes+len(encoded) <= h.options.MaxBytes {
+	encoded, err := encodeRetainedOperationEvent(event, h.options.MaxBytes-entry.eventBytes)
+	if err == nil && len(entry.events) < h.options.MaxEvents {
 		if entry.validator.Accept(event) == nil {
-			entry.events = append(entry.events, event)
-			entry.eventBytes += len(encoded)
-			h.dispatchLocked(entry, event)
+			entry.events = append(entry.events, encoded)
+			entry.eventBytes += len(encoded.encoded)
+			h.dispatchLocked(entry, encoded)
 		}
 	}
 	h.markTerminalLocked(entry)
@@ -655,7 +667,7 @@ func operationFailure(err error) service.Descriptor {
 			Code: service.OperationOutcomeUnknown, Message: "operation was canceled", Retryable: true,
 		}
 	}
-	return service.AsError(err).Descriptor
+	return publicErrorDescriptor(err)
 }
 
 func (h *OperationHub) markTerminalLocked(entry *operationEntry) {
@@ -679,11 +691,11 @@ func (h *OperationHub) markTerminalLocked(entry *operationEntry) {
 
 func (h *OperationHub) dispatchLocked(
 	entry *operationEntry,
-	event service.OperationEvent,
+	event retainedOperationEvent,
 ) {
 	for subscription, events := range entry.subscribers {
 		limit := cap(events)
-		if event.Kind != service.OperationEventPrompt && event.Kind != service.OperationEventComplete {
+		if event.kind != service.OperationEventPrompt && event.kind != service.OperationEventComplete {
 			limit -= operationCriticalQueueReserve
 		}
 		if len(events) >= limit {

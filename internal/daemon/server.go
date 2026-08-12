@@ -338,9 +338,9 @@ func (p *Problem) ContentType(value string) string {
 }
 
 func problemFromError(err error) *Problem {
-	typed := service.AsError(err)
+	descriptor := publicErrorDescriptor(err)
 	status := http.StatusInternalServerError
-	switch typed.Code {
+	switch descriptor.Code {
 	case service.InvalidRequest, service.SSHInvalidTarget:
 		status = http.StatusBadRequest
 	case service.PermissionDenied:
@@ -352,7 +352,7 @@ func problemFromError(err error) *Problem {
 		service.SSHRouteUnreviewable, service.SSHConfigurationChanged:
 		status = http.StatusConflict
 	case service.ProtectedEndpointInventoryIncomplete:
-		if typed.Retryable {
+		if descriptor.Retryable {
 			status = http.StatusServiceUnavailable
 		} else {
 			status = http.StatusConflict
@@ -374,15 +374,20 @@ func problemFromError(err error) *Problem {
 	case service.TransportFailure, service.DaemonTransportFailed:
 		status = http.StatusBadGateway
 	}
+	problem := newProblem(status, descriptor)
+	return &problem
+}
+
+func publicErrorDescriptor(err error) service.Descriptor {
+	typed := service.AsError(err)
 	message := typed.Message
 	if typed.Code == service.Internal {
 		message = "internal failure"
 	}
-	problem := newProblem(status, service.Descriptor{
+	return service.Descriptor{
 		Code: typed.Code, Message: message, Retryable: typed.Retryable,
 		Details: allowedProblemDetails(typed.Code, typed.Details),
-	})
-	return &problem
+	}
 }
 
 func reportProblem(opts ServerOptions, route string, err error) *Problem {
