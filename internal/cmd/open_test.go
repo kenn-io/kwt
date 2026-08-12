@@ -361,6 +361,38 @@ func TestRunOpenWithContextRejectsExplicitEmptyExpectedFlags(t *testing.T) {
 	assert.True(t, service.IsCode(err, service.InvalidRequest))
 }
 
+func TestRunOpenWithContextWithoutArgumentsUsesPickerFlow(t *testing.T) {
+	originalStartSession := openStartSession
+	originalRepository := openExpectedRepository
+	originalRegistration := openExpectedRegistration
+	originalGeneration := openExpectedGeneration
+	originalSession := openExpectedSession
+	t.Cleanup(func() {
+		openStartSession = originalStartSession
+		openExpectedRepository = originalRepository
+		openExpectedRegistration = originalRegistration
+		openExpectedGeneration = originalGeneration
+		openExpectedSession = originalSession
+	})
+	openStartSession = false
+	openExpectedRepository = ""
+	openExpectedRegistration = ""
+	openExpectedGeneration = ""
+	openExpectedSession = ""
+	cmd, _, _ := fleetTestCommand()
+	cmd.SetContext(context.Background())
+
+	err := runOpenWithContext(
+		cmd,
+		nil,
+		&CommandContext{Config: &models.Config{
+			Worktree: models.WorktreeConfig{BaseDir: t.TempDir()},
+		}},
+	)
+
+	require.NoError(t, err)
+}
+
 func TestRunOpenWithContextReportsGuardedDisappearanceAsRegistrationChanged(
 	t *testing.T,
 ) {

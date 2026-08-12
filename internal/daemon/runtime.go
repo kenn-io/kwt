@@ -18,14 +18,15 @@ import (
 )
 
 const (
-	RuntimePrefix         = "kwt"
-	metadataHome          = "home"
-	metadataRevision      = "revision"
-	metadataRevisionTime  = "revision_time"
-	metadataSchemaMajor   = "schema_major"
-	metadataSchemaVersion = "schema_version"
-	metadataCapabilities  = "capabilities"
-	metadataToken         = "bearer"
+	RuntimePrefix                      = "kwt"
+	metadataHome                       = "home"
+	metadataRevision                   = "revision"
+	metadataRevisionTime               = "revision_time"
+	metadataSchemaMajor                = "schema_major"
+	metadataSchemaVersion              = "schema_version"
+	metadataCapabilities               = "capabilities"
+	metadataToken                      = "bearer"
+	metadataLegacyLinuxProcessIdentity = "process_identity_linux_v1"
 )
 
 type Build struct {
@@ -123,7 +124,7 @@ func Inspect(
 			continue
 		}
 		var candidate Observation
-		switch kitdaemon.CompareRuntimeProcessIdentity(rec) {
+		switch compareRuntimeProcessIdentity(rec) {
 		case kitdaemon.ProcessIdentityMismatch:
 			if err := removeStaleRecord(store, rec); err != nil {
 				return Observation{}, err
@@ -153,6 +154,26 @@ func Inspect(
 		return Observation{State: RuntimeAbsent}, nil
 	}
 	return *found, nil
+}
+
+func compareRuntimeProcessIdentity(
+	rec kitdaemon.RuntimeRecord,
+) kitdaemon.ProcessIdentityStatus {
+	if rec.ProcessIdentityV2 != "" {
+		return kitdaemon.CompareRuntimeProcessIdentity(rec)
+	}
+	recorded, legacy := rec.Metadata[metadataLegacyLinuxProcessIdentity]
+	if !legacy {
+		return kitdaemon.CompareRuntimeProcessIdentity(rec)
+	}
+	live, ok := readLegacyLinuxProcessIdentity(rec.PID)
+	if recorded == "" || !ok || !legacyLinuxProcessIdentityCompatible(recorded) {
+		return kitdaemon.ProcessIdentityUnknown
+	}
+	if live == recorded {
+		return kitdaemon.ProcessIdentityMatch
+	}
+	return kitdaemon.ProcessIdentityMismatch
 }
 
 func inspectLiveRecord(

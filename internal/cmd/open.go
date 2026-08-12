@@ -153,8 +153,9 @@ func runOpenWithContext(
 	}
 
 	var entry *discovery.GlobalWorktreeEntry
-	requestedPath := args[0]
+	requestedPath := ""
 	if guardedOpen {
+		requestedPath = args[0]
 		entry, err = resolveExpectedOpenWorktree(ctx, requestedPath)
 	} else {
 		entry, requestedPath, err = resolveOpenWorktree(

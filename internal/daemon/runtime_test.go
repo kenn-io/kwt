@@ -6,6 +6,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -96,6 +97,48 @@ func TestInspectUsesKitStableProcessIdentityAcrossLegacyClockDrift(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, RuntimeUnresponsive, observation.State)
 	assert.FileExists(t, path)
+}
+
+func TestCompareRuntimeProcessIdentityAcceptsPreviousLinuxMetadata(t *testing.T) {
+	identity, ok := readLegacyLinuxProcessIdentity(os.Getpid())
+	if !ok {
+		t.Skip("platform does not expose the previous Linux process identity")
+	}
+	record := kitdaemon.RuntimeRecord{
+		PID: os.Getpid(),
+		Metadata: map[string]string{
+			metadataLegacyLinuxProcessIdentity: identity,
+		},
+	}
+
+	assert.Equal(t, kitdaemon.ProcessIdentityMatch, compareRuntimeProcessIdentity(record))
+}
+
+func TestCompareRuntimeProcessIdentityRejectsMalformedPreviousLinuxMetadata(t *testing.T) {
+	record := kitdaemon.RuntimeRecord{
+		PID: os.Getpid(),
+		Metadata: map[string]string{
+			metadataLegacyLinuxProcessIdentity: "malformed",
+		},
+	}
+
+	assert.Equal(t, kitdaemon.ProcessIdentityUnknown, compareRuntimeProcessIdentity(record))
+}
+
+func TestCompareRuntimeProcessIdentityPrefersKitVersionedIdentity(t *testing.T) {
+	record := kitdaemon.NewRuntimeRecord(
+		ServiceName,
+		"development",
+		kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: "127.0.0.1:1"},
+	)
+	if record.ProcessIdentityV2 == "" {
+		t.Skip("platform does not expose a versioned process identity")
+	}
+	record.Metadata = map[string]string{
+		metadataLegacyLinuxProcessIdentity: "malformed",
+	}
+
+	assert.Equal(t, kitdaemon.ProcessIdentityMatch, compareRuntimeProcessIdentity(record))
 }
 
 func TestInspectRemovesMismatchedStableProcessIdentity(t *testing.T) {
