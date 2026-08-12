@@ -14,7 +14,6 @@ import (
 
 	kitdaemon "go.kenn.io/kit/daemon"
 	kwt "go.kenn.io/kwt"
-	internalssh "go.kenn.io/kwt/internal/ssh"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
@@ -204,12 +203,7 @@ func runHost(
 		})
 	}
 	if sshResolver == nil {
-		sshResolver = internalssh.NewService(internalssh.ServiceOptions{
-			Resolver: internalssh.NewResolver(internalssh.ResolverOptions{
-				ProtectedNames: []string{configuredFleetTokenEnvironment(opts.Home)},
-			}),
-			Now: opts.Now,
-		})
+		sshResolver = newConfiguredSSHResolver(opts.Home, opts.Now)
 	}
 	status := &hostStatus{
 		base: Status{

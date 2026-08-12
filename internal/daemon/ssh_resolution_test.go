@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	kitdaemon "go.kenn.io/kit/daemon"
 	kwt "go.kenn.io/kwt"
+	internalssh "go.kenn.io/kwt/internal/ssh"
 	"go.kenn.io/kwt/service"
 )
 
@@ -48,6 +51,45 @@ func (r *fakeSSHResolver) Resolve(
 		}
 	}
 	return r.result, r.err
+}
+
+func TestConfiguredSSHResolverReloadsProtectedEnvironmentPerRequest(t *testing.T) {
+	home := t.TempDir()
+	configPath := filepath.Join(home, "config.toml")
+	require.NoError(t, os.WriteFile(
+		configPath,
+		[]byte("[fleet]\ntoken_env = \"TOKEN_ONE\"\n"),
+		0o600,
+	))
+	environment := []string{
+		"TOKEN_ONE=first-secret",
+		"TOKEN_TWO=second-secret",
+		"SAFE=value",
+	}
+	var captured []internalssh.ResolverOptions
+	resolver := &configuredSSHResolver{
+		home:        home,
+		environment: func() []string { return append([]string(nil), environment...) },
+		build: func(options internalssh.ResolverOptions) SSHResolver {
+			captured = append(captured, options)
+			return &fakeSSHResolver{}
+		},
+	}
+
+	_, err := resolver.Resolve(context.Background(), kwt.SSHResolveRequest{})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		configPath,
+		[]byte("[fleet]\ntoken_env = \"TOKEN_TWO\"\n"),
+		0o600,
+	))
+	_, err = resolver.Resolve(context.Background(), kwt.SSHResolveRequest{})
+	require.NoError(t, err)
+	require.Len(t, captured, 2)
+	assert.Equal(t, []string{"TOKEN_ONE"}, captured[0].ProtectedNames)
+	assert.ElementsMatch(t, []string{"TOKEN_TWO=second-secret", "SAFE=value"}, captured[0].Environment)
+	assert.Equal(t, []string{"TOKEN_TWO"}, captured[1].ProtectedNames)
+	assert.ElementsMatch(t, []string{"TOKEN_ONE=first-secret", "SAFE=value"}, captured[1].Environment)
 }
 
 func TestSSHResolveRouteRoundTripsSnapshotAndReusesService(t *testing.T) {

@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.kenn.io/kwt/service"
 )
 
 const operationRoutePrefix = "/api/v1/operations/"
+const operationEventWriteTimeout = 5 * time.Second
 
 func registerOperationRoutes(
 	mux *http.ServeMux,
@@ -85,8 +87,13 @@ func serveOperationEvents(
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
+	if err := withOperationWriteDeadline(w, func() error {
+		w.WriteHeader(http.StatusOK)
+		flusher.Flush()
+		return nil
+	}); err != nil {
+		return
+	}
 	encoder := json.NewEncoder(w)
 	for {
 		select {
@@ -96,12 +103,27 @@ func serveOperationEvents(
 			if !open {
 				return
 			}
-			if err := encoder.Encode(event); err != nil {
+			if err := withOperationWriteDeadline(w, func() error {
+				if err := encoder.Encode(event); err != nil {
+					return err
+				}
+				flusher.Flush()
+				return nil
+			}); err != nil {
 				return
 			}
-			flusher.Flush()
 		}
 	}
+}
+
+func withOperationWriteDeadline(w http.ResponseWriter, write func() error) error {
+	controller := http.NewResponseController(w)
+	if err := controller.SetWriteDeadline(time.Now().Add(operationEventWriteTimeout)); err != nil {
+		return err
+	}
+	writeErr := write()
+	clearErr := controller.SetWriteDeadline(time.Time{})
+	return errors.Join(writeErr, clearErr)
 }
 
 func serveOperationResponse(

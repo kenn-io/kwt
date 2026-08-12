@@ -444,6 +444,44 @@ func TestOperationHubCountsTerminalReplaySubscribersUntilClose(t *testing.T) {
 	replacement.Close()
 }
 
+func TestOperationHubCountsOverflowedSubscriberUntilClose(t *testing.T) {
+	release := make(chan struct{})
+	hub := NewOperationHub(context.Background(), OperationHubOptions{
+		SubscriberQueue:            1,
+		MaxSubscribersPerOperation: 1,
+		MaxSubscribers:             1,
+	})
+	operation, _, err := hub.Start(OperationStart{
+		RequestDigest: "request-1",
+		Run: func(context.Context, *Operation) (json.RawMessage, error) {
+			<-release
+			return json.RawMessage(`{}`), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscription, err := hub.Subscribe(operation.ID(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if err := operation.Progress("fill subscriber queue"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := hub.Subscribe(operation.ID(), 0); !service.IsCode(err, service.OperationCapacityExhausted) {
+		t.Fatalf("overflowed subscriber capacity error = %v", err)
+	}
+	subscription.Close()
+	replacement, err := hub.Subscribe(operation.ID(), 0)
+	if err != nil {
+		t.Fatalf("subscriber after overflowed stream closed: %v", err)
+	}
+	replacement.Close()
+	close(release)
+}
+
 func TestOperationHubReservesLiveHeadroomAfterReplay(t *testing.T) {
 	replayReady := make(chan struct{})
 	emitLive := make(chan struct{})

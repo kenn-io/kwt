@@ -116,14 +116,15 @@ Each operation retains at most 256 events and 1 MiB of event payload. The
 daemon admits at most 128 active operations and retains at most 128 completed
 operations for five minutes. An operation admits at most eight subscribers,
 with at most 128 live subscribers across the daemon. Retained terminal replays
-count against both limits until the subscriber closes. Replay queues reserve
-bounded capacity for live events and terminal completion. The daemon rejects
-excess work or subscriptions instead of dropping a prompt or terminal result.
-A new operation has five seconds to gain its first subscriber. Afterward,
-losing the final subscriber starts the same five-second reconnect grace before
-the worker is canceled. A client retries one interrupted stream against the
-same proof-verified daemon. Daemon loss, retention loss, or replacement of the
-runtime owner returns
+and streams detached after queue overflow count against both limits until the
+HTTP subscriber closes. Each response write has a five-second deadline. Replay
+queues reserve bounded capacity for live events and terminal completion. The
+daemon rejects excess work or subscriptions instead of dropping a prompt or
+terminal result. A new operation has five seconds to gain its first subscriber.
+Afterward, losing the final subscriber starts the same five-second reconnect
+grace before the worker is canceled. A client retries one interrupted stream
+against the same proof-verified daemon. Daemon loss, retention loss, or
+replacement of the runtime owner returns
 `operation_outcome_unknown`; the client never repeats the domain mutation to
 guess its result.
 
@@ -136,11 +137,13 @@ before the HTTP server closes.
 daemon-owned service and returns an immutable route snapshot. On POSIX, the
 service runs nonce-framed `ssh -G` inside the account's configured login shell
 so shell startup banners cannot become configuration. Windows invokes system
-OpenSSH directly. Direct ProxyJump hops are resolved in connection order;
-opaque ProxyCommand and nested proxy routes fail closed. The complete
-normalized option stream contributes to route identity but never crosses the
-HTTP boundary. This resolution route does not create a connection, control
-socket, trust decision, credential prompt, or lease.
+OpenSSH directly. Each request reloads the global fleet-token environment name
+and sanitizes a fresh process environment before crossing either boundary.
+Direct ProxyJump hops are resolved in connection order; opaque ProxyCommand and
+nested proxy routes fail closed. The complete normalized option stream
+contributes to route identity but never crosses the HTTP boundary. This
+resolution route does not create a connection, control socket, trust decision,
+credential prompt, or lease.
 
 `kwt projects` and `kwt list` auto-start or reuse the daemon and require a
 current inventory result. They fail instead of falling back to cached or direct

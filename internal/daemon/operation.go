@@ -60,20 +60,21 @@ type OperationHub struct {
 }
 
 type operationEntry struct {
-	id            string
-	requestDigest string
-	operation     *Operation
-	context       context.Context
-	cancel        context.CancelFunc
-	validator     *service.OperationStreamValidator
-	events        []service.OperationEvent
-	eventBytes    int
-	terminal      bool
-	completedAt   time.Time
-	prompt        *operationPromptState
-	subscribers   map[*OperationSubscription]chan service.OperationEvent
-	lossTimer     *time.Timer
-	release       func()
+	id              string
+	requestDigest   string
+	operation       *Operation
+	context         context.Context
+	cancel          context.CancelFunc
+	validator       *service.OperationStreamValidator
+	events          []service.OperationEvent
+	eventBytes      int
+	terminal        bool
+	completedAt     time.Time
+	prompt          *operationPromptState
+	subscribers     map[*OperationSubscription]chan service.OperationEvent
+	subscriberCount int
+	lossTimer       *time.Timer
+	release         func()
 }
 
 type operationPromptState struct {
@@ -88,10 +89,11 @@ type Operation struct {
 }
 
 type OperationSubscription struct {
-	hub    *OperationHub
-	entry  *operationEntry
-	events <-chan service.OperationEvent
-	once   sync.Once
+	hub     *OperationHub
+	entry   *operationEntry
+	events  <-chan service.OperationEvent
+	counted bool
+	once    sync.Once
 }
 
 func NewOperationHub(ctx context.Context, options OperationHubOptions) *OperationHub {
@@ -451,7 +453,7 @@ func (h *OperationHub) Subscribe(
 			nil,
 		)
 	}
-	if len(entry.subscribers) >= h.options.MaxSubscribersPerOperation ||
+	if entry.subscriberCount >= h.options.MaxSubscribersPerOperation ||
 		h.subscribers >= h.options.MaxSubscribers {
 		return nil, service.NewError(
 			service.OperationCapacityExhausted,
@@ -480,6 +482,8 @@ func (h *OperationHub) Subscribe(
 		entry.lossTimer = nil
 	}
 	entry.subscribers[subscription] = events
+	entry.subscriberCount++
+	subscription.counted = true
 	h.subscribers++
 	if entry.terminal {
 		close(events)
@@ -502,14 +506,18 @@ func (h *OperationHub) removeSubscriber(subscription *OperationSubscription) {
 	defer h.mu.Unlock()
 	entry := subscription.entry
 	events, ok := entry.subscribers[subscription]
-	if !ok {
+	if ok {
+		delete(entry.subscribers, subscription)
+		if !entry.terminal {
+			close(events)
+		}
+	}
+	if !subscription.counted {
 		return
 	}
-	delete(entry.subscribers, subscription)
+	subscription.counted = false
+	entry.subscriberCount--
 	h.subscribers--
-	if !entry.terminal {
-		close(events)
-	}
 	h.scheduleSubscriberLossLocked(entry)
 }
 
@@ -670,7 +678,6 @@ func (h *OperationHub) dispatchLocked(
 		case events <- event:
 		default:
 			delete(entry.subscribers, subscription)
-			h.subscribers--
 			close(events)
 		}
 	}

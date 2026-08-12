@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,31 @@ import (
 )
 
 type testStatusProvider struct{ status Status }
+
+type stalledOperationResponseWriter struct {
+	header      http.Header
+	deadlineSet chan struct{}
+	release     chan struct{}
+	once        sync.Once
+}
+
+func (w *stalledOperationResponseWriter) Header() http.Header { return w.header }
+func (w *stalledOperationResponseWriter) WriteHeader(int)     {}
+func (w *stalledOperationResponseWriter) Flush()              {}
+func (w *stalledOperationResponseWriter) SetWriteDeadline(deadline time.Time) error {
+	if !deadline.IsZero() {
+		w.once.Do(func() { close(w.deadlineSet) })
+	}
+	return nil
+}
+func (w *stalledOperationResponseWriter) Write(value []byte) (int, error) {
+	select {
+	case <-w.deadlineSet:
+		return 0, context.DeadlineExceeded
+	case <-w.release:
+		return len(value), nil
+	}
+}
 
 func (p *testStatusProvider) Status(time.Time) Status { return p.status }
 
@@ -296,6 +322,60 @@ func TestOperationResponseRouteBindsCurrentPrompt(t *testing.T) {
 	completion := receiveOperationEvent(t, subscription.Events())
 	require.Equal(t, service.OperationEventComplete, completion.Kind)
 	assert.JSONEq(t, `{"value":"fleet secret"}`, string(completion.Result))
+}
+
+func TestOperationEventWriteDeadlineStopsStalledSubscriber(t *testing.T) {
+	releaseWorker := make(chan struct{})
+	replayReady := make(chan struct{})
+	hub := NewOperationHub(context.Background(), OperationHubOptions{
+		MaxSubscribersPerOperation: 1,
+		MaxSubscribers:             1,
+	})
+	operation, _, err := hub.Start(OperationStart{
+		RequestDigest: "request-1",
+		Run: func(_ context.Context, operation *Operation) (json.RawMessage, error) {
+			if err := operation.Progress("replay"); err != nil {
+				return nil, err
+			}
+			close(replayReady)
+			<-releaseWorker
+			return json.RawMessage(`{}`), nil
+		},
+	})
+	require.NoError(t, err)
+	<-replayReady
+
+	writer := &stalledOperationResponseWriter{
+		header:      make(http.Header),
+		deadlineSet: make(chan struct{}),
+		release:     make(chan struct{}),
+	}
+	requestContext, cancelRequest := context.WithCancel(context.Background())
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"http://kwt.invalid/api/v1/operations/"+operation.ID()+"/events",
+		nil,
+	).WithContext(requestContext)
+	done := make(chan struct{})
+	go func() {
+		serveOperationEvents(writer, request, hub, ServerOptions{}, operation.ID())
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		cancelRequest()
+		close(writer.release)
+		close(releaseWorker)
+		t.Fatal("stalled operation response survived its write deadline")
+	}
+	cancelRequest()
+	close(writer.release)
+	replacement, err := hub.Subscribe(operation.ID(), 0)
+	require.NoError(t, err)
+	replacement.Close()
+	close(releaseWorker)
 }
 
 func TestOperationCancelRouteCancelsWorker(t *testing.T) {
