@@ -47,8 +47,10 @@ formula.
 
 This bounded exception preserves the credential-isolated tmux endpoint without
 allowing an arbitrary persisted session name to become trusted. It does not
-provide a general legacy parser, ordinary-session fallback, or dual attach
-path.
+provide ordinary-session adoption, fallback, or a dual attach path. Because
+the new broad parser also accepts the old hyphenated shape, old sessions may
+remain visible in `kwt tmux list`; worktree lifecycle operations still derive
+and use only the new name.
 
 ## Verification
 
