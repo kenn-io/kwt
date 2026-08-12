@@ -9,7 +9,7 @@ import (
 	"syscall"
 )
 
-func configureResolverCommand(command *exec.Cmd) {
+func runResolverCommand(command *exec.Cmd) error {
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Cancel = func() error {
 		if command.Process == nil {
@@ -21,4 +21,5 @@ func configureResolverCommand(command *exec.Cmd) {
 		}
 		return err
 	}
+	return command.Run()
 }

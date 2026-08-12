@@ -105,7 +105,10 @@ shell and accepts stdout only between unpredictable, exact nonce markers;
 startup output and marker-like stderr are not configuration. Windows avoids a
 shell boundary and invokes OpenSSH directly. Kwt's built-in credential
 environment variables and the configured fleet-token variable are removed
-before either process boundary.
+before either process boundary. Cancellation terminates the complete resolver
+process tree through a POSIX process group or a Windows Job Object, so an
+OpenSSH configuration command cannot survive daemon drain while retaining its
+output handles.
 
 The daemon retains the complete normalized `ssh -G` stream only as private
 route-identity input. Authenticated responses expose semantic targets and the

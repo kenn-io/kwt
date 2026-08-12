@@ -100,13 +100,12 @@ func runOutput(
 		return nil, nil, -1, errors.New("empty process arguments")
 	}
 	command := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	configureResolverCommand(command)
 	command.Env = environment
 	command.Stdin = bytes.NewReader(standardInput)
 	var stdout, stderr []byte
 	command.Stdout = byteSliceWriter{target: &stdout}
 	command.Stderr = byteSliceWriter{target: &stderr}
-	err := command.Run()
+	err := runResolverCommand(command)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		err = errors.Join(ctxErr, err)
 	}

@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -71,7 +72,7 @@ func projectConfig(config openssh.EffectiveConfig) (projection, error) {
 	result := projection{
 		PolicyVersion: projectionPolicyV1,
 		Arguments: []string{
-			"-F", "/dev/null",
+			"-F", os.DevNull,
 			"-o", "CanonicalizeHostname=no",
 		},
 	}
