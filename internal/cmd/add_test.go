@@ -66,6 +66,57 @@ func TestRegisteredAddLosesToProjectRemoval(t *testing.T) {
 	assert.NoDirExists(t, worktreePath)
 }
 
+func TestRegisteredAddRequiresExactExpectedRegistration(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetAddCommandFlags(t)
+
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	t.Chdir(repoPath)
+	configPath := filepath.Join(os.Getenv("KWT_HOME"), "config.toml")
+	file, err := os.OpenFile(configPath, os.O_APPEND|os.O_WRONLY, 0)
+	require.NoError(t, err)
+	_, err = fmt.Fprintf(
+		file,
+		"\n[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'widget'\npath = %q\n",
+		repoPath,
+	)
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	addBranch = true
+	addNoLaunch = true
+	addExpectedRepository = "github.com/acme/widget"
+	addExpectedRegistration = "v1:0000000000000000000000000000000000000000000000000000000000000000"
+	worktreePath := filepath.Join(t.TempDir(), "feature-guarded")
+	cmd, _, _ := fleetTestCommand()
+	markCommandFlagsChanged(t, cmd, "expected-repository", "expected-registration")
+
+	err = runAdd(cmd, []string{"feature/guarded", worktreePath})
+
+	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+	assert.NoDirExists(t, worktreePath)
+}
+
+func TestRegisteredAddRejectsExplicitEmptyExpectedFlags(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetAddCommandFlags(t)
+
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	t.Chdir(repoPath)
+	addBranch = true
+	addNoLaunch = true
+	worktreePath := filepath.Join(t.TempDir(), "feature-empty-guard")
+	cmd, _, _ := fleetTestCommand()
+	markCommandFlagsChanged(t, cmd, "expected-repository", "expected-registration")
+
+	err := runAdd(cmd, []string{"feature/empty-guard", worktreePath})
+
+	assert.True(t, service.IsCode(err, service.InvalidRequest))
+	assert.NoDirExists(t, worktreePath)
+}
+
 func TestAddPublishesBestEffortAfterSuccessfulCreation(t *testing.T) {
 	resetFleetCommandDeps(t)
 	resetAddCommandFlags(t)
@@ -585,6 +636,8 @@ func resetAddCommandFlags(t *testing.T) {
 	oldAddSelectLayout := addSelectLayout
 	oldAddNoLaunch := addNoLaunch
 	oldAddFrom := addFrom
+	oldAddExpectedRepository := addExpectedRepository
+	oldAddExpectedRegistration := addExpectedRegistration
 
 	t.Cleanup(func() {
 		addBranch = oldAddBranch
@@ -595,6 +648,8 @@ func resetAddCommandFlags(t *testing.T) {
 		addSelectLayout = oldAddSelectLayout
 		addNoLaunch = oldAddNoLaunch
 		addFrom = oldAddFrom
+		addExpectedRepository = oldAddExpectedRepository
+		addExpectedRegistration = oldAddExpectedRegistration
 	})
 
 	addBranch = false
@@ -605,6 +660,8 @@ func resetAddCommandFlags(t *testing.T) {
 	addSelectLayout = false
 	addNoLaunch = false
 	addFrom = ""
+	addExpectedRepository = ""
+	addExpectedRegistration = ""
 }
 
 func initCommandTestConfig(t *testing.T, baseDir string) {

@@ -15,22 +15,26 @@ import (
 	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/duration"
 	"go.kenn.io/kwt/internal/git"
+	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 )
 
 var (
-	addBranch       bool
-	addInteractive  bool
-	addForce        bool
-	addExpires      string
-	addLayout       string
-	addSelectLayout bool
-	addNoLaunch     bool
-	addFrom         string
+	addBranch               bool
+	addInteractive          bool
+	addForce                bool
+	addExpires              string
+	addLayout               string
+	addSelectLayout         bool
+	addNoLaunch             bool
+	addFrom                 string
+	addExpectedRepository   string
+	addExpectedRegistration string
 
 	newAddWorkspaceRunner = func(names []string) openWorkspaceRunner {
 		tmuxCommand := tmux.NewTmuxCommandWithStripNames("", names)
@@ -94,6 +98,18 @@ func init() {
 		"Create the worktree without launching a workspace")
 	addCmd.Flags().StringVar(&addFrom, "from", "",
 		"Create a local tracking branch from this remote ref")
+	addCmd.Flags().StringVar(
+		&addExpectedRepository,
+		"expected-repository",
+		"",
+		"Require the exact credential-free registered repository identity",
+	)
+	addCmd.Flags().StringVar(
+		&addExpectedRegistration,
+		"expected-registration",
+		"",
+		"Require the exact observed project registration fingerprint",
+	)
 	if err := addCmd.RegisterFlagCompletionFunc(
 		"from",
 		getRemoteBranchCompletions,
@@ -110,6 +126,37 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		commandContext = context.Background()
 	}
 	return ExecuteWithArgs(true, func(ctx *CommandContext, cmd *cobra.Command, args []string) error {
+		hasExpectedRepository := commandFlagChanged(cmd, "expected-repository")
+		hasExpectedRegistration := commandFlagChanged(cmd, "expected-registration")
+		guardedAdd := hasExpectedRepository || hasExpectedRegistration
+		if hasExpectedRepository != hasExpectedRegistration ||
+			(guardedAdd && (addExpectedRepository == "" || addExpectedRegistration == "")) {
+			return service.NewError(
+				service.InvalidRequest,
+				"expected repository identity and registration fingerprint are required together",
+				false, nil, nil,
+			)
+		}
+		if guardedAdd && !lifecycle.EqualProjectIdentity(
+			addExpectedRepository,
+			addExpectedRepository,
+		) {
+			return service.NewError(
+				service.InvalidRequest,
+				"expected repository identity is invalid",
+				false, nil, nil,
+			)
+		}
+		if guardedAdd && !config.ValidProjectRegistrationFingerprint(
+			addExpectedRegistration,
+		) {
+			return service.NewError(
+				service.InvalidRequest,
+				"expected project registration fingerprint is invalid",
+				false, nil, nil,
+			)
+		}
+
 		var branch string
 		var path string
 		remoteSource := addFrom
@@ -226,9 +273,21 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		guard, err := observeGuardedProjectOperation(
-			commandContext, home, mainPath, expansion,
-		)
+		var guard *guardedProjectOperation
+		if guardedAdd {
+			guard, err = observeExpectedGuardedProjectOperation(
+				commandContext,
+				home,
+				mainPath,
+				expansion,
+				addExpectedRepository,
+				addExpectedRegistration,
+			)
+		} else {
+			guard, err = observeGuardedProjectOperation(
+				commandContext, home, mainPath, expansion,
+			)
+		}
 		if err != nil {
 			return err
 		}

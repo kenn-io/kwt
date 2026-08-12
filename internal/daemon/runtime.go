@@ -18,15 +18,15 @@ import (
 )
 
 const (
-	RuntimePrefix           = "kwt"
-	metadataHome            = "home"
-	metadataRevision        = "revision"
-	metadataRevisionTime    = "revision_time"
-	metadataSchemaMajor     = "schema_major"
-	metadataSchemaVersion   = "schema_version"
-	metadataCapabilities    = "capabilities"
-	metadataToken           = "bearer"
-	metadataProcessIdentity = "process_identity_linux_v1"
+	RuntimePrefix                      = "kwt"
+	metadataHome                       = "home"
+	metadataRevision                   = "revision"
+	metadataRevisionTime               = "revision_time"
+	metadataSchemaMajor                = "schema_major"
+	metadataSchemaVersion              = "schema_version"
+	metadataCapabilities               = "capabilities"
+	metadataToken                      = "bearer"
+	metadataLegacyLinuxProcessIdentity = "process_identity_linux_v1"
 )
 
 type Build struct {
@@ -100,12 +100,6 @@ func NewRuntimeRecord(
 		}, ","),
 		metadataToken: token,
 	}
-	if identity, ok := readStableProcessIdentity(rec.PID); ok {
-		rec.Metadata[metadataProcessIdentity] = identity
-		// Older clients must fail closed instead of deleting this record after
-		// WSL adjusts the wall clock used by kit's legacy Linux identity.
-		rec.ProcessIdentity = ""
-	}
 	return rec, token, nil
 }
 
@@ -162,16 +156,18 @@ func Inspect(
 	return *found, nil
 }
 
-func compareRuntimeProcessIdentity(rec kitdaemon.RuntimeRecord) kitdaemon.ProcessIdentityStatus {
-	recorded, hasStableIdentity := rec.Metadata[metadataProcessIdentity]
-	if !hasStableIdentity {
-		return kitdaemon.CompareProcessIdentity(rec.PID, rec.ProcessIdentity)
+func compareRuntimeProcessIdentity(
+	rec kitdaemon.RuntimeRecord,
+) kitdaemon.ProcessIdentityStatus {
+	if rec.ProcessIdentityV2 != "" {
+		return kitdaemon.CompareRuntimeProcessIdentity(rec)
 	}
-	if recorded == "" {
-		return kitdaemon.ProcessIdentityUnknown
+	recorded, legacy := rec.Metadata[metadataLegacyLinuxProcessIdentity]
+	if !legacy {
+		return kitdaemon.CompareRuntimeProcessIdentity(rec)
 	}
-	live, ok := readStableProcessIdentity(rec.PID)
-	if !ok {
+	live, ok := readLegacyLinuxProcessIdentity(rec.PID)
+	if recorded == "" || !ok || !legacyLinuxProcessIdentityCompatible(recorded) {
 		return kitdaemon.ProcessIdentityUnknown
 	}
 	if live == recorded {

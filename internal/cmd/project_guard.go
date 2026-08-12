@@ -4,12 +4,21 @@ import (
 	"context"
 	"errors"
 
+	"github.com/spf13/cobra"
 	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
+
+func commandFlagChanged(cmd *cobra.Command, name string) bool {
+	if cmd == nil {
+		return false
+	}
+	flag := cmd.Flags().Lookup(name)
+	return flag != nil && flag.Changed
+}
 
 type guardedProjectOperation struct {
 	home     string
@@ -38,6 +47,38 @@ func observeRequiredGuardedProjectOperation(
 		)
 	}
 	guard.required = true
+	return guard, nil
+}
+
+func observeExpectedGuardedProjectOperation(
+	ctx context.Context,
+	home string,
+	mainPath string,
+	expansion kwt.ExpansionContext,
+	expectedIdentity string,
+	expectedRegistration string,
+) (*guardedProjectOperation, error) {
+	if !config.ValidProjectRegistrationFingerprint(expectedRegistration) {
+		return nil, service.NewError(
+			service.InvalidRequest,
+			"expected project registration fingerprint is invalid",
+			false, nil, nil,
+		)
+	}
+	guard, err := observeRequiredGuardedProjectOperation(
+		ctx, home, mainPath, expansion, expectedIdentity,
+	)
+	if err != nil {
+		return nil, err
+	}
+	actualRegistration, err := guard.claim.Registration.Fingerprint()
+	if err != nil || actualRegistration != expectedRegistration {
+		return nil, service.NewError(
+			service.RegistrationChanged,
+			"the project registration changed before the operation began",
+			true, nil, err,
+		)
+	}
 	return guard, nil
 }
 

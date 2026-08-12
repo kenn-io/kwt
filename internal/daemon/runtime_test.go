@@ -60,10 +60,24 @@ func TestNewRuntimeRecordAlwaysAdvertisesRevisionTime(t *testing.T) {
 	assert.Empty(t, value)
 }
 
-func TestInspectUsesStableProcessIdentityAcrossLegacyClockDrift(t *testing.T) {
-	if _, ok := readStableProcessIdentity(os.Getpid()); !ok {
+func TestNewRuntimeRecordUsesKitStableProcessIdentity(t *testing.T) {
+	home := t.TempDir()
+	record, _, err := NewRuntimeRecord(
+		home,
+		Build{Version: "development"},
+		kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: "127.0.0.1:1"},
+	)
+	require.NoError(t, err)
+	if record.ProcessIdentityV2 == "" {
 		t.Skip("platform does not expose a stable process identity")
 	}
+
+	assert.Empty(t, record.ProcessIdentity)
+	assert.NotContains(t, record.Metadata, "process_identity_linux_v1")
+	assert.Equal(t, kitdaemon.ProcessIdentityMatch, kitdaemon.CompareRuntimeProcessIdentity(record))
+}
+
+func TestInspectUsesKitStableProcessIdentityAcrossLegacyClockDrift(t *testing.T) {
 	home := t.TempDir()
 	store := RuntimeStore(home)
 	record, _, err := NewRuntimeRecord(
@@ -72,8 +86,9 @@ func TestInspectUsesStableProcessIdentityAcrossLegacyClockDrift(t *testing.T) {
 		kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: "127.0.0.1:1"},
 	)
 	require.NoError(t, err)
-	require.NotEmpty(t, record.Metadata[metadataProcessIdentity])
-	assert.Empty(t, record.ProcessIdentity)
+	if record.ProcessIdentityV2 == "" {
+		t.Skip("platform does not expose a stable process identity")
+	}
 	record.ProcessIdentity = "legacy-wall-clock-shifted"
 	path, err := store.Write(record)
 	require.NoError(t, err)
@@ -84,10 +99,49 @@ func TestInspectUsesStableProcessIdentityAcrossLegacyClockDrift(t *testing.T) {
 	assert.FileExists(t, path)
 }
 
-func TestInspectRemovesMismatchedStableProcessIdentity(t *testing.T) {
-	if _, ok := readStableProcessIdentity(os.Getpid()); !ok {
-		t.Skip("platform does not expose a stable process identity")
+func TestCompareRuntimeProcessIdentityAcceptsPreviousLinuxMetadata(t *testing.T) {
+	identity, ok := readLegacyLinuxProcessIdentity(os.Getpid())
+	if !ok {
+		t.Skip("platform does not expose the previous Linux process identity")
 	}
+	record := kitdaemon.RuntimeRecord{
+		PID: os.Getpid(),
+		Metadata: map[string]string{
+			metadataLegacyLinuxProcessIdentity: identity,
+		},
+	}
+
+	assert.Equal(t, kitdaemon.ProcessIdentityMatch, compareRuntimeProcessIdentity(record))
+}
+
+func TestCompareRuntimeProcessIdentityRejectsMalformedPreviousLinuxMetadata(t *testing.T) {
+	record := kitdaemon.RuntimeRecord{
+		PID: os.Getpid(),
+		Metadata: map[string]string{
+			metadataLegacyLinuxProcessIdentity: "malformed",
+		},
+	}
+
+	assert.Equal(t, kitdaemon.ProcessIdentityUnknown, compareRuntimeProcessIdentity(record))
+}
+
+func TestCompareRuntimeProcessIdentityPrefersKitVersionedIdentity(t *testing.T) {
+	record := kitdaemon.NewRuntimeRecord(
+		ServiceName,
+		"development",
+		kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: "127.0.0.1:1"},
+	)
+	if record.ProcessIdentityV2 == "" {
+		t.Skip("platform does not expose a versioned process identity")
+	}
+	record.Metadata = map[string]string{
+		metadataLegacyLinuxProcessIdentity: "malformed",
+	}
+
+	assert.Equal(t, kitdaemon.ProcessIdentityMatch, compareRuntimeProcessIdentity(record))
+}
+
+func TestInspectRemovesMismatchedStableProcessIdentity(t *testing.T) {
 	home := t.TempDir()
 	store := RuntimeStore(home)
 	record, _, err := NewRuntimeRecord(
@@ -96,7 +150,10 @@ func TestInspectRemovesMismatchedStableProcessIdentity(t *testing.T) {
 		kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: "127.0.0.1:1"},
 	)
 	require.NoError(t, err)
-	record.Metadata[metadataProcessIdentity] = "different-runtime:1:1"
+	if record.ProcessIdentityV2 == "" {
+		t.Skip("platform does not expose a stable process identity")
+	}
+	setMismatchedRuntimeIdentity(t, &record)
 	path, err := store.Write(record)
 	require.NoError(t, err)
 
@@ -104,6 +161,21 @@ func TestInspectRemovesMismatchedStableProcessIdentity(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, RuntimeAbsent, observation.State)
 	assert.NoFileExists(t, path)
+}
+
+func setMismatchedRuntimeIdentity(t *testing.T, record *kitdaemon.RuntimeRecord) {
+	t.Helper()
+	if record.ProcessIdentityV2 == "" {
+		record.ProcessIdentity = "1"
+		return
+	}
+	separator := strings.LastIndexByte(string(record.ProcessIdentityV2), ':')
+	require.Positive(t, separator)
+	ticks, err := strconv.ParseUint(string(record.ProcessIdentityV2)[separator+1:], 10, 64)
+	require.NoError(t, err)
+	record.ProcessIdentityV2 = kitdaemon.ProcessIdentity(
+		string(record.ProcessIdentityV2[:separator+1]) + strconv.FormatUint(ticks+1, 10),
+	)
 }
 
 func TestNewRuntimeRecordAdvertisesFirstDomainContracts(t *testing.T) {
@@ -203,7 +275,7 @@ func TestInspectRemovesAReusedPIDRecord(t *testing.T) {
 		"v1",
 		kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: "127.0.0.1:1"},
 	)
-	rec.ProcessIdentity = "1"
+	setMismatchedRuntimeIdentity(t, &rec)
 	rec.Metadata = validMetadata(t.TempDir(), "secret")
 	path, err := store.Write(rec)
 	require.NoError(t, err)
@@ -309,6 +381,7 @@ func TestInspectPreservesUnknownProcessIdentityAsUnresponsive(t *testing.T) {
 	ep := kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: listener.Addr().String()}
 	rec := kitdaemon.NewRuntimeRecord(ServiceName, "v1", ep)
 	rec.ProcessIdentity = ""
+	rec.ProcessIdentityV2 = ""
 	rec.Metadata = validMetadata(home, "secret")
 	proof, err := kitdaemon.NewProof([]byte("secret"))
 	require.NoError(t, err)
