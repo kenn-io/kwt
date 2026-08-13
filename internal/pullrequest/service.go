@@ -10,6 +10,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"go.kenn.io/kwt/internal/tmux"
+	repositoryurl "go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
 )
 
@@ -303,6 +305,23 @@ func matchingProvenanceWorkspace(byPath map[string]Workspace, record Provenance)
 		(record.Workspace.Generation != "" &&
 			workspace.Generation != record.Workspace.Generation) {
 		return Workspace{}, false
+	}
+	for _, identity := range ProvenanceRepositoryIdentities(record) {
+		info, valid := repositoryurl.CanonicalRepositoryInfo(identity)
+		if !valid || !tmux.MatchesWorkspaceSessionName(
+			record.Workspace.SessionName,
+			info,
+			record.Workspace.Branch,
+			record.Workspace.Path,
+		) {
+			continue
+		}
+		workspace.SessionName = record.Workspace.SessionName
+		workspace.TmuxSocketName = tmux.ProtectedWorkspaceSocketName(
+			record.Workspace.SessionName,
+			record.Workspace.Path,
+		)
+		break
 	}
 	return workspace, true
 }
