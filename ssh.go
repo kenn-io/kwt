@@ -9,6 +9,7 @@ type (
 	SSHResolvedTarget      = internalssh.ResolvedTarget
 	SSHRouteSnapshot       = internalssh.RouteSnapshot
 	SSHLeaseRequest        = internalssh.LeaseRequest
+	SSHPromptHandler       = internalssh.PromptHandler
 	SSHLease               = internalssh.Lease
 	SSHLeaseMode           = internalssh.LeaseMode
 	SSHEvent               = internalssh.Event

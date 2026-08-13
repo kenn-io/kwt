@@ -64,7 +64,10 @@ type LeaseRequest struct {
 	Snapshot         RouteSnapshot `json:"snapshot"`
 	WorkingDirectory string        `json:"working_directory"`
 	Environment      []string      `json:"environment"`
+	Prompt           PromptHandler `json:"-"`
 }
+
+type PromptHandler func(context.Context, service.OperationPrompt) (string, error)
 
 type LeaseMode string
 

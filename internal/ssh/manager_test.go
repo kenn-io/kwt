@@ -28,6 +28,9 @@ type fakePersistentManager struct {
 	disconnectStart chan struct{}
 	disconnectWait  <-chan struct{}
 	disconnectOnce  sync.Once
+	connectStart    chan struct{}
+	connectWait     <-chan struct{}
+	connectOnce     sync.Once
 }
 
 func (m *fakePersistentManager) ConnectWithRunner(
@@ -37,9 +40,19 @@ func (m *fakePersistentManager) ConnectWithRunner(
 	openssh.RunSSH,
 ) (openssh.Generation, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.connectCalls++
-	return m.generation, m.connectErr
+	generation := m.generation
+	connectErr := m.connectErr
+	connectStart := m.connectStart
+	connectWait := m.connectWait
+	m.mu.Unlock()
+	if connectStart != nil {
+		m.connectOnce.Do(func() { close(connectStart) })
+	}
+	if connectWait != nil {
+		<-connectWait
+	}
+	return generation, connectErr
 }
 
 func (m *fakePersistentManager) ConnectionArguments(
@@ -258,6 +271,56 @@ func TestManagerCloseDisconnectsRoutesAndRejectsNewAcquires(t *testing.T) {
 	_, _, _, disconnects := persistent.counts()
 	assert.Equal(t, 1, disconnects)
 	require.NoError(t, lease.Release())
+}
+
+func TestManagerCloseHonorsContextWhileAcquireOwnsIdentity(t *testing.T) {
+	connectStarted := make(chan struct{})
+	continueConnect := make(chan struct{})
+	var continueOnce sync.Once
+	unblockConnect := func() {
+		continueOnce.Do(func() { close(continueConnect) })
+	}
+	defer unblockConnect()
+	persistent := &fakePersistentManager{
+		generation:   33,
+		connectStart: connectStarted,
+		connectWait:  continueConnect,
+	}
+	manager := NewManager(ManagerOptions{
+		Persistent: persistent,
+		Runner: func(LeaseRequest, ResolvedTarget) (openssh.RunSSH, error) {
+			return func(context.Context, []string) (int, error) { return 0, nil }, nil
+		},
+	})
+	snapshot := directSnapshot("route-one")
+	resolve := func(context.Context) (RouteSnapshot, error) { return snapshot, nil }
+	acquireDone := make(chan error, 1)
+	go func() {
+		_, err := manager.Acquire(
+			context.Background(), LeaseRequest{Snapshot: snapshot}, resolve,
+		)
+		acquireDone <- err
+	}()
+	select {
+	case <-connectStarted:
+	case <-time.After(time.Second):
+		t.Fatal("connection preparation did not start")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- manager.Close(ctx) }()
+	select {
+	case err := <-closeDone:
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(200 * time.Millisecond):
+		unblockConnect()
+		t.Fatal("manager close ignored its context deadline")
+	}
+
+	unblockConnect()
+	assert.True(t, service.IsCode(<-acquireDone, service.SSHConnectionChanged))
 }
 
 func TestManagerEventCallbackCanAcquireSameRoute(t *testing.T) {

@@ -47,7 +47,7 @@ type Manager struct {
 }
 
 type identityOperation struct {
-	mu         sync.Mutex
+	gate       chan struct{}
 	references int
 }
 
@@ -102,7 +102,10 @@ func (m *Manager) Acquire(
 		return nil, connectionFailed(err)
 	}
 	identity := managerIdentity(request.Snapshot)
-	unlockIdentity := m.lockIdentity(identity)
+	unlockIdentity, err := m.lockIdentityContext(ctx, identity)
+	if err != nil {
+		return nil, err
+	}
 	identityLocked := true
 	releaseIdentity := func() {
 		if identityLocked {
@@ -446,7 +449,11 @@ func (m *Manager) Close(ctx context.Context) error {
 	}
 	sort.Strings(ordered)
 	for _, identity := range ordered {
-		unlockIdentity := m.lockIdentity(identity)
+		unlockIdentity, err := m.lockIdentityContext(ctx, identity)
+		if err != nil {
+			closeErr = errors.Join(closeErr, err)
+			break
+		}
 		m.mu.Lock()
 		route := m.routes[identity]
 		if route != nil {
@@ -460,7 +467,7 @@ func (m *Manager) Close(ctx context.Context) error {
 			unlockIdentity()
 			continue
 		}
-		err := m.persistent.Disconnect(ctx, identity)
+		err = m.persistent.Disconnect(ctx, identity)
 		unlockIdentity()
 		if err != nil {
 			failure := cleanupFailed(err)
@@ -493,25 +500,54 @@ func (m *Manager) Close(ctx context.Context) error {
 }
 
 func (m *Manager) lockIdentity(identity string) func() {
+	unlock, _ := m.lockIdentityContext(context.Background(), identity)
+	return unlock
+}
+
+func (m *Manager) lockIdentityContext(
+	ctx context.Context,
+	identity string,
+) (func(), error) {
 	m.mu.Lock()
 	operation := m.operations[identity]
 	if operation == nil {
-		operation = &identityOperation{}
+		operation = &identityOperation{gate: make(chan struct{}, 1)}
+		operation.gate <- struct{}{}
 		m.operations[identity] = operation
 	}
 	operation.references++
 	m.mu.Unlock()
 
-	operation.mu.Lock()
-	return func() {
-		operation.mu.Unlock()
+	select {
+	case <-ctx.Done():
 		m.mu.Lock()
 		operation.references--
 		if operation.references == 0 {
 			delete(m.operations, identity)
 		}
 		m.mu.Unlock()
+		return nil, ctx.Err()
+	case <-operation.gate:
+		if err := ctx.Err(); err != nil {
+			operation.gate <- struct{}{}
+			m.mu.Lock()
+			operation.references--
+			if operation.references == 0 {
+				delete(m.operations, identity)
+			}
+			m.mu.Unlock()
+			return nil, err
+		}
 	}
+	return func() {
+		operation.gate <- struct{}{}
+		m.mu.Lock()
+		operation.references--
+		if operation.references == 0 {
+			delete(m.operations, identity)
+		}
+		m.mu.Unlock()
+	}, nil
 }
 
 type masterlessLease struct {
