@@ -164,7 +164,9 @@ func runHost(
 
 	startedAt := opts.Now()
 	gate := NewGate(startedAt)
-	operations := NewOperationHub(ctx, OperationHubOptions{
+	operationContext, cancelOperations := newHostOperationContext(ctx)
+	defer cancelOperations()
+	operations := NewOperationHub(operationContext, OperationHubOptions{
 		Now: opts.Now,
 		Reserve: func() (func(), error) {
 			return gate.Reserve(ReservationWork, opts.Now())
@@ -334,6 +336,7 @@ func runHost(
 	drainResult := gate.WaitForDrain(context.Background(), opts.Now())
 	if drainResult != DrainReleased {
 		operations.CancelActiveForDrain()
+		cancelOperations()
 	}
 	shutdownErr := shutdownHTTPServer(httpServer, drain.DrainDeadline, drainResult)
 	var cleanupErr error
@@ -349,6 +352,10 @@ func runHost(
 	stopErr := errors.Join(runErr, shutdownErr, cleanupErr, removeErr)
 	logLifecycle(logger, "stopped", status.Status(opts.Now()), stopErr)
 	return stopErr
+}
+
+func newHostOperationContext(hostContext context.Context) (context.Context, context.CancelFunc) {
+	return context.WithCancel(context.WithoutCancel(hostContext))
 }
 
 func newHTTPServer(handler http.Handler) *http.Server {
