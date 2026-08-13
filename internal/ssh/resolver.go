@@ -103,9 +103,13 @@ func runOutput(
 	if len(argv) == 0 {
 		return nil, nil, -1, errors.New("empty process arguments")
 	}
+	executable, err := resolveExecutable(argv[0], environment)
+	if err != nil {
+		return nil, nil, -1, err
+	}
 	processContext, cancelProcess := context.WithCancelCause(ctx)
 	defer cancelProcess(nil)
-	command := exec.CommandContext(processContext, argv[0], argv[1:]...)
+	command := exec.CommandContext(processContext, executable, argv[1:]...)
 	command.Env = environment
 	command.Stdin = bytes.NewReader(standardInput)
 	var stdout, stderr []byte
@@ -115,7 +119,7 @@ func runOutput(
 	command.Stderr = byteSliceWriter{
 		target: &stderr, limit: resolverOutputLimit, cancel: cancelProcess,
 	}
-	err := runResolverCommand(command)
+	err = runResolverCommand(command)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		err = errors.Join(ctxErr, err)
 	} else if processErr := context.Cause(processContext); processErr != nil {

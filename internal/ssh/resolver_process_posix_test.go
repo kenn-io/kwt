@@ -64,6 +64,32 @@ func TestRunOutputCancellationTerminatesDescendantProcessGroup(t *testing.T) {
 	t.Fatal("resolver descendant survived cancellation")
 }
 
+func TestRunOutputResolvesExecutableWithInvocationEnvironment(t *testing.T) {
+	daemonDir := t.TempDir()
+	invocationDir := t.TempDir()
+	const executable = "kwt-ssh-path-test"
+	require.NoError(t, os.WriteFile(
+		filepath.Join(daemonDir, executable),
+		[]byte("#!/bin/sh\nprintf daemon"),
+		0o700,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(invocationDir, executable),
+		[]byte("#!/bin/sh\nprintf invocation"),
+		0o700,
+	))
+	t.Setenv("PATH", daemonDir)
+
+	stdout, _, _, err := runOutput(
+		context.Background(),
+		[]string{executable},
+		[]string{"PATH=" + invocationDir},
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "invocation", string(stdout))
+}
+
 func TestRunOutputBoundsOutputAndCancelsResolverProcess(t *testing.T) {
 	for _, test := range []struct {
 		name   string

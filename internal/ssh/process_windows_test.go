@@ -109,6 +109,43 @@ func TestRunOutputCancellationTerminatesWindowsProcessTree(t *testing.T) {
 	}
 }
 
+func TestRunOutputResolvesExecutableWithInvocationEnvironment(t *testing.T) {
+	daemonDir := t.TempDir()
+	invocationDir := t.TempDir()
+	const executable = "kwt-ssh-path-test.exe"
+	binary, err := os.ReadFile(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, directory := range []string{daemonDir, invocationDir} {
+		if err := os.WriteFile(filepath.Join(directory, executable), binary, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", daemonDir)
+	t.Setenv("PATHEXT", ".EXE")
+	environment := append(
+		os.Environ(),
+		"PATH="+invocationDir,
+		"PATHEXT=.EXE",
+		resolverProcessHelperRole+"=lookup",
+	)
+
+	stdout, _, _, err := runOutput(
+		context.Background(),
+		[]string{"kwt-ssh-path-test", "-test.run=^TestResolverWindowsProcessHelper$"},
+		environment,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(invocationDir, executable)
+	if !strings.EqualFold(filepath.Clean(string(stdout)), filepath.Clean(want)) {
+		t.Fatalf("resolver executable = %q, want %q", stdout, want)
+	}
+}
+
 func TestResolverWindowsProcessHelper(t *testing.T) {
 	switch os.Getenv(resolverProcessHelperRole) {
 	case "":
@@ -147,6 +184,12 @@ func TestResolverWindowsProcessHelper(t *testing.T) {
 		for {
 			time.Sleep(time.Second)
 		}
+	case "lookup":
+		executable, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = os.Stdout.WriteString(executable)
 	default:
 		t.Fatalf("unknown helper role %q", os.Getenv(resolverProcessHelperRole))
 	}
