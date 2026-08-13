@@ -310,3 +310,25 @@ func TestProjectRegistrationTransitionDeduplicatesRepositoryCaseVariants(t *test
 		pathIdentity,
 	}, identities)
 }
+
+func TestProjectRegistrationTransitionRepairsPathlessRepositoryEntry(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(t.TempDir(), "repo")
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
+		"[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'widget'\n",
+	), 0o600))
+
+	identities, err := projectRegistrationTransitionIdentities(
+		context.Background(), home, testExpansion(t), models.Project{
+			Repository: "github.com/acme/widget", Name: "widget", Path: path,
+		},
+	)
+
+	require.NoError(t, err)
+	pathIdentity, err := pathLifecycleIdentity(path)
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"github.com/acme/widget",
+		pathIdentity,
+	}, identities)
+}

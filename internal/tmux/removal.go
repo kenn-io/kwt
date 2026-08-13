@@ -222,7 +222,7 @@ func matchingSessionPanePIDs(
 	output, stderr, err := command.runCommandOutputContextWithStderr(
 		ctx,
 		"if-shell", "-F", "-t", target, identity,
-		"list-panes -s -t "+target+" -F '#{pane_pid}'",
+		"list-panes -s -t "+target+" -F '#{pane_pid}|#{window_linked}'",
 		"display-message -p "+changed,
 	)
 	if err != nil {
@@ -239,9 +239,22 @@ func matchingSessionPanePIDs(
 	}
 	var pids []int
 	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
-		pid, parseErr := strconv.Atoi(strings.TrimSpace(line))
+		parts := strings.SplitN(strings.TrimSpace(line), "|", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("inspect confirmed tmux session: invalid pane record")
+		}
+		pid, parseErr := strconv.Atoi(parts[0])
 		if parseErr != nil || pid <= 1 {
 			return nil, fmt.Errorf("inspect confirmed tmux session: invalid pane process")
+		}
+		switch parts[1] {
+		case "0":
+		case "1":
+			return nil, &RemovalSessionConditionError{
+				Reason: "tmux session has a window shared with another session",
+			}
+		default:
+			return nil, fmt.Errorf("inspect confirmed tmux session: invalid window link state")
 		}
 		pids = append(pids, pid)
 	}

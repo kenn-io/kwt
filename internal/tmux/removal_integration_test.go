@@ -58,6 +58,45 @@ func TestRemovalSessionGuardQuiescesAndResumesCapturedSession(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestRemovalSessionGuardRejectsWindowSharedWithAnotherSession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires POSIX tmux")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is not installed")
+	}
+	tempDir := t.TempDir()
+	command := NewTmuxCommandInTempDir("tmux", tempDir)
+	const target = "kwt-removal-shared-target"
+	const peer = "kwt-removal-shared-peer"
+	require.NoError(t, command.RunCommandContext(
+		context.Background(), "new-session", "-d", "-s", target, "sleep", "60",
+	))
+	condition := removalConditionForTest(t, command, target, tempDir)
+	require.NoError(t, command.RunCommandContext(
+		context.Background(), "new-session", "-d", "-s", peer, "sleep", "60",
+	))
+	require.NoError(t, command.RunCommandContext(
+		context.Background(), "link-window", "-s", target+":0", "-t", peer+":1",
+	))
+	t.Cleanup(func() { _ = command.RunCommandContext(context.Background(), "kill-server") })
+
+	lease, err := NewRemovalSessionGuard("tmux").Quiesce(
+		context.Background(), condition,
+	)
+	if lease != nil {
+		require.NoError(t, lease.Resume())
+	}
+
+	assert.Nil(t, lease)
+	require.Error(t, err)
+	var conditionErr *RemovalSessionConditionError
+	require.ErrorAs(t, err, &conditionErr)
+	assert.Contains(t, conditionErr.Reason, "shared")
+	assert.True(t, command.HasSession(target))
+	assert.True(t, command.HasSession(peer))
+}
+
 func TestRemovalSessionGuardTerminatesHupIgnoringWriterWhileQuiesced(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires POSIX tmux")

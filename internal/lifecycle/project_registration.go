@@ -143,11 +143,13 @@ func projectRegistrationTransitionIdentities(
 			return nil, identityErr
 		}
 		identities = append(identities, identity)
-		pathIdentity, identityErr := pathLifecycleIdentity(registration.Effective.Path)
-		if identityErr != nil {
-			return nil, identityErr
+		if registration.Effective.Path != "" {
+			pathIdentity, identityErr := pathLifecycleIdentity(registration.Effective.Path)
+			if identityErr != nil {
+				return nil, identityErr
+			}
+			identities = append(identities, pathIdentity)
 		}
-		identities = append(identities, pathIdentity)
 	}
 	slices.Sort(identities)
 	return slices.Compact(identities), nil
