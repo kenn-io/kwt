@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -495,6 +496,97 @@ func TestOperationHubExpiresCompletedRetention(t *testing.T) {
 	if !service.IsCode(err, service.NotFound) {
 		t.Fatalf("expired operation error = %v", err)
 	}
+}
+
+func TestOperationHubRetainsTerminalOperationUntilWorkerReleaseAfterExpiry(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	releaseStarted := make(chan struct{})
+	allowRelease := make(chan struct{})
+	released := make(chan struct{})
+	var allowReleaseOnce sync.Once
+	defer allowReleaseOnce.Do(func() { close(allowRelease) })
+	hub := NewOperationHub(context.Background(), OperationHubOptions{
+		Now:                func() time.Time { return now },
+		CompletedRetention: time.Minute,
+		Reserve: func() (func(), error) {
+			return func() {
+				close(releaseStarted)
+				<-allowRelease
+				close(released)
+			}, nil
+		},
+	})
+	operation, _, err := hub.Start(OperationStart{
+		ID: "operation-1", RequestDigest: "request-1",
+		Run: func(context.Context, *Operation) (json.RawMessage, error) {
+			return json.RawMessage(`{}`), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-releaseStarted
+	now = now.Add(time.Minute)
+	reused, created, err := hub.Start(OperationStart{
+		ID: "operation-1", RequestDigest: "request-1",
+	})
+	if err != nil || created || reused != operation {
+		t.Fatalf("reuse during worker release: operation=%p created=%v err=%v", reused, created, err)
+	}
+	allowReleaseOnce.Do(func() { close(allowRelease) })
+	<-released
+}
+
+func TestOperationHubRetainsTerminalOperationUntilWorkerReleaseUnderCompletedCapacity(t *testing.T) {
+	firstReleaseStarted := make(chan struct{})
+	allowFirstRelease := make(chan struct{})
+	firstReleased := make(chan struct{})
+	secondReleased := make(chan struct{})
+	var allowFirstReleaseOnce sync.Once
+	defer allowFirstReleaseOnce.Do(func() { close(allowFirstRelease) })
+	reservations := 0
+	hub := NewOperationHub(context.Background(), OperationHubOptions{
+		MaxCompletedOperations: 1,
+		Reserve: func() (func(), error) {
+			reservations++
+			if reservations == 1 {
+				return func() {
+					close(firstReleaseStarted)
+					<-allowFirstRelease
+					close(firstReleased)
+				}, nil
+			}
+			return func() { close(secondReleased) }, nil
+		},
+	})
+	first, _, err := hub.Start(OperationStart{
+		ID: "operation-1", RequestDigest: "request-1",
+		Run: func(context.Context, *Operation) (json.RawMessage, error) {
+			return json.RawMessage(`{}`), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-firstReleaseStarted
+	_, _, err = hub.Start(OperationStart{
+		ID: "operation-2", RequestDigest: "request-2",
+		Run: func(context.Context, *Operation) (json.RawMessage, error) {
+			return json.RawMessage(`{}`), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-secondReleased
+	reused, created, err := hub.Start(OperationStart{
+		ID: "operation-1", RequestDigest: "request-1",
+	})
+	if err != nil || created || reused != first {
+		t.Fatalf("reuse under completed capacity: operation=%p created=%v err=%v", reused, created, err)
+	}
+	allowFirstReleaseOnce.Do(func() { close(allowFirstRelease) })
+	<-firstReleased
 }
 
 func TestOperationHubRejectsNewWorkAtActiveCapacity(t *testing.T) {

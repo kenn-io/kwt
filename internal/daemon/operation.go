@@ -77,6 +77,7 @@ type operationEntry struct {
 	lossTimer       *time.Timer
 	lossTimerToken  uint64
 	release         func()
+	workerActive    bool
 }
 
 type operationPromptState struct {
@@ -256,6 +257,7 @@ func (h *OperationHub) Start(start OperationStart) (*Operation, bool, error) {
 			validator:     validator,
 			subscribers:   make(map[*OperationSubscription]chan retainedOperationEvent),
 			release:       release,
+			workerActive:  true,
 		}
 		entry.operation = &Operation{hub: h, entry: entry}
 		h.operations[id] = entry
@@ -281,13 +283,15 @@ func (h *OperationHub) run(
 func (h *OperationHub) releaseWorker(entry *operationEntry) {
 	h.mu.Lock()
 	release := entry.release
-	entry.release = nil
 	h.mu.Unlock()
 	if release != nil {
 		release()
 	}
 	h.mu.Lock()
+	entry.release = nil
+	entry.workerActive = false
 	h.active--
+	h.pruneLocked()
 	h.mu.Unlock()
 }
 
@@ -738,7 +742,8 @@ func (h *OperationHub) dispatchLocked(
 func (h *OperationHub) pruneLocked() {
 	now := h.options.Now()
 	for id, entry := range h.operations {
-		if entry.terminal && !now.Before(entry.completedAt.Add(h.options.CompletedRetention)) {
+		if entry.terminal && !entry.workerActive &&
+			!now.Before(entry.completedAt.Add(h.options.CompletedRetention)) {
 			delete(h.operations, id)
 		}
 	}
@@ -754,6 +759,9 @@ func (h *OperationHub) pruneCompletedLocked() {
 				continue
 			}
 			completed++
+			if entry.workerActive {
+				continue
+			}
 			if oldest == nil || entry.completedAt.Before(oldest.completedAt) {
 				oldest = entry
 			}
