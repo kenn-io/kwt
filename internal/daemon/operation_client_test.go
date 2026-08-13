@@ -261,6 +261,41 @@ func TestOperationClientTerminalResultSurvivesEventCallbackFailure(t *testing.T)
 	assert.JSONEq(t, `{"status":"ready"}`, string(result))
 }
 
+func TestOperationClientCancelsAfterPromptHandlerFailure(t *testing.T) {
+	promptErr := errors.New("prompt input failed")
+	var cancellations atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			_ = json.NewEncoder(w).Encode(service.OperationEvent{
+				OperationID: "operation-1", Sequence: 1,
+				Kind: service.OperationEventPrompt,
+				Prompt: &service.OperationPrompt{
+					ID: "prompt-1", Kind: "password", Message: "Password:", Sensitive: true,
+				},
+			})
+		case http.MethodDelete:
+			cancellations.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+
+	_, err := client.FollowOperation(
+		context.Background(), "operation-1", 0,
+		OperationCallbacks{Prompt: func(context.Context, service.OperationPrompt) (string, error) {
+			return "", promptErr
+		}},
+	)
+	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
+	assert.ErrorIs(t, err, promptErr)
+	assert.Equal(t, int32(1), cancellations.Load())
+}
+
 func TestOperationClientPreservesInteractionRequired(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")

@@ -174,7 +174,11 @@ func (c *Client) followOperationAttempt(
 			}
 			value, err := callbacks.Prompt(ctx, *event.Prompt)
 			if err != nil {
-				return nil, acknowledgedSequence, err
+				cancelErr := c.cancelOperationBestEffort(ctx, operationID)
+				return nil, acknowledgedSequence, operationOutcomeUnknown(
+					"operation outcome is unknown after prompt handling failed",
+					errors.Join(err, cancelErr),
+				)
 			}
 			if err := c.sendOperationResponse(ctx, operationID, service.OperationResponse{
 				PromptID: event.Prompt.ID,
