@@ -88,6 +88,46 @@ func TestSSHResolveRouteRoundTripsSnapshotAndReusesService(t *testing.T) {
 	}
 }
 
+func TestSSHResolveRouteAcceptsSnapshotAboveControlResponseLimit(t *testing.T) {
+	argument := strings.Repeat("x", int(controlResponseLimit)+1)
+	resolver := &fakeSSHResolver{result: kwt.SSHRouteSnapshot{
+		RouteIdentity:    strings.Repeat("a", 64),
+		ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+		Targets: []kwt.SSHResolvedTarget{{
+			Projection: kwt.SSHExecutionProjection{Arguments: []string{argument}},
+		}},
+	}}
+	client, closeServer := newSSHResolutionTestClient(t, resolver, NewGate(time.Now()))
+	defer closeServer()
+
+	result, err := client.ResolveSSH(context.Background(), kwt.SSHResolveRequest{
+		Target: kwt.SSHTarget{Hostname: "build.example.test"},
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Targets, 1)
+	assert.Equal(t, argument, result.Targets[0].Projection.Arguments[0])
+}
+
+func TestSSHResolveRouteRejectsSnapshotAboveEndpointLimit(t *testing.T) {
+	resolver := &fakeSSHResolver{result: kwt.SSHRouteSnapshot{
+		RouteIdentity:    strings.Repeat("a", 64),
+		ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+		Targets: []kwt.SSHResolvedTarget{{
+			Projection: kwt.SSHExecutionProjection{
+				Arguments: []string{strings.Repeat("x", int(sshSnapshotLimit)+1)},
+			},
+		}},
+	}}
+	client, closeServer := newSSHResolutionTestClient(t, resolver, NewGate(time.Now()))
+	defer closeServer()
+
+	_, err := client.ResolveSSH(context.Background(), kwt.SSHResolveRequest{
+		Target: kwt.SSHTarget{Hostname: "build.example.test"},
+	})
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.SSHResolutionFailed), err)
+}
+
 func TestSSHResolveRouteUsesFreshSanitizedInvocationEnvironment(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("KWT_HOME", home)

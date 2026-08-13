@@ -166,8 +166,10 @@ projection is target-local; a downstream projection requires master-backed
 proxy transport through its preceding prepared target and is never a
 standalone direct-connect command. This resolution route caps stdout and
 stderr at 1 MiB each and cancels the complete resolver process tree when either
-bound is exceeded. It does not create a connection, control socket, trust
-decision, credential prompt, or lease.
+bound is exceeded. The daemon also caps the encoded public route snapshot at
+8 MiB; the client reserves 64 KiB above that bound for response framing, and an
+oversized snapshot fails as `ssh_resolution_failed`. Resolution does not create
+a connection, control socket, trust decision, credential prompt, or lease.
 
 `kwt projects` and `kwt list` auto-start or reuse the daemon and require a
 current inventory result. They fail instead of falling back to cached or direct

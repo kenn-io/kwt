@@ -86,6 +86,8 @@ const (
 	removalReconcileTimeout            = 5 * time.Second
 	controlResponseLimit         int64 = 1 << 20
 	inventoryResponseLimit             = 64 << 20
+	sshSnapshotLimit                   = 8 << 20
+	sshResponseLimit                   = sshSnapshotLimit + (64 << 10)
 )
 
 func NewVerifiedClient(
@@ -189,7 +191,7 @@ func (c *Client) ResolveSSH(
 	err = c.doWith(
 		ctx,
 		c.sshHTTP,
-		controlResponseLimit,
+		sshResponseLimit,
 		http.MethodPost,
 		"/api/v1/ssh/resolve",
 		request,

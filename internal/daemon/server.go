@@ -196,6 +196,9 @@ func NewServer(opts ServerOptions) http.Handler {
 				if err != nil {
 					return nil, reportProblem(opts, "/api/v1/ssh/resolve", err)
 				}
+				if err := validateSSHSnapshotSize(result); err != nil {
+					return nil, reportProblem(opts, "/api/v1/ssh/resolve", err)
+				}
 				return &sshResolveOutput{Body: result}, nil
 			},
 		)
@@ -219,6 +222,23 @@ func NewServer(opts ServerOptions) http.Handler {
 		mux.Handle("/api/ping", opts.Ping)
 	}
 	return secureLocalHandler(mux, opts)
+}
+
+func validateSSHSnapshotSize(snapshot kwt.SSHRouteSnapshot) error {
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		return service.NewError(service.Internal, "internal failure", false, nil, err)
+	}
+	if int64(len(encoded)) > sshSnapshotLimit {
+		return service.NewError(
+			service.SSHResolutionFailed,
+			"SSH route snapshot exceeds the supported size limit",
+			false,
+			nil,
+			nil,
+		)
+	}
+	return nil
 }
 
 func reserveInventoryWork(opts ServerOptions) (func(), error) {
