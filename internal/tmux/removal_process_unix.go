@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 func suspendRemovalProcessSessions(
@@ -17,7 +18,7 @@ func suspendRemovalProcessSessions(
 	panePIDs []int,
 	seen map[int]struct{},
 ) ([]int, error) {
-	output, err := exec.CommandContext(ctx, "ps", "-e", "-o", "pid=,ppid=,pgid=").Output()
+	output, err := exec.CommandContext(ctx, "/bin/ps", "-e", "-o", "pid=,ppid=,pgid=").Output()
 	if err != nil {
 		return nil, fmt.Errorf("inspect tmux pane process trees: %w", err)
 	}
@@ -104,4 +105,61 @@ func resumeRemovalProcessGroups(groups []int) error {
 		}
 	}
 	return result
+}
+
+func terminateRemovalProcessGroups(ctx context.Context, groups []int) error {
+	for _, group := range groups {
+		if err := syscall.Kill(-group, syscall.SIGKILL); err != nil &&
+			!errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("terminate tmux pane process group %d: %w", group, err)
+		}
+	}
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		settled, err := removalProcessGroupsSettled(ctx, groups)
+		if err != nil {
+			return err
+		}
+		if settled {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("terminate tmux pane process groups: timed out")
+		case <-ticker.C:
+		}
+	}
+}
+
+func removalProcessGroupsSettled(ctx context.Context, groups []int) (bool, error) {
+	output, err := exec.CommandContext(ctx, "/bin/ps", "-e", "-o", "pgid=,stat=").Output()
+	if err != nil {
+		return false, fmt.Errorf("inspect terminated tmux pane process groups: %w", err)
+	}
+	pending := make(map[int]struct{}, len(groups))
+	for _, group := range groups {
+		pending[group] = struct{}{}
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		group, parseErr := strconv.Atoi(fields[0])
+		if parseErr != nil {
+			continue
+		}
+		if _, ok := pending[group]; !ok {
+			continue
+		}
+		if !strings.HasPrefix(fields[1], "Z") {
+			return false, nil
+		}
+	}
+	return true, nil
 }

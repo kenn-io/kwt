@@ -17,6 +17,10 @@ func suspendRemovalProcessSessions(
 
 func resumeRemovalProcessGroups([]int) error { return nil }
 
+func terminateRemovalProcessGroups(context.Context, []int) error {
+	return fmt.Errorf("terminating quiesced tmux pane processes is unsupported on Windows")
+}
+
 func suspendRemovalServer(int) error {
 	return fmt.Errorf("quiescing the tmux server is unsupported on Windows")
 }

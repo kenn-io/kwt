@@ -58,6 +58,46 @@ func TestRemovalSessionGuardQuiescesAndResumesCapturedSession(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestRemovalSessionGuardTerminatesHupIgnoringWriterWhileQuiesced(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires POSIX tmux")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is not installed")
+	}
+	tempDir := t.TempDir()
+	outputPath := filepath.Join(tempDir, "activity")
+	scriptPath := filepath.Join(tempDir, "ignore-hup.sh")
+	require.NoError(t, os.WriteFile(scriptPath, []byte(
+		"trap '' HUP TERM\nwhile :; do printf x >> \"$1\"; sleep 0.02; done\n",
+	), 0o700))
+	command := NewTmuxCommandInTempDir("tmux", tempDir)
+	const session = "kwt-removal-ignore-hup-test"
+	require.NoError(t, command.RunCommandContext(
+		context.Background(), "new-session", "-d", "-s", session,
+		"/bin/sh", scriptPath, outputPath,
+	))
+	t.Cleanup(func() { _ = command.RunCommandContext(context.Background(), "kill-server") })
+	require.Eventually(t, func() bool {
+		info, err := os.Stat(outputPath)
+		return err == nil && info.Size() > 2
+	}, time.Second, 10*time.Millisecond)
+	condition := removalConditionForTest(t, command, session, tempDir)
+	lease, err := NewRemovalSessionGuard("tmux").Quiesce(
+		context.Background(), condition,
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, lease.Terminate(context.Background()))
+	terminated, err := os.Stat(outputPath)
+	require.NoError(t, err)
+	time.Sleep(150 * time.Millisecond)
+	stillTerminated, err := os.Stat(outputPath)
+	require.NoError(t, err)
+	assert.Equal(t, terminated.Size(), stillTerminated.Size())
+	assert.False(t, command.HasSession(session))
+}
+
 func TestRemovalSessionGuardTerminatesOnlyCapturedIdentity(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires POSIX tmux")

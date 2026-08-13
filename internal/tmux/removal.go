@@ -122,20 +122,30 @@ func (l *liveRemovalSessionLease) Terminate(ctx context.Context) error {
 			l.Resume(),
 		)
 	}
+	groups := l.groups
+	if err := terminateRemovalProcessGroups(ctx, groups); err != nil {
+		_ = cmd.Process.Kill()
+		waitErr := cmd.Wait()
+		return errors.Join(err, waitErr, l.Resume())
+	}
+	l.groups = nil
 	serverErr := resumeRemovalServer(l.serverPID)
-	l.serverPID = 0
+	if serverErr == nil {
+		l.serverPID = 0
+	}
 	if serverErr != nil {
 		_ = cmd.Process.Kill()
 	}
 	waitErr := cmd.Wait()
-	groupsErr := resumeRemovalProcessGroups(l.groups)
-	l.groups = nil
+	terminationErr := classifyTerminateMatchingSession(
+		stdout.String(), stderr.String(), waitErr,
+	)
+	if terminationErr != nil {
+		terminationErr = confirmRemovalSessionAbsent(ctx, l.command, l.condition)
+	}
 	return errors.Join(
-		classifyTerminateMatchingSession(
-			stdout.String(), stderr.String(), waitErr,
-		),
+		terminationErr,
 		serverErr,
-		groupsErr,
 	)
 }
 
@@ -288,6 +298,38 @@ func classifyTerminateMatchingSession(output, stderr string, err error) error {
 	}
 	if strings.TrimSpace(output) != "" {
 		return fmt.Errorf("terminate confirmed tmux session: unexpected tmux output")
+	}
+	return nil
+}
+
+func confirmRemovalSessionAbsent(
+	ctx context.Context,
+	command *TmuxCommand,
+	condition RemovalSessionCondition,
+) error {
+	const format = "#{pid}|#{session_id}|#{session_created}|#{session_name}"
+	output, stderr, err := command.runCommandOutputContextWithStderr(
+		ctx, "list-sessions", "-F", format,
+	)
+	if err != nil {
+		if isExplicitlyAbsentTmuxDiagnostic(stderr) {
+			return nil
+		}
+		return fmt.Errorf(
+			"confirm tmux session termination: %w, stderr: %s",
+			err, strings.TrimSpace(stderr),
+		)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		parts := strings.SplitN(line, "|", 4)
+		if len(parts) != 4 {
+			return fmt.Errorf("confirm tmux session termination: malformed session identity")
+		}
+		if parts[1] == condition.SessionID || parts[3] == condition.SessionName {
+			return &RemovalSessionConditionError{
+				Reason: "tmux session identity changed during termination",
+			}
+		}
 	}
 	return nil
 }
