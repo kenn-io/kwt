@@ -27,7 +27,9 @@ func TestRunOutputCancellationTerminatesDescendantProcessGroup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() {
-		_, _, _, err := runOutput(ctx, []string{"/bin/sh", "-c", script}, os.Environ(), nil)
+		_, _, _, err := runOutput(
+			ctx, []string{"/bin/sh", "-c", script}, filepath.Dir(pidPath), os.Environ(), nil,
+		)
 		result <- err
 	}()
 
@@ -83,11 +85,29 @@ func TestRunOutputResolvesExecutableWithInvocationEnvironment(t *testing.T) {
 	stdout, _, _, err := runOutput(
 		context.Background(),
 		[]string{executable},
+		t.TempDir(),
 		[]string{"PATH=" + invocationDir},
 		nil,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "invocation", string(stdout))
+}
+
+func TestRunOutputUsesInvocationWorkingDirectory(t *testing.T) {
+	workingDirectory := t.TempDir()
+	stdout, _, _, err := runOutput(
+		context.Background(),
+		[]string{"/bin/pwd"},
+		workingDirectory,
+		[]string{"PATH=/usr/bin:/bin"},
+		nil,
+	)
+	require.NoError(t, err)
+	want, err := filepath.EvalSymlinks(workingDirectory)
+	require.NoError(t, err)
+	got, err := filepath.EvalSymlinks(strings.TrimSpace(string(stdout)))
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
 }
 
 func TestRunOutputBoundsOutputAndCancelsResolverProcess(t *testing.T) {
@@ -114,6 +134,7 @@ func TestRunOutputBoundsOutputAndCancelsResolverProcess(t *testing.T) {
 			stdout, stderr, _, err := runOutput(
 				ctx,
 				[]string{"/bin/sh", "-c", test.script},
+				t.TempDir(),
 				os.Environ(),
 				nil,
 			)

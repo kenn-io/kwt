@@ -59,6 +59,7 @@ func (r *Resolver) resolveConfig(
 			stdout, stderr, exitCode, runErr := r.run(
 				ctx,
 				arguments,
+				r.workingDirectory,
 				resolveEnvironment(r.environment, command),
 				standardInput,
 			)

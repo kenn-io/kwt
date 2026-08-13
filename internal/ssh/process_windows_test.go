@@ -36,6 +36,7 @@ func TestRunOutputCancellationTerminatesWindowsProcessTree(t *testing.T) {
 		_, _, _, err := runOutput(
 			ctx,
 			[]string{os.Args[0], "-test.run=^TestResolverWindowsProcessHelper$"},
+			tempDir,
 			environment,
 			nil,
 		)
@@ -134,6 +135,7 @@ func TestRunOutputResolvesExecutableWithInvocationEnvironment(t *testing.T) {
 	stdout, _, _, err := runOutput(
 		context.Background(),
 		[]string{"kwt-ssh-path-test", "-test.run=^TestResolverWindowsProcessHelper$"},
+		t.TempDir(),
 		environment,
 		nil,
 	)

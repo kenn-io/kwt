@@ -20,6 +20,7 @@ var errResolverOutputLimit = errors.New("SSH resolver output exceeds limit")
 type OutputRunner func(
 	ctx context.Context,
 	argv []string,
+	workingDirectory string,
 	environment []string,
 	standardInput []byte,
 ) (stdout, stderr []byte, exitCode int, err error)
@@ -104,13 +105,13 @@ func randomNonce() (string, error) {
 func runOutput(
 	ctx context.Context,
 	argv []string,
+	workingDirectory string,
 	environment []string,
 	standardInput []byte,
 ) ([]byte, []byte, int, error) {
 	if len(argv) == 0 {
 		return nil, nil, -1, errors.New("empty process arguments")
 	}
-	workingDirectory, _ := os.Getwd()
 	executable, err := resolveExecutable(argv[0], environment, workingDirectory)
 	if err != nil {
 		return nil, nil, -1, err
@@ -118,6 +119,7 @@ func runOutput(
 	processContext, cancelProcess := context.WithCancelCause(ctx)
 	defer cancelProcess(nil)
 	command := exec.CommandContext(processContext, executable, argv[1:]...)
+	command.Dir = workingDirectory
 	command.Env = environment
 	command.Stdin = bytes.NewReader(standardInput)
 	var stdout, stderr []byte

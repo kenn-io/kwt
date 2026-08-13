@@ -29,7 +29,7 @@ func TestResolverPOSIXUsesLoginShellFrameAndExplicitTarget(t *testing.T) {
 			"KWT_GITHUB_TOKEN=github-secret", "GHOSTHUB_AUTH=fleet-secret",
 		},
 		ProtectedNames: []string{"GHOSTHUB_AUTH"},
-		Run: func(_ context.Context, argv, environment []string, _ []byte) ([]byte, []byte, int, error) {
+		Run: func(_ context.Context, argv []string, _ string, environment []string, _ []byte) ([]byte, []byte, int, error) {
 			gotArgv = append([]string(nil), argv...)
 			gotEnvironment = append([]string(nil), environment...)
 			return []byte("banner\nKWT_SSH_CONFIG_START_nonce\n" +
@@ -68,7 +68,7 @@ func TestResolverPOSIXBindsBareExecutableBeforeLoginShellStartup(t *testing.T) {
 		LoginShell:       func() (string, error) { return "/bin/sh", nil },
 		Nonce:            func() (string, error) { return "nonce", nil },
 		Environment:      []string{"PATH=tools"},
-		Run: func(_ context.Context, _ []string, environment []string, _ []byte) ([]byte, []byte, int, error) {
+		Run: func(_ context.Context, _ []string, _ string, environment []string, _ []byte) ([]byte, []byte, int, error) {
 			command = resolveCommandFromEnvironment(t, environment)
 			return framedResolverOutput("nonce", "hostname build.internal\n"), nil, 0, nil
 		},
@@ -87,7 +87,7 @@ func TestResolverPOSIXDelegatesResolveScriptThroughPOSIXShellForFish(t *testing.
 	resolver := NewResolver(ResolverOptions{
 		LoginShell: func() (string, error) { return "/usr/local/bin/fish", nil },
 		Nonce:      func() (string, error) { return "nonce", nil },
-		Run: func(_ context.Context, argv, _ []string, _ []byte) ([]byte, []byte, int, error) {
+		Run: func(_ context.Context, argv []string, _ string, _ []string, _ []byte) ([]byte, []byte, int, error) {
 			gotArgv = append([]string(nil), argv...)
 			return framedResolverOutput("nonce", "hostname build.internal\n"), nil, 0, nil
 		},
@@ -107,7 +107,7 @@ func TestResolverPOSIXDelegatesResolveScriptThroughPOSIXShellForTcsh(t *testing.
 	resolver := NewResolver(ResolverOptions{
 		LoginShell: func() (string, error) { return "/bin/tcsh", nil },
 		Nonce:      func() (string, error) { return "nonce", nil },
-		Run: func(_ context.Context, argv, _ []string, standardInput []byte) ([]byte, []byte, int, error) {
+		Run: func(_ context.Context, argv []string, _ string, _ []string, standardInput []byte) ([]byte, []byte, int, error) {
 			gotArgv = append([]string(nil), argv...)
 			gotStandardInput = append(gotStandardInput, string(standardInput))
 			return framedResolverOutput("nonce", "hostname build.internal\n"), nil, 0, nil
@@ -156,7 +156,7 @@ func TestResolverPOSIXResolvesProxyJumpInConnectionOrder(t *testing.T) {
 	resolver := NewResolver(ResolverOptions{
 		LoginShell: func() (string, error) { return "/bin/sh", nil },
 		Nonce:      func() (string, error) { return "nonce", nil },
-		Run: func(_ context.Context, _, environment []string, _ []byte) ([]byte, []byte, int, error) {
+		Run: func(_ context.Context, _ []string, _ string, environment []string, _ []byte) ([]byte, []byte, int, error) {
 			command := resolveCommandFromEnvironment(t, environment)
 			mu.Lock()
 			commands = append(commands, command)
@@ -198,7 +198,7 @@ func TestResolverPOSIXFailsClosedForUnreviewableRoutes(t *testing.T) {
 			resolver := NewResolver(ResolverOptions{
 				LoginShell: func() (string, error) { return "/bin/sh", nil },
 				Nonce:      func() (string, error) { return "nonce", nil },
-				Run: func(_ context.Context, _, environment []string, _ []byte) ([]byte, []byte, int, error) {
+				Run: func(_ context.Context, _ []string, _ string, environment []string, _ []byte) ([]byte, []byte, int, error) {
 					command := resolveCommandFromEnvironment(t, environment)
 					if test.name == "nested jump" && strings.Contains(command, "'relay.example.test'") {
 						return framedResolverOutput("nonce", "hostname relay.internal\nproxyjump edge.example.test\n"), nil, 0, nil
@@ -218,7 +218,7 @@ func TestResolverPOSIXFailsClosedForUnreviewableRoutes(t *testing.T) {
 func TestResolverPOSIXRejectsTargetBeforeInvocation(t *testing.T) {
 	invoked := false
 	resolver := NewResolver(ResolverOptions{
-		Run: func(context.Context, []string, []string, []byte) ([]byte, []byte, int, error) {
+		Run: func(context.Context, []string, string, []string, []byte) ([]byte, []byte, int, error) {
 			invoked = true
 			return nil, nil, 0, nil
 		},
@@ -236,7 +236,7 @@ func TestResolverPOSIXPreservesCancellationAndRejectsMalformedFrames(t *testing.
 		resolver := NewResolver(ResolverOptions{
 			LoginShell: func() (string, error) { return "/bin/sh", nil },
 			Nonce:      func() (string, error) { return "nonce", nil },
-			Run: func(context.Context, []string, []string, []byte) ([]byte, []byte, int, error) {
+			Run: func(context.Context, []string, string, []string, []byte) ([]byte, []byte, int, error) {
 				return nil, nil, -1, context.Canceled
 			},
 		})
@@ -252,7 +252,7 @@ func TestResolverPOSIXPreservesCancellationAndRejectsMalformedFrames(t *testing.
 		resolver := NewResolver(ResolverOptions{
 			LoginShell: func() (string, error) { return "/bin/sh", nil },
 			Nonce:      func() (string, error) { return "nonce", nil },
-			Run: func(context.Context, []string, []string, []byte) ([]byte, []byte, int, error) {
+			Run: func(context.Context, []string, string, []string, []byte) ([]byte, []byte, int, error) {
 				return []byte("hostname build.internal\n"), nil, 0, nil
 			},
 		})
@@ -268,7 +268,7 @@ func TestResolverPOSIXPreservesDeadlineCause(t *testing.T) {
 	resolver := NewResolver(ResolverOptions{
 		LoginShell: func() (string, error) { return "/bin/sh", nil },
 		Nonce:      func() (string, error) { return "nonce", nil },
-		Run: func(context.Context, []string, []string, []byte) ([]byte, []byte, int, error) {
+		Run: func(context.Context, []string, string, []string, []byte) ([]byte, []byte, int, error) {
 			return nil, nil, -1, context.DeadlineExceeded
 		},
 	})
