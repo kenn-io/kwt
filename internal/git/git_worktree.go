@@ -152,6 +152,7 @@ const (
 	ReasonUpstreamRepositoryChanged ConditionReason = "upstream_repository_changed"
 	ReasonUpstreamBranchChanged     ConditionReason = "upstream_branch_changed"
 	ReasonDirty                     ConditionReason = "dirty_worktree"
+	ReasonInitializedSubmodule      ConditionReason = "initialized_submodule"
 	ReasonLocked                    ConditionReason = "locked_worktree"
 	ReasonMainWorktree              ConditionReason = "main_worktree"
 )
@@ -1213,6 +1214,11 @@ func (g *Git) RemoveWorktreeTransactionAfterClaim(
 		if selected.Locked {
 			return &ConditionError{Reason: ReasonLocked, Path: path}
 		}
+		if !forceWorktree {
+			if err := g.validateNativeWorktreeRemovalLocked(path, nil); err != nil {
+				return err
+			}
+		}
 		result.Branch = selected.Branch
 		var claimErr error
 		claimed, claimErr = claim(func() error {
@@ -1402,22 +1408,57 @@ func (g *Git) validateWorktreeRemovalLocked(
 		}
 	}
 	if conditions.RequireClean {
-		args := []string{
-			"-C",
+		return g.validateWorktreeCleanLocked(
 			path,
-			"status",
-			"--porcelain",
-			"--untracked-files=normal",
-		}
-		if conditions.IncludeIgnored {
-			args = append(args, "--ignored")
-		}
-		status, err := g.runWithoutCredentials(conditions.ProtectedNames, args...)
-		if err != nil {
-			return fmt.Errorf("inspect worktree status for %s: %w", path, err)
-		}
-		if strings.TrimSpace(status) != "" {
-			return &ConditionError{Reason: ReasonDirty, Path: path}
+			conditions.ProtectedNames,
+			conditions.IncludeIgnored,
+		)
+	}
+	return nil
+}
+
+func (g *Git) validateWorktreeCleanLocked(
+	path string,
+	protectedNames []string,
+	includeIgnored bool,
+) error {
+	args := []string{
+		"-C",
+		path,
+		"status",
+		"--porcelain",
+		"--untracked-files=normal",
+	}
+	if includeIgnored {
+		args = append(args, "--ignored")
+	}
+	status, err := g.runWithoutCredentials(protectedNames, args...)
+	if err != nil {
+		return fmt.Errorf("inspect worktree status for %s: %w", path, err)
+	}
+	if strings.TrimSpace(status) != "" {
+		return &ConditionError{Reason: ReasonDirty, Path: path}
+	}
+	return nil
+}
+
+func (g *Git) validateNativeWorktreeRemovalLocked(
+	path string,
+	protectedNames []string,
+) error {
+	if err := g.validateWorktreeCleanLocked(path, protectedNames, false); err != nil {
+		return err
+	}
+	status, err := g.runWithoutCredentials(
+		protectedNames,
+		"-C", path, "submodule", "status", "--recursive",
+	)
+	if err != nil {
+		return fmt.Errorf("inspect worktree submodules for %s: %w", path, err)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(status, "\n"), "\n") {
+		if line != "" && line[0] != '-' {
+			return &ConditionError{Reason: ReasonInitializedSubmodule, Path: path}
 		}
 	}
 	return nil

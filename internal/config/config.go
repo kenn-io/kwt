@@ -1034,13 +1034,25 @@ func expandConfigPathsWith(
 
 // RegisterProject records a repository in the global project registry.
 func RegisterProject(project models.Project) error {
+	_, err := RegisterProjectWithIdentity(project)
+	return err
+}
+
+type RegisteredProjectIdentity struct {
+	Project     models.Project
+	Fingerprint string
+}
+
+// RegisterProjectWithIdentity records a repository and returns the exact
+// persisted identity computed before the atomic configuration write commits.
+func RegisterProjectWithIdentity(project models.Project) (RegisteredProjectIdentity, error) {
 	if strings.TrimSpace(project.Path) == "" {
-		return fmt.Errorf("project path required")
+		return RegisteredProjectIdentity{}, fmt.Errorf("project path required")
 	}
 
 	path, err := normalizeProjectPath(project.Path)
 	if err != nil {
-		return err
+		return RegisteredProjectIdentity{}, err
 	}
 	project.Path = path
 	if project.Name == "" {
@@ -1052,6 +1064,7 @@ func RegisterProject(project models.Project) error {
 	project.LastTouched = time.Now().UTC().Format(time.RFC3339)
 
 	var projects []map[string]any
+	var registered RegisteredProjectIdentity
 	configPath := filepath.Join(getConfigDir(), configName+"."+configType)
 	if _, err := (globalConfigStore{path: configPath}).mutate(
 		func(globalViper *viper.Viper) (bool, error) {
@@ -1071,25 +1084,37 @@ func RegisterProject(project models.Project) error {
 				)
 			}
 			updated := false
+			updatedIndex := -1
 			for i := range persisted {
 				if sameProject(persisted[i], project) {
 					projects[i] = updateRawProject(projects[i], project)
 					updated = true
+					updatedIndex = i
 					break
 				}
 			}
 			if !updated {
 				projects = append(projects, updateRawProject(nil, project))
+				updatedIndex = len(projects) - 1
 			}
+			fingerprint, fingerprintErr := (ProjectRegistration{
+				Persisted: project,
+				Effective: project,
+				raw:       cloneStringMap(projects[updatedIndex]),
+			}).Fingerprint()
+			if fingerprintErr != nil {
+				return false, fingerprintErr
+			}
+			registered = RegisteredProjectIdentity{Project: project, Fingerprint: fingerprint}
 			globalViper.Set("projects", projects)
 			return true, nil
 		},
 	); err != nil {
-		return err
+		return RegisteredProjectIdentity{}, err
 	}
 
 	viper.Set("projects", projects)
-	return nil
+	return registered, nil
 }
 
 func updateRawProject(raw map[string]any, project models.Project) map[string]any {

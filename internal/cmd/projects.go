@@ -25,7 +25,7 @@ var (
 	projectsAddJSON              bool
 	projectsRemoveJSON           bool
 	loadProjectsConfig           = config.Load
-	registerProject              = registerProjectWithLifecycle
+	registerProject              = registerProjectIdentityWithLifecycle
 	queryProjectsInventory       = queryCLIInventory
 	removeProjectThroughDaemon   = removeProjectViaDaemon
 	projectsExpectedRepository   string
@@ -143,6 +143,11 @@ type projectMutationResult struct {
 	Project models.Project `json:"project"`
 }
 
+type projectRegistrationResult struct {
+	Status  string      `json:"status"`
+	Project kwt.Project `json:"project"`
+}
+
 func projectsNoArgs(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return nil
@@ -198,7 +203,8 @@ func runProjectsAdd(cmd *cobra.Command, args []string) error {
 		break
 	}
 	project.LastTouched = time.Now().UTC().Format(time.RFC3339)
-	if err := registerProject(cmd.Context(), project); err != nil {
+	registered, err := registerProject(cmd.Context(), project)
+	if err != nil {
 		return writeProjectCommandError(
 			cmd,
 			"registration_failed",
@@ -210,9 +216,9 @@ func runProjectsAdd(cmd *cobra.Command, args []string) error {
 	if projectsAddJSON {
 		encoder := json.NewEncoder(cmd.OutOrStdout())
 		encoder.SetIndent("", "  ")
-		return encoder.Encode(projectMutationResult{
+		return encoder.Encode(projectRegistrationResult{
 			Status:  "registered",
-			Project: project,
+			Project: registered,
 		})
 	}
 	_, err = fmt.Fprintf(

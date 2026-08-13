@@ -1074,6 +1074,41 @@ future_policy = "untouched"
 	assert.Equal(t, "untouched", projects[1]["future_policy"])
 }
 
+func TestRegisterProjectWithIdentityReturnsCommittedFingerprint(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(func() { viper.Reset() })
+
+	kwtHome := t.TempDir()
+	t.Setenv("KWT_HOME", kwtHome)
+	originalPath := t.TempDir()
+	replacementPath := t.TempDir()
+	configPath := filepath.Join(kwtHome, "config.toml")
+	contents := fmt.Sprintf(`[[projects]]
+repository = "github.com/example/widget"
+name = "widget"
+path = %q
+last_touched = "2026-08-01T00:00:00Z"
+future_policy = "retain"
+`, originalPath)
+	require.NoError(t, os.WriteFile(configPath, []byte(contents), 0o600))
+
+	receipt, err := RegisterProjectWithIdentity(models.Project{
+		Repository: "github.com/example/widget",
+		Name:       "widget-renamed",
+		Path:       replacementPath,
+	})
+	require.NoError(t, err)
+
+	snapshot, err := LoadGlobalSnapshotAt(kwtHome)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Projects, 1)
+	persistedFingerprint, err := snapshot.Projects[0].Fingerprint()
+	require.NoError(t, err)
+	assert.Equal(t, snapshot.Projects[0].Persisted, receipt.Project)
+	assert.Equal(t, persistedFingerprint, receipt.Fingerprint)
+	assert.True(t, ValidProjectRegistrationFingerprint(receipt.Fingerprint))
+}
+
 func TestRegisterProjectAppendsWithoutDiscardingUnknownFields(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(func() { viper.Reset() })

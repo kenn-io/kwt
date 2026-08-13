@@ -8,16 +8,21 @@ import (
 
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/registry"
+	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/service"
 )
 
+type RemovalSessionCondition = tmux.RemovalSessionCondition
+type RemovalSessionConditionError = tmux.RemovalSessionConditionError
+
 type RemovalRequest struct {
-	RepositoryPath     string `json:"repository_path"`
-	Path               string `json:"path"`
-	ExpectedGeneration string `json:"expected_generation"`
-	Force              bool   `json:"force,omitempty"`
-	DeleteBranch       bool   `json:"delete_branch,omitempty"`
-	ForceDeleteBranch  bool   `json:"force_delete_branch,omitempty"`
+	RepositoryPath     string                   `json:"repository_path"`
+	Path               string                   `json:"path"`
+	ExpectedGeneration string                   `json:"expected_generation"`
+	Force              bool                     `json:"force,omitempty"`
+	DeleteBranch       bool                     `json:"delete_branch,omitempty"`
+	ForceDeleteBranch  bool                     `json:"force_delete_branch,omitempty"`
+	Session            *RemovalSessionCondition `json:"session,omitempty"`
 }
 
 type RemovalResult struct {
@@ -33,15 +38,21 @@ type Remover interface {
 }
 
 type RemovalServiceOptions struct {
-	Home string
+	Home         string
+	SessionGuard tmux.RemovalSessionGuard
 }
 
 type removalService struct {
-	home string
+	home         string
+	sessionGuard tmux.RemovalSessionGuard
 }
 
 func NewRemovalService(options RemovalServiceOptions) Remover {
-	return &removalService{home: options.Home}
+	guard := options.SessionGuard
+	if guard == nil {
+		guard = tmux.NewRemovalSessionGuard("")
+	}
+	return &removalService{home: options.Home, sessionGuard: guard}
 }
 
 func (s *removalService) Remove(
@@ -60,6 +71,29 @@ func (s *removalService) Remove(
 	}
 	if err := ctx.Err(); err != nil {
 		return result, classifyRemovalError(err, result)
+	}
+
+	repository := git.NewForInventory(ctx, request.RepositoryPath, nil)
+	root, err := repository.GetMainRepositoryPath()
+	if err != nil {
+		return result, classifyRemovalError(fmt.Errorf("resolve main repository: %w", err), result)
+	}
+	if request.Session != nil {
+		releaseProject, fenceErr := acquireRemovalProjectFence(ctx, s.home, root)
+		if fenceErr != nil {
+			return result, classifyRemovalError(fenceErr, result)
+		}
+		defer func() {
+			if releaseErr := releaseProject(); releaseErr != nil {
+				resultErr = errors.Join(
+					resultErr,
+					classifyRemovalError(
+						fmt.Errorf("release project lifecycle lock: %w", releaseErr),
+						result,
+					),
+				)
+			}
+		}()
 	}
 
 	reg, err := registry.NewAt(s.home)
@@ -93,11 +127,6 @@ func (s *removalService) Remove(
 		}
 	}()
 
-	repository := git.NewForInventory(ctx, request.RepositoryPath, nil)
-	root, err := repository.GetMainRepositoryPath()
-	if err != nil {
-		return result, classifyRemovalError(fmt.Errorf("resolve main repository: %w", err), result)
-	}
 	record, registered := reg.Get(request.Path)
 	var mutationErr error
 	transaction, committed, err := git.NewForInventory(
@@ -112,6 +141,11 @@ func (s *removalService) Remove(
 		request.ForceDeleteBranch,
 		func(remove func() error) (bool, error) {
 			return reg.RemoveIfMatchAfter(request.Path, record, func() error {
+				if request.Session != nil {
+					if err := s.sessionGuard.ValidateAndTerminate(ctx, *request.Session); err != nil {
+						return err
+					}
+				}
 				mutationErr = remove()
 				if git.WorktreeWasRemoved(mutationErr) {
 					return nil
@@ -143,6 +177,22 @@ func (s *removalService) Remove(
 	return result, nil
 }
 
+func acquireRemovalProjectFence(
+	ctx context.Context,
+	home string,
+	root string,
+) (func() error, error) {
+	expansion, err := CaptureExpansionContext()
+	if err != nil {
+		return nil, err
+	}
+	claim, err := ObserveProjectClaim(ctx, home, root, expansion)
+	if err != nil {
+		return nil, err
+	}
+	return AcquireRequiredProjectClaim(ctx, home, claim)
+}
+
 func removalInvalid(message string) error {
 	return service.NewError(service.InvalidRequest, message, false, nil, nil)
 }
@@ -170,6 +220,11 @@ func classifyRemovalError(err error, result RemovalResult) error {
 			message = fmt.Sprintf("worktree generation changed for %s", condition.Path)
 		}
 		return service.NewError(service.Conflict, message, true, details, err)
+	}
+	var sessionCondition *RemovalSessionConditionError
+	if errors.As(err, &sessionCondition) {
+		details["reason"] = sessionCondition.Error()
+		return service.NewError(service.Conflict, sessionCondition.Error(), true, details, err)
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return service.NewError(service.Busy, "worktree removal canceled", true, details, err)

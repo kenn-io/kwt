@@ -3,10 +3,12 @@ package lifecycle
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,6 +16,40 @@ import (
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/service"
 )
+
+type recordingRemovalSessionGuard struct {
+	condition RemovalSessionCondition
+	err       error
+	called    bool
+	path      string
+	pathLive  bool
+}
+
+type signalingRemovalSessionGuard struct {
+	called chan struct{}
+	err    error
+}
+
+func (g *signalingRemovalSessionGuard) ValidateAndTerminate(
+	_ context.Context,
+	_ RemovalSessionCondition,
+) error {
+	close(g.called)
+	return g.err
+}
+
+func (g *recordingRemovalSessionGuard) ValidateAndTerminate(
+	_ context.Context,
+	condition RemovalSessionCondition,
+) error {
+	g.called = true
+	g.condition = condition
+	if g.path != "" {
+		_, err := os.Stat(g.path)
+		g.pathLive = err == nil
+	}
+	return g.err
+}
 
 func TestRemovalServiceRemovesWorktreeAndRegistryRecord(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "remove-me")
@@ -63,6 +99,189 @@ func TestRemovalServiceRejectsChangedGeneration(t *testing.T) {
 	require.Error(t, err)
 	assert.False(t, result.WorktreeRemoved)
 	assert.True(t, service.IsCode(err, service.Conflict))
+	assert.DirExists(t, worktreePath)
+}
+
+func TestRemovalServiceTerminatesConfirmedSessionBeforeRemovingWorktree(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "guarded-remove")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	home := t.TempDir()
+	registerRemovalRepository(t, home, repositoryPath)
+	guard := &recordingRemovalSessionGuard{path: worktreePath}
+	condition := RemovalSessionCondition{
+		SessionName: "kwt-workspace-guarded",
+		ServerPID:   "321",
+		SessionID:   "$7",
+		CreatedAt:   "1720000000",
+	}
+
+	result, err := NewRemovalService(RemovalServiceOptions{
+		Home: home, SessionGuard: guard,
+	}).Remove(context.Background(), RemovalRequest{
+		RepositoryPath: repositoryPath,
+		Path:           worktreePath, ExpectedGeneration: generation,
+		Session: &condition,
+	})
+
+	require.NoError(t, err)
+	assert.True(t, guard.called)
+	assert.True(t, guard.pathLive, "session guard must run before checkout removal")
+	assert.Equal(t, condition, guard.condition)
+	assert.True(t, result.WorktreeRemoved)
+	assert.NoDirExists(t, worktreePath)
+}
+
+func TestRemovalServicePreservesWorktreeWhenSessionConditionChanges(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "guarded-conflict")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	home := t.TempDir()
+	registerRemovalRepository(t, home, repositoryPath)
+	guard := &recordingRemovalSessionGuard{err: &RemovalSessionConditionError{
+		Reason: "tmux session identity changed",
+	}}
+
+	result, err := NewRemovalService(RemovalServiceOptions{
+		Home: home, SessionGuard: guard,
+	}).Remove(context.Background(), RemovalRequest{
+		RepositoryPath: repositoryPath,
+		Path:           worktreePath, ExpectedGeneration: generation,
+		Session: &RemovalSessionCondition{SessionName: "kwt-workspace-guarded", Absent: true},
+	})
+
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.Conflict))
+	assert.False(t, result.WorktreeRemoved)
+	assert.DirExists(t, worktreePath)
+}
+
+func TestRemovalServicePreservesConfirmedSessionWhenDirtyWorktreeCannotBeRemoved(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "guarded-dirty")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(worktreePath, "untracked.txt"),
+		[]byte("keep me\n"),
+		0o644,
+	))
+	guard := &recordingRemovalSessionGuard{}
+	home := t.TempDir()
+	registerRemovalRepository(t, home, repositoryPath)
+
+	result, err := NewRemovalService(RemovalServiceOptions{
+		Home: home, SessionGuard: guard,
+	}).Remove(context.Background(), RemovalRequest{
+		RepositoryPath: repositoryPath,
+		Path:           worktreePath, ExpectedGeneration: generation,
+		Session: &RemovalSessionCondition{SessionName: "kwt-workspace-dirty", Absent: true},
+	})
+
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.Conflict))
+	assert.False(t, result.WorktreeRemoved)
+	assert.False(t, guard.called, "dirty worktree must fail before terminating its session")
+	assert.DirExists(t, worktreePath)
+}
+
+func TestRemovalServiceWaitsForProjectSessionStartupFence(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "guarded-race")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	home := t.TempDir()
+	registerRemovalRepository(t, home, repositoryPath)
+	expansion, err := CaptureExpansionContext()
+	require.NoError(t, err)
+	claim, err := ObserveProjectClaim(
+		context.Background(), home, repositoryPath, expansion,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	identity := claim.Identity
+	releaseFence, err := acquireProjectFence(context.Background(), home, identity)
+	require.NoError(t, err)
+	guard := &signalingRemovalSessionGuard{
+		called: make(chan struct{}),
+		err: &RemovalSessionConditionError{
+			Reason: "tmux session started after confirmation",
+		},
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, removeErr := NewRemovalService(RemovalServiceOptions{
+			Home: home, SessionGuard: guard,
+		}).Remove(context.Background(), RemovalRequest{
+			RepositoryPath: repositoryPath,
+			Path:           worktreePath, ExpectedGeneration: generation,
+			Session: &RemovalSessionCondition{
+				SessionName: "kwt-workspace-race", Absent: true,
+			},
+		})
+		result <- removeErr
+	}()
+
+	select {
+	case <-guard.called:
+		t.Fatal("removal inspected the session while startup held the project fence")
+	case <-time.After(50 * time.Millisecond):
+	}
+	require.NoError(t, releaseFence())
+
+	err = <-result
+	assert.True(t, service.IsCode(err, service.Conflict))
+	assert.DirExists(t, worktreePath)
+}
+
+func TestRemovalServicePreservesConfirmedSessionForInitializedSubmodule(t *testing.T) {
+	submodulePath := filepath.Join(t.TempDir(), "submodule")
+	require.NoError(t, os.MkdirAll(submodulePath, 0o755))
+	runRemovalGit(t, submodulePath, "init", "-b", "main")
+	runRemovalGit(t, submodulePath, "config", "user.email", "test@example.com")
+	runRemovalGit(t, submodulePath, "config", "user.name", "Test User")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(submodulePath, "README.md"), []byte("submodule\n"), 0o644,
+	))
+	runRemovalGit(t, submodulePath, "add", "README.md")
+	runRemovalGit(t, submodulePath, "commit", "-m", "initial")
+
+	repositoryPath := filepath.Join(t.TempDir(), "repository")
+	require.NoError(t, os.MkdirAll(repositoryPath, 0o755))
+	runRemovalGit(t, repositoryPath, "init", "-b", "main")
+	runRemovalGit(t, repositoryPath, "config", "user.email", "test@example.com")
+	runRemovalGit(t, repositoryPath, "config", "user.name", "Test User")
+	runRemovalGit(
+		t, repositoryPath, "-c", "protocol.file.allow=always",
+		"submodule", "add", submodulePath, "dependency",
+	)
+	runRemovalGit(t, repositoryPath, "commit", "-m", "add submodule")
+	runRemovalGit(t, repositoryPath, "branch", "guarded-submodule")
+	worktreePath := filepath.Join(t.TempDir(), "guarded-submodule")
+	runRemovalGit(
+		t, repositoryPath, "worktree", "add", worktreePath, "guarded-submodule",
+	)
+	runRemovalGit(
+		t, worktreePath, "-c", "protocol.file.allow=always",
+		"submodule", "update", "--init",
+	)
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	guard := &recordingRemovalSessionGuard{}
+	home := t.TempDir()
+	registerRemovalRepository(t, home, repositoryPath)
+
+	result, err := NewRemovalService(RemovalServiceOptions{
+		Home: home, SessionGuard: guard,
+	}).Remove(context.Background(), RemovalRequest{
+		RepositoryPath: repositoryPath,
+		Path:           worktreePath, ExpectedGeneration: generation,
+		Session: &RemovalSessionCondition{
+			SessionName: "kwt-workspace-submodule", Absent: true,
+		},
+	})
+
+	require.Error(t, err)
+	assert.False(t, result.WorktreeRemoved)
+	assert.False(t, guard.called, "initialized submodule must fail before terminating its session")
 	assert.DirExists(t, worktreePath)
 }
 
@@ -165,4 +384,14 @@ func runRemovalGit(t *testing.T, directory string, args ...string) {
 	command.Dir = directory
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "%s", output)
+}
+
+func registerRemovalRepository(t *testing.T, home, repositoryPath string) {
+	t.Helper()
+	contents := fmt.Sprintf(
+		"[[projects]]\nrepository = %q\nname = \"repository\"\npath = %q\n",
+		repositoryPath,
+		repositoryPath,
+	)
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(contents), 0o600))
 }

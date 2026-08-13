@@ -2,12 +2,15 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	kwt "go.kenn.io/kwt"
+	kwtdaemon "go.kenn.io/kwt/internal/daemon"
+	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/service"
 )
 
@@ -90,4 +93,40 @@ func TestTrustRequirementDecodesHTTPDetailTypes(t *testing.T) {
 	require.NoError(t, decodeErr)
 	assert.Equal(t, 42, requirement.Size)
 	assert.True(t, requirement.Truncated)
+}
+
+func TestGuardedRemovalRejectsVersionOneDaemonBeforeMutation(t *testing.T) {
+	oldFactory := newDaemonController
+	oldRemove := removeWorktreeWithDaemonClient
+	t.Cleanup(func() {
+		newDaemonController = oldFactory
+		removeWorktreeWithDaemonClient = oldRemove
+	})
+
+	newDaemonController = func() (daemonController, error) {
+		return &fakeDaemonController{observation: kwtdaemon.Observation{
+			State: kwtdaemon.RuntimeReady,
+			Status: kwtdaemon.Status{
+				Capabilities: []string{kwtdaemon.CapabilityRemoval},
+			},
+			Client: &kwtdaemon.Client{},
+		}}, nil
+	}
+	mutated := false
+	removeWorktreeWithDaemonClient = func(
+		context.Context,
+		*kwtdaemon.Client,
+		kwt.RemovalRequest,
+	) (kwt.RemovalResult, error) {
+		mutated = true
+		return kwt.RemovalResult{}, nil
+	}
+
+	_, err := removeWorktreeThroughDaemon(context.Background(), kwt.RemovalRequest{
+		Session: &tmux.RemovalSessionCondition{},
+	})
+
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.DaemonIncompatible))
+	assert.False(t, mutated, "an older daemon must be rejected before removal is dispatched")
 }

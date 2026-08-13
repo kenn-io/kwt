@@ -99,6 +99,7 @@ func NewRuntimeRecord(
 			CapabilitySSHResolve,
 			CapabilityInventory,
 			CapabilityRemoval,
+			CapabilityGuardedRemoval,
 		}, ","),
 		metadataToken: token,
 	}

@@ -16,6 +16,13 @@ import (
 
 var queryCLIInventory = queryInventoryForCLI
 var removeDaemonWorktree = removeWorktreeThroughDaemon
+var removeWorktreeWithDaemonClient = func(
+	ctx context.Context,
+	client *kwtdaemon.Client,
+	request kwt.RemovalRequest,
+) (kwt.RemovalResult, error) {
+	return client.RemoveWorktree(ctx, request)
+}
 
 func resolveSSHViaDaemon(
 	ctx context.Context,
@@ -111,17 +118,21 @@ func removeWorktreeThroughDaemon(
 		if err != nil {
 			return kwt.RemovalResult{}, err
 		}
+		requiredCapability := kwtdaemon.CapabilityRemoval
+		if request.Session != nil {
+			requiredCapability = kwtdaemon.CapabilityGuardedRemoval
+		}
 		if observation.Client == nil ||
-			!slices.Contains(observation.Status.Capabilities, kwtdaemon.CapabilityRemoval) {
+			!slices.Contains(observation.Status.Capabilities, requiredCapability) {
 			return kwt.RemovalResult{}, service.NewError(
 				service.DaemonIncompatible,
-				"the running kwt daemon does not provide worktree removal",
+				"the running kwt daemon does not provide the required worktree removal contract",
 				false,
 				nil,
 				nil,
 			)
 		}
-		result, err := observation.Client.RemoveWorktree(ctx, request)
+		result, err := removeWorktreeWithDaemonClient(ctx, observation.Client, request)
 		deadline, draining := inventoryDrainDeadline(err)
 		if !draining {
 			return result, err

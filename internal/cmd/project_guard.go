@@ -137,19 +137,39 @@ func registerProjectWithLifecycle(
 	ctx context.Context,
 	project models.Project,
 ) error {
+	_, err := registerProjectIdentityWithLifecycle(ctx, project)
+	return err
+}
+
+func registerProjectIdentityWithLifecycle(
+	ctx context.Context,
+	project models.Project,
+) (kwt.Project, error) {
 	home, err := config.CanonicalHome()
 	if err != nil {
-		return err
+		return kwt.Project{}, err
 	}
 	expansion, err := kwt.CaptureExpansionContext()
 	if err != nil {
-		return err
+		return kwt.Project{}, err
 	}
-	return lifecycle.TransitionProjectRegistration(
+	return lifecycle.TransitionProjectRegistrationWithIdentity(
 		ctx,
 		home,
 		expansion,
 		project,
-		func() error { return config.RegisterProject(project) },
+		func() (kwt.Project, error) {
+			registered, registerErr := config.RegisterProjectWithIdentity(project)
+			if registerErr != nil {
+				return kwt.Project{}, registerErr
+			}
+			return kwt.Project{
+				Repository:              registered.Project.Repository,
+				Name:                    registered.Project.Name,
+				Path:                    registered.Project.Path,
+				LastTouched:             registered.Project.LastTouched,
+				RegistrationFingerprint: registered.Fingerprint,
+			}, nil
+		},
 	)
 }

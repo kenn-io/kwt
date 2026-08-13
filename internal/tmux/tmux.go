@@ -99,6 +99,14 @@ func NewTmuxCommandForSocketInTempDirWithStripNames(
 	return tmuxCommand
 }
 
+// NewTmuxCommandInTempDir targets the default socket beneath an explicit
+// TMUX_TMPDIR, ignoring any ambient socket selection inherited by the daemon.
+func NewTmuxCommandInTempDir(command, tempDir string) *TmuxCommand {
+	tmuxCommand := NewTmuxCommand(command)
+	tmuxCommand.socketTempDir = strings.TrimSpace(tempDir)
+	return tmuxCommand
+}
+
 func (t *TmuxCommand) NewSession(name, workDir string) error {
 	args := []string{"new-session", "-d", "-s", name}
 	if workDir != "" {
@@ -439,11 +447,14 @@ func (t *TmuxCommand) socketArgs(args []string) []string {
 }
 
 func (t *TmuxCommand) stripExtraNames(env []string) []string {
-	if len(t.extraStripNames) == 0 && t.socketName == "" {
+	if len(t.extraStripNames) == 0 && t.socketName == "" && t.socketTempDir == "" {
 		return env
 	}
 	return filteredEnviron(env, func(name string) bool {
-		if t.socketName != "" && strings.EqualFold(name, "TMUX_TMPDIR") {
+		if (t.socketName != "" || t.socketTempDir != "") && strings.EqualFold(name, "TMUX_TMPDIR") {
+			return true
+		}
+		if t.socketTempDir != "" && strings.EqualFold(name, "TMUX") {
 			return true
 		}
 		return t.extraStripNames[strings.ToLower(name)]
@@ -452,7 +463,7 @@ func (t *TmuxCommand) stripExtraNames(env []string) []string {
 
 func (t *TmuxCommand) socketEnvironment(env []string) []string {
 	env = t.stripExtraNames(env)
-	if t.socketName != "" && t.socketTempDir != "" {
+	if t.socketTempDir != "" {
 		env = append(env, "TMUX_TMPDIR="+t.socketTempDir)
 	}
 	return env

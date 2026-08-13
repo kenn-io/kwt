@@ -444,11 +444,19 @@ func TestRunProjectsAddJSONRegistersCanonicalProject(t *testing.T) {
 	runTUITestGit(t, repoPath, "worktree", "add", "-b", "linked", linkedPath)
 
 	originalRegister := registerProject
-	t.Cleanup(func() { registerProject = originalRegister })
+	t.Cleanup(func() {
+		registerProject = originalRegister
+	})
 	var registered models.Project
-	registerProject = func(_ context.Context, project models.Project) error {
+	registerProject = func(_ context.Context, project models.Project) (kwt.Project, error) {
 		registered = project
-		return nil
+		return kwt.Project{
+			Repository:              project.Repository,
+			Name:                    project.Name,
+			Path:                    project.Path,
+			LastTouched:             project.LastTouched,
+			RegistrationFingerprint: "v1:0000000000000000000000000000000000000000000000000000000000000000",
+		}, nil
 	}
 	projectsAddJSON = true
 	t.Cleanup(func() { projectsAddJSON = false })
@@ -458,15 +466,19 @@ func TestRunProjectsAddJSONRegistersCanonicalProject(t *testing.T) {
 	require.NoError(t, runProjectsAdd(projectsAddCmd, []string{linkedPath}))
 
 	var response struct {
-		Status  string         `json:"status"`
-		Project models.Project `json:"project"`
+		Status  string `json:"status"`
+		Project struct {
+			models.Project
+			RegistrationFingerprint string `json:"registration_fingerprint"`
+		} `json:"project"`
 	}
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &response))
 	assert.Equal(t, "registered", response.Status)
 	assert.Equal(t, "github.com/acme/widget", response.Project.Repository)
 	assert.Equal(t, canonicalRepoPath, response.Project.Path)
 	assert.NotEmpty(t, response.Project.LastTouched)
-	assert.Equal(t, response.Project, registered)
+	assert.Regexp(t, `^v1:[0-9a-f]{64}$`, response.Project.RegistrationFingerprint)
+	assert.Equal(t, response.Project.Project, registered)
 }
 
 func TestRunProjectsAddJSONWritesStableInvalidRepositoryError(t *testing.T) {

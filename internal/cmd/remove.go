@@ -18,17 +18,29 @@ import (
 )
 
 var (
-	removeForce        bool
-	removeDryRun       bool
-	removeGlobal       bool
-	removeIfGeneration string
-	deleteBranch       bool
-	forceDeleteBranch  bool
+	removeForce                    bool
+	removeDryRun                   bool
+	removeGlobal                   bool
+	removeIfGeneration             string
+	removeIfSessionName            string
+	removeIfSessionAbsent          bool
+	removeIfSessionServerPID       string
+	removeIfSessionID              string
+	removeIfSessionCreated         string
+	removeIfSessionSocketDirectory string
+	removeIfSessionSocketName      string
+	deleteBranch                   bool
+	forceDeleteBranch              bool
 )
 
 type removalGenerationCondition struct {
 	generation string
 	specified  bool
+}
+
+type removalConditions struct {
+	generation removalGenerationCondition
+	session    *kwt.RemovalSessionCondition
 }
 
 // removeCmd represents the remove command.
@@ -83,12 +95,19 @@ func init() {
 	removeCmd.Flags().BoolVarP(&removeDryRun, "dry-run", "d", false, "Show deletion targets only")
 	removeCmd.Flags().BoolVarP(&removeGlobal, "global", "g", false, "Remove from any worktree in the configured base directory")
 	removeCmd.Flags().StringVar(&removeIfGeneration, "if-generation", "", "Remove only if the worktree generation matches")
+	removeCmd.Flags().StringVar(&removeIfSessionName, "if-session-name", "", "Remove only if this exact tmux session still satisfies the session guard")
+	removeCmd.Flags().BoolVar(&removeIfSessionAbsent, "if-session-absent", false, "Require the guarded tmux session to be absent")
+	removeCmd.Flags().StringVar(&removeIfSessionServerPID, "if-session-server-pid", "", "Expected tmux server PID for guarded removal")
+	removeCmd.Flags().StringVar(&removeIfSessionID, "if-session-id", "", "Expected tmux session ID for guarded removal")
+	removeCmd.Flags().StringVar(&removeIfSessionCreated, "if-session-created", "", "Expected tmux session creation time for guarded removal")
+	removeCmd.Flags().StringVar(&removeIfSessionSocketDirectory, "if-session-socket-directory", "", "Explicit TMUX_TMPDIR for guarded removal")
+	removeCmd.Flags().StringVar(&removeIfSessionSocketName, "if-session-socket-name", "", "Explicit named tmux socket for guarded removal")
 	removeCmd.Flags().BoolVarP(&deleteBranch, "delete-branch", "b", false, "Also delete the branch after removing worktree")
 	removeCmd.Flags().BoolVar(&forceDeleteBranch, "force-delete-branch", false, "Force delete the branch even if not merged")
 }
 
 func runRemove(cmd *cobra.Command, args []string) error {
-	generationCondition, err := requestedRemovalGeneration(cmd)
+	conditions, err := requestedRemovalConditions(cmd)
 	if err != nil {
 		return err
 	}
@@ -110,7 +129,7 @@ func runRemove(cmd *cobra.Command, args []string) error {
 					commandContext,
 					ctx,
 					args,
-					generationCondition,
+					conditions,
 				)
 				if removed > 0 {
 					publishFleetBestEffortForCommand(cmd, ctx.Config)
@@ -122,7 +141,7 @@ func runRemove(cmd *cobra.Command, args []string) error {
 					commandContext,
 					ctx,
 					args,
-					generationCondition,
+					conditions,
 				)
 				if removed > 0 {
 					publishFleetBestEffortForCommand(cmd, ctx.Config)
@@ -131,6 +150,50 @@ func runRemove(cmd *cobra.Command, args []string) error {
 			},
 		)
 	})(cmd, args)
+}
+
+func requestedRemovalConditions(cmd *cobra.Command) (removalConditions, error) {
+	generation, err := requestedRemovalGeneration(cmd)
+	if err != nil {
+		return removalConditions{}, err
+	}
+	sessionFlags := []string{
+		"if-session-name", "if-session-absent", "if-session-server-pid",
+		"if-session-id", "if-session-created",
+		"if-session-socket-directory",
+		"if-session-socket-name",
+	}
+	guarded := false
+	for _, name := range sessionFlags {
+		guarded = guarded || cmd.Flags().Changed(name)
+	}
+	if !guarded {
+		return removalConditions{generation: generation}, nil
+	}
+	if !generation.specified || !cmd.Flags().Changed("if-session-name") || removeIfSessionName == "" {
+		return removalConditions{}, fmt.Errorf("guarded session removal requires --if-generation and --if-session-name")
+	}
+	condition := &kwt.RemovalSessionCondition{
+		SessionName:     removeIfSessionName,
+		Absent:          removeIfSessionAbsent,
+		ServerPID:       removeIfSessionServerPID,
+		SessionID:       removeIfSessionID,
+		CreatedAt:       removeIfSessionCreated,
+		SocketDirectory: removeIfSessionSocketDirectory,
+		SocketName:      removeIfSessionSocketName,
+	}
+	identityChanged := cmd.Flags().Changed("if-session-server-pid") ||
+		cmd.Flags().Changed("if-session-id") || cmd.Flags().Changed("if-session-created")
+	if removeIfSessionAbsent {
+		if identityChanged {
+			return removalConditions{}, fmt.Errorf("--if-session-absent cannot be combined with live session identity flags")
+		}
+	} else if !cmd.Flags().Changed("if-session-server-pid") ||
+		!cmd.Flags().Changed("if-session-id") || !cmd.Flags().Changed("if-session-created") ||
+		removeIfSessionServerPID == "" || removeIfSessionID == "" || removeIfSessionCreated == "" {
+		return removalConditions{}, fmt.Errorf("live guarded removal requires the complete tmux session identity")
+	}
+	return removalConditions{generation: generation, session: condition}, nil
 }
 
 func requestedRemovalGeneration(
@@ -154,7 +217,7 @@ func removeLocalWorktree(
 	commandContext context.Context,
 	ctx *CommandContext,
 	args []string,
-	generationCondition removalGenerationCondition,
+	conditions removalConditions,
 ) (int, error) {
 	worktrees, err := ctx.WorktreeManager.List()
 	if err != nil {
@@ -213,7 +276,7 @@ func removeLocalWorktree(
 		}
 		return 0, nil
 	}
-	if generationCondition.specified && len(toRemove) != 1 {
+	if conditions.generation.specified && len(toRemove) != 1 {
 		return 0, fmt.Errorf(
 			"--if-generation requires exactly one worktree",
 		)
@@ -226,20 +289,21 @@ func removeLocalWorktree(
 	}
 	for _, wt := range toRemove {
 		generation := wt.Generation
-		if generationCondition.specified {
-			generation = generationCondition.generation
+		if conditions.generation.specified {
+			generation = conditions.generation.generation
 		}
 		result, removalErr := removeDaemonWorktree(commandContext, kwt.RemovalRequest{
 			RepositoryPath: repositoryPath,
 			Path:           wt.Path, ExpectedGeneration: generation,
 			Force: removeForce, DeleteBranch: deleteBranch,
 			ForceDeleteBranch: forceDeleteBranch,
+			Session:           conditions.session,
 		})
 		if result.WorktreeRemoved || daemonMutationRequiresRefresh(removalErr) {
 			removed++
 		}
 		if removalErr != nil {
-			if generationCondition.specified {
+			if conditions.generation.specified {
 				return removed, removalErr
 			}
 			ctx.Printer.PrintError(fmt.Errorf("failed to remove %s: %v", wt.Branch, removalErr))
@@ -268,7 +332,7 @@ func removeGlobalWorktree(
 	commandContext context.Context,
 	ctx *CommandContext,
 	args []string,
-	generationCondition removalGenerationCondition,
+	conditions removalConditions,
 ) (int, error) {
 	entries, err := discovery.DiscoverGlobalWorktrees(ctx.Config.Worktree.BaseDir, ctx.Config.Projects)
 	if err != nil {
@@ -366,7 +430,7 @@ func removeGlobalWorktree(
 		}
 		return 0, nil
 	}
-	if generationCondition.specified && len(toRemove) != 1 {
+	if conditions.generation.specified && len(toRemove) != 1 {
 		return 0, fmt.Errorf(
 			"--if-generation requires exactly one worktree",
 		)
@@ -389,20 +453,21 @@ func removeGlobalWorktree(
 			continue
 		}
 		generation := entry.Generation
-		if generationCondition.specified {
-			generation = generationCondition.generation
+		if conditions.generation.specified {
+			generation = conditions.generation.generation
 		}
 		result, removalErr := removeDaemonWorktree(commandContext, kwt.RemovalRequest{
 			RepositoryPath: repoPath,
 			Path:           entry.Path, ExpectedGeneration: generation,
 			Force: removeForce, DeleteBranch: deleteBranch,
 			ForceDeleteBranch: forceDeleteBranch,
+			Session:           conditions.session,
 		})
 		if result.WorktreeRemoved || daemonMutationRequiresRefresh(removalErr) {
 			removed++
 		}
 		if removalErr != nil {
-			if generationCondition.specified {
+			if conditions.generation.specified {
 				return removed, removalErr
 			}
 			ctx.Printer.PrintError(fmt.Errorf("failed to remove %s:%s: %v", repoName, entry.Branch, removalErr))

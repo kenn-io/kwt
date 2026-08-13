@@ -25,6 +25,7 @@ type (
 	InventoryServiceOptions      = lifecycle.InventoryServiceOptions
 	InventoryService             = lifecycle.InventoryService
 	RemovalRequest               = lifecycle.RemovalRequest
+	RemovalSessionCondition      = lifecycle.RemovalSessionCondition
 	RemovalResult                = lifecycle.RemovalResult
 	Remover                      = lifecycle.Remover
 	RemovalServiceOptions        = lifecycle.RemovalServiceOptions

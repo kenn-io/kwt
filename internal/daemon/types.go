@@ -15,6 +15,7 @@ const (
 	CapabilityProjectRemoval  = "project.removal.v1"
 	CapabilityInventory       = "worktree.inventory.v1"
 	CapabilityRemoval         = "worktree.removal.v1"
+	CapabilityGuardedRemoval  = "worktree.removal.v2"
 	CapabilityOperationStream = "operation.stream.v1"
 	CapabilitySSHResolve      = "ssh.resolve.v1"
 )

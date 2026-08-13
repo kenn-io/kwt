@@ -296,6 +296,34 @@ func TestRemoveRejectsExplicitInvalidGeneration(t *testing.T) {
 	}
 }
 
+func TestRequestedRemovalConditionsRequiresCompleteSessionAuthority(t *testing.T) {
+	resetRemoveCommandFlags(t)
+	cmd := removalConditionTestCommand()
+	require.NoError(t, cmd.Flags().Set("if-generation", "0123456789abcdef0123456789abcdef"))
+	require.NoError(t, cmd.Flags().Set("if-session-name", "kwt-workspace-topic"))
+	require.NoError(t, cmd.Flags().Set("if-session-server-pid", "41"))
+	require.NoError(t, cmd.Flags().Set("if-session-id", "$3"))
+
+	_, err := requestedRemovalConditions(cmd)
+
+	require.ErrorContains(t, err, "complete tmux session identity")
+}
+
+func TestRequestedRemovalConditionsCapturesAbsentSessionGuard(t *testing.T) {
+	resetRemoveCommandFlags(t)
+	cmd := removalConditionTestCommand()
+	require.NoError(t, cmd.Flags().Set("if-generation", "0123456789abcdef0123456789abcdef"))
+	require.NoError(t, cmd.Flags().Set("if-session-name", "kwt-workspace-topic"))
+	require.NoError(t, cmd.Flags().Set("if-session-absent", "true"))
+
+	conditions, err := requestedRemovalConditions(cmd)
+
+	require.NoError(t, err)
+	require.NotNil(t, conditions.session)
+	assert.Equal(t, "kwt-workspace-topic", conditions.session.SessionName)
+	assert.True(t, conditions.session.Absent)
+}
+
 func TestRemoveLocalDoesNotPublishOnDryRun(t *testing.T) {
 	resetFleetCommandDeps(t)
 	resetRemoveCommandFlags(t)
@@ -581,6 +609,13 @@ func resetRemoveCommandFlags(t *testing.T) {
 	oldRemoveDryRun := removeDryRun
 	oldRemoveGlobal := removeGlobal
 	oldRemoveIfGeneration := removeIfGeneration
+	oldRemoveIfSessionName := removeIfSessionName
+	oldRemoveIfSessionAbsent := removeIfSessionAbsent
+	oldRemoveIfSessionServerPID := removeIfSessionServerPID
+	oldRemoveIfSessionID := removeIfSessionID
+	oldRemoveIfSessionCreated := removeIfSessionCreated
+	oldRemoveIfSessionSocketDirectory := removeIfSessionSocketDirectory
+	oldRemoveIfSessionSocketName := removeIfSessionSocketName
 	oldDeleteBranch := deleteBranch
 	oldForceDeleteBranch := forceDeleteBranch
 	oldRemoveDaemonWorktree := removeDaemonWorktree
@@ -590,6 +625,13 @@ func resetRemoveCommandFlags(t *testing.T) {
 		removeDryRun = oldRemoveDryRun
 		removeGlobal = oldRemoveGlobal
 		removeIfGeneration = oldRemoveIfGeneration
+		removeIfSessionName = oldRemoveIfSessionName
+		removeIfSessionAbsent = oldRemoveIfSessionAbsent
+		removeIfSessionServerPID = oldRemoveIfSessionServerPID
+		removeIfSessionID = oldRemoveIfSessionID
+		removeIfSessionCreated = oldRemoveIfSessionCreated
+		removeIfSessionSocketDirectory = oldRemoveIfSessionSocketDirectory
+		removeIfSessionSocketName = oldRemoveIfSessionSocketName
 		deleteBranch = oldDeleteBranch
 		forceDeleteBranch = oldForceDeleteBranch
 		removeDaemonWorktree = oldRemoveDaemonWorktree
@@ -599,6 +641,13 @@ func resetRemoveCommandFlags(t *testing.T) {
 	removeDryRun = false
 	removeGlobal = false
 	removeIfGeneration = ""
+	removeIfSessionName = ""
+	removeIfSessionAbsent = false
+	removeIfSessionServerPID = ""
+	removeIfSessionID = ""
+	removeIfSessionCreated = ""
+	removeIfSessionSocketDirectory = ""
+	removeIfSessionSocketName = ""
 	deleteBranch = false
 	forceDeleteBranch = false
 	removeDaemonWorktree = func(
@@ -609,6 +658,51 @@ func resetRemoveCommandFlags(t *testing.T) {
 			Home: os.Getenv("KWT_HOME"),
 		}).Remove(ctx, request)
 	}
+}
+
+func removalConditionTestCommand() *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.Flags().StringVar(&removeIfGeneration, "if-generation", "", "")
+	cmd.Flags().StringVar(&removeIfSessionName, "if-session-name", "", "")
+	cmd.Flags().BoolVar(&removeIfSessionAbsent, "if-session-absent", false, "")
+	cmd.Flags().StringVar(&removeIfSessionServerPID, "if-session-server-pid", "", "")
+	cmd.Flags().StringVar(&removeIfSessionID, "if-session-id", "", "")
+	cmd.Flags().StringVar(&removeIfSessionCreated, "if-session-created", "", "")
+	cmd.Flags().StringVar(&removeIfSessionSocketDirectory, "if-session-socket-directory", "", "")
+	cmd.Flags().StringVar(&removeIfSessionSocketName, "if-session-socket-name", "", "")
+	return cmd
+}
+
+func TestRequestedRemovalConditionsCarriesNamedSocket(t *testing.T) {
+	resetRemoveCommandFlags(t)
+	cmd := removalConditionTestCommand()
+	require.NoError(t, cmd.Flags().Set("if-generation", "0123456789abcdef0123456789abcdef"))
+	require.NoError(t, cmd.Flags().Set("if-session-name", "kwt-topic"))
+	require.NoError(t, cmd.Flags().Set("if-session-absent", "true"))
+	require.NoError(t, cmd.Flags().Set("if-session-socket-name", "kwt-pr-0123456789abcdef"))
+
+	conditions, err := requestedRemovalConditions(cmd)
+
+	require.NoError(t, err)
+	require.NotNil(t, conditions.session)
+	assert.Equal(t, "kwt-pr-0123456789abcdef", conditions.session.SocketName)
+}
+
+func TestRequestedRemovalConditionsCarriesLegacyNamedSocketDirectory(t *testing.T) {
+	resetRemoveCommandFlags(t)
+	cmd := removalConditionTestCommand()
+	require.NoError(t, cmd.Flags().Set("if-generation", "0123456789abcdef0123456789abcdef"))
+	require.NoError(t, cmd.Flags().Set("if-session-name", "kwt-topic"))
+	require.NoError(t, cmd.Flags().Set("if-session-absent", "true"))
+	require.NoError(t, cmd.Flags().Set("if-session-socket-name", "kwt-pr-0123456789abcdef"))
+	require.NoError(t, cmd.Flags().Set("if-session-socket-directory", "/tmp/tmux"))
+
+	conditions, err := requestedRemovalConditions(cmd)
+
+	require.NoError(t, err)
+	require.NotNil(t, conditions.session)
+	assert.Equal(t, "kwt-pr-0123456789abcdef", conditions.session.SocketName)
+	assert.Equal(t, "/tmp/tmux", conditions.session.SocketDirectory)
 }
 
 func setRemoveGenerationFlag(
