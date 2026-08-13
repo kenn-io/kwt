@@ -42,7 +42,6 @@ type Manager struct {
 	masterless           map[uint64]*masterlessLease
 	closed               bool
 	closeDone            chan struct{}
-	closeErr             error
 	masterlessGeneration atomic.Uint64
 }
 
@@ -378,52 +377,76 @@ func (m *Manager) disconnectIdle(identity string, generation openssh.Generation)
 }
 
 func (m *Manager) Close(ctx context.Context) error {
-	m.mu.Lock()
-	if m.closed {
-		done := m.closeDone
-		err := m.closeErr
-		m.mu.Unlock()
-		if done != nil {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		m.mu.Lock()
+		m.closed = true
+		if m.closeDone != nil {
+			done := m.closeDone
+			m.mu.Unlock()
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-done:
+				continue
 			}
-			m.mu.Lock()
-			err = m.closeErr
+		}
+		if len(m.routes) == 0 && len(m.operations) == 0 && len(m.masterless) == 0 {
 			m.mu.Unlock()
+			return nil
 		}
-		return err
-	}
-	m.closed = true
-	done := make(chan struct{})
-	m.closeDone = done
-	identities := make(map[string]struct{}, len(m.routes)+len(m.operations))
-	for identity, route := range m.routes {
-		identities[identity] = struct{}{}
-		if route.idle != nil {
-			route.idle.Stop()
-			route.idle = nil
+		done := make(chan struct{})
+		m.closeDone = done
+		routeIdentities := make([]string, 0, len(m.routes))
+		for identity, route := range m.routes {
+			routeIdentities = append(routeIdentities, identity)
+			if route.idle != nil {
+				route.idle.Stop()
+				route.idle = nil
+			}
 		}
-	}
-	for identity := range m.operations {
-		identities[identity] = struct{}{}
-	}
-	masterless := make([]*masterlessLease, 0, len(m.masterless))
-	for _, lease := range m.masterless {
-		masterless = append(masterless, lease)
-	}
-	m.mu.Unlock()
-
-	var closeErr error
-	events := make([]Event, 0, len(identities)+len(masterless))
-	for _, lease := range masterless {
-		if !lease.released.CompareAndSwap(false, true) {
-			continue
+		operationIdentities := make([]string, 0, len(m.operations))
+		for identity := range m.operations {
+			if _, established := m.routes[identity]; !established {
+				operationIdentities = append(operationIdentities, identity)
+			}
 		}
-		m.mu.Lock()
-		delete(m.masterless, lease.generation)
+		masterless := make([]*masterlessLease, 0, len(m.masterless))
+		for _, lease := range m.masterless {
+			masterless = append(masterless, lease)
+		}
 		m.mu.Unlock()
+
+		events, closeErr := m.closeAttempt(
+			ctx,
+			routeIdentities,
+			operationIdentities,
+			masterless,
+		)
+		m.mu.Lock()
+		m.closeDone = nil
+		close(done)
+		m.mu.Unlock()
+		for _, event := range events {
+			m.emit(event)
+		}
+		return closeErr
+	}
+}
+
+func (m *Manager) closeAttempt(
+	ctx context.Context,
+	routeIdentities []string,
+	operationIdentities []string,
+	masterless []*masterlessLease,
+) ([]Event, error) {
+	var closeErr error
+	events := make([]Event, 0, len(routeIdentities)+len(masterless))
+
+	for _, lease := range masterless {
+		lease.released.Store(true)
 		if err := lease.cleanup(); err != nil {
 			failure := cleanupFailed(err)
 			closeErr = errors.Join(closeErr, failure)
@@ -436,6 +459,11 @@ func (m *Manager) Close(ctx context.Context) error {
 			})
 			continue
 		}
+		m.mu.Lock()
+		if m.masterless[lease.generation] == lease {
+			delete(m.masterless, lease.generation)
+		}
+		m.mu.Unlock()
 		events = append(events, Event{
 			RouteIdentity: lease.routeIdentity,
 			Generation:    lease.generation,
@@ -443,12 +471,8 @@ func (m *Manager) Close(ctx context.Context) error {
 		})
 	}
 
-	ordered := make([]string, 0, len(identities))
-	for identity := range identities {
-		ordered = append(ordered, identity)
-	}
-	sort.Strings(ordered)
-	for _, identity := range ordered {
+	sort.Strings(routeIdentities)
+	for _, identity := range routeIdentities {
 		unlockIdentity, err := m.lockIdentityContext(ctx, identity)
 		if err != nil {
 			closeErr = errors.Join(closeErr, err)
@@ -460,7 +484,6 @@ func (m *Manager) Close(ctx context.Context) error {
 			if route.idle != nil {
 				route.idle.Stop()
 			}
-			delete(m.routes, identity)
 		}
 		m.mu.Unlock()
 		if route == nil {
@@ -481,6 +504,11 @@ func (m *Manager) Close(ctx context.Context) error {
 			})
 			continue
 		}
+		m.mu.Lock()
+		if m.routes[identity] == route {
+			delete(m.routes, identity)
+		}
+		m.mu.Unlock()
 		events = append(events, Event{
 			RouteIdentity: route.routeIdentity,
 			Generation:    uint64(route.generation),
@@ -488,15 +516,18 @@ func (m *Manager) Close(ctx context.Context) error {
 		})
 	}
 
-	m.mu.Lock()
-	m.closeErr = closeErr
-	m.closeDone = nil
-	close(done)
-	m.mu.Unlock()
-	for _, event := range events {
-		m.emit(event)
+	if ctx.Err() == nil {
+		sort.Strings(operationIdentities)
+		for _, identity := range operationIdentities {
+			unlockIdentity, err := m.lockIdentityContext(ctx, identity)
+			if err != nil {
+				closeErr = errors.Join(closeErr, err)
+				break
+			}
+			unlockIdentity()
+		}
 	}
-	return closeErr
+	return events, closeErr
 }
 
 func (m *Manager) lockIdentity(identity string) func() {
@@ -626,7 +657,10 @@ func (m *Manager) emit(event Event) {
 }
 
 func mapManagerError(err error) error {
+	var typed *service.Error
 	switch {
+	case errors.As(err, &typed):
+		return typed
 	case errors.Is(err, openssh.ErrConnectionChanged):
 		return connectionChanged()
 	case errors.Is(err, openssh.ErrControlPathOccupied):

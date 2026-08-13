@@ -31,13 +31,14 @@ type fakePersistentManager struct {
 	connectStart    chan struct{}
 	connectWait     <-chan struct{}
 	connectOnce     sync.Once
+	connectWaitFor  string
 }
 
 func (m *fakePersistentManager) ConnectWithRunner(
-	context.Context,
-	string,
-	openssh.Target,
-	openssh.RunSSH,
+	_ context.Context,
+	identity string,
+	_ openssh.Target,
+	_ openssh.RunSSH,
 ) (openssh.Generation, error) {
 	m.mu.Lock()
 	m.connectCalls++
@@ -45,11 +46,13 @@ func (m *fakePersistentManager) ConnectWithRunner(
 	connectErr := m.connectErr
 	connectStart := m.connectStart
 	connectWait := m.connectWait
+	connectWaitFor := m.connectWaitFor
 	m.mu.Unlock()
-	if connectStart != nil {
+	shouldWait := connectWait != nil && (connectWaitFor == "" || connectWaitFor == identity)
+	if shouldWait && connectStart != nil {
 		m.connectOnce.Do(func() { close(connectStart) })
 	}
-	if connectWait != nil {
+	if shouldWait {
 		<-connectWait
 	}
 	return generation, connectErr
@@ -321,6 +324,93 @@ func TestManagerCloseHonorsContextWhileAcquireOwnsIdentity(t *testing.T) {
 
 	unblockConnect()
 	assert.True(t, service.IsCode(<-acquireDone, service.SSHConnectionChanged))
+}
+
+func TestManagerCloseCleansEstablishedRoutesBeforeWaitingOnOperations(t *testing.T) {
+	connectStarted := make(chan struct{})
+	continueConnect := make(chan struct{})
+	var continueOnce sync.Once
+	unblockConnect := func() {
+		continueOnce.Do(func() { close(continueConnect) })
+	}
+	defer unblockConnect()
+	established := directSnapshot("zzz-established")
+	blocked := directSnapshot("aaa-blocked")
+	persistent := &fakePersistentManager{
+		generation:     34,
+		connectStart:   connectStarted,
+		connectWait:    continueConnect,
+		connectWaitFor: managerIdentity(blocked),
+	}
+	manager := NewManager(ManagerOptions{
+		Persistent: persistent,
+		Runner: func(LeaseRequest, ResolvedTarget) (openssh.RunSSH, error) {
+			return func(context.Context, []string) (int, error) { return 0, nil }, nil
+		},
+	})
+	establishedLease, err := manager.Acquire(
+		context.Background(),
+		LeaseRequest{Snapshot: established},
+		func(context.Context) (RouteSnapshot, error) { return established, nil },
+	)
+	require.NoError(t, err)
+	blockedDone := make(chan error, 1)
+	go func() {
+		_, acquireErr := manager.Acquire(
+			context.Background(),
+			LeaseRequest{Snapshot: blocked},
+			func(context.Context) (RouteSnapshot, error) { return blocked, nil },
+		)
+		blockedDone <- acquireErr
+	}()
+	select {
+	case <-connectStarted:
+	case <-time.After(time.Second):
+		t.Fatal("blocked connection preparation did not start")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(t, manager.Close(ctx), context.DeadlineExceeded)
+	_, _, _, disconnects := persistent.counts()
+	assert.Equal(t, 1, disconnects)
+
+	unblockConnect()
+	assert.True(t, service.IsCode(<-blockedDone, service.SSHConnectionChanged))
+	require.NoError(t, manager.Close(context.Background()))
+	require.NoError(t, establishedLease.Release())
+}
+
+func TestManagerPreservesTypedPromptFailure(t *testing.T) {
+	promptFailure := service.NewError(
+		service.SSHPromptRejected,
+		"SSH prompt was rejected",
+		false,
+		nil,
+		nil,
+	)
+	persistent := &fakePersistentManager{
+		connectErr: errors.Join(errors.New("ssh exited"), promptFailure),
+	}
+	manager := NewManager(ManagerOptions{
+		Persistent: persistent,
+		Runner: func(LeaseRequest, ResolvedTarget) (openssh.RunSSH, error) {
+			return func(context.Context, []string) (int, error) { return 1, promptFailure }, nil
+		},
+	})
+	snapshot := directSnapshot("route-one")
+
+	_, err := manager.Acquire(
+		context.Background(),
+		LeaseRequest{Snapshot: snapshot},
+		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
+	)
+
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.SSHPromptRejected))
+	var typed *service.Error
+	require.ErrorAs(t, err, &typed)
+	assert.False(t, typed.Retryable)
 }
 
 func TestManagerEventCallbackCanAcquireSameRoute(t *testing.T) {
