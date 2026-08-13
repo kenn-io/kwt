@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/git"
 	repositoryurl "go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
@@ -52,6 +53,40 @@ func ResolveProjectRegistrationIdentity(
 	protectedNames ...string,
 ) (string, error) {
 	return resolveProjectIdentity(ctx, registration, protectedNames...)
+}
+
+// ResolveProspectiveProjectIdentity returns the same canonical identity that
+// project inventory will publish after registering project. Resolution occurs
+// before mutation so a failure cannot leave an unacknowledged registration.
+func ResolveProspectiveProjectIdentity(
+	ctx context.Context,
+	home string,
+	expansion ExpansionContext,
+	project models.Project,
+) (string, error) {
+	if err := expansion.validate(); err != nil {
+		return "", err
+	}
+	snapshot, err := config.LoadGlobalSnapshotAtWithExpansion(
+		home, expansion.expandPath,
+	)
+	if err != nil {
+		return "", err
+	}
+	registration := config.ProjectRegistration{
+		Persisted: project,
+		Effective: project,
+	}
+	effectivePath, err := expansion.expandPath(project.Path)
+	if err != nil {
+		return "", err
+	}
+	registration.Effective.Path = effectivePath
+	return resolveProjectIdentity(
+		ctx,
+		registration,
+		credentials.ProtectedNames(snapshot.Config)...,
+	)
 }
 
 func stableProjectIdentity(registration config.ProjectRegistration) (string, error) {

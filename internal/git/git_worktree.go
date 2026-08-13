@@ -1159,6 +1159,7 @@ func (g *Git) RemoveWorktreeTransaction(
 		forceWorktree,
 		deleteBranch,
 		forceBranch,
+		false,
 		func(remove func() error) (bool, error) {
 			err := remove()
 			return err == nil || WorktreeWasRemoved(err), err
@@ -1177,6 +1178,7 @@ func (g *Git) RemoveWorktreeTransactionAfterClaim(
 	forceWorktree bool,
 	deleteBranch bool,
 	forceBranch bool,
+	preflightNativeRemoval bool,
 	claim func(remove func() error) (bool, error),
 ) (WorktreeRemovalResult, bool, error) {
 	result := WorktreeRemovalResult{Path: path}
@@ -1214,7 +1216,7 @@ func (g *Git) RemoveWorktreeTransactionAfterClaim(
 		if selected.Locked {
 			return &ConditionError{Reason: ReasonLocked, Path: path}
 		}
-		if !forceWorktree {
+		if preflightNativeRemoval && !forceWorktree {
 			if err := g.validateNativeWorktreeRemovalLocked(path, nil); err != nil {
 				return err
 			}

@@ -50,6 +50,8 @@ func TestRemovalClientRoundTripsResult(t *testing.T) {
 	assert.Equal(t, remover.result, result)
 	require.Len(t, remover.requests, 1)
 	assert.True(t, remover.requests[0].DeleteBranch)
+	assert.NotEmpty(t, remover.requests[0].Expansion.WorkingDirectory)
+	assert.NotEmpty(t, remover.requests[0].Expansion.HomeDirectory)
 }
 
 func TestRemovalClientPreservesPartialResultOnError(t *testing.T) {

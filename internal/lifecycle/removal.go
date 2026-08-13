@@ -19,6 +19,7 @@ type RemovalRequest struct {
 	RepositoryPath     string                   `json:"repository_path"`
 	Path               string                   `json:"path"`
 	ExpectedGeneration string                   `json:"expected_generation"`
+	Expansion          ExpansionContext         `json:"expansion"`
 	Force              bool                     `json:"force,omitempty"`
 	DeleteBranch       bool                     `json:"delete_branch,omitempty"`
 	ForceDeleteBranch  bool                     `json:"force_delete_branch,omitempty"`
@@ -69,6 +70,11 @@ func (s *removalService) Remove(
 	if err := git.ValidateWorktreeGeneration(request.ExpectedGeneration); err != nil {
 		return result, removalInvalid("expected generation must be a 32-character hexadecimal value")
 	}
+	if request.Session != nil {
+		if err := request.Expansion.validate(); err != nil {
+			return result, removalInvalid(err.Error())
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return result, classifyRemovalError(err, result)
 	}
@@ -79,7 +85,9 @@ func (s *removalService) Remove(
 		return result, classifyRemovalError(fmt.Errorf("resolve main repository: %w", err), result)
 	}
 	if request.Session != nil {
-		releaseProject, fenceErr := acquireRemovalProjectFence(ctx, s.home, root)
+		releaseProject, fenceErr := acquireRemovalProjectFence(
+			ctx, s.home, root, request.Expansion,
+		)
 		if fenceErr != nil {
 			return result, classifyRemovalError(fenceErr, result)
 		}
@@ -139,6 +147,7 @@ func (s *removalService) Remove(
 		request.Force,
 		request.DeleteBranch,
 		request.ForceDeleteBranch,
+		request.Session != nil,
 		func(remove func() error) (bool, error) {
 			return reg.RemoveIfMatchAfter(request.Path, record, func() error {
 				if request.Session != nil {
@@ -181,11 +190,8 @@ func acquireRemovalProjectFence(
 	ctx context.Context,
 	home string,
 	root string,
+	expansion ExpansionContext,
 ) (func() error, error) {
-	expansion, err := CaptureExpansionContext()
-	if err != nil {
-		return nil, err
-	}
 	claim, err := ObserveProjectClaim(ctx, home, root, expansion)
 	if err != nil {
 		return nil, err

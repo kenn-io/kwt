@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
 
@@ -90,4 +91,35 @@ func TestRequiredProjectGuardAcceptsEquivalentRepositoryCase(t *testing.T) {
 		return nil
 	}))
 	assert.True(t, called)
+}
+
+func TestRegisterProjectIdentityMatchesPublishedCanonicalIdentity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("KWT_HOME", home)
+	projectPath := newTUITestRepo(t)
+
+	registered, err := registerProjectIdentityWithLifecycle(
+		context.Background(),
+		models.Project{Repository: "repo", Name: "repo", Path: projectPath},
+	)
+	require.NoError(t, err)
+	expansion, err := kwt.CaptureExpansionContext()
+	require.NoError(t, err)
+	inventory, err := kwt.NewSource(kwt.SourceOptions{Home: home}).Load(
+		context.Background(),
+		kwt.Request{
+			View: kwt.ViewProjects, Expansion: expansion,
+			UntrustedConfig: kwt.IgnoreUntrustedConfig,
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, inventory.Snapshot.Projects, 1)
+
+	assert.NotEqual(t, "repo", registered.Repository)
+	assert.Equal(t, inventory.Snapshot.Projects[0].Repository, registered.Repository)
+	assert.Equal(
+		t,
+		inventory.Snapshot.Projects[0].RegistrationFingerprint,
+		registered.RegistrationFingerprint,
+	)
 }

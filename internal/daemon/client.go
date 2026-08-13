@@ -204,8 +204,13 @@ func (c *Client) RemoveWorktree(
 	ctx context.Context,
 	request kwt.RemovalRequest,
 ) (kwt.RemovalResult, error) {
+	expansion, err := kwt.CaptureExpansionContext()
+	if err != nil {
+		return kwt.RemovalResult{}, err
+	}
+	request.Expansion = expansion
 	var result kwt.RemovalResult
-	err := c.doWith(
+	err = c.doWith(
 		ctx,
 		c.mutationHTTP,
 		controlResponseLimit,

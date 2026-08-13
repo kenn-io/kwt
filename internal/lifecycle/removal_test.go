@@ -121,7 +121,8 @@ func TestRemovalServiceTerminatesConfirmedSessionBeforeRemovingWorktree(t *testi
 	}).Remove(context.Background(), RemovalRequest{
 		RepositoryPath: repositoryPath,
 		Path:           worktreePath, ExpectedGeneration: generation,
-		Session: &condition,
+		Expansion: testExpansion(t),
+		Session:   &condition,
 	})
 
 	require.NoError(t, err)
@@ -147,7 +148,8 @@ func TestRemovalServicePreservesWorktreeWhenSessionConditionChanges(t *testing.T
 	}).Remove(context.Background(), RemovalRequest{
 		RepositoryPath: repositoryPath,
 		Path:           worktreePath, ExpectedGeneration: generation,
-		Session: &RemovalSessionCondition{SessionName: "kwt-workspace-guarded", Absent: true},
+		Expansion: testExpansion(t),
+		Session:   &RemovalSessionCondition{SessionName: "kwt-workspace-guarded", Absent: true},
 	})
 
 	require.Error(t, err)
@@ -174,7 +176,8 @@ func TestRemovalServicePreservesConfirmedSessionWhenDirtyWorktreeCannotBeRemoved
 	}).Remove(context.Background(), RemovalRequest{
 		RepositoryPath: repositoryPath,
 		Path:           worktreePath, ExpectedGeneration: generation,
-		Session: &RemovalSessionCondition{SessionName: "kwt-workspace-dirty", Absent: true},
+		Expansion: testExpansion(t),
+		Session:   &RemovalSessionCondition{SessionName: "kwt-workspace-dirty", Absent: true},
 	})
 
 	require.Error(t, err)
@@ -182,6 +185,62 @@ func TestRemovalServicePreservesConfirmedSessionWhenDirtyWorktreeCannotBeRemoved
 	assert.False(t, result.WorktreeRemoved)
 	assert.False(t, guard.called, "dirty worktree must fail before terminating its session")
 	assert.DirExists(t, worktreePath)
+}
+
+func TestRemovalServicePreservesNativeDirtyErrorWithoutSessionGuard(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "ordinary-dirty")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(worktreePath, "untracked.txt"),
+		[]byte("keep me\n"),
+		0o644,
+	))
+
+	result, err := NewRemovalService(RemovalServiceOptions{Home: t.TempDir()}).Remove(
+		context.Background(),
+		RemovalRequest{
+			RepositoryPath: repositoryPath,
+			Path:           worktreePath, ExpectedGeneration: generation,
+		},
+	)
+
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.RemovalFailed))
+	assert.False(t, result.WorktreeRemoved)
+	assert.DirExists(t, worktreePath)
+}
+
+func TestRemovalServiceUsesClientExpansionForProjectFence(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "expanded-project")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	home := t.TempDir()
+	projectRoot := filepath.Dir(repositoryPath)
+	configuredPath := filepath.Join("$PROJECT_ROOT", filepath.Base(repositoryPath))
+	contents := fmt.Sprintf(
+		"[[projects]]\nrepository = %q\nname = \"repository\"\npath = %q\n",
+		repositoryPath,
+		configuredPath,
+	)
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(contents), 0o600))
+	t.Setenv("PROJECT_ROOT", t.TempDir())
+	expansion := testExpansion(t)
+	expansion.Environment[normalizedEnvironmentName("PROJECT_ROOT")] = projectRoot
+	guard := &recordingRemovalSessionGuard{}
+
+	result, err := NewRemovalService(RemovalServiceOptions{
+		Home: home, SessionGuard: guard,
+	}).Remove(context.Background(), RemovalRequest{
+		RepositoryPath: repositoryPath,
+		Path:           worktreePath, ExpectedGeneration: generation,
+		Expansion: expansion,
+		Session:   &RemovalSessionCondition{SessionName: "expanded", Absent: true},
+	})
+
+	require.NoError(t, err)
+	assert.True(t, guard.called)
+	assert.True(t, result.WorktreeRemoved)
 }
 
 func TestRemovalServiceWaitsForProjectSessionStartupFence(t *testing.T) {
@@ -213,6 +272,7 @@ func TestRemovalServiceWaitsForProjectSessionStartupFence(t *testing.T) {
 		}).Remove(context.Background(), RemovalRequest{
 			RepositoryPath: repositoryPath,
 			Path:           worktreePath, ExpectedGeneration: generation,
+			Expansion: testExpansion(t),
 			Session: &RemovalSessionCondition{
 				SessionName: "kwt-workspace-race", Absent: true,
 			},
@@ -274,6 +334,7 @@ func TestRemovalServicePreservesConfirmedSessionForInitializedSubmodule(t *testi
 	}).Remove(context.Background(), RemovalRequest{
 		RepositoryPath: repositoryPath,
 		Path:           worktreePath, ExpectedGeneration: generation,
+		Expansion: testExpansion(t),
 		Session: &RemovalSessionCondition{
 			SessionName: "kwt-workspace-submodule", Absent: true,
 		},

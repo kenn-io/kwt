@@ -153,6 +153,12 @@ func registerProjectIdentityWithLifecycle(
 	if err != nil {
 		return kwt.Project{}, err
 	}
+	canonicalIdentity, err := lifecycle.ResolveProspectiveProjectIdentity(
+		ctx, home, expansion, project,
+	)
+	if err != nil {
+		return kwt.Project{}, err
+	}
 	return lifecycle.TransitionProjectRegistrationWithIdentity(
 		ctx,
 		home,
@@ -164,7 +170,7 @@ func registerProjectIdentityWithLifecycle(
 				return kwt.Project{}, registerErr
 			}
 			return kwt.Project{
-				Repository:              registered.Project.Repository,
+				Repository:              canonicalIdentity,
 				Name:                    registered.Project.Name,
 				Path:                    registered.Project.Path,
 				LastTouched:             registered.Project.LastTouched,
