@@ -37,7 +37,13 @@ type Manager struct {
 
 	mu         sync.Mutex
 	routes     map[string]*managedRoute
+	operations map[string]*identityOperation
 	masterless atomic.Uint64
+}
+
+type identityOperation struct {
+	mu         sync.Mutex
+	references int
 }
 
 type managedRoute struct {
@@ -55,6 +61,7 @@ func NewManager(options ManagerOptions) *Manager {
 		idleTimeout:      options.IdleTimeout,
 		onEvent:          options.OnEvent,
 		routes:           make(map[string]*managedRoute),
+		operations:       make(map[string]*identityOperation),
 	}
 }
 
@@ -75,6 +82,8 @@ func (m *Manager) Acquire(
 		return nil, connectionFailed(err)
 	}
 	identity := managerIdentity(request.Snapshot)
+	unlockIdentity := m.lockIdentity(identity)
+	defer unlockIdentity()
 	generation, err := m.persistent.ConnectWithRunner(
 		ctx,
 		identity,
@@ -95,6 +104,19 @@ func (m *Manager) Acquire(
 			return nil, connectionFailed(argumentErr)
 		}
 		arguments = append(projectionArguments, arguments...)
+		current, resolveErr := resolve(ctx)
+		if resolveErr != nil {
+			if cleanupErr := cleanup(); cleanupErr != nil {
+				return nil, cleanupFailed(cleanupErr)
+			}
+			return nil, resolveErr
+		}
+		if !sameRoute(request.Snapshot, current) {
+			if cleanupErr := cleanup(); cleanupErr != nil {
+				return nil, cleanupFailed(cleanupErr)
+			}
+			return nil, configurationChanged()
+		}
 		generation := m.masterless.Add(1)
 		lease := &masterlessLease{
 			generation:    generation,
@@ -228,6 +250,9 @@ func (l *managedLease) Release() error {
 }
 
 func (m *Manager) release(identity string, generation openssh.Generation) error {
+	unlockIdentity := m.lockIdentity(identity)
+	defer unlockIdentity()
+
 	m.mu.Lock()
 	route := m.routes[identity]
 	if route == nil || route.generation != generation {
@@ -263,6 +288,9 @@ func (m *Manager) release(identity string, generation openssh.Generation) error 
 }
 
 func (m *Manager) disconnectIdle(identity string, generation openssh.Generation) {
+	unlockIdentity := m.lockIdentity(identity)
+	defer unlockIdentity()
+
 	m.mu.Lock()
 	route := m.routes[identity]
 	if route == nil || route.generation != generation || route.leases != 0 {
@@ -281,6 +309,28 @@ func (m *Manager) disconnectIdle(identity string, generation openssh.Generation)
 		Generation:    uint64(generation),
 		State:         EventStateDisconnected,
 	})
+}
+
+func (m *Manager) lockIdentity(identity string) func() {
+	m.mu.Lock()
+	operation := m.operations[identity]
+	if operation == nil {
+		operation = &identityOperation{}
+		m.operations[identity] = operation
+	}
+	operation.references++
+	m.mu.Unlock()
+
+	operation.mu.Lock()
+	return func() {
+		operation.mu.Unlock()
+		m.mu.Lock()
+		operation.references--
+		if operation.references == 0 {
+			delete(m.operations, identity)
+		}
+		m.mu.Unlock()
+	}
 }
 
 type masterlessLease struct {

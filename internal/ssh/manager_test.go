@@ -25,6 +25,9 @@ type fakePersistentManager struct {
 	touchCalls      int
 	disconnectCalls int
 	disconnectErr   error
+	disconnectStart chan struct{}
+	disconnectWait  <-chan struct{}
+	disconnectOnce  sync.Once
 }
 
 func (m *fakePersistentManager) ConnectWithRunner(
@@ -58,9 +61,18 @@ func (m *fakePersistentManager) TouchActivity(string, openssh.Generation) bool {
 
 func (m *fakePersistentManager) Disconnect(context.Context, string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.disconnectCalls++
-	return m.disconnectErr
+	disconnectErr := m.disconnectErr
+	disconnectStart := m.disconnectStart
+	disconnectWait := m.disconnectWait
+	m.mu.Unlock()
+	if disconnectStart != nil {
+		m.disconnectOnce.Do(func() { close(disconnectStart) })
+	}
+	if disconnectWait != nil {
+		<-disconnectWait
+	}
+	return disconnectErr
 }
 
 func (m *fakePersistentManager) counts() (connect, arguments, touch, disconnect int) {
@@ -142,6 +154,82 @@ func TestManagerKeepsFinalLeaseWarmUntilIdleTimeout(t *testing.T) {
 		_, _, _, disconnects := persistent.counts()
 		return disconnects == 1
 	}, time.Second, 5*time.Millisecond)
+}
+
+func TestManagerSerializesAcquireWithFinalAndIdleDisconnect(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		idleTimeout time.Duration
+	}{
+		{name: "final release"},
+		{name: "idle cleanup", idleTimeout: time.Millisecond},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			disconnectStarted := make(chan struct{})
+			continueDisconnect := make(chan struct{})
+			var continueOnce sync.Once
+			unblockDisconnect := func() {
+				continueOnce.Do(func() { close(continueDisconnect) })
+			}
+			defer unblockDisconnect()
+			persistent := &fakePersistentManager{
+				generation:      14,
+				disconnectStart: disconnectStarted,
+				disconnectWait:  continueDisconnect,
+			}
+			secondAcquireEntered := make(chan struct{})
+			var runnerCalls int
+			manager := NewManager(ManagerOptions{
+				Persistent:  persistent,
+				IdleTimeout: test.idleTimeout,
+				Runner: func(LeaseRequest, ResolvedTarget) (openssh.RunSSH, error) {
+					runnerCalls++
+					if runnerCalls == 2 {
+						close(secondAcquireEntered)
+					}
+					return func(context.Context, []string) (int, error) { return 0, nil }, nil
+				},
+			})
+			snapshot := directSnapshot("route-one")
+			resolve := func(context.Context) (RouteSnapshot, error) { return snapshot, nil }
+			lease, err := manager.Acquire(
+				context.Background(),
+				LeaseRequest{Snapshot: snapshot},
+				resolve,
+			)
+			require.NoError(t, err)
+
+			releaseDone := make(chan error, 1)
+			go func() { releaseDone <- lease.Release() }()
+			select {
+			case <-disconnectStarted:
+			case <-time.After(time.Second):
+				t.Fatal("disconnect did not start")
+			}
+
+			acquireDone := make(chan error, 1)
+			go func() {
+				_, acquireErr := manager.Acquire(
+					context.Background(),
+					LeaseRequest{Snapshot: snapshot},
+					resolve,
+				)
+				acquireDone <- acquireErr
+			}()
+			select {
+			case <-secondAcquireEntered:
+			case <-time.After(time.Second):
+				t.Fatal("second acquire did not start")
+			}
+			time.Sleep(20 * time.Millisecond)
+			connects, _, _, _ := persistent.counts()
+			assert.Equal(t, 1, connects)
+
+			unblockDisconnect()
+			require.NoError(t, <-releaseDone)
+			require.NoError(t, <-acquireDone)
+		})
+	}
 }
 
 func TestManagerReportsIdleCleanupFailure(t *testing.T) {
@@ -290,6 +378,35 @@ func TestManagerReturnsMasterlessLeaseWhenPersistenceIsUnsupported(t *testing.T)
 	require.NoError(t, lease.Release())
 	_, _, _, disconnects := persistent.counts()
 	assert.Equal(t, 0, disconnects)
+}
+
+func TestManagerRejectsMasterlessRouteChangeAfterProjectionPreparation(t *testing.T) {
+	persistent := &fakePersistentManager{connectErr: openssh.ErrPersistentUnsupported}
+	privateDirectory := filepath.Join(t.TempDir(), "private")
+	manager := NewManager(ManagerOptions{
+		Persistent:       persistent,
+		PrivateDirectory: privateDirectory,
+		Runner: func(LeaseRequest, ResolvedTarget) (openssh.RunSSH, error) {
+			return func(context.Context, []string) (int, error) { return 0, nil }, nil
+		},
+	})
+	expected := directSnapshot("route-one")
+	expected.Targets[0].Projection.PrivateConfig = []string{`IdentityFile "C:/keys/build"`}
+
+	lease, err := manager.Acquire(
+		context.Background(),
+		LeaseRequest{Snapshot: expected},
+		func(context.Context) (RouteSnapshot, error) {
+			return directSnapshot("route-two"), nil
+		},
+	)
+
+	require.Error(t, err)
+	assert.Nil(t, lease)
+	assert.True(t, service.IsCode(err, service.SSHConfigurationChanged))
+	entries, readErr := os.ReadDir(privateDirectory)
+	require.NoError(t, readErr)
+	assert.Empty(t, entries)
 }
 
 func TestMasterlessLeaseRetainsPrivateProjectionUntilRelease(t *testing.T) {

@@ -17,6 +17,7 @@ func TestParseOpenSSHVersionAcceptsPortableAndAppleOutput(t *testing.T) {
 	}{
 		{"OpenSSH_8.4p1, OpenSSL 1.1.1w", OpenSSHVersion{Major: 8, Minor: 4}},
 		{"OpenSSH_9.9p1, LibreSSL 3.3.6", OpenSSHVersion{Major: 9, Minor: 9}},
+		{"OpenSSH_for_Windows_9.5p1, LibreSSL 3.8.2", OpenSSHVersion{Major: 9, Minor: 5}},
 		{"OpenSSH 10.1 vendor-build", OpenSSHVersion{Major: 10, Minor: 1}},
 	}
 	for _, test := range tests {
