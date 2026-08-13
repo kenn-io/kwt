@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -21,6 +22,7 @@ import (
 type ProjectClaim struct {
 	Registration config.ProjectRegistration
 	Identity     string
+	Identities   []string
 	Expansion    ExpansionContext
 	MainPath     string
 	Registered   bool
@@ -120,8 +122,13 @@ func ObserveProjectClaim(
 		if identityErr != nil {
 			return nil, identityErr
 		}
+		identities, identityErr := stableProjectIdentitySet(identity)
+		if identityErr != nil {
+			return nil, identityErr
+		}
 		return &ProjectClaim{
 			Identity:   identity,
+			Identities: identities,
 			Expansion:  expansion,
 			MainPath:   effectiveMainPath,
 			Registered: false,
@@ -133,13 +140,35 @@ func ObserveProjectClaim(
 	if err != nil {
 		return nil, service.NewError(service.Internal, "internal failure", false, nil, err)
 	}
+	pathIdentity, err := pathLifecycleIdentity(effectiveMainPath)
+	if err != nil {
+		return nil, err
+	}
+	identities, err := stableProjectIdentitySet(identity, pathIdentity)
+	if err != nil {
+		return nil, err
+	}
 	return &ProjectClaim{
 		Registration: *match,
 		Identity:     identity,
+		Identities:   identities,
 		Expansion:    expansion,
 		MainPath:     effectiveMainPath,
 		Registered:   true,
 	}, nil
+}
+
+func stableProjectIdentitySet(identities ...string) ([]string, error) {
+	stable := make([]string, 0, len(identities))
+	for _, identity := range identities {
+		folded, err := foldProjectIdentity(identity)
+		if err != nil {
+			return nil, err
+		}
+		stable = append(stable, folded)
+	}
+	slices.Sort(stable)
+	return slices.Compact(stable), nil
 }
 
 func AcquireProjectClaim(
@@ -179,7 +208,11 @@ func acquireProjectClaim(
 		_ = releaseTransition()
 		return nil, registrationChanged(matchErr)
 	}
-	release, err := acquireProjectFence(ctx, home, claim.Identity)
+	identities := claim.Identities
+	if len(identities) == 0 {
+		identities = []string{claim.Identity}
+	}
+	releases, err := acquireProjectIdentitySet(ctx, home, identities)
 	if err != nil {
 		_ = releaseTransition()
 		return nil, err
@@ -187,9 +220,9 @@ func acquireProjectClaim(
 	matched, matchErr = projectClaimMatches(ctx, home, claim)
 	transitionErr := releaseTransition()
 	if matchErr == nil && matched && transitionErr == nil {
-		return release, nil
+		return func() error { return releaseProjectIdentitySet(releases) }, nil
 	}
-	_ = release()
+	_ = releaseProjectIdentitySet(releases)
 	return nil, registrationChanged(errors.Join(matchErr, transitionErr))
 }
 

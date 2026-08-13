@@ -123,6 +123,33 @@ func TestRequiredProjectClaimAcceptsUnchangedUnregisteredRepository(t *testing.T
 	require.NoError(t, release())
 }
 
+func TestRegisteredProjectClaimAlsoLocksMainPathIdentity(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(t.TempDir(), "repo")
+	require.NoError(t, os.MkdirAll(path, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
+		"[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'widget'\npath = '"+path+"'\n",
+	), 0o600))
+	claim, err := ObserveProjectClaim(
+		context.Background(), home, path, testExpansion(t),
+	)
+	require.NoError(t, err)
+	release, err := AcquireRequiredProjectClaim(context.Background(), home, claim)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, release()) }()
+	pathIdentity, err := pathLifecycleIdentity(path)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	unexpectedRelease, err := acquireProjectFence(ctx, home, pathIdentity)
+	if unexpectedRelease != nil {
+		require.NoError(t, unexpectedRelease())
+	}
+
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
 func TestUnregisteredClaimRejectsRegistrationAddedWhileWaiting(t *testing.T) {
 	home := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), nil, 0o600))
