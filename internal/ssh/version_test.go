@@ -56,11 +56,8 @@ func TestVersionPolicyCachesAuthoritativeResult(t *testing.T) {
 
 func TestVersionPolicyPreservesCancellationWithoutCachingIt(t *testing.T) {
 	calls := 0
-	policy := NewVersionPolicy(func(ctx context.Context) (string, error) {
+	policy := NewVersionPolicy(func(context.Context) (string, error) {
 		calls++
-		if calls == 1 {
-			return "", ctx.Err()
-		}
 		return "OpenSSH_9.0p1", nil
 	})
 	canceled, cancel := context.WithCancel(context.Background())
@@ -70,5 +67,5 @@ func TestVersionPolicyPreservesCancellationWithoutCachingIt(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, context.Canceled))
 	require.NoError(t, policy.RequireInteractive(context.Background()))
-	assert.Equal(t, 2, calls)
+	assert.Equal(t, 1, calls)
 }

@@ -51,6 +51,9 @@ func NewVersionPolicy(run VersionRunner) *VersionPolicy {
 }
 
 func (p *VersionPolicy) RequireInteractive(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	version, err := p.current(ctx)
 	if err != nil {
 		return err
