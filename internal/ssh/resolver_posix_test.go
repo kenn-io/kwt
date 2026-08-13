@@ -82,6 +82,44 @@ func TestResolverPOSIXBindsBareExecutableBeforeLoginShellStartup(t *testing.T) {
 	assert.NotContains(t, command, "'ssh' '-G'")
 }
 
+func TestResolverPOSIXRestoresWorkingDirectoryAfterLoginShellStartup(t *testing.T) {
+	workingDirectory := t.TempDir()
+	startupDirectory := t.TempDir()
+	capturePath := filepath.Join(t.TempDir(), "cwd")
+	shellPath := filepath.Join(t.TempDir(), "login-shell")
+	require.NoError(t, os.WriteFile(shellPath, []byte(`#!/bin/sh
+cd "$KWT_TEST_STARTUP_DIR" || exit 1
+exec /bin/sh -c "$3"
+`), 0o700))
+	sshPath := filepath.Join(t.TempDir(), "ssh")
+	require.NoError(t, os.WriteFile(sshPath, []byte(`#!/bin/sh
+printf '%s' "$PWD" > "$KWT_TEST_CAPTURE"
+printf 'hostname build.internal\n'
+`), 0o700))
+	resolver := NewResolver(ResolverOptions{
+		Executable:       sshPath,
+		WorkingDirectory: workingDirectory,
+		LoginShell:       func() (string, error) { return shellPath, nil },
+		Environment: []string{
+			"PATH=/usr/bin:/bin",
+			"KWT_TEST_STARTUP_DIR=" + startupDirectory,
+			"KWT_TEST_CAPTURE=" + capturePath,
+		},
+	})
+
+	_, err := resolver.Resolve(context.Background(), ResolveRequest{
+		Target: Target{Hostname: "build.example.test"},
+	})
+	require.NoError(t, err)
+	captured, err := os.ReadFile(capturePath)
+	require.NoError(t, err)
+	want, err := filepath.EvalSymlinks(workingDirectory)
+	require.NoError(t, err)
+	got, err := filepath.EvalSymlinks(string(captured))
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}
+
 func TestResolverPOSIXDelegatesResolveScriptThroughPOSIXShellForFish(t *testing.T) {
 	var gotArgv []string
 	resolver := NewResolver(ResolverOptions{

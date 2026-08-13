@@ -54,6 +54,7 @@ func (r *Resolver) resolveConfig(
 			start := "KWT_SSH_CONFIG_START_" + nonce
 			end := "KWT_SSH_CONFIG_END_" + nonce
 			command := "unset " + resolveCommandEnvironment + "\n" +
+				"cd " + shellQuote(r.workingDirectory) + " || exit $?\n" +
 				renderFramedResolveCommand(argv, start, end)
 			arguments, standardInput := loginShellInvocation(shell)
 			stdout, stderr, exitCode, runErr := r.run(

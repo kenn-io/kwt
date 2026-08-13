@@ -210,6 +210,57 @@ func TestOperationClientPreservesTerminalServiceFailure(t *testing.T) {
 	assert.True(t, service.IsCode(err, service.Conflict), err)
 }
 
+func TestOperationClientCancelsAfterPreterminalEventCallbackFailure(t *testing.T) {
+	callbackErr := errors.New("progress writer failed")
+	var cancellations atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			_ = json.NewEncoder(w).Encode(service.OperationEvent{
+				OperationID: "operation-1", Sequence: 1,
+				Kind: service.OperationEventProgress, Message: "started",
+			})
+		case http.MethodDelete:
+			cancellations.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+
+	_, err := client.FollowOperation(
+		context.Background(), "operation-1", 0,
+		OperationCallbacks{Event: func(service.OperationEvent) error { return callbackErr }},
+	)
+	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
+	assert.ErrorIs(t, err, callbackErr)
+	assert.Equal(t, int32(1), cancellations.Load())
+}
+
+func TestOperationClientTerminalResultSurvivesEventCallbackFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_ = json.NewEncoder(w).Encode(service.OperationEvent{
+			OperationID: "operation-1", Sequence: 1,
+			Kind: service.OperationEventComplete, Result: json.RawMessage(`{"status":"ready"}`),
+		})
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+
+	result, err := client.FollowOperation(
+		context.Background(), "operation-1", 0,
+		OperationCallbacks{Event: func(service.OperationEvent) error {
+			return errors.New("completion writer failed")
+		}},
+	)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"status":"ready"}`, string(result))
+}
+
 func TestOperationClientPreservesInteractionRequired(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")

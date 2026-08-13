@@ -142,9 +142,23 @@ func (c *Client) followOperationAttempt(
 			)
 		}
 		sequence := event.Sequence
+		if event.Kind == service.OperationEventComplete {
+			acknowledgedSequence = sequence
+			if callbacks.Event != nil {
+				_ = callbacks.Event(event)
+			}
+			if event.Failure != nil {
+				return nil, acknowledgedSequence, service.NewDescriptorError(*event.Failure, nil)
+			}
+			return event.Result, acknowledgedSequence, nil
+		}
 		if callbacks.Event != nil {
 			if err := callbacks.Event(event); err != nil {
-				return nil, acknowledgedSequence, err
+				cancelErr := c.cancelOperationBestEffort(ctx, operationID)
+				return nil, acknowledgedSequence, operationOutcomeUnknown(
+					"operation outcome is unknown after event handling failed",
+					errors.Join(err, cancelErr),
+				)
 			}
 		}
 		switch event.Kind {
@@ -172,16 +186,19 @@ func (c *Client) followOperationAttempt(
 				)
 			}
 			acknowledgedSequence = sequence
-		case service.OperationEventComplete:
-			acknowledgedSequence = sequence
-			if event.Failure != nil {
-				return nil, acknowledgedSequence, service.NewDescriptorError(*event.Failure, nil)
-			}
-			return event.Result, acknowledgedSequence, nil
 		default:
 			acknowledgedSequence = sequence
 		}
 	}
+}
+
+func (c *Client) cancelOperationBestEffort(ctx context.Context, operationID string) error {
+	cancelContext, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		controlRequestTimeout,
+	)
+	defer cancel()
+	return c.CancelOperation(cancelContext, operationID)
 }
 
 func (c *Client) sendOperationResponse(
