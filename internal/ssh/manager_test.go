@@ -281,17 +281,56 @@ func TestManagerRejectsRouteChangeAfterConnectionPreparation(t *testing.T) {
 	})
 	expected := directSnapshot("route-one")
 	changed := directSnapshot("route-two")
+	resolveCalls := 0
 
 	_, err := manager.Acquire(
 		context.Background(),
 		LeaseRequest{Snapshot: expected},
-		func(context.Context) (RouteSnapshot, error) { return changed, nil },
+		func(context.Context) (RouteSnapshot, error) {
+			resolveCalls++
+			if resolveCalls == 1 {
+				return expected, nil
+			}
+			return changed, nil
+		},
 	)
 
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.SSHConfigurationChanged))
 	_, _, _, disconnects := persistent.counts()
 	assert.Equal(t, 1, disconnects)
+}
+
+func TestManagerExecutesFreshResolvedSnapshotInsteadOfCallerFields(t *testing.T) {
+	persistent := &fakePersistentManager{generation: 29}
+	current := directSnapshot("route-one")
+	current.Targets[0].EffectiveTarget.Hostname = "resolved.internal"
+	current.Targets[0].Projection.Arguments = []string{"-F", os.DevNull, "-o", "Ciphers=resolved"}
+	caller := current
+	caller.Targets = append([]ResolvedTarget(nil), current.Targets...)
+	caller.Targets[0].EffectiveTarget.Hostname = "injected.internal"
+	caller.Targets[0].Projection.Arguments = []string{"-F", os.DevNull, "-o", "ProxyCommand=injected"}
+	var runnerRequest LeaseRequest
+	var runnerTarget ResolvedTarget
+	manager := NewManager(ManagerOptions{
+		Persistent: persistent,
+		Runner: func(request LeaseRequest, target ResolvedTarget) (openssh.RunSSH, error) {
+			runnerRequest = request
+			runnerTarget = target
+			return func(context.Context, []string) (int, error) { return 0, nil }, nil
+		},
+	})
+
+	lease, err := manager.Acquire(
+		context.Background(),
+		LeaseRequest{Snapshot: caller},
+		func(context.Context) (RouteSnapshot, error) { return current, nil },
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, lease)
+	assert.Equal(t, current, runnerRequest.Snapshot)
+	assert.Equal(t, current.Targets[0], runnerTarget)
 }
 
 func TestManagerReportsCleanupFailureAfterRouteChange(t *testing.T) {
@@ -306,11 +345,16 @@ func TestManagerReportsCleanupFailureAfterRouteChange(t *testing.T) {
 		},
 	})
 	expected := directSnapshot("route-one")
+	resolveCalls := 0
 
 	_, err := manager.Acquire(
 		context.Background(),
 		LeaseRequest{Snapshot: expected},
 		func(context.Context) (RouteSnapshot, error) {
+			resolveCalls++
+			if resolveCalls == 1 {
+				return expected, nil
+			}
 			return directSnapshot("route-two"), nil
 		},
 	)
@@ -359,6 +403,7 @@ func TestManagerReturnsMasterlessLeaseWhenPersistenceIsUnsupported(t *testing.T)
 		},
 	})
 	snapshot := directSnapshot("route-one")
+	snapshot.Targets[0].StrictHostKeyChecking = "yes"
 
 	lease, err := manager.Acquire(
 		context.Background(),
@@ -372,6 +417,7 @@ func TestManagerReturnsMasterlessLeaseWhenPersistenceIsUnsupported(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, []string{
 		"-F", os.DevNull, "-o", "HostName=build.internal",
+		"-o", "StrictHostKeyChecking=yes",
 		"-o", "ControlMaster=no", "-o", "ControlPersist=no", "-S", "none",
 	}, arguments)
 	require.NoError(t, lease.Touch())
@@ -392,11 +438,16 @@ func TestManagerRejectsMasterlessRouteChangeAfterProjectionPreparation(t *testin
 	})
 	expected := directSnapshot("route-one")
 	expected.Targets[0].Projection.PrivateConfig = []string{`IdentityFile "C:/keys/build"`}
+	resolveCalls := 0
 
 	lease, err := manager.Acquire(
 		context.Background(),
 		LeaseRequest{Snapshot: expected},
 		func(context.Context) (RouteSnapshot, error) {
+			resolveCalls++
+			if resolveCalls == 1 {
+				return expected, nil
+			}
 			return directSnapshot("route-two"), nil
 		},
 	)

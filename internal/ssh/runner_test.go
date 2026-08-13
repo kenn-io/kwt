@@ -63,3 +63,41 @@ func TestRunnerAppliesProjectionAndPrivateConfigToEveryManagerCommand(t *testing
 		"-MNf -S /tmp/control -- deploy@build.internal"))
 	assert.NoFileExists(t, capturedArguments[1])
 }
+
+func TestRunnerEnforcesResolvedHostKeyPolicyWithoutAmbientAskpass(t *testing.T) {
+	request := LeaseRequest{
+		WorkingDirectory: t.TempDir(),
+		Environment: []string{
+			"PATH=/usr/bin",
+			"SSH_ASKPASS=/tmp/untrusted-helper",
+			"SSH_ASKPASS_REQUIRE=force",
+			"DISPLAY=:0",
+			askpassHandleEnvironment + "=untrusted-handle",
+		},
+	}
+	target := ResolvedTarget{
+		StrictHostKeyChecking: "yes",
+		Projection: ExecutionProjection{
+			Arguments: []string{"-F", os.DevNull},
+		},
+	}
+	var capturedArguments []string
+	var capturedEnvironment []string
+	runner, err := newRunner(t.TempDir(), request, target, func(
+		_ context.Context,
+		arguments []string,
+		_ string,
+		environment []string,
+	) (int, error) {
+		capturedArguments = append([]string(nil), arguments...)
+		capturedEnvironment = append([]string(nil), environment...)
+		return 0, nil
+	})
+	require.NoError(t, err)
+
+	_, err = runner(context.Background(), []string{"-MNf", "--", "build.internal"})
+
+	require.NoError(t, err)
+	assert.Contains(t, capturedArguments, "StrictHostKeyChecking=yes")
+	assert.Equal(t, []string{"PATH=/usr/bin"}, capturedEnvironment)
+}

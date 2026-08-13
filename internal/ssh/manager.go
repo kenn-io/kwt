@@ -70,11 +70,19 @@ func (m *Manager) Acquire(
 	request LeaseRequest,
 	resolve func(context.Context) (RouteSnapshot, error),
 ) (Lease, error) {
-	if len(request.Snapshot.Targets) != 1 {
-		return nil, routeUnreviewable(errors.New("SSH lifecycle requires one resolved target"))
-	}
 	if m.persistent == nil || m.runner == nil {
 		return nil, connectionFailed(errors.New("SSH connection manager is unavailable"))
+	}
+	current, err := resolve(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !sameRoute(request.Snapshot, current) {
+		return nil, configurationChanged()
+	}
+	request.Snapshot = current
+	if len(request.Snapshot.Targets) != 1 {
+		return nil, routeUnreviewable(errors.New("SSH lifecycle requires one resolved target"))
 	}
 	target := request.Snapshot.Targets[0]
 	runner, err := m.runner(request, target)
@@ -93,7 +101,7 @@ func (m *Manager) Acquire(
 	if errors.Is(err, openssh.ErrPersistentUnsupported) {
 		projectionArguments, cleanup, projectionErr := materializeProjection(
 			m.privateDirectory,
-			target.Projection,
+			executionProjection(target),
 		)
 		if projectionErr != nil {
 			return nil, connectionFailed(projectionErr)
@@ -135,7 +143,7 @@ func (m *Manager) Acquire(
 	if err != nil {
 		return nil, mapManagerError(err)
 	}
-	current, err := resolve(ctx)
+	current, err = resolve(ctx)
 	if err != nil {
 		if cleanupErr := m.disconnectUnleased(
 			identity,

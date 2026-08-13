@@ -7,6 +7,7 @@ import (
 
 	"go.kenn.io/kit/openssh"
 	"go.kenn.io/kit/safefileio"
+	"go.kenn.io/kwt/internal/credentials"
 )
 
 type sshProcessRunner func(
@@ -30,8 +31,13 @@ func newRunner(
 	target ResolvedTarget,
 	run sshProcessRunner,
 ) (openssh.RunSSH, error) {
-	projection := target.Projection
-	environment := append([]string(nil), request.Environment...)
+	projection := executionProjection(target)
+	environment := credentials.StripEnvironment(request.Environment, []string{
+		"SSH_ASKPASS",
+		"SSH_ASKPASS_REQUIRE",
+		"DISPLAY",
+		askpassHandleEnvironment,
+	})
 	return func(ctx context.Context, managerArguments []string) (int, error) {
 		arguments, cleanup, err := materializeProjection(privateDirectory, projection)
 		if err != nil {
@@ -46,6 +52,17 @@ func newRunner(
 		)
 		return exitCode, errors.Join(runErr, cleanup())
 	}, nil
+}
+
+func executionProjection(target ResolvedTarget) ExecutionProjection {
+	projection := target.Projection
+	if target.StrictHostKeyChecking != "" {
+		projection.Arguments = append(
+			append([]string(nil), projection.Arguments...),
+			"-o", "StrictHostKeyChecking="+target.StrictHostKeyChecking,
+		)
+	}
+	return projection
 }
 
 func materializeProjection(

@@ -150,13 +150,6 @@ func (s *PublicService) Acquire(
 	resolve := func(ctx context.Context) (RouteSnapshot, error) {
 		return requestContext.resolver.Resolve(ctx, resolveRequest)
 	}
-	current, err := resolve(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if !sameRoute(request.Snapshot, current) {
-		return nil, configurationChanged()
-	}
 	if err := s.initializeManager(requestContext.config.Config.SSH.IdleTimeout); err != nil {
 		return nil, err
 	}
