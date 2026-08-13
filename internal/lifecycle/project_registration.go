@@ -123,7 +123,11 @@ func projectRegistrationTransitionIdentities(
 	if err != nil {
 		return nil, err
 	}
-	identities := []string{identity}
+	pathIdentity, err := pathLifecycleIdentity(next.Effective.Path)
+	if err != nil {
+		return nil, err
+	}
+	identities := []string{identity, pathIdentity}
 	for _, registration := range snapshot.Projects {
 		if !projectRegistrationUpdateMatches(registration, next) {
 			continue
@@ -139,6 +143,11 @@ func projectRegistrationTransitionIdentities(
 			return nil, identityErr
 		}
 		identities = append(identities, identity)
+		pathIdentity, identityErr := pathLifecycleIdentity(registration.Effective.Path)
+		if identityErr != nil {
+			return nil, identityErr
+		}
+		identities = append(identities, pathIdentity)
 	}
 	slices.Sort(identities)
 	return slices.Compact(identities), nil

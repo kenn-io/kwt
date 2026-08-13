@@ -90,26 +90,84 @@ func TestProjectClaimRejectsRegistrationRemovedWhileWaiting(t *testing.T) {
 	assert.True(t, service.IsCode(err, service.RegistrationChanged))
 }
 
-func TestObserveProjectClaimAllowsUnregisteredRepository(t *testing.T) {
+func TestObserveProjectClaimUsesPathIdentityForUnregisteredRepository(t *testing.T) {
 	home := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), nil, 0o600))
+	path := t.TempDir()
 
-	claim, err := ObserveProjectClaim(context.Background(), home, t.TempDir(), testExpansion(t))
+	claim, err := ObserveProjectClaim(context.Background(), home, path, testExpansion(t))
 
 	require.NoError(t, err)
-	assert.Nil(t, claim)
+	require.NotNil(t, claim)
+	assert.False(t, claim.Registered)
+	identity, err := pathLifecycleIdentity(path)
+	require.NoError(t, err)
+	assert.Equal(t, identity, claim.Identity)
 }
 
-func TestRequiredProjectClaimRejectsUnregisteredRepository(t *testing.T) {
+func TestRequiredProjectClaimAcceptsUnchangedUnregisteredRepository(t *testing.T) {
 	home := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), nil, 0o600))
+	path := t.TempDir()
+	claim, err := ObserveProjectClaim(
+		context.Background(), home, path, testExpansion(t),
+	)
+	require.NoError(t, err)
 
 	release, err := AcquireRequiredProjectClaim(
-		context.Background(), home, nil,
+		context.Background(), home, claim,
 	)
 
+	require.NoError(t, err)
+	require.NotNil(t, release)
+	require.NoError(t, release())
+}
+
+func TestUnregisteredClaimRejectsRegistrationAddedWhileWaiting(t *testing.T) {
+	home := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), nil, 0o600))
+	path := t.TempDir()
+	expansion := testExpansion(t)
+	claim, err := ObserveProjectClaim(context.Background(), home, path, expansion)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
+		"[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'widget'\npath = '"+path+"'\n",
+	), 0o600))
+
+	release, err := AcquireRequiredProjectClaim(context.Background(), home, claim)
 	assert.Nil(t, release)
 	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+}
+
+func TestProjectRegistrationTransitionWaitsForUnregisteredPathClaim(t *testing.T) {
+	home := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), nil, 0o600))
+	path := t.TempDir()
+	expansion := testExpansion(t)
+	claim, err := ObserveProjectClaim(context.Background(), home, path, expansion)
+	require.NoError(t, err)
+	release, err := AcquireRequiredProjectClaim(context.Background(), home, claim)
+	require.NoError(t, err)
+
+	mutationStarted := make(chan struct{})
+	done := make(chan error, 1)
+	project := models.Project{Repository: "github.com/acme/widget", Name: "widget", Path: path}
+	go func() {
+		done <- TransitionProjectRegistration(
+			context.Background(), home, expansion, project,
+			func() error {
+				close(mutationStarted)
+				return nil
+			},
+		)
+	}()
+	select {
+	case <-mutationStarted:
+		t.Fatal("registration started while the unregistered path was in use")
+	case <-time.After(30 * time.Millisecond):
+	}
+	require.NoError(t, release())
+	require.NoError(t, <-done)
 }
 
 func TestProjectRegistrationTransitionWaitsForExistingIdentity(t *testing.T) {
@@ -245,5 +303,10 @@ func TestProjectRegistrationTransitionDeduplicatesRepositoryCaseVariants(t *test
 	)
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"github.com/acme/widget"}, identities)
+	pathIdentity, err := pathLifecycleIdentity(path)
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"github.com/acme/widget",
+		pathIdentity,
+	}, identities)
 }

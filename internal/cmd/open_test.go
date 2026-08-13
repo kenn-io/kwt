@@ -675,17 +675,6 @@ func TestOrdinaryOpenCannotRaceGuardedRemoval(t *testing.T) {
 	require.NoError(t, err)
 	initCommandTestConfig(t, t.TempDir())
 	home := os.Getenv("KWT_HOME")
-	configPath := filepath.Join(home, "config.toml")
-	file, err := os.OpenFile(configPath, os.O_APPEND|os.O_WRONLY, 0)
-	require.NoError(t, err)
-	_, err = fmt.Fprintf(
-		file,
-		"\n[[projects]]\nrepository = %q\nname = 'repository'\npath = %q\n",
-		repoPath,
-		repoPath,
-	)
-	require.NoError(t, err)
-	require.NoError(t, file.Close())
 	expansion, err := kwt.CaptureExpansionContext()
 	require.NoError(t, err)
 	removalGuard := &blockingOpenRemovalGuard{

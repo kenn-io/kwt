@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/utils"
+	internalworktree "go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/service"
 )
 
@@ -21,6 +22,19 @@ type ProjectClaim struct {
 	Registration config.ProjectRegistration
 	Identity     string
 	Expansion    ExpansionContext
+	MainPath     string
+	Registered   bool
+}
+
+func pathLifecycleIdentity(path string) (string, error) {
+	info, err := internalworktree.RepositoryInfoFromExactLocalPath(path)
+	if err != nil {
+		return "", fmt.Errorf("derive project path identity: %w", err)
+	}
+	if info == nil || info.FullPath == "" {
+		return "", fmt.Errorf("derive project path identity: empty identity")
+	}
+	return info.FullPath, nil
 }
 
 func acquireProjectFence(
@@ -102,7 +116,16 @@ func ObserveProjectClaim(
 		match = candidate
 	}
 	if match == nil {
-		return nil, nil
+		identity, identityErr := pathLifecycleIdentity(effectiveMainPath)
+		if identityErr != nil {
+			return nil, identityErr
+		}
+		return &ProjectClaim{
+			Identity:   identity,
+			Expansion:  expansion,
+			MainPath:   effectiveMainPath,
+			Registered: false,
+		}, nil
 	}
 	identity, err := resolveProjectIdentity(
 		ctx, *match, credentials.ProtectedNames(snapshot.Config)...,
@@ -114,6 +137,8 @@ func ObserveProjectClaim(
 		Registration: *match,
 		Identity:     identity,
 		Expansion:    expansion,
+		MainPath:     effectiveMainPath,
+		Registered:   true,
 	}, nil
 }
 
@@ -179,6 +204,18 @@ func projectClaimMatches(
 	)
 	if err != nil {
 		return false, err
+	}
+	if !claim.Registered {
+		for _, candidate := range current.Projects {
+			if utils.PathKey(candidate.Effective.Path) == utils.PathKey(claim.MainPath) {
+				return false, nil
+			}
+		}
+		identity, identityErr := pathLifecycleIdentity(claim.MainPath)
+		if identityErr != nil {
+			return false, identityErr
+		}
+		return claim.Identity == identity, nil
 	}
 	for _, candidate := range current.Projects {
 		if !candidate.SamePersistedEntry(claim.Registration) {

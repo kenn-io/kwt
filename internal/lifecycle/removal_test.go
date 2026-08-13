@@ -133,6 +133,30 @@ func TestRemovalServiceTerminatesConfirmedSessionBeforeRemovingWorktree(t *testi
 	assert.NoDirExists(t, worktreePath)
 }
 
+func TestGuardedRemovalSupportsUnregisteredRepository(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "unregistered-guarded")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	home := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), nil, 0o600))
+	guard := &recordingRemovalSessionGuard{}
+
+	result, err := NewRemovalService(RemovalServiceOptions{
+		Home: home, SessionGuard: guard,
+	}).Remove(context.Background(), RemovalRequest{
+		RepositoryPath: repositoryPath,
+		Path:           worktreePath, ExpectedGeneration: generation,
+		Expansion: testExpansion(t),
+		Session: &RemovalSessionCondition{
+			SessionName: "kwt-workspace-unregistered", Absent: true,
+		},
+	})
+
+	require.NoError(t, err)
+	assert.True(t, guard.called)
+	assert.True(t, result.WorktreeRemoved)
+}
+
 func TestRemovalServicePreservesWorktreeWhenSessionConditionChanges(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "guarded-conflict")
 	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
