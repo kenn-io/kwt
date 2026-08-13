@@ -14,15 +14,19 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/registry"
+	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/service"
 )
 
 type recordingRemovalSessionGuard struct {
-	condition RemovalSessionCondition
-	err       error
-	called    bool
-	path      string
-	pathLive  bool
+	condition  RemovalSessionCondition
+	err        error
+	quiesced   bool
+	terminated bool
+	resumed    bool
+	path       string
+	pathLive   bool
+	onQuiesce  func() error
 }
 
 type signalingRemovalSessionGuard struct {
@@ -30,25 +34,45 @@ type signalingRemovalSessionGuard struct {
 	err    error
 }
 
-func (g *signalingRemovalSessionGuard) ValidateAndTerminate(
+func (g *signalingRemovalSessionGuard) Quiesce(
 	_ context.Context,
 	_ RemovalSessionCondition,
-) error {
+) (tmux.RemovalSessionLease, error) {
 	close(g.called)
-	return g.err
+	return nil, g.err
 }
 
-func (g *recordingRemovalSessionGuard) ValidateAndTerminate(
+func (g *recordingRemovalSessionGuard) Quiesce(
 	_ context.Context,
 	condition RemovalSessionCondition,
-) error {
-	g.called = true
+) (tmux.RemovalSessionLease, error) {
+	g.quiesced = true
 	g.condition = condition
 	if g.path != "" {
 		_, err := os.Stat(g.path)
 		g.pathLive = err == nil
 	}
-	return g.err
+	if g.err != nil {
+		return nil, g.err
+	}
+	if g.onQuiesce != nil {
+		if err := g.onQuiesce(); err != nil {
+			return nil, err
+		}
+	}
+	return recordingRemovalSessionLease{guard: g}, nil
+}
+
+type recordingRemovalSessionLease struct{ guard *recordingRemovalSessionGuard }
+
+func (l recordingRemovalSessionLease) Terminate(context.Context) error {
+	l.guard.terminated = true
+	return nil
+}
+
+func (l recordingRemovalSessionLease) Resume() error {
+	l.guard.resumed = true
+	return nil
 }
 
 func TestRemovalServiceRemovesWorktreeAndRegistryRecord(t *testing.T) {
@@ -126,7 +150,8 @@ func TestRemovalServiceTerminatesConfirmedSessionBeforeRemovingWorktree(t *testi
 	})
 
 	require.NoError(t, err)
-	assert.True(t, guard.called)
+	assert.True(t, guard.quiesced)
+	assert.True(t, guard.terminated)
 	assert.True(t, guard.pathLive, "session guard must run before checkout removal")
 	assert.Equal(t, condition, guard.condition)
 	assert.True(t, result.WorktreeRemoved)
@@ -153,7 +178,8 @@ func TestGuardedRemovalSupportsUnregisteredRepository(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.True(t, guard.called)
+	assert.True(t, guard.quiesced)
+	assert.True(t, guard.terminated)
 	assert.True(t, result.WorktreeRemoved)
 }
 
@@ -207,7 +233,7 @@ func TestRemovalServicePreservesConfirmedSessionWhenDirtyWorktreeCannotBeRemoved
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.Conflict))
 	assert.False(t, result.WorktreeRemoved)
-	assert.False(t, guard.called, "dirty worktree must fail before terminating its session")
+	assert.False(t, guard.quiesced, "dirty worktree must fail before quiescing its session")
 	assert.DirExists(t, worktreePath)
 }
 
@@ -263,7 +289,8 @@ func TestRemovalServiceUsesClientExpansionForProjectFence(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.True(t, guard.called)
+	assert.True(t, guard.quiesced)
+	assert.True(t, guard.terminated)
 	assert.True(t, result.WorktreeRemoved)
 }
 
@@ -366,7 +393,37 @@ func TestRemovalServicePreservesConfirmedSessionForInitializedSubmodule(t *testi
 
 	require.Error(t, err)
 	assert.False(t, result.WorktreeRemoved)
-	assert.False(t, guard.called, "initialized submodule must fail before terminating its session")
+	assert.False(t, guard.quiesced, "initialized submodule must fail before quiescing its session")
+	assert.DirExists(t, worktreePath)
+}
+
+func TestRemovalServiceResumesSessionWhenCheckoutChangesDuringQuiesce(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "guarded-quiesce-race")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	home := t.TempDir()
+	registerRemovalRepository(t, home, repositoryPath)
+	guard := &recordingRemovalSessionGuard{onQuiesce: func() error {
+		return os.WriteFile(filepath.Join(worktreePath, "late-change.txt"), []byte("keep me\n"), 0o644)
+	}}
+
+	result, err := NewRemovalService(RemovalServiceOptions{
+		Home: home, SessionGuard: guard,
+	}).Remove(context.Background(), RemovalRequest{
+		RepositoryPath: repositoryPath,
+		Path:           worktreePath, ExpectedGeneration: generation,
+		Expansion: testExpansion(t),
+		Session: &RemovalSessionCondition{
+			SessionName: "kwt-workspace-quiesce-race",
+			ServerPID:   "123", SessionID: "$4", CreatedAt: "1720000000",
+		},
+	})
+
+	require.Error(t, err)
+	assert.False(t, result.WorktreeRemoved)
+	assert.True(t, guard.quiesced)
+	assert.True(t, guard.resumed)
+	assert.False(t, guard.terminated)
 	assert.DirExists(t, worktreePath)
 }
 

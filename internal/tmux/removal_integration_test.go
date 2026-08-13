@@ -4,13 +4,59 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRemovalSessionGuardQuiescesAndResumesCapturedSession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires POSIX tmux")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is not installed")
+	}
+	tempDir := t.TempDir()
+	outputPath := filepath.Join(tempDir, "activity")
+	scriptPath := filepath.Join(tempDir, "activity.sh")
+	require.NoError(t, os.WriteFile(scriptPath, []byte(
+		"while :; do printf x >> \"$1\"; sleep 0.02; done\n",
+	), 0o700))
+	command := NewTmuxCommandInTempDir("tmux", tempDir)
+	const session = "kwt-removal-quiesce-test"
+	require.NoError(t, command.RunCommandContext(
+		context.Background(), "new-session", "-d", "-s", session,
+		"/bin/sh", scriptPath, outputPath,
+	))
+	t.Cleanup(func() { _ = command.RunCommandContext(context.Background(), "kill-server") })
+	require.Eventually(t, func() bool {
+		info, err := os.Stat(outputPath)
+		return err == nil && info.Size() > 2
+	}, time.Second, 10*time.Millisecond)
+	condition := removalConditionForTest(t, command, session, tempDir)
+
+	lease, err := NewRemovalSessionGuard("tmux").Quiesce(
+		context.Background(), condition,
+	)
+	require.NoError(t, err)
+	quiesced, err := os.Stat(outputPath)
+	require.NoError(t, err)
+	time.Sleep(100 * time.Millisecond)
+	stillQuiesced, err := os.Stat(outputPath)
+	require.NoError(t, err)
+	assert.Equal(t, quiesced.Size(), stillQuiesced.Size())
+
+	require.NoError(t, lease.Resume())
+	require.Eventually(t, func() bool {
+		info, statErr := os.Stat(outputPath)
+		return statErr == nil && info.Size() > stillQuiesced.Size()
+	}, time.Second, 10*time.Millisecond)
+}
 
 func TestRemovalSessionGuardTerminatesOnlyCapturedIdentity(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -37,7 +83,7 @@ func TestRemovalSessionGuardTerminatesOnlyCapturedIdentity(t *testing.T) {
 	require.Len(t, parts, 4)
 
 	guard := NewRemovalSessionGuard("tmux")
-	err = guard.ValidateAndTerminate(context.Background(), RemovalSessionCondition{
+	err = quiesceAndTerminateForTest(guard, RemovalSessionCondition{
 		SessionName: session, ServerPID: parts[0], SessionID: parts[1],
 		CreatedAt: parts[2], SocketDirectory: tempDir,
 	})
@@ -71,7 +117,7 @@ func TestRemovalSessionGuardTerminatesCapturedIdentityOnNamedSocket(t *testing.T
 	require.Len(t, parts, 4)
 
 	guard := NewRemovalSessionGuard("tmux")
-	err = guard.ValidateAndTerminate(context.Background(), RemovalSessionCondition{
+	err = quiesceAndTerminateForTest(guard, RemovalSessionCondition{
 		SessionName: session, ServerPID: parts[0], SessionID: parts[1],
 		CreatedAt: parts[2], SocketName: socket,
 	})
@@ -110,7 +156,7 @@ func TestRemovalSessionGuardTerminatesCapturedIdentityOnNamedSocketInTempDir(t *
 	require.Len(t, parts, 4)
 
 	guard := NewRemovalSessionGuard("tmux")
-	err = guard.ValidateAndTerminate(context.Background(), RemovalSessionCondition{
+	err = quiesceAndTerminateForTest(guard, RemovalSessionCondition{
 		SessionName: session, ServerPID: parts[0], SessionID: parts[1],
 		CreatedAt: parts[2], SocketName: socket, SocketDirectory: tempDir,
 	})
@@ -144,7 +190,7 @@ func TestRemovalSessionGuardRejectsReplacementIdentity(t *testing.T) {
 	require.Len(t, parts, 4)
 
 	guard := NewRemovalSessionGuard("tmux")
-	err = guard.ValidateAndTerminate(context.Background(), RemovalSessionCondition{
+	err = quiesceAndTerminateForTest(guard, RemovalSessionCondition{
 		SessionName: session, ServerPID: differentCanonicalPID(parts[0]), SessionID: parts[1],
 		CreatedAt: parts[2], SocketDirectory: tempDir,
 	})
@@ -188,7 +234,7 @@ func TestRemovalSessionGuardRejectsRenamedSessionAndSameNameReplacement(t *testi
 	))
 
 	guard := NewRemovalSessionGuard("tmux")
-	err = guard.ValidateAndTerminate(context.Background(), RemovalSessionCondition{
+	err = quiesceAndTerminateForTest(guard, RemovalSessionCondition{
 		SessionName: original, ServerPID: parts[0], SessionID: parts[1],
 		CreatedAt: parts[2], SocketDirectory: tempDir,
 	})
@@ -217,13 +263,44 @@ func TestRemovalSessionGuardAcceptsMissingNamedSocketWhenAbsenceWasConfirmed(t *
 	}
 
 	guard := NewRemovalSessionGuard("tmux")
-	err := guard.ValidateAndTerminate(context.Background(), RemovalSessionCondition{
+	err := quiesceAndTerminateForTest(guard, RemovalSessionCondition{
 		SessionName: "kwt-missing-protected-session",
 		Absent:      true,
 		SocketName:  "kwt-missing-protected-socket",
 	})
 
 	require.NoError(t, err)
+}
+
+func quiesceAndTerminateForTest(
+	guard RemovalSessionGuard,
+	condition RemovalSessionCondition,
+) error {
+	lease, err := guard.Quiesce(context.Background(), condition)
+	if err != nil {
+		return err
+	}
+	return lease.Terminate(context.Background())
+}
+
+func removalConditionForTest(
+	t *testing.T,
+	command *TmuxCommand,
+	session string,
+	socketDirectory string,
+) RemovalSessionCondition {
+	t.Helper()
+	output, err := command.RunCommandOutputContext(
+		context.Background(), "list-sessions", "-F",
+		"#{pid}|#{session_id}|#{session_created}|#{session_name}",
+	)
+	require.NoError(t, err)
+	parts := strings.SplitN(strings.TrimSpace(output), "|", 4)
+	require.Len(t, parts, 4)
+	return RemovalSessionCondition{
+		SessionName: session, ServerPID: parts[0], SessionID: parts[1],
+		CreatedAt: parts[2], SocketDirectory: socketDirectory,
+	}
 }
 
 func TestRemovalSessionConditionRejectsNoncanonicalIdentity(t *testing.T) {

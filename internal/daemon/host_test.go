@@ -334,6 +334,46 @@ func TestServeRedactsConfiguredFleetTokenWithoutRequestExpansion(t *testing.T) {
 	assert.Contains(t, string(logBody), "[redacted]")
 }
 
+func TestServeRedactsRemovalSecretsChangedAfterStartup(t *testing.T) {
+	const (
+		secretName  = "KWT_REMOVAL_SECRET"
+		secretValue = "removal-secret-after-start"
+	)
+	home := t.TempDir()
+	t.Setenv(secretName, "")
+	cause := errors.New("removal credential " + secretValue)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, ServeOptions{
+			Home:  home,
+			Build: Build{Version: "v1.0.0", Revision: "abc"},
+			Config: models.DaemonConfig{
+				IdleTimeout: time.Hour, AutoRestart: "newer",
+				ReplacementGrace: time.Second,
+			},
+			Remover: &fakeRemover{err: cause},
+		})
+	}()
+
+	observation := waitForRuntime(t, home)
+	require.NoError(t, os.Setenv(secretName, secretValue))
+	_, err := observation.Client.RemoveWorktree(
+		context.Background(),
+		kwt.RemovalRequest{Path: "/worktrees/topic"},
+	)
+	require.Error(t, err)
+	_, err = observation.Client.Shutdown(context.Background(), "stop")
+	require.NoError(t, err)
+	require.NoError(t, <-done)
+
+	logBody, err := os.ReadFile(filepath.Join(home, backgroundLogName))
+	require.NoError(t, err)
+	assert.NotContains(t, string(logBody), secretValue)
+	assert.Contains(t, string(logBody), "[redacted]")
+}
+
 func TestServeRefusesASecondWritableOwner(t *testing.T) {
 	home := t.TempDir()
 	store := RuntimeStore(home)

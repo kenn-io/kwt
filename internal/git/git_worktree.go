@@ -1160,7 +1160,7 @@ func (g *Git) RemoveWorktreeTransaction(
 		deleteBranch,
 		forceBranch,
 		false,
-		func(remove func() error) (bool, error) {
+		func(_ func() error, remove func() error) (bool, error) {
 			err := remove()
 			return err == nil || WorktreeWasRemoved(err), err
 		},
@@ -1170,8 +1170,9 @@ func (g *Git) RemoveWorktreeTransaction(
 
 // RemoveWorktreeTransactionAfterClaim revalidates under the repository
 // mutation lock, then lets the caller atomically claim its policy record
-// around the supplied lock-owned removal. Callers must invoke remove
-// synchronously at most once.
+// around a repeatable native-removal preflight and the supplied lock-owned
+// removal. Callers must invoke both closures synchronously and remove at most
+// once.
 func (g *Git) RemoveWorktreeTransactionAfterClaim(
 	path string,
 	expectedGeneration string,
@@ -1179,7 +1180,7 @@ func (g *Git) RemoveWorktreeTransactionAfterClaim(
 	deleteBranch bool,
 	forceBranch bool,
 	preflightNativeRemoval bool,
-	claim func(remove func() error) (bool, error),
+	claim func(preflight func() error, remove func() error) (bool, error),
 ) (WorktreeRemovalResult, bool, error) {
 	result := WorktreeRemovalResult{Path: path}
 	if !filepath.IsAbs(path) {
@@ -1223,7 +1224,13 @@ func (g *Git) RemoveWorktreeTransactionAfterClaim(
 		}
 		result.Branch = selected.Branch
 		var claimErr error
-		claimed, claimErr = claim(func() error {
+		preflight := func() error {
+			if !preflightNativeRemoval || forceWorktree {
+				return nil
+			}
+			return g.validateNativeWorktreeRemovalLocked(path, nil)
+		}
+		claimed, claimErr = claim(preflight, func() error {
 			removalErr := g.removeWorktree(path, forceWorktree, true, nil)
 			if removalErr != nil && !WorktreeWasRemoved(removalErr) {
 				return removalErr

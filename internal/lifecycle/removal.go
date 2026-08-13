@@ -148,10 +148,12 @@ func (s *removalService) Remove(
 		request.DeleteBranch,
 		request.ForceDeleteBranch,
 		request.Session != nil,
-		func(remove func() error) (bool, error) {
+		func(preflight func() error, remove func() error) (bool, error) {
 			return reg.RemoveIfMatchAfter(request.Path, record, func() error {
 				if request.Session != nil {
-					if err := s.sessionGuard.ValidateAndTerminate(ctx, *request.Session); err != nil {
+					if err := quiescePreflightAndTerminate(
+						ctx, s.sessionGuard, *request.Session, preflight,
+					); err != nil {
 						return err
 					}
 				}
@@ -184,6 +186,32 @@ func (s *removalService) Remove(
 		return result, classifyRemovalError(mutationErr, result)
 	}
 	return result, nil
+}
+
+func quiescePreflightAndTerminate(
+	ctx context.Context,
+	guard tmux.RemovalSessionGuard,
+	condition RemovalSessionCondition,
+	preflight func() error,
+) (resultErr error) {
+	lease, err := guard.Quiesce(ctx, condition)
+	if err != nil {
+		return err
+	}
+	terminated := false
+	defer func() {
+		if !terminated {
+			resultErr = errors.Join(resultErr, lease.Resume())
+		}
+	}()
+	if err := preflight(); err != nil {
+		return err
+	}
+	if err := lease.Terminate(ctx); err != nil {
+		return err
+	}
+	terminated = true
+	return nil
 }
 
 func acquireRemovalProjectFence(

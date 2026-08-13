@@ -136,12 +136,16 @@ func NewServer(opts ServerOptions) http.Handler {
 			func(ctx context.Context, input *removalInput) (*removalOutput, error) {
 				release, err := reserveInventoryWork(opts)
 				if err != nil {
-					return nil, reportProblem(opts, "/api/v1/worktrees/remove", err)
+					return nil, reportProblemWithExpansion(
+						opts, "/api/v1/worktrees/remove", err, input.Body.Expansion,
+					)
 				}
 				defer release()
 				result, err := opts.Remover.Remove(ctx, input.Body)
 				if err != nil {
-					return nil, reportProblem(opts, "/api/v1/worktrees/remove", err)
+					return nil, reportProblemWithExpansion(
+						opts, "/api/v1/worktrees/remove", err, input.Body.Expansion,
+					)
 				}
 				return &removalOutput{Body: result}, nil
 			},

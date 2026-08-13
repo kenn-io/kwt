@@ -34,14 +34,19 @@ type blockingOpenRemovalGuard struct {
 	release chan struct{}
 }
 
-func (g *blockingOpenRemovalGuard) ValidateAndTerminate(
+func (g *blockingOpenRemovalGuard) Quiesce(
 	_ context.Context,
 	_ tmux.RemovalSessionCondition,
-) error {
+) (tmux.RemovalSessionLease, error) {
 	close(g.entered)
 	<-g.release
-	return nil
+	return openTestRemovalLease{}, nil
 }
+
+type openTestRemovalLease struct{}
+
+func (openTestRemovalLease) Terminate(context.Context) error { return nil }
+func (openTestRemovalLease) Resume() error                   { return nil }
 
 type signalingOpenWorkspaceRunner struct {
 	ensure chan struct{}

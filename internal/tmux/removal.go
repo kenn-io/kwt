@@ -1,7 +1,9 @@
 package tmux
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	pathpkg "path"
 	"strconv"
@@ -32,11 +34,19 @@ func (e *RemovalSessionConditionError) Error() string {
 	return e.Reason
 }
 
-// RemovalSessionGuard validates and, when authorized, terminates one exact
-// tmux session. The lifecycle service invokes it while holding the worktree's
-// creation/removal lock.
+// RemovalSessionLease keeps an exact tmux session quiescent while the caller
+// performs its final worktree-removal preflight.
+type RemovalSessionLease interface {
+	Terminate(context.Context) error
+	Resume() error
+}
+
+// RemovalSessionGuard validates and quiesces one exact tmux session. The
+// lifecycle service invokes it while holding the worktree's creation/removal
+// lock, then either terminates the lease or resumes it after a failed final
+// preflight.
 type RemovalSessionGuard interface {
-	ValidateAndTerminate(context.Context, RemovalSessionCondition) error
+	Quiesce(context.Context, RemovalSessionCondition) (RemovalSessionLease, error)
 }
 
 type removalSessionGuard struct{ command string }
@@ -50,16 +60,16 @@ func NewRemovalSessionGuard(command string) RemovalSessionGuard {
 	return &removalSessionGuard{command: command}
 }
 
-func (g *removalSessionGuard) ValidateAndTerminate(
+func (g *removalSessionGuard) Quiesce(
 	ctx context.Context,
 	condition RemovalSessionCondition,
-) error {
+) (RemovalSessionLease, error) {
 	if err := validateRemovalSessionCondition(condition); err != nil {
-		return err
+		return nil, err
 	}
 	command := newRemovalTmuxCommand(g.command, condition)
 	if !condition.Absent {
-		return terminateMatchingSession(ctx, command, condition)
+		return quiesceMatchingSession(ctx, command, condition)
 	}
 	const format = "#{pid}|#{session_id}|#{session_created}|#{session_name}"
 	output, stderr, err := command.runCommandOutputContextWithStderr(
@@ -67,9 +77,11 @@ func (g *removalSessionGuard) ValidateAndTerminate(
 	)
 	if err != nil {
 		if isExplicitlyAbsentTmuxDiagnostic(stderr) {
-			return nil
+			return noRemovalSessionLease{}, nil
 		}
-		return fmt.Errorf("inspect tmux sessions: %w, stderr: %s", err, strings.TrimSpace(stderr))
+		return nil, fmt.Errorf(
+			"inspect tmux sessions: %w, stderr: %s", err, strings.TrimSpace(stderr),
+		)
 	}
 
 	var matching []string
@@ -81,9 +93,152 @@ func (g *removalSessionGuard) ValidateAndTerminate(
 		}
 	}
 	if matching == nil {
-		return nil
+		return noRemovalSessionLease{}, nil
 	}
-	return &RemovalSessionConditionError{Reason: "tmux session started after confirmation"}
+	return nil, &RemovalSessionConditionError{Reason: "tmux session started after confirmation"}
+}
+
+type noRemovalSessionLease struct{}
+
+func (noRemovalSessionLease) Terminate(context.Context) error { return nil }
+func (noRemovalSessionLease) Resume() error                   { return nil }
+
+type liveRemovalSessionLease struct {
+	command   *TmuxCommand
+	condition RemovalSessionCondition
+	groups    []int
+	serverPID int
+}
+
+func (l *liveRemovalSessionLease) Terminate(ctx context.Context) error {
+	args := terminateMatchingSessionArgs(l.condition)
+	cmd := l.command.newCmd(ctx, args)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return errors.Join(
+			fmt.Errorf("start confirmed tmux termination: %w", err),
+			l.Resume(),
+		)
+	}
+	serverErr := resumeRemovalServer(l.serverPID)
+	l.serverPID = 0
+	if serverErr != nil {
+		_ = cmd.Process.Kill()
+	}
+	waitErr := cmd.Wait()
+	groupsErr := resumeRemovalProcessGroups(l.groups)
+	l.groups = nil
+	return errors.Join(
+		classifyTerminateMatchingSession(
+			stdout.String(), stderr.String(), waitErr,
+		),
+		serverErr,
+		groupsErr,
+	)
+}
+
+func (l *liveRemovalSessionLease) Resume() error {
+	serverPID := l.serverPID
+	l.serverPID = 0
+	groups := l.groups
+	l.groups = nil
+	return errors.Join(
+		resumeRemovalServer(serverPID),
+		resumeRemovalProcessGroups(groups),
+	)
+}
+
+func quiesceMatchingSession(
+	ctx context.Context,
+	command *TmuxCommand,
+	condition RemovalSessionCondition,
+) (_ RemovalSessionLease, resultErr error) {
+	groups := make([]int, 0)
+	serverPID, err := strconv.Atoi(condition.ServerPID)
+	if err != nil || serverPID <= 1 {
+		return nil, &RemovalSessionConditionError{Reason: "tmux session identity is invalid"}
+	}
+	serverSuspended := false
+	defer func() {
+		if resultErr != nil {
+			var serverErr error
+			if serverSuspended {
+				serverErr = resumeRemovalServer(serverPID)
+			}
+			resultErr = errors.Join(
+				resultErr, serverErr, resumeRemovalProcessGroups(groups),
+			)
+		}
+	}()
+	panePIDs, err := matchingSessionPanePIDs(ctx, command, condition)
+	if err != nil {
+		return nil, err
+	}
+	if err := suspendRemovalServer(serverPID); err != nil {
+		return nil, err
+	}
+	// tmux immediately continues a stopped pane leader while its server is
+	// running. Hold the server only across this final removability transaction
+	// so the target process tree cannot resume and mutate the checkout.
+	serverSuspended = true
+	seen := make(map[int]struct{})
+	for range 8 {
+		newGroups, err := suspendRemovalProcessSessions(ctx, panePIDs, seen)
+		groups = append(groups, newGroups...)
+		if err != nil {
+			return nil, err
+		}
+		if len(newGroups) == 0 {
+			serverSuspended = false
+			return &liveRemovalSessionLease{
+				command: command, condition: condition, groups: groups,
+				serverPID: serverPID,
+			}, nil
+		}
+	}
+	return nil, fmt.Errorf("quiesce confirmed tmux session: process set did not stabilize")
+}
+
+func matchingSessionPanePIDs(
+	ctx context.Context,
+	command *TmuxCommand,
+	condition RemovalSessionCondition,
+) ([]int, error) {
+	identity := removalSessionIdentityFormat(condition)
+	target := condition.SessionID + ":"
+	const changed = "kwt-removal-identity-changed"
+	output, stderr, err := command.runCommandOutputContextWithStderr(
+		ctx,
+		"if-shell", "-F", "-t", target, identity,
+		"list-panes -s -t "+target+" -F '#{pane_pid}'",
+		"display-message -p "+changed,
+	)
+	if err != nil {
+		if isExplicitlyAbsentTmuxDiagnostic(stderr) {
+			return nil, &RemovalSessionConditionError{Reason: "tmux session exited after confirmation"}
+		}
+		return nil, fmt.Errorf(
+			"inspect confirmed tmux session: %w, stderr: %s",
+			err, strings.TrimSpace(stderr),
+		)
+	}
+	if strings.TrimSpace(output) == changed {
+		return nil, &RemovalSessionConditionError{Reason: "tmux session identity changed after confirmation"}
+	}
+	var pids []int
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		pid, parseErr := strconv.Atoi(strings.TrimSpace(line))
+		if parseErr != nil || pid <= 1 {
+			return nil, fmt.Errorf("inspect confirmed tmux session: invalid pane process")
+		}
+		pids = append(pids, pid)
+	}
+	if len(pids) == 0 {
+		return nil, fmt.Errorf("inspect confirmed tmux session: no pane processes")
+	}
+	return pids, nil
 }
 
 func newRemovalTmuxCommand(command string, condition RemovalSessionCondition) *TmuxCommand {
@@ -107,25 +262,17 @@ func newRemovalTmuxCommand(command string, condition RemovalSessionCondition) *T
 
 const removalIdentityChanged = "kwt-removal-identity-changed"
 
-func terminateMatchingSession(
-	ctx context.Context,
-	command *TmuxCommand,
-	condition RemovalSessionCondition,
-) error {
-	identity := fmt.Sprintf(
-		"#{&&:#{==:#{pid},%s},#{&&:#{==:#{session_id},%s},#{&&:#{==:#{session_created},%s},#{==:#{session_name},%s}}}}",
-		condition.ServerPID,
-		condition.SessionID,
-		condition.CreatedAt,
-		escapeTmuxFormatLiteral(condition.SessionName),
-	)
+func terminateMatchingSessionArgs(condition RemovalSessionCondition) []string {
+	identity := removalSessionIdentityFormat(condition)
 	target := condition.SessionID + ":"
-	output, stderr, err := command.runCommandOutputContextWithStderr(
-		ctx,
+	return []string{
 		"if-shell", "-F", "-t", target, identity,
-		"kill-session -t "+target,
-		"display-message -p "+removalIdentityChanged,
-	)
+		"kill-session -t " + target,
+		"display-message -p " + removalIdentityChanged,
+	}
+}
+
+func classifyTerminateMatchingSession(output, stderr string, err error) error {
 	if err != nil {
 		if isExplicitlyAbsentTmuxDiagnostic(stderr) {
 			return &RemovalSessionConditionError{Reason: "tmux session exited after confirmation"}
@@ -143,6 +290,16 @@ func terminateMatchingSession(
 		return fmt.Errorf("terminate confirmed tmux session: unexpected tmux output")
 	}
 	return nil
+}
+
+func removalSessionIdentityFormat(condition RemovalSessionCondition) string {
+	return fmt.Sprintf(
+		"#{&&:#{==:#{pid},%s},#{&&:#{==:#{session_id},%s},#{&&:#{==:#{session_created},%s},#{==:#{session_name},%s}}}}",
+		condition.ServerPID,
+		condition.SessionID,
+		condition.CreatedAt,
+		escapeTmuxFormatLiteral(condition.SessionName),
+	)
 }
 
 func escapeTmuxFormatLiteral(value string) string {
