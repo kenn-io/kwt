@@ -83,6 +83,27 @@ func suspendRemovalServer(pid int) error {
 	return nil
 }
 
+func waitRemovalServerSuspended(ctx context.Context, pid int) error {
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		output, err := exec.CommandContext(
+			ctx, "/bin/ps", "-o", "stat=", "-p", strconv.Itoa(pid),
+		).Output()
+		if err != nil {
+			return fmt.Errorf("inspect quiesced tmux server: %w", err)
+		}
+		if strings.HasPrefix(strings.TrimSpace(string(output)), "T") {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func resumeRemovalServer(pid int) error {
 	if pid == 0 {
 		return nil

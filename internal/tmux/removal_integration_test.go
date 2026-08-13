@@ -97,6 +97,45 @@ func TestRemovalSessionGuardRejectsWindowSharedWithAnotherSession(t *testing.T) 
 	assert.True(t, command.HasSession(peer))
 }
 
+func TestRemovalSessionGuardRejectsPaneChangeBeforeAtomicFreeze(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires POSIX tmux")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is not installed")
+	}
+	tempDir := t.TempDir()
+	command := NewTmuxCommandInTempDir("tmux", tempDir)
+	const session = "kwt-removal-pane-race-test"
+	require.NoError(t, command.RunCommandContext(
+		context.Background(), "new-session", "-d", "-s", session, "sleep", "60",
+	))
+	t.Cleanup(func() { _ = command.RunCommandContext(context.Background(), "kill-server") })
+	condition := removalConditionForTest(t, command, session, tempDir)
+	wrapper := filepath.Join(t.TempDir(), "tmux-wrapper")
+	require.NoError(t, os.WriteFile(wrapper, []byte(
+		"#!/bin/sh\n/usr/bin/tmux \"$@\"\nstatus=$?\n"+
+			"case \" $* \" in *\" display-message -p -t \"*) "+
+			"/usr/bin/tmux -f /dev/null split-window -d -t "+session+" sleep 60 ;; esac\n"+
+			"exit $status\n",
+	), 0o700))
+
+	lease, err := NewRemovalSessionGuard(wrapper).Quiesce(
+		context.Background(), condition,
+	)
+
+	assert.Nil(t, lease)
+	require.Error(t, err)
+	var conditionErr *RemovalSessionConditionError
+	require.ErrorAs(t, err, &conditionErr)
+	assert.Contains(t, conditionErr.Reason, "identity changed")
+	output, listErr := command.RunCommandOutputContext(
+		context.Background(), "list-panes", "-s", "-t", session, "-F", "#{pane_id}",
+	)
+	require.NoError(t, listErr)
+	assert.Len(t, strings.Fields(output), 2)
+}
+
 func TestRemovalSessionGuardTerminatesHupIgnoringWriterWhileQuiesced(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires POSIX tmux")
@@ -135,6 +174,36 @@ func TestRemovalSessionGuardTerminatesHupIgnoringWriterWhileQuiesced(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, terminated.Size(), stillTerminated.Size())
 	assert.False(t, command.HasSession(session))
+}
+
+func TestRemovalSessionGuardDoesNotDowngradeIdentityMismatchAfterPanesExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires POSIX tmux")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is not installed")
+	}
+	tempDir := t.TempDir()
+	command := NewTmuxCommandInTempDir("tmux", tempDir)
+	const session = "kwt-removal-stale-authority-test"
+	require.NoError(t, command.RunCommandContext(
+		context.Background(), "new-session", "-d", "-s", session, "sleep", "60",
+	))
+	t.Cleanup(func() { _ = command.RunCommandContext(context.Background(), "kill-server") })
+	condition := removalConditionForTest(t, command, session, tempDir)
+	lease, err := NewRemovalSessionGuard("tmux").Quiesce(
+		context.Background(), condition,
+	)
+	require.NoError(t, err)
+	live := lease.(*liveRemovalSessionLease)
+	live.condition.SessionName = "stale-authority"
+
+	err = live.Terminate(context.Background())
+
+	require.Error(t, err)
+	var conditionErr *RemovalSessionConditionError
+	require.ErrorAs(t, err, &conditionErr)
+	assert.Contains(t, conditionErr.Reason, "identity changed")
 }
 
 func TestRemovalSessionGuardTerminatesOnlyCapturedIdentity(t *testing.T) {

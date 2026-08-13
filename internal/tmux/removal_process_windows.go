@@ -25,4 +25,8 @@ func suspendRemovalServer(int) error {
 	return fmt.Errorf("quiescing the tmux server is unsupported on Windows")
 }
 
+func waitRemovalServerSuspended(context.Context, int) error {
+	return fmt.Errorf("quiescing the tmux server is unsupported on Windows")
+}
+
 func resumeRemovalServer(int) error { return nil }
