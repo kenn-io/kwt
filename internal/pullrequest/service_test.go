@@ -642,25 +642,27 @@ func TestImportIsIdempotent(t *testing.T) {
 func TestImportPreservesLegacyProtectedWorkspaceEndpoint(t *testing.T) {
 	pr := testPR(41, false)
 	branch := importBranchName(pr)
-	path := "/worktrees/widget/" + branch
+	livePath := "/worktrees/widget/" + branch
+	recordedPath := "/worktrees/widget/alias/../" + branch
 	info, ok := urlutil.CanonicalRepositoryInfo(testProject().Identity)
 	require.True(t, ok)
 	legacyName := "kwt-workspace-github-com-acme-widget-" + branch + "-" +
-		template.ShortHash(path)
-	legacySocket := tmux.ProtectedWorkspaceSocketName(legacyName, path)
+		template.ShortHash(recordedPath)
+	legacySocket := tmux.ProtectedWorkspaceSocketName(legacyName, recordedPath)
 	live := Workspace{
 		ID:          "github.com/acme/widget:" + branch,
 		Repository:  testProject().Identity,
 		Branch:      branch,
-		Path:        path,
+		Path:        livePath,
 		Generation:  "0123456789abcdef0123456789abcdef",
 		State:       "ready",
-		SessionName: tmux.WorkspaceSessionName(info, branch, path),
+		SessionName: tmux.WorkspaceSessionName(info, branch, livePath),
 	}
 	backend := newFakeBackend()
 	backend.workspaces = []Workspace{live}
 	store := newMemoryStore()
 	recorded := live
+	recorded.Path = recordedPath
 	recorded.SessionName = legacyName
 	recorded.TmuxSocketName = legacySocket
 	store.records[pr.ID] = Provenance{
@@ -683,14 +685,17 @@ func TestImportPreservesLegacyProtectedWorkspaceEndpoint(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
 	require.NotNil(t, listed[0].Workspace)
+	assert.Equal(t, recordedPath, listed[0].Workspace.Path)
 	assert.Equal(t, legacyName, listed[0].Workspace.SessionName)
 	assert.Equal(t, legacySocket, listed[0].Workspace.TmuxSocketName)
 
 	result, err := service.Import(context.Background(), testProject(), pr.ID)
 	require.NoError(t, err)
 	assert.Equal(t, ImportExisting, result.Status)
+	assert.Equal(t, recordedPath, result.Workspace.Path)
 	assert.Equal(t, legacyName, result.Workspace.SessionName)
 	assert.Equal(t, legacySocket, result.Workspace.TmuxSocketName)
+	assert.Equal(t, recordedPath, store.records[pr.ID].Workspace.Path)
 	assert.Equal(t, legacyName, store.records[pr.ID].Workspace.SessionName)
 	assert.Equal(t, legacySocket, store.records[pr.ID].Workspace.TmuxSocketName)
 	assert.Zero(t, backend.createCalls)

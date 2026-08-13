@@ -316,6 +316,7 @@ func matchingProvenanceWorkspace(byPath map[string]Workspace, record Provenance)
 		) {
 			continue
 		}
+		workspace.Path = record.Workspace.Path
 		workspace.SessionName = record.Workspace.SessionName
 		workspace.TmuxSocketName = tmux.ProtectedWorkspaceSocketName(
 			record.Workspace.SessionName,
