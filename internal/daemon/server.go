@@ -177,6 +177,15 @@ func NewServer(opts ServerOptions) http.Handler {
 				OperationID: "ssh-resolve",
 			},
 			func(ctx context.Context, input *sshResolveInput) (*sshResolveOutput, error) {
+				if input.Body.Environment == nil {
+					return nil, reportProblem(opts, "/api/v1/ssh/resolve", service.NewError(
+						service.InvalidRequest,
+						"SSH resolution requires an invocation environment",
+						false,
+						nil,
+						nil,
+					))
+				}
 				release, err := reserveInventoryWork(opts)
 				if err != nil {
 					return nil, reportProblem(opts, "/api/v1/ssh/resolve", err)

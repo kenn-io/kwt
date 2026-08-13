@@ -76,7 +76,11 @@ func (s *SSHService) Resolve(
 		return SSHRouteSnapshot{}, err
 	}
 	protectedNames := append(credentials.ProtectedNames(snapshot.Config), s.protectedNames...)
-	environment := credentials.StripEnvironment(s.environment(), protectedNames)
+	environment := request.Environment
+	if environment == nil {
+		environment = s.environment()
+	}
+	environment = credentials.StripEnvironment(environment, protectedNames)
 	resolver := s.build(internalssh.ResolverOptions{
 		Environment:    environment,
 		ProtectedNames: protectedNames,

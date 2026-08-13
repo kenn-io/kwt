@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -78,7 +80,44 @@ func TestSSHResolveRouteRoundTripsSnapshotAndReusesService(t *testing.T) {
 	}
 	resolver.mu.Lock()
 	defer resolver.mu.Unlock()
-	assert.Equal(t, []kwt.SSHResolveRequest{request, request}, resolver.requests)
+	require.Len(t, resolver.requests, 2)
+	for _, captured := range resolver.requests {
+		assert.Equal(t, request.Target, captured.Target)
+		assert.NotNil(t, captured.Environment)
+	}
+}
+
+func TestSSHResolveRouteUsesFreshSanitizedInvocationEnvironment(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("KWT_HOME", home)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home, "config.toml"),
+		[]byte("[fleet]\ntoken_env = \"GHOSTHUB_AUTH\"\n"),
+		0o600,
+	))
+	t.Setenv("GHOSTHUB_AUTH", "fleet-secret")
+	t.Setenv("KWT_GITHUB_TOKEN", "github-secret")
+	t.Setenv("KWT_SSH_INVOCATION_CONTEXT", "first")
+
+	resolver := &fakeSSHResolver{}
+	client, closeServer := newSSHResolutionTestClient(t, resolver, NewGate(time.Now()))
+	defer closeServer()
+	request := kwt.SSHResolveRequest{Target: kwt.SSHTarget{Hostname: "build.example.test"}}
+	_, err := client.ResolveSSH(context.Background(), request)
+	require.NoError(t, err)
+	t.Setenv("KWT_SSH_INVOCATION_CONTEXT", "second")
+	_, err = client.ResolveSSH(context.Background(), request)
+	require.NoError(t, err)
+
+	resolver.mu.Lock()
+	defer resolver.mu.Unlock()
+	require.Len(t, resolver.requests, 2)
+	assert.Contains(t, resolver.requests[0].Environment, "KWT_SSH_INVOCATION_CONTEXT=first")
+	assert.Contains(t, resolver.requests[1].Environment, "KWT_SSH_INVOCATION_CONTEXT=second")
+	for _, captured := range resolver.requests {
+		assert.NotContains(t, captured.Environment, "GHOSTHUB_AUTH=fleet-secret")
+		assert.NotContains(t, captured.Environment, "KWT_GITHUB_TOKEN=github-secret")
+	}
 }
 
 func TestSSHResolveRoutePreservesStableFailures(t *testing.T) {
@@ -150,7 +189,9 @@ func TestSSHResolveResponseDoesNotPublishCanonicalOptions(t *testing.T) {
 		},
 		SSHResolver: resolver,
 	})
-	body, err := json.Marshal(kwt.SSHResolveRequest{Target: kwt.SSHTarget{Hostname: "build.example.test"}})
+	body, err := json.Marshal(kwt.SSHResolveRequest{
+		Target: kwt.SSHTarget{Hostname: "build.example.test"}, Environment: []string{},
+	})
 	require.NoError(t, err)
 	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:43210/api/v1/ssh/resolve", strings.NewReader(string(body)))
 	request.Host = "127.0.0.1:43210"
@@ -160,6 +201,34 @@ func TestSSHResolveResponseDoesNotPublishCanonicalOptions(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.NotContains(t, response.Body.String(), "canonical_options")
+}
+
+func TestSSHResolveRouteRejectsMissingInvocationEnvironment(t *testing.T) {
+	resolver := &fakeSSHResolver{}
+	provider := &testStatusProvider{status: Status{State: StateReady}}
+	handler := NewServer(ServerOptions{
+		Token: "secret", ExpectedHost: "127.0.0.1:43210", Status: provider,
+		SSHResolver: resolver,
+	})
+	body, err := json.Marshal(kwt.SSHResolveRequest{
+		Target: kwt.SSHTarget{Hostname: "build.example.test"},
+	})
+	require.NoError(t, err)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1:43210/api/v1/ssh/resolve",
+		strings.NewReader(string(body)),
+	)
+	request.Host = "127.0.0.1:43210"
+	request.Header.Set("Authorization", "Bearer secret")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	assert.Equal(t, http.StatusBadRequest, response.Code)
+	resolver.mu.Lock()
+	defer resolver.mu.Unlock()
+	assert.Empty(t, resolver.requests)
 }
 
 func newSSHResolutionTestClient(

@@ -9,10 +9,13 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"os"
 	"time"
 
 	kitdaemon "go.kenn.io/kit/daemon"
 	kwt "go.kenn.io/kwt"
+	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
@@ -164,8 +167,16 @@ func (c *Client) ResolveSSH(
 	ctx context.Context,
 	request kwt.SSHResolveRequest,
 ) (kwt.SSHRouteSnapshot, error) {
+	snapshot, err := config.LoadGlobalSnapshot()
+	if err != nil {
+		return kwt.SSHRouteSnapshot{}, err
+	}
+	request.Environment = credentials.StripEnvironment(
+		os.Environ(),
+		credentials.ProtectedNames(snapshot.Config),
+	)
 	var result kwt.SSHRouteSnapshot
-	err := c.doWith(
+	err = c.doWith(
 		ctx,
 		c.sshHTTP,
 		controlResponseLimit,

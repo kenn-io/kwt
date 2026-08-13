@@ -29,7 +29,8 @@ func targetFromOpenSSH(target openssh.Target) Target {
 }
 
 type ResolveRequest struct {
-	Target Target `json:"target"`
+	Target      Target   `json:"target"`
+	Environment []string `json:"environment"`
 }
 
 type ExecutionProjection struct {
