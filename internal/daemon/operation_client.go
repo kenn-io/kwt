@@ -105,7 +105,7 @@ func (c *Client) followOperationAttempt(
 				problemErr,
 			)
 		}
-		return nil, afterSequence, problemErr
+		return nil, afterSequence, errors.Join(errOperationStreamInterrupted, problemErr)
 	}
 	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/x-ndjson" {

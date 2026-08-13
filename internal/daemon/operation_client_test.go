@@ -336,6 +336,26 @@ func TestOperationClientRetriesMalformedFailureThenReportsUnknownOutcome(t *test
 	assert.Equal(t, int32(2), requests.Load())
 }
 
+func TestOperationClientRetriesSubscriptionFailureThenReportsUnknownOutcome(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/operations/operation-1/events", r.URL.Path)
+		requests.Add(1)
+		writeProblem(w, newProblem(http.StatusServiceUnavailable, service.Descriptor{
+			Code:      service.OperationCapacityExhausted,
+			Message:   "operation subscriber capacity is exhausted",
+			Retryable: true,
+		}))
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+
+	_, err := client.FollowOperation(context.Background(), "operation-1", 0, OperationCallbacks{})
+	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
+	assert.False(t, service.IsCode(err, service.OperationCapacityExhausted), err)
+	assert.Equal(t, int32(2), requests.Load())
+}
+
 func TestOperationClientCancelsOperation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodDelete, r.Method)
