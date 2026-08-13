@@ -203,7 +203,8 @@ func mergeRequestLocal(target, local *viper.Viper) {
 			mergeRepositorySettingsInto(target, local)
 		case key == "projects" || key == "workspaces" || strings.HasPrefix(key, "workspaces."),
 			key == "fleet" || strings.HasPrefix(key, "fleet."),
-			key == "daemon" || strings.HasPrefix(key, "daemon."):
+			key == "daemon" || strings.HasPrefix(key, "daemon."),
+			key == "ssh" || strings.HasPrefix(key, "ssh."):
 			continue
 		default:
 			target.Set(key, local.Get(key))
@@ -221,6 +222,9 @@ func configFromViper(
 		return nil, fmt.Errorf("unmarshal request config: %w", err)
 	}
 	if err := validateDaemonConfig(config.Daemon); err != nil {
+		return nil, err
+	}
+	if err := validateSSHConfig(config.SSH); err != nil {
 		return nil, err
 	}
 	if err := expandConfigPathsWith(&config, expandPath); err != nil {

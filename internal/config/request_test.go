@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -182,6 +183,37 @@ func TestApproveWorkingDirectoryLoadsTrustedConfig(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "trusted/{{.Branch}}", result.Config.Naming.Template)
+}
+
+func TestResolveWorkingDirectoryIgnoresTrustedLocalSSHPolicy(t *testing.T) {
+	home := t.TempDir()
+	repo := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home, "config.toml"),
+		[]byte("[ssh]\nidle_timeout = '2h'\n"),
+		0o600,
+	))
+	localPath := filepath.Join(repo, ".kwt.toml")
+	require.NoError(t, os.WriteFile(
+		localPath,
+		[]byte("[ssh]\nidle_timeout = '0s'\n"),
+		0o600,
+	))
+	_, err := ResolveWorkingDirectory(ResolveRequest{
+		Home: home, WorkingDirectory: repo, UntrustedPolicy: RequireInteraction,
+	})
+	var required *TrustRequiredError
+	require.ErrorAs(t, err, &required)
+	require.NoError(t, ApproveWorkingDirectory(Approval{
+		Home: home, Path: required.Path, Digest: required.Digest,
+	}))
+
+	result, err := ResolveWorkingDirectory(ResolveRequest{
+		Home: home, WorkingDirectory: repo, UntrustedPolicy: RequireInteraction,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 2*time.Hour, result.Config.SSH.IdleTimeout)
 }
 
 func TestTrustRequirementBoundsAndSanitizesPreview(t *testing.T) {

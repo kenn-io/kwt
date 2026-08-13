@@ -45,6 +45,7 @@ func applyGlobalDefaults(target *viper.Viper) {
 	target.SetDefault("daemon.idle_timeout", 2*time.Hour)
 	target.SetDefault("daemon.auto_restart", "newer")
 	target.SetDefault("daemon.replacement_grace", 5*time.Minute)
+	target.SetDefault("ssh.idle_timeout", time.Hour)
 	target.SetDefault("cd.launch_shell", true)
 	target.SetDefault("worktree.basedir", "~/.kwt/worktrees")
 	target.SetDefault("worktree.auto_mkdir", true)
@@ -197,6 +198,8 @@ func mergeLocalConfig(store *TrustStore, prompter trustPrompter, interactive boo
 			fmt.Fprintf(os.Stderr, "kwt: ignoring %q in %s: sync settings are global-only\n", key, absPath)
 		case key == "daemon" || strings.HasPrefix(key, "daemon."):
 			fmt.Fprintf(os.Stderr, "kwt: ignoring %q in %s: daemon settings are global-only\n", key, absPath)
+		case key == "ssh" || strings.HasPrefix(key, "ssh."):
+			fmt.Fprintf(os.Stderr, "kwt: ignoring %q in %s: SSH settings are global-only\n", key, absPath)
 		default:
 			viper.Set(key, localViper.Get(key))
 		}
@@ -348,6 +351,9 @@ func defaultConfigTOML() string {
 idle_timeout = "2h"
 auto_restart = "newer"
 replacement_grace = "5m"
+
+[ssh]
+idle_timeout = "1h"
 
 [worktree]
 basedir = "~/.kwt/worktrees"
@@ -558,7 +564,8 @@ func loadForTarget(
 						mergeRepositorySettingsInto(target, local)
 					case key == "projects" || key == "workspaces" || strings.HasPrefix(key, "workspaces."),
 						key == "fleet" || strings.HasPrefix(key, "fleet."),
-						key == "daemon" || strings.HasPrefix(key, "daemon."):
+						key == "daemon" || strings.HasPrefix(key, "daemon."),
+						key == "ssh" || strings.HasPrefix(key, "ssh."):
 						continue
 					default:
 						target.Set(key, local.Get(key))
@@ -720,6 +727,9 @@ func Load() (*models.Config, error) {
 	if err := validateDaemonConfig(cfg.Daemon); err != nil {
 		return nil, err
 	}
+	if err := validateSSHConfig(cfg.SSH); err != nil {
+		return nil, err
+	}
 
 	if err := expandConfigPaths(&cfg); err != nil {
 		return nil, err
@@ -746,6 +756,13 @@ func validateDaemonConfig(cfg models.DaemonConfig) error {
 	default:
 		return fmt.Errorf("daemon auto_restart must be newer or never")
 	}
+}
+
+func validateSSHConfig(cfg models.SSHConfig) error {
+	if cfg.IdleTimeout < 0 {
+		return fmt.Errorf("ssh idle_timeout must not be negative")
+	}
+	return nil
 }
 
 // ProjectRegistration keeps the raw project value persisted in global TOML
@@ -802,6 +819,9 @@ func LoadGlobalSnapshotAtWithExpansion(
 		return nil, fmt.Errorf("failed to unmarshal global config: %w", err)
 	}
 	if err := validateDaemonConfig(persisted.Daemon); err != nil {
+		return nil, err
+	}
+	if err := validateSSHConfig(persisted.SSH); err != nil {
 		return nil, err
 	}
 	effective := persisted

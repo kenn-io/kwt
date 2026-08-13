@@ -41,6 +41,9 @@ idle_timeout = "2h"        # 0s disables automatic background shutdown
 auto_restart = "newer"     # newer or never
 replacement_grace = "5m"  # must be positive
 
+[ssh]
+idle_timeout = "1h"        # 0s tears down after the final lease is released
+
 [[layouts.presets]]
 name = "quad"
 arrange = "even-horizontal"
@@ -65,12 +68,15 @@ literal template text, preserving Go template variables inside actions.
 Global `naming.sanitize_chars` replacement values expand before branch
 sanitization.
 
-Daemon lifecycle policy is global-only. Repository-local `.kwt.toml` files
-never control daemon lifetime, replacement, or authority. `idle_timeout`
+Daemon and SSH lifecycle policy is global-only. Repository-local `.kwt.toml`
+files never control daemon lifetime, replacement, connection persistence, or
+authority. `daemon.idle_timeout`
 applies only to the detached background daemon; `kwt serve` stays active until
 it is stopped. With `auto_restart = "newer"`, a newer compatible kwt binary
 drains and replaces an older daemon, while an older binary continues using a
 newer daemon. `auto_restart = "never"` disables automatic version replacement.
+`ssh.idle_timeout` keeps an unleased OpenSSH master warm for one hour by
+default. Zero requests immediate teardown; negative values are invalid.
 
 Resolved worktree and directory-workspace paths cannot contain `#`, which tmux
 reserves for format expansion. kwt rejects such paths before creating or
