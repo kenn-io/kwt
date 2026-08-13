@@ -284,7 +284,7 @@ func TestOperationHubCancellationReachesWorker(t *testing.T) {
 	}
 }
 
-func TestOperationHubTerminatesAtEventCapacity(t *testing.T) {
+func TestOperationHubReportsUnknownOutcomeAtEventCapacity(t *testing.T) {
 	hub := NewOperationHub(context.Background(), OperationHubOptions{
 		MaxEvents: 2,
 	})
@@ -304,7 +304,7 @@ func TestOperationHubTerminatesAtEventCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	events := collectOperationEvents(t, hub, op.ID(), 0)
-	if len(events) != 2 || events[1].Failure == nil || events[1].Failure.Code != service.OperationCapacityExhausted {
+	if len(events) != 2 || events[1].Failure == nil || events[1].Failure.Code != service.OperationOutcomeUnknown {
 		t.Fatalf("unexpected capacity events: %#v", events)
 	}
 }

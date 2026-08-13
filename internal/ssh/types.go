@@ -49,7 +49,9 @@ type ResolvedTarget struct {
 }
 
 type RouteSnapshot struct {
-	LogicalTarget    Target           `json:"logical_target"`
+	LogicalTarget Target `json:"logical_target"`
+	// Targets are ordered in connection order. A downstream projection is
+	// target-local and requires proxy transport through the preceding target.
 	Targets          []ResolvedTarget `json:"targets"`
 	RouteIdentity    string           `json:"route_identity"`
 	ProjectionPolicy string           `json:"projection_policy"`

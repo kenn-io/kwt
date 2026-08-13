@@ -119,9 +119,11 @@ The daemon retains the complete normalized `ssh -G` stream only as private
 route-identity input. Authenticated responses expose semantic targets and the
 reviewed execution projection, never arbitrary directives. Opaque
 ProxyCommand and nested proxy routes are rejected because kwt cannot bind
-independent trust policy to every hop. Stage 1 resolution does not authorize a
-host key, authenticate, create a master, or make the returned route identity
-an authorization credential.
+independent trust policy to every hop. Projections are target-local; route
+consumers must use the ordered preceding target's prepared master as proxy
+transport rather than executing a downstream projection directly. Stage 1
+resolution does not authorize a host key, authenticate, create a master, or
+make the returned route identity an authorization credential.
 
 Guarded project unregistration requires the exact persisted path, its
 credential-free repository identity, and an opaque fingerprint of the complete

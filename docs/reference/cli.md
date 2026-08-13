@@ -144,8 +144,11 @@ create a ControlMaster.
 
 Execution policy `kwt.openssh.projection.v1` emits
 `CanonicalizeHostname=no` and resolved `HostName`, `User`, `Port`,
-`HostKeyAlias`, and generated proxy semantics in fixed order. Its positive
-directive set is:
+and `HostKeyAlias` in fixed order for each route target. Snapshot targets are
+ordered in connection order. A downstream projection is not a standalone
+direct-connect command: the current connection-lifecycle owner must combine it
+with master-backed proxy transport through the preceding prepared target. Its
+positive directive set is:
 
 - trust and crypto: `UserKnownHostsFile`, `GlobalKnownHostsFile`,
   `KnownHostsCommand`, `RevokedHostKeys`, `HostKeyAlgorithms`,

@@ -128,7 +128,9 @@ lifetime follows the caller's operation context. Replay queues reserve a slot
 that progress and warning events cannot consume; prompts and terminal
 completion remain replayable when noncritical delivery saturates. The daemon
 rejects excess work or subscriptions instead of dropping a prompt or terminal
-result. A new operation has five seconds to gain its first subscriber.
+result. If retained-event capacity terminates an admitted worker, the terminal
+result is `operation_outcome_unknown`, never a safely retryable capacity
+rejection. A new operation has five seconds to gain its first subscriber.
 Afterward, losing the final subscriber starts the same five-second reconnect
 grace before the worker is canceled. A client retries one interrupted stream
 against the same proof-verified daemon. Daemon loss, retention loss, or
@@ -158,10 +160,13 @@ invocation context before a login shell can change `PATH`. Requests without
 invocation-context authority fail closed.
 Direct ProxyJump hops are resolved in connection order; opaque ProxyCommand and
 nested proxy routes fail closed. The complete normalized option stream
-contributes to route identity but never crosses the HTTP boundary. This
-resolution route caps stdout and stderr at 1 MiB each and cancels the complete
-resolver process tree when either bound is exceeded. It does not create a
-connection, control socket, trust decision, credential prompt, or lease.
+contributes to route identity but never crosses the HTTP boundary. Each target
+projection is target-local; a downstream projection requires master-backed
+proxy transport through its preceding prepared target and is never a
+standalone direct-connect command. This resolution route caps stdout and
+stderr at 1 MiB each and cancels the complete resolver process tree when either
+bound is exceeded. It does not create a connection, control socket, trust
+decision, credential prompt, or lease.
 
 `kwt projects` and `kwt list` auto-start or reuse the daemon and require a
 current inventory result. They fail instead of falling back to cached or direct

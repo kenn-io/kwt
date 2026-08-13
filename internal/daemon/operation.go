@@ -616,8 +616,8 @@ func (h *OperationHub) terminateCapacityLocked(entry *operationEntry) {
 		return
 	}
 	failure := service.Descriptor{
-		Code:      service.OperationCapacityExhausted,
-		Message:   "operation event capacity is exhausted",
+		Code:      service.OperationOutcomeUnknown,
+		Message:   "operation outcome is unknown after event capacity was exhausted",
 		Retryable: true,
 	}
 	event := service.OperationEvent{
