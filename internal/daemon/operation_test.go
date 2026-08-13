@@ -376,6 +376,63 @@ func TestOperationHubCancelsAfterFinalSubscriberGrace(t *testing.T) {
 	}
 }
 
+func TestOperationHubIgnoresStaleSubscriberLossTimerAfterReconnect(t *testing.T) {
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	hub := NewOperationHub(context.Background(), OperationHubOptions{
+		SubscriberGrace: time.Millisecond,
+	})
+	op, _, err := hub.Start(OperationStart{
+		RequestDigest: "request-1",
+		Run: func(ctx context.Context, _ *Operation) (json.RawMessage, error) {
+			close(started)
+			<-ctx.Done()
+			close(canceled)
+			return nil, ctx.Err()
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+
+	// Hold the hub lock until the initial loss timer has fired and its callback
+	// is waiting. Replacing that timer models a subscriber reconnecting and
+	// immediately disconnecting before the stale callback acquires the lock.
+	hub.mu.Lock()
+	time.Sleep(20 * time.Millisecond)
+	staleTimer := op.entry.lossTimer
+	if staleTimer == nil {
+		hub.mu.Unlock()
+		t.Fatal("initial subscriber-loss timer is missing")
+	}
+	staleTimer.Stop()
+	op.entry.lossTimer = nil
+	hub.options.SubscriberGrace = time.Hour
+	hub.scheduleSubscriberLossLocked(op.entry)
+	currentTimer := op.entry.lossTimer
+	hub.mu.Unlock()
+
+	select {
+	case <-canceled:
+		t.Fatal("stale subscriber-loss timer canceled the reconnected operation")
+	case <-time.After(50 * time.Millisecond):
+	}
+	hub.mu.Lock()
+	if op.entry.lossTimer != currentTimer {
+		hub.mu.Unlock()
+		t.Fatal("stale subscriber-loss timer replaced the current timer")
+	}
+	hub.mu.Unlock()
+
+	op.entry.cancel()
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not stop during test cleanup")
+	}
+}
+
 func TestOperationHubExpiresCompletedRetention(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	hub := NewOperationHub(context.Background(), OperationHubOptions{

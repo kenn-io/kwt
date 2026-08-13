@@ -75,6 +75,7 @@ type operationEntry struct {
 	subscribers     map[*OperationSubscription]chan retainedOperationEvent
 	subscriberCount int
 	lossTimer       *time.Timer
+	lossTimerToken  uint64
 	release         func()
 }
 
@@ -540,9 +541,14 @@ func (h *OperationHub) scheduleSubscriberLossLocked(entry *operationEntry) {
 	if entry.terminal || len(entry.subscribers) != 0 || entry.lossTimer != nil {
 		return
 	}
+	entry.lossTimerToken++
+	token := entry.lossTimerToken
 	entry.lossTimer = time.AfterFunc(h.options.SubscriberGrace, func() {
 		h.mu.Lock()
 		defer h.mu.Unlock()
+		if entry.lossTimerToken != token {
+			return
+		}
 		if h.operations[entry.id] == entry && !entry.terminal && len(entry.subscribers) == 0 {
 			entry.cancel()
 		}
