@@ -168,6 +168,15 @@ func (h *OperationHub) Start(start OperationStart) (*Operation, bool, error) {
 				return nil, false, errors.New("generated operation ID is empty")
 			}
 		}
+		if !validOperationID(id) {
+			return nil, false, service.NewError(
+				service.InvalidRequest,
+				"operation ID must contain only ASCII letters, digits, hyphens, and underscores",
+				false,
+				nil,
+				nil,
+			)
+		}
 
 		h.mu.Lock()
 		h.pruneLocked()
@@ -762,4 +771,21 @@ func randomOperationID() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(value), nil
+}
+
+func validOperationID(value string) bool {
+	if value == "" {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		character := value[i]
+		if character >= 'a' && character <= 'z' ||
+			character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' ||
+			character == '-' || character == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }

@@ -257,6 +257,38 @@ func TestOperationHubRejectsConflictingRequestID(t *testing.T) {
 	close(release)
 }
 
+func TestOperationHubRejectsUnroutableOperationIDs(t *testing.T) {
+	for _, id := range []string{"batch/1", "batch?1", "batch#1", ".", ".."} {
+		t.Run(id, func(t *testing.T) {
+			hub := NewOperationHub(context.Background(), OperationHubOptions{})
+			_, created, err := hub.Start(OperationStart{
+				ID: id, RequestDigest: "request-1",
+				Run: func(context.Context, *Operation) (json.RawMessage, error) {
+					return json.RawMessage(`{}`), nil
+				},
+			})
+			if created || !service.IsCode(err, service.InvalidRequest) {
+				t.Fatalf("start with ID %q: created=%v err=%v", id, created, err)
+			}
+		})
+	}
+}
+
+func TestOperationHubRejectsUnroutableGeneratedOperationID(t *testing.T) {
+	hub := NewOperationHub(context.Background(), OperationHubOptions{
+		IDSource: func() (string, error) { return "batch/1", nil },
+	})
+	_, created, err := hub.Start(OperationStart{
+		RequestDigest: "request-1",
+		Run: func(context.Context, *Operation) (json.RawMessage, error) {
+			return json.RawMessage(`{}`), nil
+		},
+	})
+	if created || !service.IsCode(err, service.InvalidRequest) {
+		t.Fatalf("start with generated ID: created=%v err=%v", created, err)
+	}
+}
+
 func TestOperationHubCancellationReachesWorker(t *testing.T) {
 	started := make(chan struct{})
 	canceled := make(chan struct{})
