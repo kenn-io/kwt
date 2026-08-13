@@ -23,8 +23,14 @@ func TestRootPackageExposesSSHResolutionService(t *testing.T) {
 	}
 	var _ interface {
 		Resolve(context.Context, kwt.SSHResolveRequest) (kwt.SSHRouteSnapshot, error)
+		Acquire(context.Context, kwt.SSHLeaseRequest) (kwt.SSHLease, error)
 	} = service
 	if kwt.SSHProjectionPolicyV1 == "" {
 		t.Fatal("SSH projection policy is unavailable from the root package")
+	}
+	requireLeaseMode := func(kwt.SSHLeaseMode) {}
+	requireLeaseMode(kwt.SSHLeaseModeMultiplexed)
+	if kwt.SSHEventStateConnected == "" {
+		t.Fatal("SSH event states are unavailable from the root package")
 	}
 }
