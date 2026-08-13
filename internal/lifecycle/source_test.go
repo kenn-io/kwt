@@ -378,7 +378,7 @@ func TestAnnotateProtectedSocketsPreservesVerifiedPersistedEndpoint(t *testing.T
 	path := "/worktrees/widget/main"
 	branch := "main"
 	generation := "0123456789abcdef0123456789abcdef"
-	derived := "kwt-widget-main-" + template.ShortHash(path)
+	derived := "kwt-wt-widget-main-" + template.ShortHash(path)
 	previous := "kwt-workspace-github-com-acme-widget-main-" +
 		template.ShortHash(path)
 

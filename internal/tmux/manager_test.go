@@ -11,7 +11,7 @@ import (
 func TestParseWorkspaceSession(t *testing.T) {
 	sm := NewSessionManager(nil)
 	info := &SessionInfo{
-		Name:           "kwt-kwt-feature-foo-abcd1234",
+		Name:           "kwt-wt-kwt-feature-foo-abcd1234",
 		Created:        "1700000000",
 		WorkingDir:     "/wt",
 		CurrentCommand: "zsh",

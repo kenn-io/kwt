@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	workspaceSessionRe    = regexp.MustCompile(`^kwt-(.+)-([0-9a-f]{8})$`)
+	workspaceSessionRe    = regexp.MustCompile(`^kwt-wt-(.+)-([0-9a-f]{8})$`)
 	dirWorkspaceSessionRe = regexp.MustCompile(`^kwt-workspace-(dir-.+)-([0-9a-f]{8})$`)
 	legacySessionRe       = regexp.MustCompile(`^kwt-([^-]+)-(.+)-(\d{14})$`)
 )

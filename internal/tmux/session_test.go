@@ -60,7 +60,7 @@ func TestWorkspaceSessionName(t *testing.T) {
 	// Golden value pins field order, the worktreePath hash basis, and
 	// sanitization at once — a swapped/dropped field or a narrowed hash input
 	// trips this where the structural checks below would not.
-	assert.Equal(t, "kwt-kwt-feature-foo-9cc4e551", name)
+	assert.Equal(t, "kwt-wt-kwt-feature-foo-9cc4e551", name)
 
 	assert.True(t, strings.HasPrefix(name, "kwt-"), "must carry the kwt- prefix")
 	assert.NotContains(t, name, ".", "tmux names cannot contain '.'")
@@ -80,6 +80,17 @@ func TestWorkspaceSessionName(t *testing.T) {
 	assert.NotEqual(t, detached1, detached2)
 }
 
+func TestWorkspaceSessionNameDoesNotOverlapDirectoryWorkspaceNamespace(t *testing.T) {
+	info := &url.RepositoryInfo{Repository: "workspace"}
+	path := "/worktrees/notes"
+
+	assert.NotEqual(
+		t,
+		DirWorkspaceSessionName("notes", path),
+		WorkspaceSessionName(info, "dir-notes", path),
+	)
+}
+
 func TestMatchesWorkspaceSessionName(t *testing.T) {
 	info := &url.RepositoryInfo{
 		Host: "github.com", Owner: "wesm", Repository: "kwt",
@@ -89,7 +100,7 @@ func TestMatchesWorkspaceSessionName(t *testing.T) {
 	path := "/home/u/worktrees/github.com/wesm/kwt/feature/foo"
 
 	assert.True(t, MatchesWorkspaceSessionName(
-		"kwt-kwt-feature-foo-9cc4e551", info, branch, path,
+		"kwt-wt-kwt-feature-foo-9cc4e551", info, branch, path,
 	))
 	assert.True(t, MatchesWorkspaceSessionName(
 		"kwt-workspace-github-com-wesm-kwt-feature-foo-9cc4e551",
@@ -101,7 +112,7 @@ func TestMatchesWorkspaceSessionName(t *testing.T) {
 		"arbitrary-session", info, branch, path,
 	))
 	assert.False(t, MatchesWorkspaceSessionName(
-		"kwt-kwt-feature-foo-9cc4e551", info, branch, "/another/path",
+		"kwt-wt-kwt-feature-foo-9cc4e551", info, branch, "/another/path",
 	))
 }
 

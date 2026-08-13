@@ -72,7 +72,7 @@ the imported workspace with an explicit
   "status": "created",
   "workspace": {
     "path": "/worktrees/pr-17",
-    "session_name": "kwt-widget-pr-17-a1b2c3d4"
+    "session_name": "kwt-wt-widget-pr-17-a1b2c3d4"
   },
   "session_start_error": {
     "code": "workspace_creation_failed",
@@ -274,7 +274,7 @@ An imported list result adds the canonical workspace record:
     "branch": "pr-17-feature-rendering",
     "path": "/home/alice/.kwt/worktrees/github.com/acme/widget/pr-17-feature-rendering",
     "state": "ready",
-    "session_name": "kwt-widget-pr-17-feature-rendering-a1b2c3d4"
+    "session_name": "kwt-wt-widget-pr-17-feature-rendering-a1b2c3d4"
   }
 }
 ```
@@ -373,7 +373,7 @@ A new import returns:
       "branch": "pr-17-feature-rendering",
       "path": "/home/alice/.kwt/worktrees/github.com/acme/widget/pr-17-feature-rendering",
       "state": "ready",
-      "session_name": "kwt-widget-pr-17-feature-rendering-a1b2c3d4"
+      "session_name": "kwt-wt-widget-pr-17-feature-rendering-a1b2c3d4"
     }
   },
   "project": {
@@ -387,7 +387,7 @@ A new import returns:
     "branch": "pr-17-feature-rendering",
     "path": "/home/alice/.kwt/worktrees/github.com/acme/widget/pr-17-feature-rendering",
     "state": "ready",
-    "session_name": "kwt-widget-pr-17-feature-rendering-a1b2c3d4"
+    "session_name": "kwt-wt-widget-pr-17-feature-rendering-a1b2c3d4"
   }
 }
 ```
