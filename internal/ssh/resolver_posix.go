@@ -23,9 +23,12 @@ func (r *Resolver) resolveConfig(
 	ctx context.Context,
 	target openssh.Target,
 ) (openssh.EffectiveConfig, error) {
+	executable, err := resolveExecutable(r.executable, r.environment, r.workingDirectory)
+	if err != nil {
+		return openssh.EffectiveConfig{}, err
+	}
 	loginShell := r.loginShell
 	var shell string
-	var err error
 	if loginShell == nil {
 		shell, err = accountLoginShell(ctx)
 	} else {
@@ -39,7 +42,7 @@ func (r *Resolver) resolveConfig(
 	}
 
 	resolver := openssh.Resolver{
-		Executable: r.executable,
+		Executable: executable,
 		Run: func(ctx context.Context, argv []string) ([]byte, []byte, int, error) {
 			nonce, err := r.nonce()
 			if err != nil {

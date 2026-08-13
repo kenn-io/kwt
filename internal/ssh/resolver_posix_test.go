@@ -55,6 +55,33 @@ func TestResolverPOSIXUsesLoginShellFrameAndExplicitTarget(t *testing.T) {
 	assert.NotContains(t, gotEnvironment, "GHOSTHUB_AUTH=fleet-secret")
 }
 
+func TestResolverPOSIXBindsBareExecutableBeforeLoginShellStartup(t *testing.T) {
+	workingDirectory := t.TempDir()
+	binDirectory := filepath.Join(workingDirectory, "tools")
+	require.NoError(t, os.Mkdir(binDirectory, 0o700))
+	executable := filepath.Join(binDirectory, "ssh")
+	require.NoError(t, os.WriteFile(executable, []byte("#!/bin/sh\nexit 0\n"), 0o700))
+	var command string
+	resolver := NewResolver(ResolverOptions{
+		Executable:       "ssh",
+		WorkingDirectory: workingDirectory,
+		LoginShell:       func() (string, error) { return "/bin/sh", nil },
+		Nonce:            func() (string, error) { return "nonce", nil },
+		Environment:      []string{"PATH=tools"},
+		Run: func(_ context.Context, _ []string, environment []string, _ []byte) ([]byte, []byte, int, error) {
+			command = resolveCommandFromEnvironment(t, environment)
+			return framedResolverOutput("nonce", "hostname build.internal\n"), nil, 0, nil
+		},
+	})
+
+	_, err := resolver.Resolve(context.Background(), ResolveRequest{
+		Target: Target{Hostname: "build.example.test"},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, command, shellQuote(executable)+" '-G'")
+	assert.NotContains(t, command, "'ssh' '-G'")
+}
+
 func TestResolverPOSIXDelegatesResolveScriptThroughPOSIXShellForFish(t *testing.T) {
 	var gotArgv []string
 	resolver := NewResolver(ResolverOptions{

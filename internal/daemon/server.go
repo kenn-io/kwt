@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -177,10 +178,10 @@ func NewServer(opts ServerOptions) http.Handler {
 				OperationID: "ssh-resolve",
 			},
 			func(ctx context.Context, input *sshResolveInput) (*sshResolveOutput, error) {
-				if input.Body.Environment == nil {
+				if input.Body.Environment == nil || !filepath.IsAbs(input.Body.WorkingDirectory) {
 					return nil, reportProblem(opts, "/api/v1/ssh/resolve", service.NewError(
 						service.InvalidRequest,
-						"SSH resolution requires an invocation environment",
+						"SSH resolution requires an invocation environment and working directory",
 						false,
 						nil,
 						nil,

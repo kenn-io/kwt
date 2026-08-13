@@ -25,21 +25,23 @@ type OutputRunner func(
 ) (stdout, stderr []byte, exitCode int, err error)
 
 type ResolverOptions struct {
-	Executable  string
-	Run         OutputRunner
-	LoginShell  func() (string, error)
-	Nonce       func() (string, error)
-	Environment []string
+	Executable       string
+	Run              OutputRunner
+	LoginShell       func() (string, error)
+	Nonce            func() (string, error)
+	WorkingDirectory string
+	Environment      []string
 	// ProtectedNames extends kwt's built-in credential environment names.
 	ProtectedNames []string
 }
 
 type Resolver struct {
-	executable  string
-	run         OutputRunner
-	loginShell  func() (string, error)
-	nonce       func() (string, error)
-	environment []string
+	executable       string
+	run              OutputRunner
+	loginShell       func() (string, error)
+	nonce            func() (string, error)
+	workingDirectory string
+	environment      []string
 }
 
 func NewResolver(options ResolverOptions) *Resolver {
@@ -61,12 +63,17 @@ func NewResolver(options ResolverOptions) *Resolver {
 	}
 	protectedNames := append(credentials.ProtectedNames(nil), options.ProtectedNames...)
 	environment = credentials.StripEnvironment(environment, protectedNames)
+	workingDirectory := options.WorkingDirectory
+	if workingDirectory == "" {
+		workingDirectory, _ = os.Getwd()
+	}
 	return &Resolver{
-		executable:  executable,
-		run:         run,
-		loginShell:  options.LoginShell,
-		nonce:       nonce,
-		environment: append([]string(nil), environment...),
+		executable:       executable,
+		run:              run,
+		loginShell:       options.LoginShell,
+		nonce:            nonce,
+		workingDirectory: workingDirectory,
+		environment:      append([]string(nil), environment...),
 	}
 }
 
@@ -103,7 +110,8 @@ func runOutput(
 	if len(argv) == 0 {
 		return nil, nil, -1, errors.New("empty process arguments")
 	}
-	executable, err := resolveExecutable(argv[0], environment)
+	workingDirectory, _ := os.Getwd()
+	executable, err := resolveExecutable(argv[0], environment, workingDirectory)
 	if err != nil {
 		return nil, nil, -1, err
 	}

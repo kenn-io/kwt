@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	kitdaemon "go.kenn.io/kit/daemon"
@@ -171,6 +172,15 @@ func (c *Client) ResolveSSH(
 	if err != nil {
 		return kwt.SSHRouteSnapshot{}, err
 	}
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		return kwt.SSHRouteSnapshot{}, err
+	}
+	workingDirectory, err = filepath.Abs(workingDirectory)
+	if err != nil {
+		return kwt.SSHRouteSnapshot{}, err
+	}
+	request.WorkingDirectory = workingDirectory
 	request.Environment = credentials.StripEnvironment(
 		os.Environ(),
 		credentials.ProtectedNames(snapshot.Config),

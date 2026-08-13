@@ -147,10 +147,12 @@ daemon-owned service and returns an immutable route snapshot. On POSIX, the
 service runs nonce-framed `ssh -G` inside the account's configured login shell
 so shell startup banners cannot become configuration. Windows invokes system
 OpenSSH directly. Each request reloads the global fleet-token environment name
-and uses the invoking CLI's fresh environment rather than daemon startup state.
-The client strips configured credential variables before transport, and the
-daemon repeats that stripping after reloading its authoritative configuration.
-Requests without invocation environment authority fail closed.
+and uses the invoking CLI's fresh environment and working directory rather than
+daemon startup state. The client strips configured credential variables before
+transport, and the daemon repeats that stripping after reloading its
+authoritative configuration. OpenSSH's executable path is bound from this
+invocation context before a login shell can change `PATH`. Requests without
+invocation-context authority fail closed.
 Direct ProxyJump hops are resolved in connection order; opaque ProxyCommand and
 nested proxy routes fail closed. The complete normalized option stream
 contributes to route identity but never crosses the HTTP boundary. This

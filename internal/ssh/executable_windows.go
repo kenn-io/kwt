@@ -9,15 +9,21 @@ import (
 	"strings"
 )
 
-func resolveExecutable(name string, environment []string) (string, error) {
-	if strings.ContainsAny(name, `:\/`) {
+func resolveExecutable(name string, environment []string, workingDirectory string) (string, error) {
+	if filepath.IsAbs(name) {
 		return name, nil
+	}
+	if strings.ContainsAny(name, `:\/`) {
+		return filepath.Join(workingDirectory, name), nil
 	}
 	path := windowsEnvironmentValue(environment, "PATH")
 	extensions := windowsExecutableExtensions(
 		windowsEnvironmentValue(environment, "PATHEXT"),
 	)
 	for _, directory := range filepath.SplitList(path) {
+		if !filepath.IsAbs(directory) {
+			directory = filepath.Join(workingDirectory, directory)
+		}
 		if !filepath.IsAbs(directory) {
 			continue
 		}
