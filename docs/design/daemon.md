@@ -136,10 +136,11 @@ grace before the worker is canceled. A client retries one interrupted stream
 against the same proof-verified daemon. Daemon loss, retention loss, or
 replacement of the runtime owner returns
 `operation_outcome_unknown`; the client never repeats the domain mutation to
-guess its result. If a client cannot render or otherwise handle a preterminal
-event, it requests cancellation on a best-effort basis and reports
-`operation_outcome_unknown`. A terminal result remains authoritative even when
-the client cannot render its terminal event.
+guess its result. Every unknown-outcome descriptor is non-retryable because the
+original mutation may already have completed. If a client cannot render or
+otherwise handle a preterminal event, it requests cancellation on a best-effort
+basis and reports `operation_outcome_unknown`. A terminal result remains
+authoritative even when the client cannot render its terminal event.
 
 Operations reserve daemon work until their workers return, including cleanup
 after a terminal outcome is published. Draining refuses new operations and lets

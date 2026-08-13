@@ -119,7 +119,8 @@ behavior.
 An interrupted client may resume one retained stream from its last accepted
 event sequence on the same daemon. If the daemon or retained result is gone,
 kwt reports `operation_outcome_unknown`; it does not repeat the domain command
-and risk duplicating a mutation.
+and risk duplicating a mutation. This outcome is always non-retryable because
+the mutation may already have completed.
 
 ## SSH route resolution
 

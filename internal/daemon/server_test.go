@@ -231,6 +231,22 @@ func TestProblemRoundTripsServiceDescriptor(t *testing.T) {
 	assert.NotContains(t, string(encoded), "private cause")
 }
 
+func TestProblemMakesUnknownOutcomeNonRetryable(t *testing.T) {
+	problem := problemFromError(service.NewError(
+		service.OperationOutcomeUnknown,
+		"operation outcome is unknown",
+		true,
+		nil,
+		nil,
+	))
+	encoded, err := json.Marshal(problem)
+	require.NoError(t, err)
+
+	decoded := service.AsError(decodeProblem(problem.Status, bytes.NewReader(encoded)))
+	assert.Equal(t, service.OperationOutcomeUnknown, decoded.Code)
+	assert.False(t, decoded.Retryable)
+}
+
 func TestOperationEventRouteReplaysThenStreamsLiveEvents(t *testing.T) {
 	hub := NewOperationHub(context.Background(), OperationHubOptions{})
 	replayed := make(chan struct{})

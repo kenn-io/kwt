@@ -304,7 +304,8 @@ func TestOperationHubReportsUnknownOutcomeAtEventCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	events := collectOperationEvents(t, hub, op.ID(), 0)
-	if len(events) != 2 || events[1].Failure == nil || events[1].Failure.Code != service.OperationOutcomeUnknown {
+	if len(events) != 2 || events[1].Failure == nil ||
+		events[1].Failure.Code != service.OperationOutcomeUnknown || events[1].Failure.Retryable {
 		t.Fatalf("unexpected capacity events: %#v", events)
 	}
 }
@@ -864,7 +865,8 @@ func TestOperationHubDrainRefusesNewWorkAndTerminatesActiveStreams(t *testing.T)
 	}
 	hub.CancelActiveForDrain()
 	event := receiveOperationEvent(t, subscription.Events())
-	if event.Kind != service.OperationEventComplete || event.Failure == nil || event.Failure.Code != service.OperationOutcomeUnknown {
+	if event.Kind != service.OperationEventComplete || event.Failure == nil ||
+		event.Failure.Code != service.OperationOutcomeUnknown || event.Failure.Retryable {
 		t.Fatalf("unexpected drain event: %#v", event)
 	}
 	if active := gate.Snapshot().ActiveWork; active != 1 {

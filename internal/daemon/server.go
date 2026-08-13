@@ -391,11 +391,15 @@ func problemFromError(err error) *Problem {
 func publicErrorDescriptor(err error) service.Descriptor {
 	typed := service.AsError(err)
 	message := typed.Message
+	retryable := typed.Retryable
 	if typed.Code == service.Internal {
 		message = "internal failure"
 	}
+	if typed.Code == service.OperationOutcomeUnknown {
+		retryable = false
+	}
 	return service.Descriptor{
-		Code: typed.Code, Message: message, Retryable: typed.Retryable,
+		Code: typed.Code, Message: message, Retryable: retryable,
 		Details: allowedProblemDetails(typed.Code, typed.Details),
 	}
 }

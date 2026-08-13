@@ -242,7 +242,7 @@ func operationOutcomeUnknown(message string, cause error) error {
 	return service.NewError(
 		service.OperationOutcomeUnknown,
 		message,
-		true,
+		false,
 		nil,
 		cause,
 	)

@@ -424,7 +424,7 @@ func (h *OperationHub) CancelActiveForDrain() {
 			continue
 		}
 		failure := service.Descriptor{
-			Code: service.OperationOutcomeUnknown, Message: "daemon drain deadline expired", Retryable: true,
+			Code: service.OperationOutcomeUnknown, Message: "daemon drain deadline expired", Retryable: false,
 		}
 		_ = h.appendLocked(entry, service.OperationEvent{
 			Kind: service.OperationEventComplete, Failure: &failure,
@@ -463,7 +463,7 @@ func (h *OperationHub) Subscribe(
 		return nil, service.NewError(
 			service.OperationOutcomeUnknown,
 			"operation events are no longer retained",
-			true,
+			false,
 			nil,
 			nil,
 		)
@@ -618,7 +618,7 @@ func (h *OperationHub) terminateCapacityLocked(entry *operationEntry) {
 	failure := service.Descriptor{
 		Code:      service.OperationOutcomeUnknown,
 		Message:   "operation outcome is unknown after event capacity was exhausted",
-		Retryable: true,
+		Retryable: false,
 	}
 	event := service.OperationEvent{
 		OperationID: entry.id,
@@ -672,7 +672,7 @@ func (h *OperationHub) finish(
 func operationFailure(err error) service.Descriptor {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return service.Descriptor{
-			Code: service.OperationOutcomeUnknown, Message: "operation was canceled", Retryable: true,
+			Code: service.OperationOutcomeUnknown, Message: "operation was canceled", Retryable: false,
 		}
 	}
 	return publicErrorDescriptor(err)

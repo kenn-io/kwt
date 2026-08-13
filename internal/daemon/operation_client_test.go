@@ -335,6 +335,7 @@ func TestOperationClientMapsEndpointLossToUnknownOutcome(t *testing.T) {
 	)
 	_, err := client.FollowOperation(context.Background(), "operation-1", 0, OperationCallbacks{})
 	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
+	assert.False(t, service.AsError(err).Retryable)
 }
 
 func TestVerifiedOperationClientBoundsStreamHeaderWait(t *testing.T) {
