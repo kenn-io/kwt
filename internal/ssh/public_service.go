@@ -36,6 +36,8 @@ type PublicService struct {
 	managerID      string
 	managerErr     error
 	managerMu      sync.Mutex
+	closed         bool
+	managerDir     string
 	newPersistent  func(string, openssh.PersistentConfig) (PersistentManager, error)
 	onEvent        func(Event)
 }
@@ -159,6 +161,9 @@ func (s *PublicService) Acquire(
 func (s *PublicService) initializeManager(idleTimeout time.Duration) error {
 	s.managerMu.Lock()
 	defer s.managerMu.Unlock()
+	if s.closed {
+		return connectionChanged()
+	}
 	if s.leases != nil {
 		return nil
 	}
@@ -171,7 +176,11 @@ func (s *PublicService) initializeManager(idleTimeout time.Duration) error {
 	managerDirectory := filepath.Join(s.home, "runtime", "ssh-"+s.managerID)
 	controlDirectory := filepath.Join(managerDirectory, "control")
 	privateDirectory := filepath.Join(managerDirectory, "private")
-	persistent, err := s.newPersistent(controlDirectory, openssh.PersistentConfig{})
+	connectionOptions := openssh.DefaultConnectionOptions()
+	connectionOptions.ControlPersistTimeout = max(idleTimeout, time.Second)
+	persistent, err := s.newPersistent(controlDirectory, openssh.PersistentConfig{
+		ConnectionOptions: &connectionOptions,
+	})
 	if err != nil {
 		return connectionFailed(err)
 	}
@@ -184,5 +193,24 @@ func (s *PublicService) initializeManager(idleTimeout time.Duration) error {
 		IdleTimeout: idleTimeout,
 		OnEvent:     s.onEvent,
 	})
+	s.managerDir = managerDirectory
 	return nil
+}
+
+func (s *PublicService) Close(ctx context.Context) error {
+	s.managerMu.Lock()
+	s.closed = true
+	manager := s.leases
+	managerDirectory := s.managerDir
+	s.managerMu.Unlock()
+	if manager == nil {
+		return nil
+	}
+	if err := manager.Close(ctx); err != nil {
+		return err
+	}
+	if managerDirectory == "" {
+		return nil
+	}
+	return os.RemoveAll(managerDirectory)
 }

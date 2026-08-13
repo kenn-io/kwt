@@ -20,6 +20,22 @@ import (
 	"go.kenn.io/kwt/pkg/models"
 )
 
+type closingSSHResolver struct {
+	closed chan struct{}
+}
+
+func (r *closingSSHResolver) Resolve(
+	context.Context,
+	kwt.SSHResolveRequest,
+) (kwt.SSHRouteSnapshot, error) {
+	return kwt.SSHRouteSnapshot{}, nil
+}
+
+func (r *closingSSHResolver) Close(context.Context) error {
+	close(r.closed)
+	return nil
+}
+
 func TestHTTPServerBoundsUnauthenticatedRequests(t *testing.T) {
 	server := newHTTPServer(http.NotFoundHandler())
 
@@ -165,6 +181,7 @@ func runtimeFiles(t *testing.T, home string) []string {
 
 func TestServePublishesReadyRuntimeAndRemovesItOnShutdown(t *testing.T) {
 	home := t.TempDir()
+	sshResolver := &closingSSHResolver{closed: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
@@ -177,8 +194,9 @@ func TestServePublishesReadyRuntimeAndRemovesItOnShutdown(t *testing.T) {
 				AutoRestart:      "newer",
 				ReplacementGrace: time.Second,
 			},
-			Foreground: true,
-			Now:        time.Now,
+			Foreground:  true,
+			Now:         time.Now,
+			SSHResolver: sshResolver,
 		})
 	}()
 
@@ -193,6 +211,11 @@ func TestServePublishesReadyRuntimeAndRemovesItOnShutdown(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, <-done)
 	assert.Empty(t, runtimeFiles(t, home))
+	select {
+	case <-sshResolver.closed:
+	default:
+		assert.Fail(t, "SSH lifecycle owner was not closed")
+	}
 	cancel()
 }
 

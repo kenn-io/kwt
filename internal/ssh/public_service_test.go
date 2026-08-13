@@ -7,10 +7,12 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/openssh"
+	servicepkg "go.kenn.io/kwt/service"
 )
 
 type recordingPublicResolver struct{}
@@ -153,12 +155,15 @@ func TestPublicServiceBuildsOneOwnerScopedPersistentManager(t *testing.T) {
 	}
 	created := 0
 	controlDirectory := ""
+	var persistentConfig openssh.PersistentConfig
 	service.newPersistent = func(
 		directory string,
-		_ openssh.PersistentConfig,
+		config openssh.PersistentConfig,
 	) (PersistentManager, error) {
 		created++
 		controlDirectory = directory
+		persistentConfig = config
+		require.NoError(t, os.MkdirAll(directory, 0o700))
 		return publicTestPersistentManager{}, nil
 	}
 
@@ -168,6 +173,7 @@ func TestPublicServiceBuildsOneOwnerScopedPersistentManager(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, first.Release())
 	require.NoError(t, second.Release())
+	require.NoError(t, service.Close(context.Background()))
 
 	assert.Equal(t, 1, created)
 	assert.True(t, strings.HasPrefix(
@@ -175,4 +181,31 @@ func TestPublicServiceBuildsOneOwnerScopedPersistentManager(t *testing.T) {
 		filepath.Join(home, "runtime")+string(filepath.Separator)+"ssh-",
 	))
 	assert.Equal(t, "control", filepath.Base(controlDirectory))
+	require.NotNil(t, persistentConfig.ConnectionOptions)
+	assert.Equal(t, time.Hour, persistentConfig.ConnectionOptions.ControlPersistTimeout)
+	assert.NoDirExists(t, filepath.Dir(controlDirectory))
+}
+
+func TestPublicServiceClosePreventsManagerReinitialization(t *testing.T) {
+	home := t.TempDir()
+	snapshot := directSnapshot("route-one")
+	service := NewPublicService(PublicServiceOptions{Home: home})
+	service.build = func(ResolverOptions) snapshotResolver {
+		return fixedPublicResolver{snapshot: snapshot}
+	}
+	created := 0
+	service.newPersistent = func(
+		string,
+		openssh.PersistentConfig,
+	) (PersistentManager, error) {
+		created++
+		return publicTestPersistentManager{}, nil
+	}
+
+	require.NoError(t, service.Close(context.Background()))
+	_, err := service.Acquire(context.Background(), LeaseRequest{Snapshot: snapshot})
+
+	require.Error(t, err)
+	assert.True(t, servicepkg.IsCode(err, servicepkg.SSHConnectionChanged))
+	assert.Equal(t, 0, created)
 }

@@ -339,6 +339,11 @@ func runHost(
 		cancelOperations()
 	}
 	shutdownErr := shutdownHTTPServer(httpServer, drain.DrainDeadline, drainResult)
+	sshCleanupCtx, cancelSSHCleanup := context.WithTimeout(
+		context.Background(), forcedDrainCleanup,
+	)
+	sshCleanupErr := closeSSHResolver(sshCleanupCtx, sshResolver)
+	cancelSSHCleanup()
 	var cleanupErr error
 	if drainResult != DrainReleased {
 		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), forcedDrainCleanup)
@@ -349,9 +354,19 @@ func runHost(
 	}
 	_ = listener.Close()
 	removeErr := removeOwnedRuntime(runtimePath, store, record.PID)
-	stopErr := errors.Join(runErr, shutdownErr, cleanupErr, removeErr)
+	stopErr := errors.Join(runErr, shutdownErr, sshCleanupErr, cleanupErr, removeErr)
 	logLifecycle(logger, "stopped", status.Status(opts.Now()), stopErr)
 	return stopErr
+}
+
+func closeSSHResolver(ctx context.Context, resolver SSHResolver) error {
+	owner, ok := resolver.(interface {
+		Close(context.Context) error
+	})
+	if !ok {
+		return nil
+	}
+	return owner.Close(ctx)
 }
 
 func newHostOperationContext(hostContext context.Context) (context.Context, context.CancelFunc) {

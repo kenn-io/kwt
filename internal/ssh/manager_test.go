@@ -232,6 +232,79 @@ func TestManagerSerializesAcquireWithFinalAndIdleDisconnect(t *testing.T) {
 	}
 }
 
+func TestManagerCloseDisconnectsRoutesAndRejectsNewAcquires(t *testing.T) {
+	persistent := &fakePersistentManager{generation: 31}
+	manager := NewManager(ManagerOptions{
+		Persistent:  persistent,
+		IdleTimeout: time.Hour,
+		Runner: func(LeaseRequest, ResolvedTarget) (openssh.RunSSH, error) {
+			return func(context.Context, []string) (int, error) { return 0, nil }, nil
+		},
+	})
+	snapshot := directSnapshot("route-one")
+	resolve := func(context.Context) (RouteSnapshot, error) { return snapshot, nil }
+	lease, err := manager.Acquire(
+		context.Background(), LeaseRequest{Snapshot: snapshot}, resolve,
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, manager.Close(context.Background()))
+	_, err = manager.Acquire(
+		context.Background(), LeaseRequest{Snapshot: snapshot}, resolve,
+	)
+
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.SSHConnectionChanged))
+	_, _, _, disconnects := persistent.counts()
+	assert.Equal(t, 1, disconnects)
+	require.NoError(t, lease.Release())
+}
+
+func TestManagerEventCallbackCanAcquireSameRoute(t *testing.T) {
+	persistent := &fakePersistentManager{generation: 32}
+	snapshot := directSnapshot("route-one")
+	resolve := func(context.Context) (RouteSnapshot, error) { return snapshot, nil }
+	callbackDone := make(chan error, 1)
+	var callbackOnce sync.Once
+	var manager *Manager
+	manager = NewManager(ManagerOptions{
+		Persistent: persistent,
+		Runner: func(LeaseRequest, ResolvedTarget) (openssh.RunSSH, error) {
+			return func(context.Context, []string) (int, error) { return 0, nil }, nil
+		},
+		OnEvent: func(event Event) {
+			if event.State != EventStateConnected {
+				return
+			}
+			callbackOnce.Do(func() {
+				lease, err := manager.Acquire(
+					context.Background(), LeaseRequest{Snapshot: snapshot}, resolve,
+				)
+				if err == nil {
+					err = lease.Release()
+				}
+				callbackDone <- err
+			})
+		},
+	})
+	acquireDone := make(chan error, 1)
+	go func() {
+		_, err := manager.Acquire(
+			context.Background(), LeaseRequest{Snapshot: snapshot}, resolve,
+		)
+		acquireDone <- err
+	}()
+
+	select {
+	case err := <-callbackDone:
+		require.NoError(t, err)
+	case <-time.After(100 * time.Millisecond):
+		assert.Fail(t, "event callback deadlocked while acquiring the same route")
+		return
+	}
+	require.NoError(t, <-acquireDone)
+}
+
 func TestManagerReportsIdleCleanupFailure(t *testing.T) {
 	persistent := &fakePersistentManager{
 		generation:    16,
@@ -490,6 +563,36 @@ func TestMasterlessLeaseRetainsPrivateProjectionUntilRelease(t *testing.T) {
 
 	require.NoError(t, lease.Release())
 	assert.NoFileExists(t, configPath)
+}
+
+func TestManagerCloseCleansMasterlessPrivateProjection(t *testing.T) {
+	persistent := &fakePersistentManager{connectErr: openssh.ErrPersistentUnsupported}
+	privateDirectory := filepath.Join(t.TempDir(), "private")
+	manager := NewManager(ManagerOptions{
+		Persistent:       persistent,
+		PrivateDirectory: privateDirectory,
+		Runner: func(LeaseRequest, ResolvedTarget) (openssh.RunSSH, error) {
+			return func(context.Context, []string) (int, error) { return 0, nil }, nil
+		},
+	})
+	snapshot := directSnapshot("route-one")
+	snapshot.Targets[0].Projection.PrivateConfig = []string{`IdentityFile "C:/keys/build"`}
+	lease, err := manager.Acquire(
+		context.Background(),
+		LeaseRequest{Snapshot: snapshot},
+		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
+	)
+	require.NoError(t, err)
+	arguments, err := lease.Arguments(context.Background())
+	require.NoError(t, err)
+	configPath := arguments[1]
+	require.FileExists(t, configPath)
+
+	require.NoError(t, manager.Close(context.Background()))
+
+	assert.NoFileExists(t, configPath)
+	_, err = lease.Arguments(context.Background())
+	assert.True(t, service.IsCode(err, service.SSHConnectionChanged))
 }
 
 func TestManagerMapsConnectionGenerationChanges(t *testing.T) {
