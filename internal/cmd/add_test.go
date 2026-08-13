@@ -20,8 +20,6 @@ import (
 	"go.kenn.io/kwt/internal/fleet"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/registry"
-	"go.kenn.io/kwt/internal/tmux"
-	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
@@ -583,7 +581,16 @@ func TestPrepareLaunchUsesLocalRepositoryFallback(t *testing.T) {
 	assert.True(t, strings.HasPrefix(info.FullPath, "local/"), info.FullPath)
 }
 
-func TestAttachWorkspacePassesConfiguredCredentialName(t *testing.T) {
+func TestAddLaunchPassesConfiguredCredentialName(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetAddCommandFlags(t)
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	putFakeTmuxOnPath(t)
+	t.Chdir(repoPath)
+	addBranch = true
+	addLayout = "shell"
+	viper.Set("fleet.token_env", "Custom_Fleet_Token")
 	runner := &recordingOpenWorkspaceRunner{}
 	var protectedNames []string
 	oldNewRunner := newAddWorkspaceRunner
@@ -592,19 +599,13 @@ func TestAttachWorkspacePassesConfiguredCredentialName(t *testing.T) {
 		protectedNames = append([]string(nil), names...)
 		return runner
 	}
-	cfg := &models.Config{
-		Fleet: models.FleetConfig{TokenEnv: "Custom_Fleet_Token"},
-	}
+	worktreePath := filepath.Join(t.TempDir(), "credential-launch")
+	cmd, _, _ := fleetTestCommand()
 
-	err := attachWorkspace(
-		&url.RepositoryInfo{FullPath: "github.com/acme/widget"},
-		"feature",
-		t.TempDir(),
-		tmux.BlankLayout(),
-		cfg,
-	)
+	err := runAdd(cmd, []string{"credential-launch", worktreePath})
 
 	require.NoError(t, err)
+	assert.True(t, runner.ensured)
 	assert.True(t, runner.attached)
 	assert.ElementsMatch(
 		t,

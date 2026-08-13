@@ -3,14 +3,47 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/spf13/cobra"
 	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
+
+func runWorktreeSessionEstablishment(
+	ctx context.Context,
+	worktreePath string,
+	expectedGeneration string,
+	establish func() error,
+) error {
+	mainPath, err := git.New(worktreePath).GetMainRepositoryPath()
+	if err != nil {
+		return fmt.Errorf("resolve selected repository root: %w", err)
+	}
+	home, err := config.CanonicalHome()
+	if err != nil {
+		return err
+	}
+	expansion, err := kwt.CaptureExpansionContext()
+	if err != nil {
+		return err
+	}
+	guard, err := observeGuardedProjectOperation(ctx, home, mainPath, expansion)
+	if err != nil {
+		return err
+	}
+	return guard.run(ctx, func() error {
+		return git.New(mainPath).WithWorktreeGeneration(
+			worktreePath,
+			expectedGeneration,
+			establish,
+		)
+	})
+}
 
 func commandFlagChanged(cmd *cobra.Command, name string) bool {
 	if cmd == nil {

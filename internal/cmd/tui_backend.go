@@ -48,6 +48,8 @@ type tuiBackend struct {
 	discoverLaunchWorktrees   func(string) ([]*discovery.GlobalWorktreeEntry, error)
 	collectStatuses           func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error)
 	listSessions              func() ([]string, error)
+	ensureWorkspace           func(context.Context, string, string, models.Layout) error
+	attachSession             func(string, bool) error
 	ensureAndAttach           func(context.Context, string, string, models.Layout, bool) error
 	registerProject           func(context.Context, models.Project) error
 	registerWorkspace         func(models.Workspace) (models.Workspace, error)
@@ -70,6 +72,7 @@ func newTUIBackend(cfg *models.Config) *tuiBackend {
 func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBackend {
 	protectedNames := credentials.ProtectedNames(cfg)
 	tmuxCmd := tmux.NewTmuxCommandWithStripNames("", protectedNames)
+	runner := tmux.NewWorkspaceRunner(tmuxCmd, protectedNames)
 	backend := &tuiBackend{
 		cfg:            cfg,
 		tmux:           tmuxCmd,
@@ -85,18 +88,17 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 		discoverLaunchWorktrees:  discoverLaunchRepoWorktrees,
 		collectStatuses:          collectTUIStatuses,
 		listSessions:             tmuxCmd.ListSessions,
-		ensureAndAttach: tmux.NewWorkspaceRunner(
-			tmuxCmd,
-			protectedNames,
-		).EnsureAndAttach,
-		registerProject:         registerProjectWithLifecycle,
-		registerWorkspace:       config.RegisterWorkspace,
-		unregisterWorkspace:     config.UnregisterWorkspace,
-		readFleetState:          readTUIFleetState,
-		acknowledgeRemoteSource: acknowledgeRemoteSourcePath,
-		removeWorktree:          removeDaemonWorktree,
-		runProjectOperation:     runTUIProjectOperation,
-		now:                     time.Now,
+		ensureWorkspace:          runner.Ensure,
+		attachSession:            runner.Attach,
+		ensureAndAttach:          runner.EnsureAndAttach,
+		registerProject:          registerProjectWithLifecycle,
+		registerWorkspace:        config.RegisterWorkspace,
+		unregisterWorkspace:      config.UnregisterWorkspace,
+		readFleetState:           readTUIFleetState,
+		acknowledgeRemoteSource:  acknowledgeRemoteSourcePath,
+		removeWorktree:           removeDaemonWorktree,
+		runProjectOperation:      runTUIProjectOperation,
+		now:                      time.Now,
 	}
 	backend.loadTargetConfig = func(repoRoot string, interactive bool) (*models.Config, error) {
 		return config.LoadForTargetFrom(backend.cfg, repoRoot, interactive)
@@ -280,10 +282,10 @@ func (b *tuiBackend) applyInventoryConfig(effective *models.Config) error {
 	b.protectedNames = credentials.ProtectedNames(b.cfg)
 	b.tmux = tmux.NewTmuxCommandWithStripNames("", b.protectedNames)
 	b.listSessions = b.tmux.ListSessions
-	b.ensureAndAttach = tmux.NewWorkspaceRunner(
-		b.tmux,
-		b.protectedNames,
-	).EnsureAndAttach
+	runner := tmux.NewWorkspaceRunner(b.tmux, b.protectedNames)
+	b.ensureWorkspace = runner.Ensure
+	b.attachSession = runner.Attach
+	b.ensureAndAttach = runner.EnsureAndAttach
 	return nil
 }
 
@@ -1676,9 +1678,25 @@ func (b *tuiBackend) attachWorkspace(ctx context.Context, row dashboard.Row, lay
 	if err != nil {
 		return err
 	}
-	return b.ensureAndAttach(
-		ctx, sessionName, rowPaneRoot(row), layout, insideTmux,
+	if row.Entry == nil {
+		return b.ensureAndAttach(
+			ctx, sessionName, rowPaneRoot(row), layout, insideTmux,
+		)
+	}
+	err = runWorktreeSessionEstablishment(
+		ctx,
+		row.Entry.Path,
+		row.Entry.Generation,
+		func() error {
+			return b.ensureWorkspace(
+				ctx, sessionName, row.Entry.Path, layout,
+			)
+		},
 	)
+	if err != nil {
+		return err
+	}
+	return b.attachSession(sessionName, insideTmux)
 }
 
 func rowPaneRoot(row dashboard.Row) string {

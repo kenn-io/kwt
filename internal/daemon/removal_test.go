@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -52,6 +53,41 @@ func TestRemovalClientRoundTripsResult(t *testing.T) {
 	assert.True(t, remover.requests[0].DeleteBranch)
 	assert.NotEmpty(t, remover.requests[0].Expansion.WorkingDirectory)
 	assert.NotEmpty(t, remover.requests[0].Expansion.HomeDirectory)
+}
+
+func TestRemovalServerAcceptsLegacyV1PayloadWithoutExpansion(t *testing.T) {
+	remover := &fakeRemover{result: kwt.RemovalResult{
+		Path: "/worktrees/topic", WorktreeRemoved: true,
+	}}
+	provider := &testStatusProvider{status: Status{State: StateReady}}
+	handler := NewServer(ServerOptions{
+		Token: "secret", ExpectedHost: "127.0.0.1:43210", Status: provider,
+		Shutdown: func(context.Context, ShutdownRequest) (Status, error) {
+			return provider.status, nil
+		},
+		Remover: remover, Gate: NewGate(time.Now()),
+	})
+	body := []byte(`{
+		"repository_path":"/repos/widget",
+		"path":"/worktrees/topic",
+		"expected_generation":"0123456789abcdef0123456789abcdef"
+	}`)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1:43210/api/v1/worktrees/remove",
+		bytes.NewReader(body),
+	)
+	request.Host = "127.0.0.1:43210"
+	request.Header.Set("Authorization", "Bearer secret")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Len(t, remover.requests, 1)
+	assert.Empty(t, remover.requests[0].Expansion.WorkingDirectory)
+	assert.Empty(t, remover.requests[0].Expansion.HomeDirectory)
 }
 
 func TestRemovalClientPreservesPartialResultOnError(t *testing.T) {

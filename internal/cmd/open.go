@@ -431,12 +431,18 @@ func openSelectedWorktree(
 			os.Getenv("TMUX") != "",
 		)
 	}
-	if startSession {
-		return runner.Ensure(commandCtx, session, entry.Path, layout)
-	}
-	return runner.EnsureAndAttach(
-		commandCtx, session, entry.Path, layout, os.Getenv("TMUX") != "",
+	err = runWorktreeSessionEstablishment(
+		commandCtx,
+		entry.Path,
+		entry.Generation,
+		func() error {
+			return runner.Ensure(commandCtx, session, entry.Path, layout)
+		},
 	)
+	if err != nil || startSession {
+		return err
+	}
+	return runner.Attach(session, os.Getenv("TMUX") != "")
 }
 
 func openExpectedWorktree(

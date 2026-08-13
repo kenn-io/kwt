@@ -19,7 +19,7 @@ type RemovalRequest struct {
 	RepositoryPath     string                   `json:"repository_path"`
 	Path               string                   `json:"path"`
 	ExpectedGeneration string                   `json:"expected_generation"`
-	Expansion          ExpansionContext         `json:"expansion"`
+	Expansion          ExpansionContext         `json:"expansion,omitempty"`
 	Force              bool                     `json:"force,omitempty"`
 	DeleteBranch       bool                     `json:"delete_branch,omitempty"`
 	ForceDeleteBranch  bool                     `json:"force_delete_branch,omitempty"`

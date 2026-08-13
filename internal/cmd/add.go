@@ -293,6 +293,11 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		}
 
 		var expiresAt *time.Time
+		var launchRunner openWorkspaceRunner
+		var launchSession string
+		if launch {
+			launchRunner = newAddWorkspaceRunner(credentials.ProtectedNames(ctx.Config))
+		}
 		err = guard.run(commandContext, func() error {
 			var mutationErr error
 			if remoteSource != "" {
@@ -357,6 +362,12 @@ func runAdd(cmd *cobra.Command, args []string) error {
 				_, _ = fmt.Fprintln(os.Stdout, existingBranchReviewMessage())
 			}
 			publishFleetBestEffortForCommand(cmd, ctx.Config)
+			if launch {
+				launchSession = tmux.WorkspaceSessionName(info, branch, worktreePath)
+				return launchRunner.Ensure(
+					commandContext, launchSession, worktreePath, layout,
+				)
+			}
 			return nil
 		})
 		if err != nil {
@@ -364,13 +375,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		}
 
 		if launch {
-			return attachWorkspace(
-				info,
-				branch,
-				worktreePath,
-				layout,
-				ctx.Config,
-			)
+			return launchRunner.Attach(launchSession, os.Getenv("TMUX") != "")
 		}
 		return nil
 	})(cmd, args)
@@ -511,22 +516,4 @@ func prepareLaunch(ctx *CommandContext) (models.Layout, *url.RepositoryInfo, err
 	}
 
 	return layout, info, nil
-}
-
-// attachWorkspace computes the just-created worktree's session name from the
-// already-parsed repository info and attaches to its tmux workspace,
-// creating the session first if needed. Called only after prepareLaunch has
-// already validated tmux, resolved the layout, and parsed the repository
-// URL, and after the worktree exists.
-func attachWorkspace(
-	info *url.RepositoryInfo,
-	branch, worktreePath string,
-	layout models.Layout,
-	cfg *models.Config,
-) error {
-	session := tmux.WorkspaceSessionName(info, branch, worktreePath)
-	runner := newAddWorkspaceRunner(credentials.ProtectedNames(cfg))
-	return runner.EnsureAndAttach(
-		context.Background(), session, worktreePath, layout, os.Getenv("TMUX") != "",
-	)
 }
