@@ -187,7 +187,13 @@ events may occur repeatedly; the client answers each with one
 `{"prompt_id":"...","value":"..."}` line on stdin. The completion event
 contains generation-bound OpenSSH arguments. Each prompt carries the daemon's
 deadline, so blocked input ends when the prompt expires and the command reports
-the daemon's terminal timeout. The process keeps the lease alive
+the daemon's terminal timeout. OpenSSH confirmation requests use the
+`ssh_host_key` kind and are not sensitive; credential and keyboard-interactive
+requests use `ssh_authentication` and are sensitive. Every prompt includes its
+credential-free logical target, effective target, display target, zero-based
+hop index, and route hop count in `details`, so a native client can identify
+which direct or ProxyJump target controls the prompt. The prompt message remains
+OpenSSH's original text. The process keeps the lease alive
 while stdin remains open, touches it every ten seconds, and releases it when
 stdin reaches EOF or the command is canceled. Progress and warnings are written
 as they occur rather than buffered.

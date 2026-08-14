@@ -62,10 +62,12 @@ type RouteSnapshot struct {
 }
 
 type LeaseRequest struct {
-	Snapshot         RouteSnapshot `json:"snapshot"`
-	WorkingDirectory string        `json:"working_directory"`
-	Environment      []string      `json:"environment"`
-	Prompt           PromptHandler `json:"-"`
+	Snapshot          RouteSnapshot `json:"snapshot"`
+	WorkingDirectory  string        `json:"working_directory"`
+	Environment       []string      `json:"environment"`
+	Prompt            PromptHandler `json:"-"`
+	promptTargetIndex int
+	promptTargetCount int
 }
 
 type PromptHandler func(context.Context, service.OperationPrompt) (string, error)

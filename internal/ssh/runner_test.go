@@ -124,12 +124,22 @@ func TestRunnerCarriesPromptThroughAskpassHelperProcess(t *testing.T) {
 		Environment:      []string{"PATH=" + os.Getenv("PATH")},
 		Prompt: func(_ context.Context, prompt service.OperationPrompt) (string, error) {
 			assert.Equal(t, "Password:", prompt.Message)
+			assert.Equal(t, "ssh_authentication", prompt.Kind)
+			assert.True(t, prompt.Sensitive)
+			assert.Equal(t, "build.example.test", prompt.Details["display_target"])
+			assert.Equal(t, 0, prompt.Details["hop_index"])
+			assert.Equal(t, 1, prompt.Details["hop_count"])
 			return "secret", nil
 		},
 	}
-	target := ResolvedTarget{Projection: ExecutionProjection{
-		Arguments: []string{"-F", os.DevNull},
-	}}
+	target := ResolvedTarget{
+		LogicalTarget:   Target{Hostname: "build"},
+		EffectiveTarget: Target{Hostname: "build.internal", User: "deploy", Port: 2200},
+		DisplayTarget:   "build.example.test",
+		Projection: ExecutionProjection{
+			Arguments: []string{"-F", os.DevNull},
+		},
+	}
 	var output bytes.Buffer
 	runner, err := newRunner(
 		t.TempDir(),
@@ -165,6 +175,61 @@ func TestRunnerCarriesPromptThroughAskpassHelperProcess(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, exitCode)
 	assert.Equal(t, "secret\n", output.String())
+}
+
+func TestRunnerClassifiesHostKeyConfirmationAndAttributesProxyHop(t *testing.T) {
+	var captured service.OperationPrompt
+	request := LeaseRequest{
+		WorkingDirectory: t.TempDir(),
+		Environment:      []string{"PATH=" + os.Getenv("PATH")},
+		Prompt: func(_ context.Context, prompt service.OperationPrompt) (string, error) {
+			captured = prompt
+			return "yes", nil
+		},
+		promptTargetIndex: 0,
+		promptTargetCount: 2,
+	}
+	target := ResolvedTarget{
+		LogicalTarget:   Target{Hostname: "relay"},
+		EffectiveTarget: Target{Hostname: "100.64.0.7", User: "jump", Port: 2201},
+		DisplayTarget:   "relay.example.test",
+		Projection: ExecutionProjection{
+			Arguments: []string{"-F", os.DevNull},
+		},
+	}
+	runner, err := newRunner(t.TempDir(), request, target, runnerOptions{
+		Version: supportedAskpassVersion(),
+		Run: func(
+			_ context.Context,
+			_ []string,
+			_ string,
+			environment []string,
+		) (int, error) {
+			var output bytes.Buffer
+			exitCode, handled := RunAskpassHelper(
+				[]string{"kwt", "Continue connecting (yes/no)?"},
+				append(environment, "SSH_ASKPASS_PROMPT=confirm"),
+				&output,
+			)
+			require.True(t, handled)
+			assert.Equal(t, "yes\n", output.String())
+			return exitCode, nil
+		},
+	})
+	require.NoError(t, err)
+
+	exitCode, err := runner(context.Background(), []string{"-MNf", "--", "jump@100.64.0.7"})
+
+	require.NoError(t, err)
+	assert.Equal(t, 0, exitCode)
+	assert.Equal(t, "ssh_host_key", captured.Kind)
+	assert.False(t, captured.Sensitive)
+	assert.Equal(t, "Continue connecting (yes/no)?", captured.Message)
+	assert.Equal(t, target.LogicalTarget, captured.Details["logical_target"])
+	assert.Equal(t, target.EffectiveTarget, captured.Details["effective_target"])
+	assert.Equal(t, target.DisplayTarget, captured.Details["display_target"])
+	assert.Equal(t, 0, captured.Details["hop_index"])
+	assert.Equal(t, 2, captured.Details["hop_count"])
 }
 
 func TestRunnerPropagatesPromptFailure(t *testing.T) {

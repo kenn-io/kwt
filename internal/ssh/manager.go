@@ -167,6 +167,8 @@ func (m *Manager) acquireTarget(
 	terminal bool,
 	resolve func(context.Context) (RouteSnapshot, error),
 ) (Lease, error) {
+	request.promptTargetIndex = hopDepth
+	request.promptTargetCount = len(request.Snapshot.Targets)
 	runner, err := m.runner(request, target)
 	if err != nil {
 		return nil, connectionFailed(err)

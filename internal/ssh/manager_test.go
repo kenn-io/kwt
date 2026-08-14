@@ -223,10 +223,15 @@ func proxyJumpSnapshot(identity string) RouteSnapshot {
 func TestManagerAcquiresProxyJumpRouteAsOneCompositeLease(t *testing.T) {
 	persistent := &fakePersistentManager{generation: 41}
 	var prepared []ResolvedTarget
+	var promptPositions [][2]int
 	manager := NewManager(ManagerOptions{
 		Persistent: persistent,
-		Runner: func(_ LeaseRequest, target ResolvedTarget) (openssh.RunSSH, error) {
+		Runner: func(request LeaseRequest, target ResolvedTarget) (openssh.RunSSH, error) {
 			prepared = append(prepared, target)
+			promptPositions = append(promptPositions, [2]int{
+				request.promptTargetIndex,
+				request.promptTargetCount,
+			})
 			return func(context.Context, []string) (int, error) { return 0, nil }, nil
 		},
 	})
@@ -238,6 +243,7 @@ func TestManagerAcquiresProxyJumpRouteAsOneCompositeLease(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, prepared, 2)
+	assert.Equal(t, [][2]int{{0, 2}, {1, 2}}, promptPositions)
 	assert.NotContains(t, prepared[0].Projection.Arguments, "ProxyCommand")
 	assert.NotContains(t, prepared[1].Projection.Arguments, "ProxyJump=none")
 	proxyOption := prepared[1].Projection.Arguments[len(prepared[1].Projection.Arguments)-1]

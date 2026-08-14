@@ -124,6 +124,10 @@ stdout back to the waiting OpenSSH process; they are not placed in arguments,
 environment values, daemon events, logs, or persistent state. Deliberate empty
 responses remain distinct from rejection. Kwt creates no channel state unless
 the selected system OpenSSH satisfies the 8.4 forced-askpass floor.
+OpenSSH's own askpass confirmation hint distinguishes host-key confirmation
+from credential input without parsing server-controlled prompt text. Published
+prompt details contain only the already reviewed route targets and hop position;
+they contain no credentials or environment values.
 
 SSH route resolution validates user, hostname, and port before invoking
 OpenSSH. POSIX resolution quotes the validated argv into the account login

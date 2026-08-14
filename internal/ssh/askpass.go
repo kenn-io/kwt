@@ -21,16 +21,17 @@ import (
 )
 
 const (
-	askpassHandleEnvironment = "KWT_SSH_ASKPASS_HANDLE"
-	defaultPromptTimeout     = 2 * time.Minute
-	defaultMaxPromptRounds   = 32
-	askpassIOTimeout         = 5 * time.Second
-	askpassHelperTimeout     = 5 * time.Minute
-	maxAskpassHandleBytes    = 4 << 10
-	maxAskpassConnections    = 8
+	askpassHandleEnvironment  = "KWT_SSH_ASKPASS_HANDLE"
+	defaultPromptTimeout      = 2 * time.Minute
+	defaultMaxPromptRounds    = 32
+	askpassIOTimeout          = 5 * time.Second
+	askpassHelperTimeout      = 5 * time.Minute
+	maxAskpassHandleBytes     = 4 << 10
+	maxAskpassPromptHintBytes = 64
+	maxAskpassConnections     = 8
 )
 
-var askpassProtocolMagic = [6]byte{'K', 'W', 'T', 'A', 'P', '1'} //nolint:gochecknoglobals
+var askpassProtocolMagic = [6]byte{'K', 'W', 'T', 'A', 'P', '2'} //nolint:gochecknoglobals
 
 type InteractiveVersionPolicy interface {
 	RequireInteractive(context.Context) error
@@ -43,7 +44,7 @@ type AskpassOptions struct {
 	ProtectedNames []string
 	PromptTimeout  time.Duration
 	MaxRounds      int
-	Describe       func(string) (service.OperationPrompt, error)
+	Describe       func(string, string) (service.OperationPrompt, error)
 	Prompt         func(context.Context, service.OperationPrompt) (string, error)
 }
 
@@ -242,8 +243,12 @@ func (a *Askpass) handleConnection(connection net.Conn) {
 	if err != nil {
 		return
 	}
+	promptHint, err := readAskpassFrame(connection, maxAskpassPromptHintBytes)
+	if err != nil {
+		return
+	}
 	_ = connection.SetReadDeadline(time.Time{})
-	response, promptErr := a.prompt(promptMessage)
+	response, promptErr := a.prompt(promptMessage, promptHint)
 	_ = connection.SetWriteDeadline(time.Now().Add(askpassIOTimeout))
 	if promptErr != nil {
 		a.setError(promptErr)
@@ -255,7 +260,7 @@ func (a *Askpass) handleConnection(connection net.Conn) {
 	}
 }
 
-func (a *Askpass) prompt(message string) (string, error) {
+func (a *Askpass) prompt(message, hint string) (string, error) {
 	a.mu.Lock()
 	a.rounds++
 	round := a.rounds
@@ -263,13 +268,10 @@ func (a *Askpass) prompt(message string) (string, error) {
 	if round > a.options.MaxRounds {
 		return "", connectionFailed(errors.New("SSH prompt round limit exceeded"))
 	}
-	prompt := service.OperationPrompt{
-		Kind:      "ssh_authentication",
-		Message:   message,
-		Sensitive: true,
-	}
+	prompt := describeSSHPrompt(hint)
+	prompt.Message = message
 	if a.options.Describe != nil {
-		described, err := a.options.Describe(message)
+		described, err := a.options.Describe(message, hint)
 		if err != nil {
 			return "", err
 		}
@@ -349,6 +351,13 @@ func RunAskpassHelper(arguments, environment []string, output io.Writer) (int, b
 	if err := writeAskpassFrame(connection, arguments[1]); err != nil {
 		return 1, true
 	}
+	promptHint, _ := environmentValue(environment, "SSH_ASKPASS_PROMPT")
+	if len(promptHint) > maxAskpassPromptHintBytes {
+		return 1, true
+	}
+	if err := writeAskpassFrame(connection, promptHint); err != nil {
+		return 1, true
+	}
 	status := []byte{0}
 	if _, err := io.ReadFull(connection, status); err != nil {
 		return 1, true
@@ -361,6 +370,13 @@ func RunAskpassHelper(arguments, environment []string, output io.Writer) (int, b
 		return 1, true
 	}
 	return 0, true
+}
+
+func describeSSHPrompt(hint string) service.OperationPrompt {
+	if hint == "confirm" {
+		return service.OperationPrompt{Kind: "ssh_host_key", Sensitive: false}
+	}
+	return service.OperationPrompt{Kind: "ssh_authentication", Sensitive: true}
 }
 
 func encodeAskpassHandle(handle askpassHandle) (string, error) {
