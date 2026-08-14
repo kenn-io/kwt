@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -260,6 +261,61 @@ func TestManagerAcquiresProxyJumpRouteAsOneCompositeLease(t *testing.T) {
 	require.NoError(t, lease.Touch())
 	require.NoError(t, lease.Release(context.Background()))
 	assert.Equal(t, []string{identities[1], identities[0]}, persistent.disconnectedIdentities())
+}
+
+func TestMultiplexedLeaseRetainsReviewedSessionProjection(t *testing.T) {
+	privateDirectory := filepath.Join(t.TempDir(), "private")
+	persistent := &fakePersistentManager{generation: 41}
+	manager := NewManager(ManagerOptions{
+		Persistent:       persistent,
+		PrivateDirectory: privateDirectory,
+		Runner: func(LeaseRequest, ResolvedTarget) (openssh.RunSSH, error) {
+			return func(context.Context, []string) (int, error) { return 0, nil }, nil
+		},
+	})
+	snapshot := proxyJumpSnapshot("session-projection")
+	snapshot.Targets[0].Projection.Arguments = append(
+		snapshot.Targets[0].Projection.Arguments, "-o", "SendEnv=UPSTREAM",
+	)
+	snapshot.Targets[0].Projection.PrivateConfig = []string{
+		`SetEnv "UPSTREAM=value"`,
+	}
+	snapshot.Targets[1].Projection.Arguments = append(
+		snapshot.Targets[1].Projection.Arguments,
+		"-o", "ForwardAgent=yes",
+		"-o", "SendEnv=LANG",
+		"-o", "EscapeChar=~",
+	)
+	snapshot.Targets[1].Projection.PrivateConfig = []string{
+		`IdentityFile "/credentials/id"`,
+		`SetEnv "CHANNEL=alpha beta"`,
+	}
+
+	lease, err := manager.Acquire(
+		context.Background(),
+		LeaseRequest{Snapshot: snapshot},
+		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
+	)
+	require.NoError(t, err)
+
+	arguments, err := lease.Arguments(context.Background())
+	require.NoError(t, err)
+	assert.Contains(t, arguments, "ForwardAgent=yes")
+	assert.Contains(t, arguments, "SendEnv=LANG")
+	assert.Contains(t, arguments, "EscapeChar=~")
+	assert.NotContains(t, arguments, "SendEnv=UPSTREAM")
+	configIndex := slices.Index(arguments, "-F")
+	require.GreaterOrEqual(t, configIndex, 0)
+	require.Less(t, configIndex+1, len(arguments))
+	configPath := arguments[configIndex+1]
+	assert.NotEqual(t, os.DevNull, configPath)
+	config, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, "SetEnv \"CHANNEL=alpha beta\"\n", string(config))
+
+	require.NoError(t, lease.Release(context.Background()))
+	_, err = os.Stat(configPath)
+	assert.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestManagerCloseDisconnectsProxyRouteDownstreamFirst(t *testing.T) {

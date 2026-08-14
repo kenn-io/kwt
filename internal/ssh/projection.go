@@ -24,6 +24,7 @@ type projectionOption struct {
 	name    string
 	openSSH string
 	private bool
+	session bool
 }
 
 var projectionOptionsV1 = []projectionOption{
@@ -48,7 +49,7 @@ var projectionOptionsV1 = []projectionOption{
 	{name: "addkeystoagent", openSSH: "AddKeysToAgent"},
 	{name: "certificatefile", openSSH: "CertificateFile", private: true},
 	{name: "enablesshkeysign", openSSH: "EnableSSHKeysign"},
-	{name: "forwardagent", openSSH: "ForwardAgent"},
+	{name: "forwardagent", openSSH: "ForwardAgent", session: true},
 	{name: "gssapiauthentication", openSSH: "GSSAPIAuthentication"},
 	{name: "gssapidelegatecredentials", openSSH: "GSSAPIDelegateCredentials"},
 	{name: "hostbasedacceptedalgorithms", openSSH: "HostbasedAcceptedAlgorithms"},
@@ -64,9 +65,41 @@ var projectionOptionsV1 = []projectionOption{
 	{name: "pubkeyauthentication", openSSH: "PubkeyAuthentication"},
 	{name: "securitykeyprovider", openSSH: "SecurityKeyProvider", private: true},
 	{name: "usekeychain", openSSH: "UseKeychain"},
-	{name: "escapechar", openSSH: "EscapeChar"},
-	{name: "sendenv", openSSH: "SendEnv"},
-	{name: "setenv", openSSH: "SetEnv", private: true},
+	{name: "escapechar", openSSH: "EscapeChar", session: true},
+	{name: "sendenv", openSSH: "SendEnv", session: true},
+	{name: "setenv", openSSH: "SetEnv", private: true, session: true},
+}
+
+func multiplexedSessionProjection(projected ExecutionProjection) ExecutionProjection {
+	result := ExecutionProjection{Arguments: []string{"-F", os.DevNull}}
+	for index := 0; index+1 < len(projected.Arguments); index++ {
+		if projected.Arguments[index] != "-o" {
+			continue
+		}
+		name, _, found := strings.Cut(projected.Arguments[index+1], "=")
+		if found && isSessionProjectionOption(name) {
+			result.Arguments = append(
+				result.Arguments, projected.Arguments[index], projected.Arguments[index+1],
+			)
+		}
+		index++
+	}
+	for _, line := range projected.PrivateConfig {
+		name, _, _ := strings.Cut(line, " ")
+		if isSessionProjectionOption(name) {
+			result.PrivateConfig = append(result.PrivateConfig, line)
+		}
+	}
+	return result
+}
+
+func isSessionProjectionOption(name string) bool {
+	for _, option := range projectionOptionsV1 {
+		if option.session && strings.EqualFold(option.openSSH, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func projectConfig(config openssh.EffectiveConfig) (projection, error) {

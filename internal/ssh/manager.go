@@ -142,7 +142,8 @@ func (m *Manager) Acquire(
 			request.Snapshot, target, index, previousIdentity, request.Environment,
 		)
 		lease, acquireErr := m.acquireTarget(
-			ctx, request, target, identity, previousIdentity, index, resolve,
+			ctx, request, target, identity, previousIdentity, index,
+			index == len(request.Snapshot.Targets)-1, resolve,
 		)
 		if acquireErr != nil {
 			return nil, errors.Join(releaseAcquiredLeases(ctx, leases), acquireErr)
@@ -163,6 +164,7 @@ func (m *Manager) acquireTarget(
 	identity string,
 	upstreamIdentity string,
 	hopDepth int,
+	terminal bool,
 	resolve func(context.Context) (RouteSnapshot, error),
 ) (Lease, error) {
 	runner, err := m.runner(request, target)
@@ -280,8 +282,9 @@ func (m *Manager) acquireTarget(
 	}
 
 	m.mu.Lock()
-	if m.closed {
-		m.mu.Unlock()
+	closed = m.closed
+	m.mu.Unlock()
+	if closed {
 		event, cleanupErr := m.disconnectUnleased(
 			identity, generation, request.Snapshot.RouteIdentity, target.ForwardAgent,
 			upstreamIdentity, hopDepth,
@@ -290,6 +293,46 @@ func (m *Manager) acquireTarget(
 			releaseIdentity()
 			m.emitFailure(request.Snapshot.RouteIdentity, generation, cleanupErr)
 			return nil, cleanupErr
+		}
+		releaseIdentity()
+		m.emitOptional(event)
+		return nil, connectionChanged()
+	}
+	sessionProjection := ExecutionProjection{Arguments: []string{"-F", os.DevNull}}
+	if terminal {
+		sessionProjection = multiplexedSessionProjection(target.Projection)
+	}
+	sessionArguments, sessionCleanup, err := materializeProjection(
+		m.privateDirectory, sessionProjection,
+	)
+	if err != nil {
+		event, cleanupErr := m.disconnectUnleased(
+			identity, generation, request.Snapshot.RouteIdentity, target.ForwardAgent,
+			upstreamIdentity, hopDepth,
+		)
+		releaseIdentity()
+		m.emitOptional(event)
+		if cleanupErr != nil {
+			m.emitFailure(request.Snapshot.RouteIdentity, generation, cleanupErr)
+		}
+		return nil, errors.Join(connectionFailed(err), cleanupErr)
+	}
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		var projectionCleanupErr error
+		if sessionCleanup != nil {
+			projectionCleanupErr = sessionCleanup()
+		}
+		event, cleanupErr := m.disconnectUnleased(
+			identity, generation, request.Snapshot.RouteIdentity, target.ForwardAgent,
+			upstreamIdentity, hopDepth,
+		)
+		if projectionCleanupErr != nil || cleanupErr != nil {
+			failure := cleanupFailed(errors.Join(projectionCleanupErr, cleanupErr))
+			releaseIdentity()
+			m.emitFailure(request.Snapshot.RouteIdentity, generation, failure)
+			return nil, failure
 		}
 		releaseIdentity()
 		m.emitOptional(event)
@@ -328,6 +371,8 @@ func (m *Manager) acquireTarget(
 	}
 	return &managedLease{
 		manager: m, identity: identity, generation: generation,
+		routeIdentity:    request.Snapshot.RouteIdentity,
+		sessionArguments: sessionArguments, sessionCleanup: sessionCleanup,
 	}, nil
 }
 
@@ -491,13 +536,16 @@ func sameRoute(expected, current RouteSnapshot) bool {
 }
 
 type managedLease struct {
-	manager        *Manager
-	identity       string
-	generation     openssh.Generation
-	released       atomic.Bool
-	releaseStarted atomic.Bool
-	releaseMu      sync.Mutex
-	countReleased  bool
+	manager          *Manager
+	identity         string
+	routeIdentity    string
+	generation       openssh.Generation
+	sessionArguments []string
+	sessionCleanup   func() error
+	released         atomic.Bool
+	releaseStarted   atomic.Bool
+	releaseMu        sync.Mutex
+	countReleased    bool
 }
 
 func (l *managedLease) Mode() LeaseMode { return LeaseModeMultiplexed }
@@ -512,7 +560,7 @@ func (l *managedLease) Arguments(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, mapManagerError(err)
 	}
-	arguments = append([]string{"-F", os.DevNull}, arguments...)
+	arguments = append(append([]string(nil), l.sessionArguments...), arguments...)
 	arguments = append(arguments,
 		"-o", "BatchMode=yes",
 		"-o", "ProxyCommand="+proxyFailureCommand(),
@@ -534,6 +582,14 @@ func (l *managedLease) Release(ctx context.Context) error {
 		return nil
 	}
 	l.releaseStarted.Store(true)
+	if l.sessionCleanup != nil {
+		if err := l.sessionCleanup(); err != nil {
+			failure := cleanupFailed(err)
+			l.manager.emitFailure(l.routeIdentity, l.generation, failure)
+			return failure
+		}
+		l.sessionCleanup = nil
+	}
 	decremented, err := l.manager.release(
 		ctx, l.identity, l.generation, !l.countReleased,
 	)

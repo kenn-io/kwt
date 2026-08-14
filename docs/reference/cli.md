@@ -192,6 +192,11 @@ while stdin remains open, touches it every ten seconds, and releases it when
 stdin reaches EOF or the command is canceled. Progress and warnings are written
 as they occur rather than buffered.
 
+Multiplexed-client arguments reapply the final target's reviewed
+`ForwardAgent`, `SendEnv`, `SetEnv`, and `EscapeChar` settings. Private
+`SetEnv` values remain in daemon-owned ephemeral configuration rather than
+appearing in argv.
+
 The daemon lease bridge requires a persistent OpenSSH master. A platform that
 cannot provide multiplexing returns `ssh_route_unreviewable` instead of
 publishing direct-connect arguments outside the daemon's prompt and trust
