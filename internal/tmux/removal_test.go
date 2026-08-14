@@ -258,27 +258,37 @@ func TestRemovalFailsClosedOnUnmarkedKWTSessionAfterWorktreeMove(t *testing.T) {
 
 func TestRemovalAllowsUnrelatedDirectoryWorkspaceSession(t *testing.T) {
 	const directoryPath = "/registered/workspaces/notes"
-	guard := &removalSessionGuard{
-		command: "tmux",
-		inspect: func(
-			_ context.Context,
-			_ *TmuxCommand,
-		) (string, string, error) {
-			return "123|$1|1720000000|" +
-				DirWorkspaceSessionName("notes", directoryPath) + "|" +
-				workspacePathIdentity(directoryPath) + "|\n", "", nil
-		},
+	for _, test := range []struct {
+		name              string
+		workspaceIdentity string
+	}{
+		{name: "marked", workspaceIdentity: workspacePathIdentity(directoryPath)},
+		{name: "legacy unmarked"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			guard := &removalSessionGuard{
+				command: "tmux",
+				inspect: func(
+					_ context.Context,
+					_ *TmuxCommand,
+				) (string, string, error) {
+					return "123|$1|1720000000|" +
+						DirWorkspaceSessionName("notes", directoryPath) + "|" +
+						test.workspaceIdentity + "|\n", "", nil
+				},
+			}
+
+			lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+				SessionName:         "kwt-wt-repo-topic-deadbeef",
+				WorkspacePath:       "/worktrees/topic",
+				WorkspaceGeneration: "0123456789abcdef0123456789abcdef",
+				Absent:              true,
+			})
+
+			require.NoError(t, err)
+			require.NotNil(t, lease)
+		})
 	}
-
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
-		SessionName:         "kwt-wt-repo-topic-deadbeef",
-		WorkspacePath:       "/worktrees/topic",
-		WorkspaceGeneration: "0123456789abcdef0123456789abcdef",
-		Absent:              true,
-	})
-
-	require.NoError(t, err)
-	require.NotNil(t, lease)
 }
 
 func TestProtectedRemovalFailsClosedOnUnexpectedCanonicalTopology(t *testing.T) {
@@ -308,6 +318,41 @@ func TestProtectedRemovalFailsClosedOnUnexpectedCanonicalTopology(t *testing.T) 
 	require.Len(t, inspected, 1, "indeterminate canonical topology must not fall through to legacy")
 	assert.Equal(t, "kwt-pr-protected", inspected[0].socketName)
 	assert.Empty(t, inspected[0].socketTempDir)
+}
+
+func TestProtectedRemovalCommandsStripRequestProtectedNames(t *testing.T) {
+	t.Setenv("CUSTOM_FLEET_TOKEN", "secret")
+	inspections := 0
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspectProtected: func(
+			_ context.Context,
+			command *TmuxCommand,
+			_ string,
+		) (ProtectedSessionState, error) {
+			inspections++
+			cmd := command.newCmd(context.Background(), []string{"list-sessions"})
+			for _, entry := range cmd.Env {
+				if hasEnvName(entry, "CUSTOM_FLEET_TOKEN") {
+					t.Fatalf("protected removal command retained configured credential: %v", cmd.Env)
+				}
+			}
+			return ProtectedSessionAbsent, nil
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName:             "protected",
+		SocketName:              "protected-socket",
+		SocketDirectory:         "/legacy/tmux",
+		Absent:                  true,
+		ProtectedSocketTopology: true,
+		ProtectedNames:          []string{"CUSTOM_FLEET_TOKEN"},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, lease)
+	assert.Equal(t, 2, inspections, "canonical and legacy endpoints must both be sanitized")
 }
 
 func TestProtectedRemovalChecksCanonicalBeforeLegacyEndpoint(t *testing.T) {

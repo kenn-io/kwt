@@ -147,6 +147,49 @@ func TestUnqualifiedRemovalGuardUsesCanonicalDefaultSocket(t *testing.T) {
 	}
 }
 
+func TestRemovalCommandsStripRequestProtectedNames(t *testing.T) {
+	t.Setenv("CUSTOM_FLEET_TOKEN", "secret")
+	condition := RemovalSessionCondition{
+		SessionName:    "workspace",
+		Absent:         true,
+		ProtectedNames: []string{"CUSTOM_FLEET_TOKEN"},
+	}
+
+	for _, test := range []struct {
+		name      string
+		condition RemovalSessionCondition
+	}{
+		{name: "default socket", condition: condition},
+		{
+			name: "named socket",
+			condition: func() RemovalSessionCondition {
+				value := condition
+				value.SocketName = "protected"
+				return value
+			}(),
+		},
+		{
+			name: "named socket in explicit directory",
+			condition: func() RemovalSessionCondition {
+				value := condition
+				value.SocketName = "protected"
+				value.SocketDirectory = "/run/user/1000/tmux"
+				return value
+			}(),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			command := newRemovalTmuxCommand("tmux", test.condition)
+			cmd := command.newCmd(context.Background(), []string{"list-sessions"})
+			for _, entry := range cmd.Env {
+				if hasEnvName(entry, "CUSTOM_FLEET_TOKEN") {
+					t.Fatalf("removal command retained configured credential: %v", cmd.Env)
+				}
+			}
+		})
+	}
+}
+
 // TestNewCmdBackgroundContextSanitizes confirms newCmd sanitizes the
 // environment for the context-free call sites (runCommand, runCommandOutput),
 // which pass context.Background(). It uses VSCODE_INJECTION

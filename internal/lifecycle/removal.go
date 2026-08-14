@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/tmux"
@@ -87,6 +89,7 @@ func (s *removalService) Remove(
 	var (
 		projectClaim    *ProjectClaim
 		protectedTarget *removalProtectedSessionTarget
+		protectedNames  []string
 	)
 	if request.Session != nil {
 		var releaseProject func() error
@@ -113,6 +116,17 @@ func (s *removalService) Remove(
 		if err != nil {
 			return result, classifyRemovalError(err, result)
 		}
+		configSnapshot, err := config.LoadGlobalSnapshotAtWithExpansion(
+			s.home,
+			request.Expansion.expandPath,
+		)
+		if err != nil {
+			return result, classifyRemovalError(
+				fmt.Errorf("reload removal credential policy: %w", err),
+				result,
+			)
+		}
+		protectedNames = credentials.ProtectedNames(configSnapshot.Config)
 	}
 
 	reg, err := registry.NewAt(s.home)
@@ -166,6 +180,7 @@ func (s *removalService) Remove(
 					sessionCondition.WorkspacePath = request.Path
 					sessionCondition.WorkspaceGeneration = request.ExpectedGeneration
 					sessionCondition.ProtectedSocketTopology = protectedTarget != nil
+					sessionCondition.ProtectedNames = append([]string(nil), protectedNames...)
 					if err := validateCurrentRemovalSessionTarget(
 						ctx,
 						request.Path,

@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/pullrequest"
 	"go.kenn.io/kwt/internal/registry"
@@ -158,9 +159,41 @@ func TestRemovalServiceTerminatesConfirmedSessionBeforeRemovingWorktree(t *testi
 	expectedCondition := condition
 	expectedCondition.WorkspacePath = worktreePath
 	expectedCondition.WorkspaceGeneration = generation
+	expectedCondition.ProtectedNames = credentials.ProtectedNames(nil)
 	assert.Equal(t, expectedCondition, guard.condition)
 	assert.True(t, result.WorktreeRemoved)
 	assert.NoDirExists(t, worktreePath)
+}
+
+func TestRemovalServiceReloadsConfiguredProtectedNamesPerRequest(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "configured-token")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	home := t.TempDir()
+	guard := &recordingRemovalSessionGuard{}
+	service := NewRemovalService(RemovalServiceOptions{Home: home, SessionGuard: guard})
+	contents := fmt.Sprintf(
+		"[fleet]\ntoken_env = %q\n[[projects]]\nrepository = %q\nname = \"repository\"\npath = %q\n",
+		"CUSTOM_FLEET_TOKEN",
+		repositoryPath,
+		repositoryPath,
+	)
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(contents), 0o600))
+
+	result, err := service.Remove(context.Background(), RemovalRequest{
+		RepositoryPath:     repositoryPath,
+		Path:               worktreePath,
+		ExpectedGeneration: generation,
+		Expansion:          testExpansion(t),
+		Session: &RemovalSessionCondition{
+			SessionName: removalSessionName(t, worktreePath, "configured-token"),
+			Absent:      true,
+		},
+	})
+
+	require.NoError(t, err)
+	assert.True(t, result.WorktreeRemoved)
+	assert.Contains(t, guard.condition.ProtectedNames, "CUSTOM_FLEET_TOKEN")
 }
 
 func TestGuardedRemovalSupportsUnregisteredRepository(t *testing.T) {
@@ -367,6 +400,7 @@ func TestRemovalServiceAcceptsOrdinarySessionOnExplicitSocketEndpoint(t *testing
 	expectedCondition := condition
 	expectedCondition.WorkspacePath = worktreePath
 	expectedCondition.WorkspaceGeneration = generation
+	expectedCondition.ProtectedNames = credentials.ProtectedNames(nil)
 	assert.Equal(t, expectedCondition, guard.condition)
 	assert.False(t, guard.condition.ProtectedSocketTopology)
 	assert.True(t, result.WorktreeRemoved)
