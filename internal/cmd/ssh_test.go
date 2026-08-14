@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -97,6 +100,320 @@ func TestRequireSSHResolveCapabilityFailsClosed(t *testing.T) {
 	err := requireSSHResolveCapability(kwtdaemon.Observation{})
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.DaemonIncompatible))
+}
+
+type fakeSSHLeaseControl struct {
+	touches    int
+	releases   int
+	touchErr   error
+	releaseErr error
+}
+
+type failingSSHOutput struct{ err error }
+
+func (w failingSSHOutput) Write([]byte) (int, error) { return 0, w.err }
+
+func (c *fakeSSHLeaseControl) Touch(context.Context, string) error {
+	c.touches++
+	return c.touchErr
+}
+
+func (c *fakeSSHLeaseControl) Release(context.Context, string) error {
+	c.releases++
+	return c.releaseErr
+}
+
+func TestSSHLeaseCommandStreamsPromptsAndReleasesOnEOF(t *testing.T) {
+	oldAcquire := acquireSSHLeaseThroughDaemon
+	oldJSON, oldIdentity := sshLeaseJSON, sshLeaseRouteIdentity
+	t.Cleanup(func() {
+		acquireSSHLeaseThroughDaemon = oldAcquire
+		sshLeaseJSON, sshLeaseRouteIdentity = oldJSON, oldIdentity
+	})
+	sshLeaseJSON = true
+	sshLeaseRouteIdentity = "route-one"
+	control := &fakeSSHLeaseControl{}
+	acquireSSHLeaseThroughDaemon = func(
+		ctx context.Context,
+		request kwt.SSHLeaseRequest,
+		callbacks kwtdaemon.OperationCallbacks,
+	) (kwtdaemon.SSHLeaseResult, sshLeaseControl, error) {
+		assert.Equal(t, "route-one", request.Snapshot.RouteIdentity)
+		prompt := service.OperationPrompt{
+			ID: "prompt-1", Kind: "password", Message: "Password:\x1b]52;c;ignored\x07",
+			Sensitive: true,
+		}
+		require.NoError(t, callbacks.Event(service.OperationEvent{
+			OperationID: "operation-1", Sequence: 1,
+			Kind: service.OperationEventPrompt, Prompt: &prompt,
+		}))
+		value, err := callbacks.Prompt(ctx, prompt)
+		require.NoError(t, err)
+		assert.Equal(t, "secret", value)
+		result := kwtdaemon.SSHLeaseResult{
+			LeaseID: "lease-1", RouteIdentity: "route-one", Generation: 9,
+			Mode: kwt.SSHLeaseModeMultiplexed, Arguments: []string{"-S", "/private/control"},
+		}
+		encoded, err := json.Marshal(result)
+		require.NoError(t, err)
+		require.NoError(t, callbacks.Event(service.OperationEvent{
+			OperationID: "operation-1", Sequence: 2,
+			Kind: service.OperationEventComplete, Result: encoded,
+		}))
+		return result, control, nil
+	}
+	command, stdout, stderr := sshResolveTestCommand()
+	command.SetIn(strings.NewReader(`{"prompt_id":"prompt-1","value":"secret"}` + "\n"))
+
+	require.NoError(t, runSSHLease(command, []string{"build.example.test"}))
+	assert.Equal(t, 1, control.releases)
+	assert.Equal(t, 0, control.touches)
+	assert.Empty(t, stderr.String())
+	decoder := json.NewDecoder(stdout)
+	var promptEvent, completeEvent service.OperationEvent
+	require.NoError(t, decoder.Decode(&promptEvent))
+	require.NoError(t, decoder.Decode(&completeEvent))
+	assert.Equal(t, service.OperationEventPrompt, promptEvent.Kind)
+	require.NotNil(t, promptEvent.Prompt)
+	assert.Equal(t, "Password:\x1b]52;c;ignored\x07", promptEvent.Prompt.Message)
+	assert.Equal(t, service.OperationEventComplete, completeEvent.Kind)
+	_, err := decoder.Token()
+	assert.ErrorIs(t, err, io.EOF)
+}
+
+func TestSSHLeaseHumanPromptEscapesTerminalControls(t *testing.T) {
+	oldAcquire := acquireSSHLeaseThroughDaemon
+	oldJSON, oldIdentity := sshLeaseJSON, sshLeaseRouteIdentity
+	t.Cleanup(func() {
+		acquireSSHLeaseThroughDaemon = oldAcquire
+		sshLeaseJSON, sshLeaseRouteIdentity = oldJSON, oldIdentity
+	})
+	sshLeaseJSON = false
+	sshLeaseRouteIdentity = "route-one"
+	message := "Password:\x1b]52;c;ignored\x07\r\nNext\x7f\u0085"
+	acquireSSHLeaseThroughDaemon = func(
+		ctx context.Context,
+		_ kwt.SSHLeaseRequest,
+		callbacks kwtdaemon.OperationCallbacks,
+	) (kwtdaemon.SSHLeaseResult, sshLeaseControl, error) {
+		value, err := callbacks.Prompt(ctx, service.OperationPrompt{
+			ID: "prompt-1", Message: message, Sensitive: true,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "secret", value)
+		return kwtdaemon.SSHLeaseResult{}, nil, service.NewError(
+			service.SSHPromptRejected, "SSH prompt rejected", false, nil, nil,
+		)
+	}
+	command, _, stderr := sshResolveTestCommand()
+	command.SetIn(strings.NewReader("secret\n"))
+
+	err := runSSHLease(command, []string{"build.example.test"})
+	require.Error(t, err)
+	assert.Contains(t, stderr.String(),
+		`Password:\x1b]52;c;ignored\x07\x0d\x0aNext\x7f\x85 `)
+	assert.NotContains(t, stderr.String(), "\x1b")
+	assert.NotContains(t, stderr.String(), "\x07")
+	assert.NotContains(t, stderr.String(), "\r")
+	assert.NotContains(t, stderr.String(), "\x7f")
+	assert.NotContains(t, stderr.String(), "\u0085")
+}
+
+func TestSSHLeasePromptReadStopsWhenContextIsCanceled(t *testing.T) {
+	for _, jsonMode := range []bool{false, true} {
+		t.Run(fmt.Sprintf("json=%t", jsonMode), func(t *testing.T) {
+			oldAcquire := acquireSSHLeaseThroughDaemon
+			oldJSON, oldIdentity := sshLeaseJSON, sshLeaseRouteIdentity
+			t.Cleanup(func() {
+				acquireSSHLeaseThroughDaemon = oldAcquire
+				sshLeaseJSON, sshLeaseRouteIdentity = oldJSON, oldIdentity
+			})
+			sshLeaseJSON = jsonMode
+			sshLeaseRouteIdentity = "route-one"
+			promptStarted := make(chan struct{})
+			acquireSSHLeaseThroughDaemon = func(
+				ctx context.Context,
+				_ kwt.SSHLeaseRequest,
+				callbacks kwtdaemon.OperationCallbacks,
+			) (kwtdaemon.SSHLeaseResult, sshLeaseControl, error) {
+				close(promptStarted)
+				_, err := callbacks.Prompt(ctx, service.OperationPrompt{
+					ID: "prompt-1", Message: "Password:", Sensitive: true,
+				})
+				return kwtdaemon.SSHLeaseResult{}, nil, err
+			}
+			reader, writer := io.Pipe()
+			t.Cleanup(func() {
+				_ = reader.Close()
+				_ = writer.Close()
+			})
+			ctx, cancel := context.WithCancel(context.Background())
+			command, _, _ := sshResolveTestCommand()
+			command.SetContext(ctx)
+			command.SetIn(reader)
+			done := make(chan error, 1)
+			go func() { done <- runSSHLease(command, []string{"build.example.test"}) }()
+			<-promptStarted
+			cancel()
+
+			select {
+			case err := <-done:
+				require.Error(t, err)
+			case <-time.After(time.Second):
+				t.Fatal("SSH prompt read did not stop after cancellation")
+			}
+		})
+	}
+}
+
+func TestSSHLeaseJSONWritesOneCompactFailureRecord(t *testing.T) {
+	for _, terminalEvent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("terminal=%t", terminalEvent), func(t *testing.T) {
+			oldAcquire := acquireSSHLeaseThroughDaemon
+			oldJSON, oldIdentity := sshLeaseJSON, sshLeaseRouteIdentity
+			t.Cleanup(func() {
+				acquireSSHLeaseThroughDaemon = oldAcquire
+				sshLeaseJSON, sshLeaseRouteIdentity = oldJSON, oldIdentity
+			})
+			sshLeaseJSON = true
+			sshLeaseRouteIdentity = "route-one"
+			failure := service.Descriptor{
+				Code: service.SSHConnectionFailed, Message: "connection failed",
+			}
+			acquireSSHLeaseThroughDaemon = func(
+				_ context.Context,
+				_ kwt.SSHLeaseRequest,
+				callbacks kwtdaemon.OperationCallbacks,
+			) (kwtdaemon.SSHLeaseResult, sshLeaseControl, error) {
+				if terminalEvent {
+					require.NoError(t, callbacks.Event(service.OperationEvent{
+						OperationID: "operation-1", Sequence: 1,
+						Kind: service.OperationEventComplete, Failure: &failure,
+					}))
+				}
+				return kwtdaemon.SSHLeaseResult{}, nil, service.NewDescriptorError(failure, nil)
+			}
+			command, stdout, _ := sshResolveTestCommand()
+
+			err := runSSHLease(command, []string{"build.example.test"})
+			require.Error(t, err)
+			assert.Equal(t, 1, strings.Count(stdout.String(), "\n"))
+			assert.NotContains(t, stdout.String(), "\n  ")
+			if terminalEvent {
+				var event service.OperationEvent
+				require.NoError(t, json.Unmarshal(stdout.Bytes(), &event))
+				assert.Equal(t, service.OperationEventComplete, event.Kind)
+			} else {
+				var envelope jsonErrorEnvelope
+				require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+				assert.Equal(t, service.SSHConnectionFailed, envelope.Error.Code)
+			}
+		})
+	}
+}
+
+func TestSSHLeaseReleasesAcquiredLeaseWhenTerminalOutputFails(t *testing.T) {
+	oldAcquire := acquireSSHLeaseThroughDaemon
+	oldJSON, oldIdentity := sshLeaseJSON, sshLeaseRouteIdentity
+	t.Cleanup(func() {
+		acquireSSHLeaseThroughDaemon = oldAcquire
+		sshLeaseJSON, sshLeaseRouteIdentity = oldJSON, oldIdentity
+	})
+	sshLeaseJSON = true
+	sshLeaseRouteIdentity = "route-one"
+	control := &fakeSSHLeaseControl{}
+	writeErr := errors.New("output closed")
+	acquireSSHLeaseThroughDaemon = func(
+		_ context.Context,
+		_ kwt.SSHLeaseRequest,
+		callbacks kwtdaemon.OperationCallbacks,
+	) (kwtdaemon.SSHLeaseResult, sshLeaseControl, error) {
+		result := kwtdaemon.SSHLeaseResult{LeaseID: "lease-1"}
+		encoded, err := json.Marshal(result)
+		require.NoError(t, err)
+		err = callbacks.Event(service.OperationEvent{
+			OperationID: "operation-1", Sequence: 1,
+			Kind: service.OperationEventComplete, Result: encoded,
+		})
+		return result, control, err
+	}
+	command, _, _ := sshResolveTestCommand()
+	command.SetOut(failingSSHOutput{err: writeErr})
+
+	err := runSSHLease(command, []string{"build.example.test"})
+	require.Error(t, err)
+	assert.Equal(t, 1, control.releases)
+	assert.Equal(t, 0, control.touches)
+}
+
+func TestSSHLeaseJSONWritesHeartbeatFailure(t *testing.T) {
+	oldAcquire := acquireSSHLeaseThroughDaemon
+	oldJSON, oldIdentity := sshLeaseJSON, sshLeaseRouteIdentity
+	oldHeartbeat := sshLeaseHeartbeatEvery
+	t.Cleanup(func() {
+		acquireSSHLeaseThroughDaemon = oldAcquire
+		sshLeaseJSON, sshLeaseRouteIdentity = oldJSON, oldIdentity
+		sshLeaseHeartbeatEvery = oldHeartbeat
+	})
+	sshLeaseJSON = true
+	sshLeaseRouteIdentity = "route-one"
+	sshLeaseHeartbeatEvery = time.Millisecond
+	control := &fakeSSHLeaseControl{touchErr: service.NewError(
+		service.SSHConnectionChanged, "SSH connection changed", false, nil, nil,
+	)}
+	acquireSSHLeaseThroughDaemon = func(
+		context.Context,
+		kwt.SSHLeaseRequest,
+		kwtdaemon.OperationCallbacks,
+	) (kwtdaemon.SSHLeaseResult, sshLeaseControl, error) {
+		return kwtdaemon.SSHLeaseResult{LeaseID: "lease-1"}, control, nil
+	}
+	reader, writer := io.Pipe()
+	t.Cleanup(func() {
+		_ = reader.Close()
+		_ = writer.Close()
+	})
+	command, stdout, _ := sshResolveTestCommand()
+	command.SetIn(reader)
+
+	err := runSSHLease(command, []string{"build.example.test"})
+	require.Error(t, err)
+	var envelope jsonErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	assert.Equal(t, service.SSHConnectionChanged, envelope.Error.Code)
+	assert.Equal(t, 1, control.touches)
+	assert.Equal(t, 1, control.releases)
+}
+
+func TestSSHLeaseJSONWritesReleaseFailure(t *testing.T) {
+	oldAcquire := acquireSSHLeaseThroughDaemon
+	oldJSON, oldIdentity := sshLeaseJSON, sshLeaseRouteIdentity
+	t.Cleanup(func() {
+		acquireSSHLeaseThroughDaemon = oldAcquire
+		sshLeaseJSON, sshLeaseRouteIdentity = oldJSON, oldIdentity
+	})
+	sshLeaseJSON = true
+	sshLeaseRouteIdentity = "route-one"
+	control := &fakeSSHLeaseControl{releaseErr: service.NewError(
+		service.SSHCleanupFailed, "SSH cleanup failed", true, nil, nil,
+	)}
+	acquireSSHLeaseThroughDaemon = func(
+		context.Context,
+		kwt.SSHLeaseRequest,
+		kwtdaemon.OperationCallbacks,
+	) (kwtdaemon.SSHLeaseResult, sshLeaseControl, error) {
+		return kwtdaemon.SSHLeaseResult{LeaseID: "lease-1"}, control, nil
+	}
+	command, stdout, _ := sshResolveTestCommand()
+	command.SetIn(strings.NewReader(""))
+
+	err := runSSHLease(command, []string{"build.example.test"})
+	require.Error(t, err)
+	var envelope jsonErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	assert.Equal(t, service.SSHCleanupFailed, envelope.Error.Code)
+	assert.Equal(t, 0, control.touches)
+	assert.Equal(t, 1, control.releases)
 }
 
 func sshResolveTestCommand() (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	kwt "go.kenn.io/kwt"
@@ -22,6 +23,14 @@ var removeWorktreeWithDaemonClient = func(
 	request kwt.RemovalRequest,
 ) (kwt.RemovalResult, error) {
 	return client.RemoveWorktree(ctx, request)
+}
+var acquireSSHFromDaemon = func(
+	ctx context.Context,
+	client *kwtdaemon.Client,
+	request kwt.SSHLeaseRequest,
+	callbacks kwtdaemon.OperationCallbacks,
+) (kwtdaemon.SSHLeaseResult, error) {
+	return client.AcquireSSH(ctx, request, callbacks)
 }
 
 func resolveSSHViaDaemon(
@@ -65,6 +74,89 @@ func requireSSHResolveCapability(observation kwtdaemon.Observation) error {
 		)
 	}
 	return nil
+}
+
+type sshLeaseControl interface {
+	Touch(context.Context, string) error
+	Release(context.Context, string) error
+}
+
+type daemonSSHLeaseControl struct{ client *kwtdaemon.Client }
+
+func (c daemonSSHLeaseControl) Touch(ctx context.Context, leaseID string) error {
+	return c.client.TouchSSHLease(ctx, leaseID)
+}
+
+func (c daemonSSHLeaseControl) Release(ctx context.Context, leaseID string) error {
+	return c.client.ReleaseSSHLease(ctx, leaseID)
+}
+
+func acquireSSHLeaseViaDaemon(
+	ctx context.Context,
+	request kwt.SSHLeaseRequest,
+	callbacks kwtdaemon.OperationCallbacks,
+) (kwtdaemon.SSHLeaseResult, sshLeaseControl, error) {
+	controller, err := newDaemonController()
+	if err != nil {
+		return kwtdaemon.SSHLeaseResult{}, nil, err
+	}
+	for {
+		observation, err := controller.Start(ctx)
+		if err != nil {
+			return kwtdaemon.SSHLeaseResult{}, nil, err
+		}
+		if observation.Client == nil || !slices.Contains(
+			observation.Status.Capabilities,
+			kwtdaemon.CapabilitySSHLifecycle,
+		) {
+			return kwtdaemon.SSHLeaseResult{}, nil, service.NewError(
+				service.DaemonIncompatible,
+				"the running kwt daemon does not provide SSH lifecycle management",
+				false, nil, nil,
+			)
+		}
+		var exposed atomic.Bool
+		trackedCallbacks := kwtdaemon.OperationCallbacks{
+			Event: func(event service.OperationEvent) error {
+				exposed.Store(true)
+				if callbacks.Event == nil {
+					return nil
+				}
+				return callbacks.Event(event)
+			},
+		}
+		if callbacks.Prompt != nil {
+			trackedCallbacks.Prompt = func(
+				promptContext context.Context,
+				prompt service.OperationPrompt,
+			) (string, error) {
+				exposed.Store(true)
+				return callbacks.Prompt(promptContext, prompt)
+			}
+		}
+		result, acquireErr := acquireSSHFromDaemon(
+			ctx, observation.Client, request, trackedCallbacks,
+		)
+		deadline, draining := inventoryDrainDeadline(acquireErr)
+		if !draining {
+			if acquireErr != nil {
+				if result.LeaseID == "" {
+					return result, nil, acquireErr
+				}
+				return result, daemonSSHLeaseControl{client: observation.Client}, acquireErr
+			}
+			return result, daemonSSHLeaseControl{client: observation.Client}, nil
+		}
+		if exposed.Load() {
+			if result.LeaseID == "" {
+				return result, nil, acquireErr
+			}
+			return result, daemonSSHLeaseControl{client: observation.Client}, acquireErr
+		}
+		if err := waitInventoryRetry(ctx, deadline); err != nil {
+			return kwtdaemon.SSHLeaseResult{}, nil, err
+		}
+	}
 }
 
 func removeProjectViaDaemon(

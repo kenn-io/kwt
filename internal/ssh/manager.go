@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -13,6 +15,8 @@ import (
 	"go.kenn.io/kit/openssh"
 	"go.kenn.io/kwt/service"
 )
+
+const leaseRollbackTimeout = 5 * time.Second
 
 type PersistentManager interface {
 	ConnectWithRunner(context.Context, string, openssh.Target, openssh.RunSSH) (openssh.Generation, error)
@@ -42,6 +46,7 @@ type Manager struct {
 	onEvent            func(Event)
 
 	mu                   sync.Mutex
+	idleCleanupMu        sync.Mutex
 	routes               map[string]*managedRoute
 	operations           map[string]*identityOperation
 	masterless           map[uint64]*masterlessLease
@@ -65,6 +70,15 @@ type managedRoute struct {
 	heartbeatCancel  context.CancelFunc
 	heartbeatDone    chan struct{}
 	forwardAgent     bool
+	hopDepth         int
+	upstreamIdentity string
+	idleDeadline     time.Time
+}
+
+type routeCleanupTarget struct {
+	identity   string
+	generation openssh.Generation
+	depth      int
 }
 
 func NewManager(options ManagerOptions) *Manager {
@@ -103,15 +117,58 @@ func (m *Manager) Acquire(
 		return nil, configurationChanged()
 	}
 	request.Snapshot = current
-	if len(request.Snapshot.Targets) != 1 {
-		return nil, routeUnreviewable(errors.New("SSH lifecycle requires one resolved target"))
+	if len(request.Snapshot.Targets) == 0 {
+		return nil, routeUnreviewable(errors.New("SSH lifecycle requires a resolved target"))
 	}
-	target := request.Snapshot.Targets[0]
+	leases := make([]Lease, 0, len(request.Snapshot.Targets))
+	previousIdentity := ""
+	for index, originalTarget := range request.Snapshot.Targets {
+		target := originalTarget
+		if index > 0 {
+			previous := leases[index-1]
+			if previous.Mode() != LeaseModeMultiplexed {
+				return nil, errors.Join(
+					releaseAcquiredLeases(ctx, leases),
+					routeUnreviewable(errors.New("masterless ProxyJump routes are unsupported")),
+				)
+			}
+			arguments, argumentErr := previous.Arguments(ctx)
+			if argumentErr != nil {
+				return nil, errors.Join(releaseAcquiredLeases(ctx, leases), argumentErr)
+			}
+			target = targetWithProxy(target, request.Snapshot.Targets[index-1], arguments)
+		}
+		identity := managerIdentityForTarget(
+			request.Snapshot, target, index, previousIdentity, request.Environment,
+		)
+		lease, acquireErr := m.acquireTarget(
+			ctx, request, target, identity, previousIdentity, index, resolve,
+		)
+		if acquireErr != nil {
+			return nil, errors.Join(releaseAcquiredLeases(ctx, leases), acquireErr)
+		}
+		leases = append(leases, lease)
+		previousIdentity = identity
+	}
+	if len(leases) == 1 {
+		return leases[0], nil
+	}
+	return &routeLease{leases: leases}, nil
+}
+
+func (m *Manager) acquireTarget(
+	ctx context.Context,
+	request LeaseRequest,
+	target ResolvedTarget,
+	identity string,
+	upstreamIdentity string,
+	hopDepth int,
+	resolve func(context.Context) (RouteSnapshot, error),
+) (Lease, error) {
 	runner, err := m.runner(request, target)
 	if err != nil {
 		return nil, connectionFailed(err)
 	}
-	identity := managerIdentityForLease(request.Snapshot, request.Environment)
 	unlockIdentity, err := m.lockIdentityContext(ctx, identity)
 	if err != nil {
 		return nil, err
@@ -125,7 +182,7 @@ func (m *Manager) Acquire(
 	}
 	defer releaseIdentity()
 	m.mu.Lock()
-	closed = m.closed
+	closed := m.closed
 	m.mu.Unlock()
 	if closed {
 		return nil, connectionChanged()
@@ -192,10 +249,11 @@ func (m *Manager) Acquire(
 	if err != nil {
 		return nil, mapManagerError(err)
 	}
-	current, err = resolve(ctx)
+	current, err := resolve(ctx)
 	if err != nil {
 		event, cleanupErr := m.disconnectUnleased(
 			identity, generation, request.Snapshot.RouteIdentity, target.ForwardAgent,
+			upstreamIdentity, hopDepth,
 		)
 		if cleanupErr != nil {
 			releaseIdentity()
@@ -209,6 +267,7 @@ func (m *Manager) Acquire(
 	if !sameRoute(request.Snapshot, current) {
 		event, cleanupErr := m.disconnectUnleased(
 			identity, generation, request.Snapshot.RouteIdentity, target.ForwardAgent,
+			upstreamIdentity, hopDepth,
 		)
 		if cleanupErr != nil {
 			releaseIdentity()
@@ -225,6 +284,7 @@ func (m *Manager) Acquire(
 		m.mu.Unlock()
 		event, cleanupErr := m.disconnectUnleased(
 			identity, generation, request.Snapshot.RouteIdentity, target.ForwardAgent,
+			upstreamIdentity, hopDepth,
 		)
 		if cleanupErr != nil {
 			releaseIdentity()
@@ -242,9 +302,11 @@ func (m *Manager) Acquire(
 			m.stopPersistenceHeartbeat(route)
 		}
 		route = &managedRoute{
-			routeIdentity: request.Snapshot.RouteIdentity,
-			generation:    generation,
-			forwardAgent:  target.ForwardAgent,
+			routeIdentity:    request.Snapshot.RouteIdentity,
+			generation:       generation,
+			forwardAgent:     target.ForwardAgent,
+			hopDepth:         hopDepth,
+			upstreamIdentity: upstreamIdentity,
 		}
 		m.routes[identity] = route
 	}
@@ -252,6 +314,7 @@ func (m *Manager) Acquire(
 		route.idle.Stop()
 		route.idle = nil
 	}
+	route.idleDeadline = time.Time{}
 	route.leases++
 	m.startPersistenceHeartbeat(identity, route)
 	m.mu.Unlock()
@@ -268,11 +331,75 @@ func (m *Manager) Acquire(
 	}, nil
 }
 
+type routeLease struct {
+	leases         []Lease
+	released       atomic.Bool
+	releaseStarted atomic.Bool
+	releaseMu      sync.Mutex
+}
+
+func (l *routeLease) Mode() LeaseMode { return l.leases[len(l.leases)-1].Mode() }
+
+func (l *routeLease) Generation() uint64 {
+	return l.leases[len(l.leases)-1].Generation()
+}
+
+func (l *routeLease) Arguments(ctx context.Context) ([]string, error) {
+	if l.releaseStarted.Load() {
+		return nil, connectionChanged()
+	}
+	return l.leases[len(l.leases)-1].Arguments(ctx)
+}
+
+func (l *routeLease) Touch() error {
+	if l.releaseStarted.Load() {
+		return connectionChanged()
+	}
+	for _, lease := range l.leases {
+		if err := lease.Touch(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (l *routeLease) Release(ctx context.Context) error {
+	l.releaseMu.Lock()
+	defer l.releaseMu.Unlock()
+	if l.released.Load() {
+		return nil
+	}
+	l.releaseStarted.Store(true)
+	if err := releaseLeases(ctx, l.leases); err != nil {
+		return err
+	}
+	l.released.Store(true)
+	return nil
+}
+
+func releaseLeases(ctx context.Context, leases []Lease) error {
+	var releaseErr error
+	for index := len(leases) - 1; index >= 0; index-- {
+		releaseErr = errors.Join(releaseErr, leases[index].Release(ctx))
+	}
+	return releaseErr
+}
+
+func releaseAcquiredLeases(ctx context.Context, leases []Lease) error {
+	cleanupCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx), leaseRollbackTimeout,
+	)
+	defer cancel()
+	return releaseLeases(cleanupCtx, leases)
+}
+
 func (m *Manager) disconnectUnleased(
 	identity string,
 	generation openssh.Generation,
 	routeIdentity string,
 	forwardAgent bool,
+	upstreamIdentity string,
+	hopDepth int,
 ) (*Event, *service.Error) {
 	m.mu.Lock()
 	route := m.routes[identity]
@@ -286,9 +413,11 @@ func (m *Manager) disconnectUnleased(
 	}
 	if route == nil {
 		route = &managedRoute{
-			routeIdentity: routeIdentity,
-			generation:    generation,
-			forwardAgent:  forwardAgent,
+			routeIdentity:    routeIdentity,
+			generation:       generation,
+			forwardAgent:     forwardAgent,
+			hopDepth:         hopDepth,
+			upstreamIdentity: upstreamIdentity,
 		}
 		m.routes[identity] = route
 	}
@@ -318,9 +447,22 @@ func managerIdentity(snapshot RouteSnapshot) string {
 	return snapshot.ProjectionPolicy + ":" + snapshot.RouteIdentity
 }
 
-func managerIdentityForLease(snapshot RouteSnapshot, environment []string) string {
+func managerIdentityForTarget(
+	snapshot RouteSnapshot,
+	target ResolvedTarget,
+	index int,
+	previousIdentity string,
+	environment []string,
+) string {
 	identity := managerIdentity(snapshot)
-	if len(snapshot.Targets) != 1 || !snapshot.Targets[0].ForwardAgent {
+	if len(snapshot.Targets) > 1 {
+		identity += ":hop:" + fmt.Sprint(index)
+	}
+	if previousIdentity != "" {
+		digest := sha256.Sum256([]byte(previousIdentity))
+		identity += ":via:" + hex.EncodeToString(digest[:])
+	}
+	if !target.ForwardAgent {
 		return identity
 	}
 	digest := sha256.New()
@@ -331,16 +473,31 @@ func managerIdentityForLease(snapshot RouteSnapshot, environment []string) strin
 	return identity + ":agent:" + hex.EncodeToString(digest.Sum(nil))
 }
 
+func targetWithProxy(
+	target ResolvedTarget,
+	previous ResolvedTarget,
+	connectionArguments []string,
+) ResolvedTarget {
+	target.Projection.Arguments = append(
+		append([]string(nil), target.Projection.Arguments...),
+		"-o", "ProxyCommand="+proxyCommand(previous.EffectiveTarget, connectionArguments),
+	)
+	return target
+}
+
 func sameRoute(expected, current RouteSnapshot) bool {
 	return expected.RouteIdentity == current.RouteIdentity &&
 		expected.ProjectionPolicy == current.ProjectionPolicy
 }
 
 type managedLease struct {
-	manager    *Manager
-	identity   string
-	generation openssh.Generation
-	released   atomic.Bool
+	manager        *Manager
+	identity       string
+	generation     openssh.Generation
+	released       atomic.Bool
+	releaseStarted atomic.Bool
+	releaseMu      sync.Mutex
+	countReleased  bool
 }
 
 func (l *managedLease) Mode() LeaseMode { return LeaseModeMultiplexed }
@@ -348,28 +505,46 @@ func (l *managedLease) Mode() LeaseMode { return LeaseModeMultiplexed }
 func (l *managedLease) Generation() uint64 { return uint64(l.generation) }
 
 func (l *managedLease) Arguments(ctx context.Context) ([]string, error) {
-	if l.released.Load() {
+	if l.releaseStarted.Load() {
 		return nil, connectionChanged()
 	}
 	arguments, err := l.manager.persistent.ConnectionArguments(l.identity, l.generation)
 	if err != nil {
 		return nil, mapManagerError(err)
 	}
+	arguments = append([]string{"-F", os.DevNull}, arguments...)
+	arguments = append(arguments,
+		"-o", "BatchMode=yes",
+		"-o", "ProxyCommand="+proxyFailureCommand(),
+	)
 	return arguments, nil
 }
 
 func (l *managedLease) Touch() error {
-	if l.released.Load() || !l.manager.persistent.TouchActivity(l.identity, l.generation) {
+	if l.releaseStarted.Load() || !l.manager.persistent.TouchActivity(l.identity, l.generation) {
 		return connectionChanged()
 	}
 	return nil
 }
 
-func (l *managedLease) Release() error {
-	if !l.released.CompareAndSwap(false, true) {
+func (l *managedLease) Release(ctx context.Context) error {
+	l.releaseMu.Lock()
+	defer l.releaseMu.Unlock()
+	if l.released.Load() {
 		return nil
 	}
-	return l.manager.release(l.identity, l.generation)
+	l.releaseStarted.Store(true)
+	decremented, err := l.manager.release(
+		ctx, l.identity, l.generation, !l.countReleased,
+	)
+	if decremented {
+		l.countReleased = true
+	}
+	if err != nil {
+		return err
+	}
+	l.released.Store(true)
+	return nil
 }
 
 // startPersistenceHeartbeat keeps OpenSSH's crash-fallback ControlPersist
@@ -459,43 +634,58 @@ func waitPersistenceHeartbeat(ctx context.Context, done <-chan struct{}) error {
 	}
 }
 
-func (m *Manager) release(identity string, generation openssh.Generation) error {
-	unlockIdentity := m.lockIdentity(identity)
+func (m *Manager) release(
+	ctx context.Context,
+	identity string,
+	generation openssh.Generation,
+	decrement bool,
+) (bool, error) {
+	unlockIdentity, err := m.lockIdentityContext(ctx, identity)
+	if err != nil {
+		return false, err
+	}
 
 	m.mu.Lock()
 	route := m.routes[identity]
 	if route == nil || route.generation != generation {
-		closed := m.closed
 		m.mu.Unlock()
 		unlockIdentity()
-		if closed {
-			return nil
-		}
-		return connectionChanged()
+		return false, nil
 	}
-	route.leases--
+	decremented := false
+	if decrement {
+		route.leases--
+		decremented = true
+	}
 	if route.leases > 0 {
 		m.mu.Unlock()
 		unlockIdentity()
-		return nil
+		return decremented, nil
 	}
 	if m.idleTimeout > 0 && !route.forwardAgent {
+		route.idleDeadline = time.Now().Add(m.idleTimeout)
+		routeIdentity := route.routeIdentity
 		route.idle = time.AfterFunc(m.idleTimeout, func() {
-			m.disconnectIdle(identity, generation)
+			m.disconnectIdleGroup(routeIdentity)
 		})
 		m.mu.Unlock()
 		unlockIdentity()
-		return nil
+		return decremented, nil
 	}
 	heartbeatDone := m.stopPersistenceHeartbeat(route)
 	routeIdentity := route.routeIdentity
 	m.mu.Unlock()
-	_ = waitPersistenceHeartbeat(context.Background(), heartbeatDone)
-	if err := m.persistent.Disconnect(context.Background(), identity); err != nil {
+	if err := waitPersistenceHeartbeat(ctx, heartbeatDone); err != nil {
 		failure := cleanupFailed(err)
 		unlockIdentity()
 		m.emitFailure(routeIdentity, generation, failure)
-		return failure
+		return decremented, failure
+	}
+	if err := m.persistent.Disconnect(ctx, identity); err != nil {
+		failure := cleanupFailed(err)
+		unlockIdentity()
+		m.emitFailure(routeIdentity, generation, failure)
+		return decremented, failure
 	}
 	m.mu.Lock()
 	if m.routes[identity] == route {
@@ -508,7 +698,35 @@ func (m *Manager) release(identity string, generation openssh.Generation) error 
 		Generation:    uint64(generation),
 		State:         EventStateDisconnected,
 	})
-	return nil
+	return decremented, nil
+}
+
+func (m *Manager) disconnectIdleGroup(routeIdentity string) {
+	m.idleCleanupMu.Lock()
+	defer m.idleCleanupMu.Unlock()
+
+	now := time.Now()
+	m.mu.Lock()
+	targets := make([]routeCleanupTarget, 0)
+	for identity, route := range m.routes {
+		if route.routeIdentity != routeIdentity || route.leases != 0 ||
+			route.idleDeadline.IsZero() || now.Before(route.idleDeadline) {
+			continue
+		}
+		targets = append(targets, routeCleanupTarget{
+			identity: identity, generation: route.generation, depth: route.hopDepth,
+		})
+	}
+	m.mu.Unlock()
+	sort.Slice(targets, func(left, right int) bool {
+		if targets[left].depth != targets[right].depth {
+			return targets[left].depth > targets[right].depth
+		}
+		return targets[left].identity < targets[right].identity
+	})
+	for _, target := range targets {
+		m.disconnectIdle(target.identity, target.generation)
+	}
 }
 
 func (m *Manager) disconnectIdle(identity string, generation openssh.Generation) {
@@ -516,12 +734,21 @@ func (m *Manager) disconnectIdle(identity string, generation openssh.Generation)
 
 	m.mu.Lock()
 	route := m.routes[identity]
-	if route == nil || route.generation != generation || route.leases != 0 {
+	if route == nil || route.generation != generation || route.leases != 0 ||
+		route.idleDeadline.IsZero() || time.Now().Before(route.idleDeadline) {
 		m.mu.Unlock()
 		unlockIdentity()
 		return
 	}
+	for _, downstream := range m.routes {
+		if downstream.upstreamIdentity == identity {
+			m.mu.Unlock()
+			unlockIdentity()
+			return
+		}
+	}
 	route.idle = nil
+	route.idleDeadline = time.Time{}
 	heartbeatDone := m.stopPersistenceHeartbeat(route)
 	routeIdentity := route.routeIdentity
 	m.mu.Unlock()
@@ -567,13 +794,16 @@ func (m *Manager) Close(ctx context.Context) error {
 		}
 		done := make(chan struct{})
 		m.closeDone = done
-		routeIdentities := make([]string, 0, len(m.routes))
+		routeTargets := make([]routeCleanupTarget, 0, len(m.routes))
 		for identity, route := range m.routes {
-			routeIdentities = append(routeIdentities, identity)
+			routeTargets = append(routeTargets, routeCleanupTarget{
+				identity: identity, generation: route.generation, depth: route.hopDepth,
+			})
 			if route.idle != nil {
 				route.idle.Stop()
 				route.idle = nil
 			}
+			route.idleDeadline = time.Time{}
 			m.stopPersistenceHeartbeat(route)
 		}
 		operationIdentities := make([]string, 0, len(m.operations))
@@ -590,7 +820,7 @@ func (m *Manager) Close(ctx context.Context) error {
 
 		events, closeErr := m.closeAttempt(
 			ctx,
-			routeIdentities,
+			routeTargets,
 			operationIdentities,
 			masterless,
 		)
@@ -607,16 +837,16 @@ func (m *Manager) Close(ctx context.Context) error {
 
 func (m *Manager) closeAttempt(
 	ctx context.Context,
-	routeIdentities []string,
+	routeTargets []routeCleanupTarget,
 	operationIdentities []string,
 	masterless []*masterlessLease,
 ) ([]Event, error) {
 	var closeErr error
-	events := make([]Event, 0, len(routeIdentities)+len(masterless))
+	events := make([]Event, 0, len(routeTargets)+len(masterless))
 
 	for _, lease := range masterless {
 		lease.released.Store(true)
-		cleaned, err := lease.cleanupTracked()
+		cleaned, err := lease.cleanupTracked(ctx)
 		if err != nil {
 			failure := cleanupFailed(err)
 			closeErr = errors.Join(closeErr, failure)
@@ -639,8 +869,14 @@ func (m *Manager) closeAttempt(
 		})
 	}
 
-	sort.Strings(routeIdentities)
-	for _, identity := range routeIdentities {
+	sort.Slice(routeTargets, func(left, right int) bool {
+		if routeTargets[left].depth != routeTargets[right].depth {
+			return routeTargets[left].depth > routeTargets[right].depth
+		}
+		return routeTargets[left].identity < routeTargets[right].identity
+	})
+	for _, target := range routeTargets {
+		identity := target.identity
 		unlockIdentity, err := m.lockIdentityContext(ctx, identity)
 		if err != nil {
 			closeErr = errors.Join(closeErr, err)
@@ -785,9 +1021,12 @@ func (l *masterlessLease) Touch() error {
 	return nil
 }
 
-func (l *masterlessLease) Release() error {
+func (l *masterlessLease) Release(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	l.released.Store(true)
-	cleaned, err := l.cleanupTracked()
+	cleaned, err := l.cleanupTracked(ctx)
 	if err != nil {
 		failure := cleanupFailed(err)
 		l.manager.emitFailure(l.routeIdentity, openssh.Generation(l.generation), failure)
@@ -804,9 +1043,12 @@ func (l *masterlessLease) Release() error {
 	return nil
 }
 
-func (l *masterlessLease) cleanupTracked() (bool, error) {
+func (l *masterlessLease) cleanupTracked(ctx context.Context) (bool, error) {
 	l.cleanupMu.Lock()
 	defer l.cleanupMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 
 	l.manager.mu.Lock()
 	tracked := l.manager.masterless[l.generation] == l

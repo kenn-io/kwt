@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"time"
 
@@ -39,6 +40,7 @@ type ServeOptions struct {
 	Remover           kwt.Remover
 	ProjectRemover    kwt.ProjectRemover
 	SSHResolver       SSHResolver
+	SSHLifecycle      SSHLifecycle
 }
 
 type hostStatus struct {
@@ -176,6 +178,7 @@ func runHost(
 	remover := opts.Remover
 	projectRemover := opts.ProjectRemover
 	sshResolver := opts.SSHResolver
+	sshLifecycle := opts.SSHLifecycle
 	var cacheDiagnostic *kwt.Diagnostic
 	if inventory == nil {
 		cache, diagnostic, cacheErr := kwt.NewFileCache(opts.Home)
@@ -210,12 +213,19 @@ func runHost(
 		if executableErr != nil {
 			return executableErr
 		}
-		sshResolver = kwt.NewSSHService(kwt.SSHServiceOptions{
+		serviceOwner := kwt.NewSSHService(kwt.SSHServiceOptions{
 			Home:              opts.Home,
 			AskpassExecutable: executable,
 			Now:               opts.Now,
 		})
+		sshResolver = serviceOwner
+		if sshLifecycle == nil {
+			sshLifecycle = serviceOwner
+		}
+	} else if sshLifecycle == nil {
+		sshLifecycle, _ = sshResolver.(SSHLifecycle)
 	}
+	sshLeases := newSSHLeaseRegistry(gate, opts.Now, 0)
 	status := &hostStatus{
 		base: Status{
 			Service:       ServiceName,
@@ -233,6 +243,7 @@ func runHost(
 				CapabilityStatus,
 				CapabilityOperationStream,
 				CapabilityProjectRemoval,
+				CapabilitySSHLifecycle,
 				CapabilitySSHResolve,
 				CapabilityInventory,
 				CapabilityRemoval,
@@ -273,6 +284,8 @@ func runHost(
 		ProjectRemover: projectRemover,
 		Operations:     operations,
 		SSHResolver:    sshResolver,
+		SSHLifecycle:   sshLifecycle,
+		SSHLeases:      sshLeases,
 		Gate:           gate,
 		ReportError: func(
 			route string,
@@ -351,7 +364,10 @@ func runHost(
 	sshCleanupCtx, cancelSSHCleanup := context.WithTimeout(
 		context.Background(), forcedDrainCleanup,
 	)
-	sshCleanupErr := closeSSHResolver(sshCleanupCtx, sshResolver)
+	sshCleanupErr := errors.Join(
+		sshLeases.close(sshCleanupCtx),
+		closeSSHOwners(sshCleanupCtx, sshResolver, sshLifecycle),
+	)
 	cancelSSHCleanup()
 	var cleanupErr error
 	if drainResult != DrainReleased {
@@ -368,14 +384,33 @@ func runHost(
 	return stopErr
 }
 
-func closeSSHResolver(ctx context.Context, resolver SSHResolver) error {
-	owner, ok := resolver.(interface {
-		Close(context.Context) error
-	})
-	if !ok {
-		return nil
+type sshOwner interface {
+	Close(context.Context) error
+}
+
+func closeSSHOwners(
+	ctx context.Context,
+	resolver SSHResolver,
+	lifecycle SSHLifecycle,
+) error {
+	resolverOwner, resolverOwned := resolver.(sshOwner)
+	lifecycleOwner, lifecycleOwned := lifecycle.(sshOwner)
+	if resolverOwned && lifecycleOwned && sameSSHOwner(resolverOwner, lifecycleOwner) {
+		return resolverOwner.Close(ctx)
 	}
-	return owner.Close(ctx)
+	var resolverErr, lifecycleErr error
+	if resolverOwned {
+		resolverErr = resolverOwner.Close(ctx)
+	}
+	if lifecycleOwned {
+		lifecycleErr = lifecycleOwner.Close(ctx)
+	}
+	return errors.Join(resolverErr, lifecycleErr)
+}
+
+func sameSSHOwner(left, right sshOwner) bool {
+	leftType := reflect.TypeOf(left)
+	return leftType == reflect.TypeOf(right) && leftType.Comparable() && left == right
 }
 
 func newHostOperationContext(hostContext context.Context) (context.Context, context.CancelFunc) {

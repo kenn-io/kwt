@@ -427,12 +427,8 @@ func (t *TmuxCommand) SessionEnvironmentContext(
 	return t.RunCommandOutputContext(ctx, "show-environment", "-t", session)
 }
 
-// sessionOption reads a session-local user option without falling back to a
-// global value. Missing options return the tmux command error to the caller.
-func (t *TmuxCommand) sessionOption(session, option string) (string, error) {
-	return t.sessionOptionContext(context.Background(), session, option)
-}
-
+// sessionOptionContext reads a session-local user option without falling back
+// to a global value. Missing options return the tmux command error to the caller.
 func (t *TmuxCommand) sessionOptionContext(
 	ctx context.Context,
 	session string,
@@ -464,10 +460,6 @@ func (t *TmuxCommand) sessionUserOption(
 		"="+session+":",
 		"#{"+option+"}",
 	)
-}
-
-func (t *TmuxCommand) globalOption(option string) (string, error) {
-	return t.globalOptionContext(context.Background(), option)
 }
 
 func (t *TmuxCommand) globalOptionContext(

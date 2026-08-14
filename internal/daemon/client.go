@@ -213,6 +213,108 @@ func (c *Client) ResolveSSH(
 	return result, err
 }
 
+func (c *Client) AcquireSSH(
+	ctx context.Context,
+	request kwt.SSHLeaseRequest,
+	callbacks OperationCallbacks,
+) (SSHLeaseResult, error) {
+	missingPromptHandler := errors.New("SSH prompt handler is unavailable")
+	if callbacks.Prompt == nil {
+		callbacks.Prompt = func(context.Context, service.OperationPrompt) (string, error) {
+			return "", missingPromptHandler
+		}
+	}
+	snapshot, err := config.LoadGlobalSnapshot()
+	if err != nil {
+		return SSHLeaseResult{}, err
+	}
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		return SSHLeaseResult{}, err
+	}
+	workingDirectory, err = filepath.Abs(workingDirectory)
+	if err != nil {
+		return SSHLeaseResult{}, err
+	}
+	request.WorkingDirectory = workingDirectory
+	request.Environment = credentials.StripEnvironment(
+		os.Environ(),
+		credentials.ProtectedNames(snapshot.Config),
+	)
+	operationID, err := randomOperationID()
+	if err != nil {
+		return SSHLeaseResult{}, err
+	}
+	accepted := SSHLeaseOperation{OperationID: operationID}
+	startErr := c.doWith(
+		ctx,
+		c.operationHTTP,
+		controlResponseLimit,
+		http.MethodPost,
+		sshLeaseRoute,
+		SSHLeaseOperationRequest{OperationID: operationID, Lease: request},
+		&accepted,
+	)
+	if startErr != nil && !service.IsCode(startErr, service.DaemonTransportFailed) {
+		return SSHLeaseResult{}, startErr
+	}
+	raw, followErr := c.FollowOperation(ctx, operationID, 0, callbacks)
+	var result SSHLeaseResult
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &result); err != nil {
+			return SSHLeaseResult{}, errors.Join(followErr, service.NewError(
+				service.Internal,
+				"internal failure",
+				false,
+				nil,
+				err,
+			))
+		}
+	}
+	if errors.Is(followErr, missingPromptHandler) {
+		return result, service.NewError(
+			service.SSHInteractionRequired,
+			"SSH interaction is required",
+			false,
+			nil,
+			errors.Join(followErr, startErr),
+		)
+	}
+	if followErr != nil {
+		return result, errors.Join(followErr, startErr)
+	}
+	if len(raw) == 0 {
+		return SSHLeaseResult{}, service.NewError(
+			service.Internal,
+			"internal failure",
+			false,
+			nil,
+			errors.New("SSH lease operation returned an empty result"),
+		)
+	}
+	return result, nil
+}
+
+func (c *Client) TouchSSHLease(ctx context.Context, leaseID string) error {
+	if leaseID == "" {
+		return service.NewError(service.InvalidRequest, "SSH lease ID is empty", false, nil, nil)
+	}
+	return c.doWith(
+		ctx, c.controlHTTP, controlResponseLimit,
+		http.MethodPost, sshLeaseRoute+"/"+leaseID+"/touch", nil, nil,
+	)
+}
+
+func (c *Client) ReleaseSSHLease(ctx context.Context, leaseID string) error {
+	if leaseID == "" {
+		return service.NewError(service.InvalidRequest, "SSH lease ID is empty", false, nil, nil)
+	}
+	return c.doWith(
+		ctx, c.controlHTTP, controlResponseLimit,
+		http.MethodDelete, sshLeaseRoute+"/"+leaseID, nil, nil,
+	)
+}
+
 func (c *Client) RemoveWorktree(
 	ctx context.Context,
 	request kwt.RemovalRequest,
@@ -607,6 +709,14 @@ func problemCode(code service.Code) (service.Code, bool) {
 		service.SSHResolutionFailed,
 		service.SSHRouteUnreviewable,
 		service.SSHConfigurationChanged,
+		service.SSHUnsupportedVersion,
+		service.SSHInteractionRequired,
+		service.SSHPromptRejected,
+		service.SSHPromptTimedOut,
+		service.SSHConnectionFailed,
+		service.SSHConnectionChanged,
+		service.SSHControlPathOccupied,
+		service.SSHCleanupFailed,
 		service.Internal:
 		return code, true
 	default:

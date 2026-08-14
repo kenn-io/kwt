@@ -26,22 +26,29 @@ type SSHResolver interface {
 	Resolve(context.Context, kwt.SSHResolveRequest) (kwt.SSHRouteSnapshot, error)
 }
 
+type SSHLifecycle interface {
+	Acquire(context.Context, kwt.SSHLeaseRequest) (kwt.SSHLease, error)
+}
+
 type ServerOptions struct {
-	Token          string
-	ExpectedHost   string
-	Status         StatusProvider
-	Shutdown       ShutdownFunc
-	Ping           http.Handler
-	Touch          func(time.Time)
-	Now            func() time.Time
-	MaxBodyBytes   int64
-	Inventory      kwt.Inventory
-	Remover        kwt.Remover
-	ProjectRemover kwt.ProjectRemover
-	Operations     *OperationHub
-	SSHResolver    SSHResolver
-	Gate           *Gate
-	ReportError    func(string, *service.Error, kwt.ExpansionContext)
+	Token           string
+	ExpectedHost    string
+	Status          StatusProvider
+	Shutdown        ShutdownFunc
+	Ping            http.Handler
+	Touch           func(time.Time)
+	Now             func() time.Time
+	MaxBodyBytes    int64
+	Inventory       kwt.Inventory
+	Remover         kwt.Remover
+	ProjectRemover  kwt.ProjectRemover
+	Operations      *OperationHub
+	SSHResolver     SSHResolver
+	SSHLifecycle    SSHLifecycle
+	SSHLeaseTimeout time.Duration
+	SSHLeases       *sshLeaseRegistry
+	Gate            *Gate
+	ReportError     func(string, *service.Error, kwt.ExpansionContext)
 }
 
 type emptyInput struct{}
@@ -74,6 +81,7 @@ func NewServer(opts ServerOptions) http.Handler {
 	}
 	mux := http.NewServeMux()
 	registerOperationRoutes(mux, opts.Operations, opts)
+	registerSSHLifecycleRoutes(mux, opts)
 	config := huma.DefaultConfig("kwt daemon API", APISchemaVersion)
 	config.OpenAPIPath = "/openapi"
 	config.DocsPath = ""
@@ -295,11 +303,12 @@ func secureLocalHandler(next http.Handler, opts ServerOptions) http.Handler {
 		status := opts.Status.Status(now)
 		shutdownPath := r.URL.Path == "/api/v1/daemon/shutdown"
 		operationPath := strings.HasPrefix(r.URL.Path, operationRoutePrefix)
+		leaseControlPath := drainingSSHLeaseControl(r.Method, r.URL.Path)
 		if opts.Touch != nil && (!shutdownPath || status.State != StateDraining) {
 			opts.Touch(now)
 		}
 		if status.State == StateDraining &&
-			r.URL.Path != "/api/v1/status" && !shutdownPath && !operationPath {
+			r.URL.Path != "/api/v1/status" && !shutdownPath && !operationPath && !leaseControlPath {
 			if status.DrainDeadline != nil {
 				retryAfter := status.DrainDeadline.Sub(now)
 				seconds := int64(retryAfter / time.Second)
@@ -325,6 +334,22 @@ func secureLocalHandler(next http.Handler, opts ServerOptions) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func drainingSSHLeaseControl(method, path string) bool {
+	const prefix = "/api/v1/ssh/leases/"
+	remainder, ok := strings.CutPrefix(path, prefix)
+	if !ok || remainder == "" {
+		return false
+	}
+	if method == http.MethodDelete {
+		return !strings.Contains(remainder, "/")
+	}
+	if method != http.MethodPost {
+		return false
+	}
+	leaseID, suffix, ok := strings.Cut(remainder, "/")
+	return ok && leaseID != "" && suffix == "touch"
 }
 
 func writeProblem(w http.ResponseWriter, problem Problem) {
@@ -383,7 +408,9 @@ func problemFromError(err error) *Problem {
 		status = http.StatusNotFound
 	case service.Conflict, service.ConnectionChanged, service.OperationIDConflict,
 		service.RegistrationChanged, service.ProtectedSessionLive,
-		service.SSHRouteUnreviewable, service.SSHConfigurationChanged:
+		service.SSHRouteUnreviewable, service.SSHConfigurationChanged,
+		service.SSHPromptRejected, service.SSHConnectionChanged,
+		service.SSHControlPathOccupied:
 		status = http.StatusConflict
 	case service.ProtectedEndpointInventoryIncomplete:
 		if descriptor.Retryable {
@@ -393,15 +420,18 @@ func problemFromError(err error) *Problem {
 		}
 	case service.DaemonDowngradeRefused, service.DaemonBuildOrderUnknown:
 		status = http.StatusConflict
-	case service.InteractionRequired:
+	case service.InteractionRequired, service.SSHInteractionRequired:
 		status = http.StatusPreconditionRequired
 	case service.Busy, service.DaemonStartFailed, service.DaemonUnresponsive,
 		service.DaemonDraining, service.InventoryTimeout,
-		service.OperationCapacityExhausted, service.SSHResolutionFailed:
+		service.OperationCapacityExhausted, service.SSHResolutionFailed,
+		service.SSHConnectionFailed, service.SSHCleanupFailed:
 		status = http.StatusServiceUnavailable
+	case service.SSHPromptTimedOut:
+		status = http.StatusRequestTimeout
 	case service.OperationOutcomeUnknown:
 		status = http.StatusConflict
-	case service.Unsupported:
+	case service.Unsupported, service.SSHUnsupportedVersion:
 		status = http.StatusNotImplemented
 	case service.DaemonIncompatible:
 		status = http.StatusUpgradeRequired

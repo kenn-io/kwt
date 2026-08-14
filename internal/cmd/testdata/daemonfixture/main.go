@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -72,11 +73,19 @@ func main() {
 		log.Fatal(err)
 	}
 	if *mode == "unresponsive" {
-		_ = listener.Close()
 		if err := os.WriteFile(*ready, []byte("ready"), 0o600); err != nil {
 			log.Fatal(err)
 		}
-		select {}
+		for {
+			connection, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				log.Fatal(acceptErr)
+			}
+			go func(connection net.Conn) {
+				defer connection.Close()
+				_, _ = io.Copy(io.Discard, connection)
+			}(connection)
+		}
 	}
 
 	proof, err := kitdaemon.NewProof([]byte(token))

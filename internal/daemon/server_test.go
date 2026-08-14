@@ -231,6 +231,34 @@ func TestProblemRoundTripsServiceDescriptor(t *testing.T) {
 	assert.NotContains(t, string(encoded), "private cause")
 }
 
+func TestSSHProblemCodesRoundTrip(t *testing.T) {
+	codes := []service.Code{
+		service.SSHInvalidTarget,
+		service.SSHResolutionFailed,
+		service.SSHRouteUnreviewable,
+		service.SSHConfigurationChanged,
+		service.SSHUnsupportedVersion,
+		service.SSHInteractionRequired,
+		service.SSHPromptRejected,
+		service.SSHPromptTimedOut,
+		service.SSHConnectionFailed,
+		service.SSHConnectionChanged,
+		service.SSHControlPathOccupied,
+		service.SSHCleanupFailed,
+	}
+	for _, code := range codes {
+		t.Run(string(code), func(t *testing.T) {
+			descriptor := service.Descriptor{Code: code, Message: "SSH lifecycle failure"}
+			problem := problemFromError(service.NewDescriptorError(descriptor, nil))
+			encoded, err := json.Marshal(problem)
+			require.NoError(t, err)
+			decoded := service.AsError(decodeProblem(problem.Status, bytes.NewReader(encoded)))
+			assert.Equal(t, code, decoded.Code)
+			assert.Equal(t, descriptor.Message, decoded.Message)
+		})
+	}
+}
+
 func TestProblemMakesUnknownOutcomeNonRetryable(t *testing.T) {
 	problem := problemFromError(service.NewError(
 		service.OperationOutcomeUnknown,

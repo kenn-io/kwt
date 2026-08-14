@@ -287,6 +287,8 @@ func (a *Askpass) prompt(message string) (string, error) {
 	}
 	promptContext, cancel := context.WithTimeout(a.context, a.options.PromptTimeout)
 	defer cancel()
+	deadline, _ := promptContext.Deadline()
+	prompt.Deadline = &deadline
 	response, err := a.options.Prompt(promptContext, prompt)
 	if errors.Is(promptContext.Err(), context.DeadlineExceeded) {
 		return "", service.NewError(

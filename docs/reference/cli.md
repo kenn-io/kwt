@@ -171,6 +171,42 @@ owner-private ephemeral configuration lines, not argv or diagnostics. Every
 unlisted directive—including forwards, commands, and user ControlMaster
 settings—still changes route identity but is never replayed for execution.
 
+## SSH connection leases
+
+```sh
+kwt ssh lease build.example.com \
+  --route-identity <identity-from-ssh-resolve> \
+  --projection-policy kwt.openssh.projection.v1 \
+  --json
+```
+
+`kwt ssh lease` is the long-lived native-client bridge to the same-machine
+daemon. It re-resolves the logical target, refuses a changed route, prepares
+every ProxyJump hop in order, and streams operation events as NDJSON. Prompt
+events may occur repeatedly; the client answers each with one
+`{"prompt_id":"...","value":"..."}` line on stdin. The completion event
+contains generation-bound OpenSSH arguments. Each prompt carries the daemon's
+deadline, so blocked input ends when the prompt expires and the command reports
+the daemon's terminal timeout. The process keeps the lease alive
+while stdin remains open, touches it every ten seconds, and releases it when
+stdin reaches EOF or the command is canceled. Progress and warnings are written
+as they occur rather than buffered.
+
+The daemon lease bridge requires a persistent OpenSSH master. A platform that
+cannot provide multiplexing returns `ssh_route_unreviewable` instead of
+publishing direct-connect arguments outside the daemon's prompt and trust
+boundary. The embeddable Go API may still return a masterless lease to an
+in-process owner that provides that direct execution boundary itself.
+
+The daemon expires a lease after thirty seconds without a successful touch.
+Release and expiry cleanup are bounded; a timed-out cleanup retains the lease
+for a later retry instead of releasing its daemon reservation.
+After final release, `ssh.idle_timeout` controls how long a non-agent-forwarding
+master remains warm. Agent-forwarding masters disconnect immediately. Daemon
+replacement reports its active lease count, waits through
+`daemon.replacement_grace`, then invalidates remaining leases and terminates
+their verified masters; a successor never adopts them as live connections.
+
 When `kwt add -b` creates a branch, it fetches `origin` and starts from its
 default branch. If that remote base is unavailable, it falls back to local
 `main`, then `master`, then the branch checked out in the primary worktree.

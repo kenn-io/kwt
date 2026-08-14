@@ -14,6 +14,84 @@ import (
 	"go.kenn.io/kwt/service"
 )
 
+func TestAcquireSSHLeaseDoesNotRetryDrainAfterExposingOperation(t *testing.T) {
+	for _, kind := range []service.OperationEventKind{
+		service.OperationEventProgress,
+		service.OperationEventPrompt,
+	} {
+		t.Run(string(kind), func(t *testing.T) {
+			oldFactory := newDaemonController
+			oldAcquire := acquireSSHFromDaemon
+			t.Cleanup(func() {
+				newDaemonController = oldFactory
+				acquireSSHFromDaemon = oldAcquire
+			})
+			newDaemonController = func() (daemonController, error) {
+				return &fakeDaemonController{observation: kwtdaemon.Observation{
+					State:  kwtdaemon.RuntimeReady,
+					Client: &kwtdaemon.Client{},
+					Status: kwtdaemon.Status{Capabilities: []string{
+						kwtdaemon.CapabilitySSHLifecycle,
+					}},
+				}}, nil
+			}
+			attempts := 0
+			acquireSSHFromDaemon = func(
+				ctx context.Context,
+				_ *kwtdaemon.Client,
+				_ kwt.SSHLeaseRequest,
+				callbacks kwtdaemon.OperationCallbacks,
+			) (kwtdaemon.SSHLeaseResult, error) {
+				attempts++
+				if attempts > 1 {
+					return kwtdaemon.SSHLeaseResult{LeaseID: "duplicate"}, nil
+				}
+				event := service.OperationEvent{Kind: kind}
+				if kind == service.OperationEventPrompt {
+					event.Prompt = &service.OperationPrompt{ID: "prompt-1", Message: "Password:"}
+				}
+				require.NoError(t, callbacks.Event(event))
+				if event.Prompt != nil {
+					_, err := callbacks.Prompt(ctx, *event.Prompt)
+					require.NoError(t, err)
+				}
+				return kwtdaemon.SSHLeaseResult{}, service.NewError(
+					service.DaemonDraining,
+					"daemon is draining",
+					true,
+					map[string]any{"drain_deadline": time.Now().Add(5 * time.Millisecond)},
+					nil,
+				)
+			}
+			events := 0
+			prompts := 0
+			_, _, err := acquireSSHLeaseViaDaemon(
+				context.Background(),
+				kwt.SSHLeaseRequest{},
+				kwtdaemon.OperationCallbacks{
+					Event: func(service.OperationEvent) error {
+						events++
+						return nil
+					},
+					Prompt: func(context.Context, service.OperationPrompt) (string, error) {
+						prompts++
+						return "secret", nil
+					},
+				},
+			)
+			require.Error(t, err)
+			assert.True(t, service.IsCode(err, service.DaemonDraining), err)
+			assert.Equal(t, 1, attempts)
+			assert.Equal(t, 1, events)
+			if kind == service.OperationEventPrompt {
+				assert.Equal(t, 1, prompts)
+			} else {
+				assert.Equal(t, 0, prompts)
+			}
+		})
+	}
+}
+
 func TestInventoryDrainDeadlineRequiresDaemonDrainingCode(t *testing.T) {
 	deadline := time.Now().UTC().Add(time.Minute)
 	tests := []struct {

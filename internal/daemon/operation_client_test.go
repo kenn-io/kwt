@@ -120,6 +120,103 @@ func TestOperationClientHandlesMultipleBoundPromptRounds(t *testing.T) {
 	assert.Equal(t, service.OperationResponse{PromptID: "prompt-2"}, second)
 }
 
+func TestOperationClientWaitsForTerminalFailureAfterPromptDeadline(t *testing.T) {
+	deadline := time.Now().Add(30 * time.Millisecond)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		flusher := w.(http.Flusher)
+		encoder := json.NewEncoder(w)
+		_ = encoder.Encode(service.OperationEvent{
+			OperationID: "operation-1", Sequence: 1,
+			Kind: service.OperationEventPrompt,
+			Prompt: &service.OperationPrompt{
+				ID: "prompt-1", Kind: "password", Message: "Password:",
+				Sensitive: true, Deadline: &deadline,
+			},
+		})
+		flusher.Flush()
+		time.Sleep(50 * time.Millisecond)
+		_ = encoder.Encode(service.OperationEvent{
+			OperationID: "operation-1", Sequence: 2,
+			Kind: service.OperationEventComplete,
+			Failure: &service.Descriptor{
+				Code: service.SSHPromptTimedOut, Message: "SSH prompt timed out",
+			},
+		})
+		flusher.Flush()
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+	var observedDeadline time.Time
+
+	_, err := client.FollowOperation(
+		context.Background(), "operation-1", 0,
+		OperationCallbacks{Prompt: func(ctx context.Context, _ service.OperationPrompt) (string, error) {
+			observedDeadline, _ = ctx.Deadline()
+			<-ctx.Done()
+			return "", ctx.Err()
+		}},
+	)
+	assert.True(t, service.IsCode(err, service.SSHPromptTimedOut), err)
+	assert.WithinDuration(t, deadline, observedDeadline, time.Millisecond)
+}
+
+func TestOperationClientWaitsForTerminalFailureWhenPromptExpiresDuringResponse(t *testing.T) {
+	deadline := time.Now().Add(500 * time.Millisecond)
+	responseStarted := make(chan struct{})
+	responseFinished := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/events"):
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			flusher := w.(http.Flusher)
+			encoder := json.NewEncoder(w)
+			_ = encoder.Encode(service.OperationEvent{
+				OperationID: "operation-1", Sequence: 1,
+				Kind: service.OperationEventPrompt,
+				Prompt: &service.OperationPrompt{
+					ID: "prompt-1", Kind: "password", Message: "Password:",
+					Sensitive: true, Deadline: &deadline,
+				},
+			})
+			flusher.Flush()
+			<-responseFinished
+			_ = encoder.Encode(service.OperationEvent{
+				OperationID: "operation-1", Sequence: 2,
+				Kind: service.OperationEventComplete,
+				Failure: &service.Descriptor{
+					Code: service.SSHPromptTimedOut, Message: "SSH prompt timed out",
+				},
+			})
+			flusher.Flush()
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/responses"):
+			close(responseStarted)
+			time.Sleep(time.Until(deadline) + 10*time.Millisecond)
+			writeProblem(w, newProblem(http.StatusConflict, service.Descriptor{
+				Code: service.Conflict, Message: "operation prompt is no longer current",
+			}))
+			close(responseFinished)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+
+	_, err := client.FollowOperation(
+		context.Background(), "operation-1", 0,
+		OperationCallbacks{Prompt: func(context.Context, service.OperationPrompt) (string, error) {
+			return "secret", nil
+		}},
+	)
+	assert.True(t, service.IsCode(err, service.SSHPromptTimedOut), err)
+	select {
+	case <-responseStarted:
+	default:
+		require.Fail(t, "prompt response was not submitted")
+	}
+}
+
 func TestOperationClientReconnectReplaysUnansweredPrompt(t *testing.T) {
 	var streamRequests atomic.Int32
 	var promptCalls atomic.Int32
@@ -251,13 +348,14 @@ func TestOperationClientTerminalResultSurvivesEventCallbackFailure(t *testing.T)
 	defer server.Close()
 	client := clientForUnverifiedServer(t, server, "secret")
 
+	callbackErr := errors.New("completion writer failed")
 	result, err := client.FollowOperation(
 		context.Background(), "operation-1", 0,
 		OperationCallbacks{Event: func(service.OperationEvent) error {
-			return errors.New("completion writer failed")
+			return callbackErr
 		}},
 	)
-	require.NoError(t, err)
+	assert.ErrorIs(t, err, callbackErr)
 	assert.JSONEq(t, `{"status":"ready"}`, string(result))
 }
 

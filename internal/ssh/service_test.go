@@ -41,8 +41,8 @@ func (fixedLease) Arguments(context.Context) ([]string, error) {
 	return []string{"-S", "socket"}, nil
 }
 
-func (fixedLease) Touch() error   { return nil }
-func (fixedLease) Release() error { return nil }
+func (fixedLease) Touch() error                  { return nil }
+func (fixedLease) Release(context.Context) error { return nil }
 
 func (r *fixedObservationResolver) Resolve(
 	context.Context,

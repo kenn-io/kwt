@@ -100,6 +100,18 @@ retains it in memory. Neither an operation ID nor a request digest authorizes a
 new daemon to adopt or replay work. Loss of that authority is reported as an
 unknown outcome rather than causing an automatic retry of a mutation.
 
+An SSH lease ID is likewise only a same-daemon routing handle. The daemon keeps
+the generation-bound lease and private projection state; clients receive only
+the arguments needed to reach that verified master. Lease touch and release
+require the owner-only bearer, and leases expire after thirty seconds without a
+heartbeat so a crashed CLI cannot pin authentication state indefinitely. During
+replacement, new leases are refused, existing leases may finish within the
+advertised grace period, and remaining lease handles are invalidated before the
+SSH owner is closed. Live masters are never transferred to the successor.
+Masterless direct arguments are never published through the daemon API. They
+remain available only to an in-process Go owner that assumes responsibility for
+the direct authentication, prompt, and trust boundary.
+
 Interactive SSH preparation uses the running kwt executable as a forced
 OpenSSH askpass helper only when its process environment contains a fresh,
 one-time channel handle. Helper dispatch occurs before configuration or Cobra

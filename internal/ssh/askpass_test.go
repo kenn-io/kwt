@@ -95,10 +95,14 @@ func TestAskpassPreservesTypedPromptRejection(t *testing.T) {
 }
 
 func TestAskpassTimesOutOnePromptRound(t *testing.T) {
+	deadlines := make(chan time.Time, 1)
 	transport, err := NewAskpass(context.Background(), t.TempDir(), AskpassOptions{
 		Version:       supportedAskpassVersion(),
 		PromptTimeout: 10 * time.Millisecond,
-		Prompt: func(ctx context.Context, _ service.OperationPrompt) (string, error) {
+		Prompt: func(ctx context.Context, prompt service.OperationPrompt) (string, error) {
+			if prompt.Deadline != nil {
+				deadlines <- *prompt.Deadline
+			}
 			<-ctx.Done()
 			return "", ctx.Err()
 		},
@@ -114,6 +118,12 @@ func TestAskpassTimesOutOnePromptRound(t *testing.T) {
 	assert.NotEqual(t, 0, exitCode)
 	require.NoError(t, transport.Close())
 	assert.True(t, service.IsCode(transport.Err(), service.SSHPromptTimedOut))
+	select {
+	case deadline := <-deadlines:
+		assert.WithinDuration(t, time.Now(), deadline, time.Second)
+	default:
+		t.Fatal("askpass prompt did not carry its deadline")
+	}
 }
 
 func TestAskpassRemovesPrivateOperationDirectory(t *testing.T) {

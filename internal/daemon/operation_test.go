@@ -78,6 +78,33 @@ func TestOperationHubPublishesSanitizedTerminalFailure(t *testing.T) {
 	}
 }
 
+func TestOperationHubPreservesTypedPromptTimeout(t *testing.T) {
+	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	operation, _, err := hub.Start(OperationStart{
+		RequestDigest: "request-1",
+		Run: func(context.Context, *Operation) (json.RawMessage, error) {
+			return nil, service.NewError(
+				service.SSHPromptTimedOut,
+				"SSH prompt timed out",
+				false,
+				nil,
+				context.DeadlineExceeded,
+			)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := collectOperationEvents(t, hub, operation.ID(), 0)
+	if len(events) != 1 || events[0].Failure == nil {
+		t.Fatalf("unexpected operation events: %#v", events)
+	}
+	failure := events[0].Failure
+	if failure.Code != service.SSHPromptTimedOut || failure.Message != "SSH prompt timed out" {
+		t.Fatalf("prompt-timeout failure = %#v", failure)
+	}
+}
+
 func TestOperationHubPublishesInternalFailureForMalformedResult(t *testing.T) {
 	hub := NewOperationHub(context.Background(), OperationHubOptions{})
 	operation, _, err := hub.Start(OperationStart{

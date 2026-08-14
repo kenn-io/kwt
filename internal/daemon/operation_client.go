@@ -51,7 +51,7 @@ func (c *Client) FollowOperation(
 		}
 		sequence = lastSequence
 		if !errors.Is(err, errOperationStreamInterrupted) {
-			return nil, err
+			return result, err
 		}
 		if ctx.Err() != nil || attempt == 1 {
 			return nil, operationOutcomeUnknown("operation stream outcome is unknown", err)
@@ -144,8 +144,18 @@ func (c *Client) followOperationAttempt(
 		sequence := event.Sequence
 		if event.Kind == service.OperationEventComplete {
 			acknowledgedSequence = sequence
+			var callbackErr error
 			if callbacks.Event != nil {
-				_ = callbacks.Event(event)
+				callbackErr = callbacks.Event(event)
+			}
+			if callbackErr != nil {
+				if event.Failure != nil {
+					callbackErr = errors.Join(
+						callbackErr,
+						service.NewDescriptorError(*event.Failure, nil),
+					)
+				}
+				return event.Result, acknowledgedSequence, callbackErr
 			}
 			if event.Failure != nil {
 				return nil, acknowledgedSequence, service.NewDescriptorError(*event.Failure, nil)
@@ -172,21 +182,42 @@ func (c *Client) followOperationAttempt(
 					nil,
 				)
 			}
-			value, err := callbacks.Prompt(ctx, *event.Prompt)
+			promptContext := ctx
+			cancelPrompt := func() {}
+			if event.Prompt.Deadline != nil {
+				promptContext, cancelPrompt = context.WithDeadline(ctx, *event.Prompt.Deadline)
+			}
+			value, err := callbacks.Prompt(promptContext, *event.Prompt)
+			promptTimedOut := errors.Is(promptContext.Err(), context.DeadlineExceeded) &&
+				ctx.Err() == nil
+			if promptTimedOut {
+				cancelPrompt()
+				acknowledgedSequence = sequence
+				continue
+			}
 			if err != nil {
+				cancelPrompt()
 				cancelErr := c.cancelOperationBestEffort(ctx, operationID)
 				return nil, acknowledgedSequence, operationOutcomeUnknown(
 					"operation outcome is unknown after prompt handling failed",
 					errors.Join(err, cancelErr),
 				)
 			}
-			if err := c.sendOperationResponse(ctx, operationID, service.OperationResponse{
+			responseErr := c.sendOperationResponse(promptContext, operationID, service.OperationResponse{
 				PromptID: event.Prompt.ID,
 				Value:    value,
-			}); err != nil {
+			})
+			promptTimedOut = errors.Is(promptContext.Err(), context.DeadlineExceeded) &&
+				ctx.Err() == nil
+			cancelPrompt()
+			if responseErr != nil {
+				if ctx.Err() == nil && (promptTimedOut || service.IsCode(responseErr, service.Conflict)) {
+					acknowledgedSequence = sequence
+					continue
+				}
 				return nil, acknowledgedSequence, operationOutcomeUnknown(
 					"operation prompt response outcome is unknown",
-					err,
+					responseErr,
 				)
 			}
 			acknowledgedSequence = sequence

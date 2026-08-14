@@ -45,12 +45,13 @@ immediately, then continues reporting observed drain state while it waits.
 Active work and leases may finish until `daemon.replacement_grace`; the default
 is five minutes.
 
-The API schema is `1.8.0`. It exposes authenticated status, graceful shutdown,
+The API schema is `1.9.0`. It exposes authenticated status, graceful shutdown,
 worktree inventory, guarded project unregistration, and repository-config
 approval under `/api/v1`, proof-capable liveness at `/api/ping`, and
 credential-free OpenAPI at `/openapi.json`. Inventory clients require the
 `worktree.inventory.v1` capability; guarded unregistration requires
-`project.removal.v1`, and SSH route resolution requires `ssh.resolve.v1`.
+`project.removal.v1`, SSH route resolution requires `ssh.resolve.v1`, and
+daemon-owned connection leases require `ssh.lifecycle.v1`.
 Daemons advertise `operation.stream.v1` when they can
 carry ordered domain-operation events and bound prompt responses. Advertising
 that transport capability does not start a domain operation or move any
@@ -97,6 +98,14 @@ The daemon and inventory paths currently emit these stable codes:
 | `ssh_resolution_failed`                   | Effective OpenSSH configuration could not be observed.            |
 | `ssh_route_unreviewable`                  | A proxy route cannot be bound to independently reviewed hops.     |
 | `ssh_configuration_changed`               | A later lifecycle request observed a different route identity.    |
+| `ssh_unsupported_version`                 | The installed OpenSSH cannot support the required prompt policy.  |
+| `ssh_interaction_required`                | Connection preparation needs a prompt-capable client.             |
+| `ssh_prompt_rejected`                     | The client rejected an OpenSSH prompt.                            |
+| `ssh_prompt_timed_out`                    | A bound OpenSSH prompt exceeded its response deadline.            |
+| `ssh_connection_failed`                   | OpenSSH could not establish the reviewed route.                   |
+| `ssh_connection_changed`                  | A generation-bound lease is no longer usable.                     |
+| `ssh_control_path_occupied`               | A verified private control path is occupied unexpectedly.         |
+| `ssh_cleanup_failed`                      | Verified SSH connection cleanup did not complete.                 |
 | `internal`                                | An unexpected failure was withheld from the public response.      |
 
 `operation_journal_unavailable` remains reserved until kwt has a durable
@@ -110,7 +119,10 @@ prompt rounds; each response is accepted only for the exact current prompt ID,
 including an intentionally empty response. Stale, duplicate, and
 cross-operation responses fail closed. A client acknowledges a prompt sequence
 only after its bound response succeeds, so reconnect replays an unanswered
-prompt.
+prompt. Prompt events carry the daemon's response deadline. When that deadline
+expires, the client stops waiting for input, consumes the prompt sequence
+without a response, and continues reading until the daemon publishes the
+authoritative terminal failure.
 
 Each operation retains at most 256 events and 1 MiB of event payload. Public
 failure sanitization happens before admission, and each admitted event is

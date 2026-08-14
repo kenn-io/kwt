@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 )
 
 const (
@@ -35,6 +36,7 @@ type OperationPrompt struct {
 	Kind      string         `json:"kind"`
 	Message   string         `json:"message"`
 	Sensitive bool           `json:"sensitive"`
+	Deadline  *time.Time     `json:"deadline,omitempty"`
 	Details   map[string]any `json:"details,omitempty"`
 }
 

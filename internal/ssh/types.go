@@ -82,7 +82,7 @@ type Lease interface {
 	Generation() uint64
 	Arguments(context.Context) ([]string, error)
 	Touch() error
-	Release() error
+	Release(context.Context) error
 }
 
 type Event struct {

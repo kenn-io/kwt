@@ -200,8 +200,8 @@ func TestPublicServiceBuildsOneOwnerScopedPersistentManager(t *testing.T) {
 	require.NoError(t, err)
 	second, err := service.Acquire(context.Background(), LeaseRequest{Snapshot: snapshot})
 	require.NoError(t, err)
-	require.NoError(t, first.Release())
-	require.NoError(t, second.Release())
+	require.NoError(t, first.Release(context.Background()))
+	require.NoError(t, second.Release(context.Background()))
 	require.NoError(t, service.Close(context.Background()))
 
 	assert.Equal(t, 1, created)

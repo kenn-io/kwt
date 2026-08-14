@@ -689,6 +689,10 @@ func (h *OperationHub) finish(
 }
 
 func operationFailure(err error) service.Descriptor {
+	var typed *service.Error
+	if errors.As(err, &typed) {
+		return publicErrorDescriptor(err)
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return service.Descriptor{
 			Code: service.OperationOutcomeUnknown, Message: "operation was canceled", Retryable: false,
