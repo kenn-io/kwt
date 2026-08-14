@@ -21,8 +21,11 @@ type PublicServiceOptions struct {
 	Home           string
 	Environment    func() []string
 	ProtectedNames []string
-	Now            func() time.Time
-	OnEvent        func(Event)
+	// AskpassExecutable must dispatch the root package's RunSSHAskpassHelper
+	// before normal startup.
+	AskpassExecutable string
+	Now               func() time.Time
+	OnEvent           func(Event)
 }
 
 type snapshotResolver interface {
@@ -30,18 +33,19 @@ type snapshotResolver interface {
 }
 
 type PublicService struct {
-	home           string
-	environment    func() []string
-	protectedNames []string
-	build          func(ResolverOptions) snapshotResolver
-	leases         *Manager
-	managerID      string
-	managerErr     error
-	managerMu      sync.Mutex
-	closed         bool
-	managerDir     string
-	newPersistent  func(string, openssh.PersistentConfig) (PersistentManager, error)
-	onEvent        func(Event)
+	home              string
+	environment       func() []string
+	protectedNames    []string
+	askpassExecutable string
+	build             func(ResolverOptions) snapshotResolver
+	leases            *Manager
+	managerID         string
+	managerErr        error
+	managerMu         sync.Mutex
+	closed            bool
+	managerDir        string
+	newPersistent     func(string, openssh.PersistentConfig) (PersistentManager, error)
+	onEvent           func(Event)
 }
 
 type requestContext struct {
@@ -57,10 +61,17 @@ func NewPublicService(options PublicServiceOptions) *PublicService {
 		environment = os.Environ
 	}
 	managerID, managerErr := randomManagerID()
+	if managerErr == nil && options.AskpassExecutable == "" {
+		managerErr = errors.New("SSH askpass helper executable is required")
+	}
+	if managerErr == nil && !filepath.IsAbs(options.AskpassExecutable) {
+		managerErr = errors.New("SSH askpass helper executable must be absolute")
+	}
 	return &PublicService{
-		home:           options.Home,
-		environment:    environment,
-		protectedNames: append([]string(nil), options.ProtectedNames...),
+		home:              options.Home,
+		environment:       environment,
+		protectedNames:    append([]string(nil), options.ProtectedNames...),
+		askpassExecutable: options.AskpassExecutable,
 		build: func(resolverOptions ResolverOptions) snapshotResolver {
 			return NewService(ServiceOptions{
 				Resolver: NewResolver(resolverOptions),
@@ -191,7 +202,9 @@ func (s *PublicService) initializeManager(idleTimeout time.Duration) error {
 		Persistent:       persistent,
 		PrivateDirectory: privateDirectory,
 		Runner: func(request LeaseRequest, target ResolvedTarget) (openssh.RunSSH, error) {
-			return NewRunner(privateDirectory, request, target)
+			return newRunner(privateDirectory, request, target, runnerOptions{
+				Executable: s.askpassExecutable,
+			})
 		},
 		IdleTimeout:        idleTimeout,
 		PersistenceTimeout: persistenceTimeout,

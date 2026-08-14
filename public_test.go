@@ -2,6 +2,7 @@ package kwt_test
 
 import (
 	"context"
+	"io"
 	"testing"
 
 	kwt "go.kenn.io/kwt"
@@ -13,6 +14,17 @@ func TestRootPackageExposesWorktreeServices(t *testing.T) {
 	}
 	if kwt.NewRemovalService(kwt.RemovalServiceOptions{}) == nil {
 		t.Fatal("removal service is unavailable from the root package")
+	}
+}
+
+func TestRootPackageExposesSSHAskpassDispatch(t *testing.T) {
+	exitCode, handled := kwt.RunSSHAskpassHelper(
+		[]string{"host-application"},
+		nil,
+		io.Discard,
+	)
+	if handled || exitCode != 0 {
+		t.Fatal("ordinary host process invocation was treated as SSH askpass")
 	}
 }
 

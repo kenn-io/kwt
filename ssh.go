@@ -1,6 +1,10 @@
 package kwt
 
-import internalssh "go.kenn.io/kwt/internal/ssh"
+import (
+	"io"
+
+	internalssh "go.kenn.io/kwt/internal/ssh"
+)
 
 type (
 	SSHTarget              = internalssh.Target
@@ -28,4 +32,12 @@ const (
 
 func NewSSHService(options SSHServiceOptions) *SSHService {
 	return internalssh.NewPublicService(options)
+}
+
+// RunSSHAskpassHelper handles an SSH askpass invocation before host startup.
+func RunSSHAskpassHelper(
+	arguments, environment []string,
+	output io.Writer,
+) (int, bool) {
+	return internalssh.RunAskpassHelper(arguments, environment, output)
 }

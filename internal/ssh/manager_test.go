@@ -255,7 +255,7 @@ func TestManagerDisconnectsForwardAgentRouteOnFinalRelease(t *testing.T) {
 	assert.Equal(t, 1, disconnects)
 }
 
-func TestManagerPartitionsForwardAgentRoutesByAgentEndpoint(t *testing.T) {
+func TestManagerPartitionsForwardAgentRoutesByExecutionEnvironment(t *testing.T) {
 	persistent := &fakePersistentManager{generation: 19}
 	manager := NewManager(ManagerOptions{
 		Persistent:  persistent,
@@ -271,8 +271,11 @@ func TestManagerPartitionsForwardAgentRoutesByAgentEndpoint(t *testing.T) {
 	first, err := manager.Acquire(
 		context.Background(),
 		LeaseRequest{
-			Snapshot:    snapshot,
-			Environment: []string{"SSH_AUTH_SOCK=/tmp/agent-one"},
+			Snapshot: snapshot,
+			Environment: []string{
+				"SSH_AUTH_SOCK=/tmp/default-agent",
+				"AGENT_SOCKET=/tmp/agent-one",
+			},
 		},
 		resolve,
 	)
@@ -280,8 +283,11 @@ func TestManagerPartitionsForwardAgentRoutesByAgentEndpoint(t *testing.T) {
 	second, err := manager.Acquire(
 		context.Background(),
 		LeaseRequest{
-			Snapshot:    snapshot,
-			Environment: []string{"SSH_AUTH_SOCK=/tmp/agent-two"},
+			Snapshot: snapshot,
+			Environment: []string{
+				"SSH_AUTH_SOCK=/tmp/default-agent",
+				"AGENT_SOCKET=/tmp/agent-two",
+			},
 		},
 		resolve,
 	)

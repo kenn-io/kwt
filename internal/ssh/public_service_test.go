@@ -149,10 +149,36 @@ func TestPublicServiceAcquiresLeaseThroughSharedManager(t *testing.T) {
 	assert.Equal(t, uint64(23), lease.Generation())
 }
 
-func TestPublicServiceBuildsOneOwnerScopedPersistentManager(t *testing.T) {
+func TestPublicServiceRequiresExplicitAskpassExecutableForAcquire(t *testing.T) {
 	home := t.TempDir()
 	snapshot := directSnapshot("route-one")
 	service := NewPublicService(PublicServiceOptions{Home: home})
+	service.build = func(ResolverOptions) snapshotResolver {
+		return fixedPublicResolver{snapshot: snapshot}
+	}
+	service.newPersistent = func(
+		string,
+		openssh.PersistentConfig,
+	) (PersistentManager, error) {
+		return publicTestPersistentManager{}, nil
+	}
+
+	_, err := service.Acquire(
+		context.Background(),
+		LeaseRequest{Snapshot: snapshot},
+	)
+
+	require.Error(t, err)
+	assert.True(t, servicepkg.IsCode(err, servicepkg.SSHConnectionFailed))
+}
+
+func TestPublicServiceBuildsOneOwnerScopedPersistentManager(t *testing.T) {
+	home := t.TempDir()
+	snapshot := directSnapshot("route-one")
+	service := NewPublicService(PublicServiceOptions{
+		Home:              home,
+		AskpassExecutable: filepath.Join(home, "kwt"),
+	})
 	service.build = func(ResolverOptions) snapshotResolver {
 		return fixedPublicResolver{snapshot: snapshot}
 	}

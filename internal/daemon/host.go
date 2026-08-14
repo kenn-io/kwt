@@ -206,7 +206,15 @@ func runHost(
 		})
 	}
 	if sshResolver == nil {
-		sshResolver = kwt.NewSSHService(kwt.SSHServiceOptions{Home: opts.Home, Now: opts.Now})
+		executable, executableErr := os.Executable()
+		if executableErr != nil {
+			return executableErr
+		}
+		sshResolver = kwt.NewSSHService(kwt.SSHServiceOptions{
+			Home:              opts.Home,
+			AskpassExecutable: executable,
+			Now:               opts.Now,
+		})
 	}
 	status := &hostStatus{
 		base: Status{

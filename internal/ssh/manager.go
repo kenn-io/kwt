@@ -323,9 +323,12 @@ func managerIdentityForLease(snapshot RouteSnapshot, environment []string) strin
 	if len(snapshot.Targets) != 1 || !snapshot.Targets[0].ForwardAgent {
 		return identity
 	}
-	agentEndpoint, _ := environmentValue(environment, "SSH_AUTH_SOCK")
-	digest := sha256.Sum256([]byte(agentEndpoint))
-	return identity + ":agent:" + hex.EncodeToString(digest[:])
+	digest := sha256.New()
+	for _, entry := range environment {
+		_, _ = digest.Write([]byte(entry))
+		_, _ = digest.Write([]byte{0})
+	}
+	return identity + ":agent:" + hex.EncodeToString(digest.Sum(nil))
 }
 
 func sameRoute(expected, current RouteSnapshot) bool {
