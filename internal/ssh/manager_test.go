@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,7 +37,9 @@ type fakePersistentManager struct {
 	disconnectErr             error
 	disconnectStart           chan struct{}
 	disconnectWait            <-chan struct{}
+	disconnectReturn          chan struct{}
 	disconnectOnce            sync.Once
+	disconnectReturnOnce      sync.Once
 	connectStart              chan struct{}
 	connectWait               <-chan struct{}
 	connectOnce               sync.Once
@@ -119,6 +122,7 @@ func (m *fakePersistentManager) Disconnect(context.Context, string) error {
 	disconnectErr := m.disconnectErr
 	disconnectStart := m.disconnectStart
 	disconnectWait := m.disconnectWait
+	disconnectReturn := m.disconnectReturn
 	if m.aliveExit != nil {
 		select {
 		case <-m.aliveExit:
@@ -132,6 +136,9 @@ func (m *fakePersistentManager) Disconnect(context.Context, string) error {
 	}
 	if disconnectWait != nil {
 		<-disconnectWait
+	}
+	if disconnectReturn != nil {
+		m.disconnectReturnOnce.Do(func() { close(disconnectReturn) })
 	}
 	return disconnectErr
 }
@@ -501,6 +508,68 @@ func TestManagerCloseDisconnectsRoutesAndRejectsNewAcquires(t *testing.T) {
 	_, _, _, disconnects := persistent.counts()
 	assert.Equal(t, 1, disconnects)
 	require.NoError(t, lease.Release())
+}
+
+func TestManagerCloseSerializesWithFinalLeaseRelease(t *testing.T) {
+	disconnectStarted := make(chan struct{})
+	continueDisconnect := make(chan struct{})
+	disconnectReturned := make(chan struct{})
+	persistent := &fakePersistentManager{
+		generation:       35,
+		disconnectStart:  disconnectStarted,
+		disconnectWait:   continueDisconnect,
+		disconnectReturn: disconnectReturned,
+	}
+	manager := NewManager(ManagerOptions{
+		Persistent: persistent,
+		Runner: func(LeaseRequest, ResolvedTarget) (openssh.RunSSH, error) {
+			return func(context.Context, []string) (int, error) { return 0, nil }, nil
+		},
+	})
+	snapshot := directSnapshot("route-one")
+	lease, err := manager.Acquire(
+		context.Background(),
+		LeaseRequest{Snapshot: snapshot},
+		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
+	)
+	require.NoError(t, err)
+	identity := managerIdentity(snapshot)
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- manager.Close(context.Background()) }()
+	select {
+	case <-disconnectStarted:
+	case <-time.After(time.Second):
+		t.Fatal("manager close did not begin disconnecting")
+	}
+	manager.mu.Lock()
+	operation := manager.operations[identity]
+	require.NotNil(t, operation)
+	identityReleased := make(chan struct{})
+	go func() {
+		<-operation.gate
+		close(identityReleased)
+		operation.gate <- struct{}{}
+	}()
+	close(continueDisconnect)
+	select {
+	case <-disconnectReturned:
+	case <-time.After(time.Second):
+		manager.mu.Unlock()
+		t.Fatal("disconnect did not return")
+	}
+	select {
+	case <-identityReleased:
+		manager.mu.Unlock()
+		t.Fatal("manager released the route identity before deleting the route")
+	case <-time.After(20 * time.Millisecond):
+	}
+	manager.mu.Unlock()
+
+	require.NoError(t, <-closeDone)
+	require.NoError(t, lease.Release())
+	_, _, _, disconnects := persistent.counts()
+	assert.Equal(t, 1, disconnects)
 }
 
 func TestManagerCloseHonorsContextWhileAcquireOwnsIdentity(t *testing.T) {
@@ -995,6 +1064,51 @@ func TestMasterlessLeaseRetriesFailedCleanupOnClose(t *testing.T) {
 	require.Error(t, lease.Release())
 	require.NoError(t, manager.Close(context.Background()))
 	assert.Equal(t, 2, cleanupCalls)
+}
+
+func TestMasterlessReleaseAndCloseShareOneCleanupAttempt(t *testing.T) {
+	cleanupStarted := make(chan struct{})
+	allowCleanup := make(chan struct{})
+	var cleanupCalls atomic.Int32
+	events := make(chan Event, 2)
+	manager := NewManager(ManagerOptions{OnEvent: func(event Event) { events <- event }})
+	lease := &masterlessLease{
+		generation:    42,
+		manager:       manager,
+		routeIdentity: "masterless-route",
+		cleanup: func() error {
+			if cleanupCalls.Add(1) == 1 {
+				close(cleanupStarted)
+			}
+			<-allowCleanup
+			return nil
+		},
+	}
+	manager.masterless[lease.generation] = lease
+
+	releaseDone := make(chan error, 1)
+	go func() { releaseDone <- lease.Release() }()
+	select {
+	case <-cleanupStarted:
+	case <-time.After(time.Second):
+		t.Fatal("lease release did not begin cleanup")
+	}
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- manager.Close(context.Background()) }()
+	assert.Never(t, func() bool { return cleanupCalls.Load() > 1 }, 20*time.Millisecond, time.Millisecond)
+	close(allowCleanup)
+
+	require.NoError(t, <-releaseDone)
+	require.NoError(t, <-closeDone)
+	assert.Equal(t, int32(1), cleanupCalls.Load())
+	close(events)
+	var disconnected int
+	for event := range events {
+		if event.State == EventStateDisconnected {
+			disconnected++
+		}
+	}
+	assert.Equal(t, 1, disconnected)
 }
 
 func TestManagerMapsConnectionGenerationChanges(t *testing.T) {

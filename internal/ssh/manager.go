@@ -562,7 +562,8 @@ func (m *Manager) closeAttempt(
 
 	for _, lease := range masterless {
 		lease.released.Store(true)
-		if err := lease.cleanup(); err != nil {
+		cleaned, err := lease.cleanupTracked()
+		if err != nil {
 			failure := cleanupFailed(err)
 			closeErr = errors.Join(closeErr, failure)
 			descriptor := failure.Descriptor
@@ -574,11 +575,9 @@ func (m *Manager) closeAttempt(
 			})
 			continue
 		}
-		m.mu.Lock()
-		if m.masterless[lease.generation] == lease {
-			delete(m.masterless, lease.generation)
+		if !cleaned {
+			continue
 		}
-		m.mu.Unlock()
 		events = append(events, Event{
 			RouteIdentity: lease.routeIdentity,
 			Generation:    lease.generation,
@@ -613,8 +612,8 @@ func (m *Manager) closeAttempt(
 			break
 		}
 		err = m.persistent.Disconnect(ctx, identity)
-		unlockIdentity()
 		if err != nil {
+			unlockIdentity()
 			failure := cleanupFailed(err)
 			closeErr = errors.Join(closeErr, failure)
 			descriptor := failure.Descriptor
@@ -631,6 +630,7 @@ func (m *Manager) closeAttempt(
 			delete(m.routes, identity)
 		}
 		m.mu.Unlock()
+		unlockIdentity()
 		events = append(events, Event{
 			RouteIdentity: route.routeIdentity,
 			Generation:    uint64(route.generation),
@@ -710,6 +710,7 @@ type masterlessLease struct {
 	manager       *Manager
 	routeIdentity string
 	released      atomic.Bool
+	cleanupMu     sync.Mutex
 }
 
 func (l *masterlessLease) Mode() LeaseMode { return LeaseModeMasterless }
@@ -731,36 +732,45 @@ func (l *masterlessLease) Touch() error {
 }
 
 func (l *masterlessLease) Release() error {
-	if !l.released.CompareAndSwap(false, true) {
-		return nil
-	}
-	if l.cleanup == nil {
-		l.manager.mu.Lock()
-		delete(l.manager.masterless, l.generation)
-		l.manager.mu.Unlock()
-		l.manager.emit(Event{
-			RouteIdentity: l.routeIdentity,
-			Generation:    l.generation,
-			State:         EventStateDisconnected,
-		})
-		return nil
-	}
-	if err := l.cleanup(); err != nil {
+	l.released.Store(true)
+	cleaned, err := l.cleanupTracked()
+	if err != nil {
 		failure := cleanupFailed(err)
 		l.manager.emitFailure(l.routeIdentity, openssh.Generation(l.generation), failure)
 		return failure
 	}
-	l.manager.mu.Lock()
-	if l.manager.masterless[l.generation] == l {
-		delete(l.manager.masterless, l.generation)
+	if !cleaned {
+		return nil
 	}
-	l.manager.mu.Unlock()
 	l.manager.emit(Event{
 		RouteIdentity: l.routeIdentity,
 		Generation:    l.generation,
 		State:         EventStateDisconnected,
 	})
 	return nil
+}
+
+func (l *masterlessLease) cleanupTracked() (bool, error) {
+	l.cleanupMu.Lock()
+	defer l.cleanupMu.Unlock()
+
+	l.manager.mu.Lock()
+	tracked := l.manager.masterless[l.generation] == l
+	l.manager.mu.Unlock()
+	if !tracked {
+		return false, nil
+	}
+	if l.cleanup != nil {
+		if err := l.cleanup(); err != nil {
+			return true, err
+		}
+	}
+	l.manager.mu.Lock()
+	if l.manager.masterless[l.generation] == l {
+		delete(l.manager.masterless, l.generation)
+	}
+	l.manager.mu.Unlock()
+	return true, nil
 }
 
 func (m *Manager) emitFailure(
