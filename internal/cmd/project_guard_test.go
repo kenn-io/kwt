@@ -13,6 +13,7 @@ import (
 	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/git"
+	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
@@ -111,6 +112,27 @@ func TestRequiredProjectGuardRejectsUnexpectedRepository(t *testing.T) {
 	guard, err := observeRequiredGuardedProjectOperation(
 		context.Background(), home, projectPath, expansion,
 		"github.com/acme/original",
+	)
+
+	assert.Nil(t, guard)
+	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+}
+
+func TestRequiredProjectGuardRejectsMatchingUnregisteredRepository(t *testing.T) {
+	home := t.TempDir()
+	repositoryPath := newTUITestRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), nil, 0o600))
+	expansion, err := kwt.CaptureExpansionContext()
+	require.NoError(t, err)
+	claim, err := lifecycle.ObserveProjectClaim(
+		context.Background(), home, repositoryPath, expansion,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	require.False(t, claim.Registered)
+
+	guard, err := observeRequiredGuardedProjectOperation(
+		context.Background(), home, repositoryPath, expansion, claim.Identity,
 	)
 
 	assert.Nil(t, guard)

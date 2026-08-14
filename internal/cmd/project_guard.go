@@ -113,7 +113,7 @@ func observeRequiredGuardedProjectOperation(
 	if err != nil {
 		return nil, err
 	}
-	if guard.claim == nil || !projectClaimHasExpectedIdentity(
+	if guard.claim == nil || !guard.claim.Registered || !projectClaimHasExpectedIdentity(
 		guard.claim, expectedIdentities,
 	) {
 		return nil, service.NewError(
