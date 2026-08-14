@@ -1457,6 +1457,17 @@ func TestReadWorktreeGenerationRejectsAnotherWorktreeAdministrativeDirectory(
 	assert.Equal(t, firstGeneration, generation)
 }
 
+func TestReadWorktreeGenerationClassifiesMissingWorktree(t *testing.T) {
+	repo := NewTestRepository(t)
+
+	_, err := New(repo.Path).ReadWorktreeGeneration(
+		filepath.Join(t.TempDir(), "missing-worktree"),
+	)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrWorktreeNotFound)
+}
+
 func TestWorktreeGitDirRejectsDuplicateAdministrativeBacklinks(t *testing.T) {
 	repo := NewTestRepository(t)
 	g := New(repo.Path)

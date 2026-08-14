@@ -24,6 +24,7 @@ import (
 	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/credentials"
+	gitadapter "go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/internal/pullrequest"
 	"go.kenn.io/kwt/internal/template"
@@ -698,6 +699,90 @@ func TestRunPRAttachUsesPersistedWorkspaceIdentity(t *testing.T) {
 	assert.True(t, attached)
 }
 
+func TestRunPRAttachGuardUsesVerifiedLiveWorkspaceIdentity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("KWT_HOME", home)
+	project := pullrequest.Project{
+		Identity: "github.com/acme/widget",
+		Name:     "widget",
+		Path:     "/repos/widget",
+	}
+	recorded := pullrequest.Workspace{
+		Path:        "/worktrees/pr-verified",
+		Branch:      "pr-verified",
+		Repository:  project.Identity,
+		SessionName: "kwt-workspace-pr-verified",
+	}
+	live := recorded
+	live.Generation = "0123456789abcdef0123456789abcdef"
+	expectedSocket := tmux.ProtectedWorkspaceSocketName(
+		recorded.SessionName,
+		recorded.Path,
+	)
+	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
+		context.Background(),
+		func(records map[string]pullrequest.Provenance) error {
+			records["pr-verified"] = pullrequest.Provenance{
+				Project: project, Workspace: recorded,
+			}
+			return nil
+		},
+	))
+	cfg := &models.Config{Projects: []models.Project{{
+		Repository: project.Identity, Name: project.Name, Path: project.Path,
+	}}}
+	withPRCommandDeps(t, cfg, &fakePRService{})
+	inspectPRProjectClone = func(
+		context.Context,
+		pullrequest.Provenance,
+	) (pullrequest.Project, []pullrequest.Workspace, error) {
+		return project, []pullrequest.Workspace{live}, nil
+	}
+	snapshot, err := config.LoadGlobalSnapshotAt(home)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Projects, 1)
+	fingerprint, err := snapshot.Projects[0].Fingerprint()
+	require.NoError(t, err)
+	prAttachExpectedRepository = project.Identity
+	prAttachExpectedRegistration = fingerprint
+	prAttachExpectedGeneration = live.Generation
+	prAttachExpectedSession = recorded.SessionName
+	prAttachExpectedSocket = expectedSocket
+	cmd, _, _ := prTestCommand()
+	markCommandFlagsChanged(
+		t, cmd,
+		"expected-repository",
+		"expected-registration",
+		"expected-generation",
+		"expected-session",
+		"expected-socket",
+	)
+	ensurePRWorkspaceSession = func(
+		_ context.Context,
+		got pullrequest.Workspace,
+		_ *models.Config,
+	) (string, error) {
+		assert.Equal(t, live.Generation, got.Generation)
+		assert.Empty(t, got.TmuxSocketName)
+		return expectedSocket, nil
+	}
+	attached := false
+	attachExistingPRWorkspaceSession = func(
+		context.Context,
+		pullrequest.Workspace,
+		*models.Config,
+		string,
+	) error {
+		attached = true
+		return nil
+	}
+
+	err = runPRAttach(cmd, []string{recorded.Path})
+
+	require.NoError(t, err)
+	assert.True(t, attached)
+}
+
 func TestRunPRAttachRejectsStaleGuardBeforeEnsuringSession(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("KWT_HOME", home)
@@ -904,6 +989,95 @@ func TestRunPRAttachRejectsProvenanceReplacementWhileWaitingForProjectFence(t *t
 	cmd, stdout, _ := prTestCommand()
 
 	err := runPRAttach(cmd, []string{workspace.Path})
+
+	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+	assert.False(t, ensured)
+	var envelope jsonErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	assert.Equal(t, service.RegistrationChanged, envelope.Error.Code)
+}
+
+func TestRunPRAttachClassifiesDisappearanceWhileWaitingAsRegistrationChanged(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("KWT_HOME", home)
+	project := pullrequest.Project{
+		Identity: "github.com/acme/widget",
+		Name:     "widget",
+		Path:     "/repos/widget",
+	}
+	workspace := pullrequest.Workspace{
+		Path:        "/worktrees/pr-disappeared",
+		Branch:      "pr-disappeared",
+		Repository:  project.Identity,
+		Generation:  "0123456789abcdef0123456789abcdef",
+		SessionName: "kwt-workspace-pr-disappeared",
+		TmuxSocketName: tmux.ProtectedWorkspaceSocketName(
+			"kwt-workspace-pr-disappeared",
+			"/worktrees/pr-disappeared",
+		),
+	}
+	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
+		context.Background(),
+		func(records map[string]pullrequest.Provenance) error {
+			records["pr-disappeared"] = pullrequest.Provenance{
+				Project: project, Workspace: workspace,
+			}
+			return nil
+		},
+	))
+	cfg := &models.Config{Projects: []models.Project{{
+		Repository: project.Identity, Name: project.Name, Path: project.Path,
+	}}}
+	withPRCommandDeps(t, cfg, &fakePRService{})
+	disappeared := false
+	readPRWorkspaceGeneration = func(string) (string, error) {
+		if disappeared {
+			return "", fmt.Errorf(
+				"read worktree identity: %w",
+				gitadapter.ErrWorktreeNotFound,
+			)
+		}
+		return workspace.Generation, nil
+	}
+	inspectPRProjectClone = func(
+		context.Context,
+		pullrequest.Provenance,
+	) (pullrequest.Project, []pullrequest.Workspace, error) {
+		return project, []pullrequest.Workspace{workspace}, nil
+	}
+	oldBeforeAcquire := beforeProjectGuardAcquire
+	t.Cleanup(func() { beforeProjectGuardAcquire = oldBeforeAcquire })
+	beforeProjectGuardAcquire = func() { disappeared = true }
+	snapshot, err := config.LoadGlobalSnapshotAt(home)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Projects, 1)
+	fingerprint, err := snapshot.Projects[0].Fingerprint()
+	require.NoError(t, err)
+	prAttachExpectedRepository = project.Identity
+	prAttachExpectedRegistration = fingerprint
+	prAttachExpectedGeneration = workspace.Generation
+	prAttachExpectedSession = workspace.SessionName
+	prAttachExpectedSocket = workspace.TmuxSocketName
+	cmd, stdout, _ := prTestCommand()
+	markCommandFlagsChanged(
+		t, cmd,
+		"expected-repository",
+		"expected-registration",
+		"expected-generation",
+		"expected-session",
+		"expected-socket",
+	)
+	ensured := false
+	ensurePRWorkspaceSession = func(
+		context.Context,
+		pullrequest.Workspace,
+		*models.Config,
+	) (string, error) {
+		ensured = true
+		return workspace.TmuxSocketName, nil
+	}
+
+	err = runPRAttach(cmd, []string{workspace.Path})
 
 	assert.True(t, service.IsCode(err, service.RegistrationChanged))
 	assert.False(t, ensured)

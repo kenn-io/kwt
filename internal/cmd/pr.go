@@ -54,6 +54,9 @@ var (
 	readPRWorkspaceGeneration        = func(path string) (string, error) {
 		return gitadapter.New(path).ReadWorktreeGeneration(path)
 	}
+	errImportedPRWorkspaceChanged = errors.New(
+		"imported pull-request workspace changed",
+	)
 )
 
 func provenanceGenerationMatches(recorded, live string) bool {
@@ -273,7 +276,7 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 		args[0],
 	)
 	if err != nil {
-		return writePRError(cmd, err)
+		return writePRError(cmd, guardedPRAttachError(err, guarded))
 	}
 	cfg, err := loadPRTargetConfig(record.Project.Path, false)
 	if err != nil {
@@ -314,7 +317,7 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 			cmd.Context(), args[0],
 		)
 		if currentErr != nil {
-			return currentErr
+			return guardedPRAttachError(currentErr, guarded)
 		}
 		if !provenanceMatchesProjectClaim(current, guard.claim) {
 			return service.NewError(
@@ -358,6 +361,19 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 		))
 	}
 	return nil
+}
+
+func guardedPRAttachError(err error, guarded bool) error {
+	if !guarded || !errors.Is(err, errImportedPRWorkspaceChanged) {
+		return err
+	}
+	return service.NewError(
+		service.RegistrationChanged,
+		"the imported workspace changed before attachment",
+		true,
+		nil,
+		err,
+	)
 }
 
 func validateExpectedPRAttachFlags(cmd *cobra.Command) (bool, error) {
@@ -452,7 +468,10 @@ func expectedPRAttachMatches(
 	}
 	return record.Workspace.Generation == prAttachExpectedGeneration &&
 		record.Workspace.SessionName == prAttachExpectedSession &&
-		record.Workspace.TmuxSocketName == prAttachExpectedSocket
+		tmux.ProtectedWorkspaceSocketName(
+			record.Workspace.SessionName,
+			record.Workspace.Path,
+		) == prAttachExpectedSocket
 }
 
 func provenanceMatchesProjectClaim(
@@ -500,11 +519,16 @@ func importedWorkspaceProvenance(
 		}
 		liveGeneration, err = readPRWorkspaceGeneration(workspacePath)
 		if err != nil {
+			cause := err
+			if errors.Is(err, os.ErrNotExist) ||
+				errors.Is(err, gitadapter.ErrWorktreeNotFound) {
+				cause = fmt.Errorf("%w: %v", errImportedPRWorkspaceChanged, err)
+			}
 			return pullrequest.Provenance{}, pullrequest.NewError(
 				pullrequest.CodeWorkspaceCreation,
 				"failed to inspect live workspace generation",
 				false,
-				err,
+				cause,
 			)
 		}
 		break
@@ -523,7 +547,7 @@ func importedWorkspaceProvenance(
 			pullrequest.CodeWorkspaceCreation,
 			"workspace is not a uniquely verified pull-request import",
 			false,
-			nil,
+			errImportedPRWorkspaceChanged,
 		)
 	}
 	record := matches[0]
@@ -539,15 +563,19 @@ func importedWorkspaceProvenance(
 			err,
 		)
 	}
-	if !samePRProjectClone(record, liveProject) ||
-		!containsPRWorkspace(liveWorkspaces, record) {
+	verifiedWorkspace, workspaceMatches := verifiedPRWorkspace(
+		liveWorkspaces,
+		record,
+	)
+	if !samePRProjectClone(record, liveProject) || !workspaceMatches {
 		return pullrequest.Provenance{}, pullrequest.NewError(
 			pullrequest.CodeWorkspaceCreation,
 			"workspace no longer matches its pull-request provenance",
 			false,
-			nil,
+			errImportedPRWorkspaceChanged,
 		)
 	}
+	record.Workspace.Generation = verifiedWorkspace.Generation
 	return record, nil
 }
 
@@ -753,6 +781,14 @@ func containsPRWorkspace(
 	live []pullrequest.Workspace,
 	recorded pullrequest.Provenance,
 ) bool {
+	_, ok := verifiedPRWorkspace(live, recorded)
+	return ok
+}
+
+func verifiedPRWorkspace(
+	live []pullrequest.Workspace,
+	recorded pullrequest.Provenance,
+) (pullrequest.Workspace, bool) {
 	for _, candidate := range live {
 		if utils.CanonicalPath(candidate.Path) ==
 			utils.CanonicalPath(recorded.Workspace.Path) &&
@@ -762,10 +798,10 @@ func containsPRWorkspace(
 				candidate.Generation,
 			) &&
 			prWorkspaceIdentityMatches(candidate, recorded) {
-			return true
+			return candidate, true
 		}
 	}
-	return false
+	return pullrequest.Workspace{}, false
 }
 
 func prWorkspaceIdentityMatches(

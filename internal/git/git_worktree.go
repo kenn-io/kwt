@@ -29,6 +29,10 @@ const (
 var (
 	inspectWorktreeStat = os.Stat
 	inspectDotGitRead   = os.ReadFile
+
+	// ErrWorktreeNotFound reports that no worktree administrative record owns
+	// the requested path.
+	ErrWorktreeNotFound = errors.New("worktree not found")
 )
 
 type worktreeCreationReservation struct {
@@ -1976,7 +1980,10 @@ func (g *Git) worktreeGitDirWithoutCredentials(
 			path,
 		)
 	}
-	return "", fmt.Errorf("resolve worktree Git directory: worktree not found")
+	return "", fmt.Errorf(
+		"resolve worktree Git directory: %w",
+		ErrWorktreeNotFound,
+	)
 }
 
 func worktreeAdminDirMatchesPath(
