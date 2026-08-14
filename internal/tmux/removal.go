@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	pathpkg "path"
 	"strconv"
@@ -46,7 +47,10 @@ type RemovalSessionGuard interface {
 	Quiesce(context.Context, RemovalSessionCondition) (RemovalSessionLease, error)
 }
 
-type removalSessionGuard struct{ command string }
+type removalSessionGuard struct {
+	command string
+	inspect func(context.Context, *TmuxCommand) (string, string, error)
+}
 
 var removalSocketSelectors = []string{"TMUX", "TMUX_TMPDIR"}
 
@@ -54,7 +58,15 @@ var removalSocketSelectors = []string{"TMUX", "TMUX_TMPDIR"}
 // request carries an explicit socket endpoint. Ambient tmux selectors are
 // never removal authority.
 func NewRemovalSessionGuard(command string) RemovalSessionGuard {
-	return &removalSessionGuard{command: command}
+	return &removalSessionGuard{command: command, inspect: inspectRemovalSessions}
+}
+
+func inspectRemovalSessions(
+	ctx context.Context,
+	command *TmuxCommand,
+) (string, string, error) {
+	const format = "#{pid}|#{session_id}|#{session_created}|#{session_name}"
+	return command.runCommandOutputContextWithStderr(ctx, "list-sessions", "-F", format)
 }
 
 func (g *removalSessionGuard) Quiesce(
@@ -70,10 +82,10 @@ func (g *removalSessionGuard) Quiesce(
 		}
 	}
 	command := newRemovalTmuxCommand(g.command, condition)
-	const format = "#{pid}|#{session_id}|#{session_created}|#{session_name}"
-	output, stderr, err := command.runCommandOutputContextWithStderr(
-		ctx, "list-sessions", "-F", format,
-	)
+	output, stderr, err := g.inspect(ctx, command)
+	if contextErr := ctx.Err(); contextErr != nil {
+		return nil, errors.Join(contextErr, err)
+	}
 	if err != nil {
 		if isExplicitlyAbsentTmuxDiagnostic(stderr) {
 			return noRemovalSessionLease{}, nil
