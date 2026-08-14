@@ -214,6 +214,8 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		// before the worktree is created, so a rejected flag combo, missing
 		// tmux, invalid layouts config, unknown --layout name, or a
 		// repository identity failure never leaves a stray worktree behind.
+		// The launch name is derived again from the created worktree under its
+		// lifecycle guard because setup may change the checked-out branch.
 		// Only worktree creation and the tmux attach below are side-effecting,
 		// so they run after this point.
 		layoutRequested := addLayout != "" || addSelectLayout
@@ -236,9 +238,8 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			launch = false
 		}
 		var layout models.Layout
-		var info *url.RepositoryInfo
 		if launch {
-			layout, info, err = prepareLaunch(ctx)
+			layout, _, err = prepareLaunch(ctx)
 			if err != nil {
 				return err
 			}
@@ -295,13 +296,15 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		var expiresAt *time.Time
 		var launchRunner openWorkspaceRunner
 		var launchSession string
+		var protectedNames []string
 		if launch {
-			launchRunner = newAddWorkspaceRunner(credentials.ProtectedNames(ctx.Config))
+			protectedNames = credentials.ProtectedNames(ctx.Config)
+			launchRunner = newAddWorkspaceRunner(protectedNames)
 		}
 		err = guard.run(commandContext, func() error {
 			var mutationErr error
 			if remoteSource != "" {
-				if addExpires != "" {
+				if addExpires != "" || launch {
 					worktreePath, worktreeGeneration, mutationErr =
 						ctx.WorktreeManager.AddTrackingWithGeneration(
 							branch,
@@ -316,7 +319,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 					)
 				}
 			} else {
-				if addExpires != "" {
+				if addExpires != "" || launch {
 					worktreePath, worktreeGeneration, mutationErr =
 						ctx.WorktreeManager.AddWithGeneration(
 							branch,
@@ -363,10 +366,24 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			}
 			publishFleetBestEffortForCommand(cmd, ctx.Config)
 			if launch {
-				launchSession = tmux.WorkspaceSessionName(info, branch, worktreePath)
-				return launchRunner.Ensure(
-					commandContext, launchSession, worktreePath, layout,
+				projects := []models.Project(nil)
+				if guard.claim != nil {
+					projects = []models.Project{guard.claim.Registration.Effective}
+				}
+				launchSession, mutationErr = withCurrentWorktreeSession(
+					commandContext,
+					mainPath,
+					worktreePath,
+					worktreeGeneration,
+					projects,
+					protectedNames,
+					func(sessionName string) error {
+						return launchRunner.Ensure(
+							commandContext, sessionName, worktreePath, layout,
+						)
+					},
 				)
+				return mutationErr
 			}
 			return nil
 		})
@@ -480,8 +497,8 @@ func shouldLaunch(autoLaunch, layoutFlagPassed, noLaunch bool) (bool, error) {
 }
 
 // prepareLaunch validates that a workspace can be launched and resolves the
-// layout to use and the repository info needed to name its session. It
-// performs no side effects, so runAdd calls it before creating the
+// layout to use and proves that repository identity is resolvable. It performs
+// no side effects, so runAdd calls it before creating the
 // worktree: a missing tmux binary, invalid layouts config, an unknown
 // --layout/--select-layout pick, or a repository identity failure is caught
 // here rather than after a worktree already exists.

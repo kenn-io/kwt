@@ -20,6 +20,8 @@ import (
 	"go.kenn.io/kwt/internal/fleet"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/registry"
+	"go.kenn.io/kwt/internal/tmux"
+	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
@@ -612,6 +614,44 @@ func TestAddLaunchPassesConfiguredCredentialName(t *testing.T) {
 		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN", "Custom_Fleet_Token"},
 		protectedNames,
 	)
+}
+
+func TestAddLaunchUsesBranchAfterRepositorySetup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("repository setup commands require a POSIX sh")
+	}
+	resetFleetCommandDeps(t)
+	resetAddCommandFlags(t)
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	putFakeTmuxOnPath(t)
+	t.Chdir(repoPath)
+	addBranch = true
+	addLayout = "shell"
+	viper.Set("repository_settings", []models.RepositorySetting{{
+		Repository:    repoPath,
+		SetupCommands: []string{"git switch -c feature/current"},
+	}})
+	runner := &recordingOpenWorkspaceRunner{}
+	originalRunner := newAddWorkspaceRunner
+	t.Cleanup(func() { newAddWorkspaceRunner = originalRunner })
+	newAddWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	worktreePath := filepath.Join(t.TempDir(), "setup-branch-launch")
+	cmd, _, _ := fleetTestCommand()
+
+	err := runAdd(cmd, []string{"feature/original", worktreePath})
+
+	require.NoError(t, err)
+	repositoryInfo, err := worktree.RepositoryInfoFromLocalPath(repoPath)
+	require.NoError(t, err)
+	expected := tmux.WorkspaceSessionName(
+		repositoryInfo,
+		"feature/current",
+		worktreePath,
+	)
+	assert.True(t, runner.ensured)
+	assert.True(t, runner.attached)
+	assert.Equal(t, expected, runner.sessionName)
 }
 
 func putFakeTmuxOnPath(t *testing.T) {
