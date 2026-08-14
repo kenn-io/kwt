@@ -1,0 +1,128 @@
+package lifecycle
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+
+	"go.kenn.io/kwt/internal/pullrequest"
+	"go.kenn.io/kwt/internal/tmux"
+	repositoryurl "go.kenn.io/kwt/internal/url"
+	"go.kenn.io/kwt/internal/utils"
+	"go.kenn.io/kwt/pkg/models"
+)
+
+type removalProtectedSessionTarget struct {
+	branch     string
+	session    string
+	socketName string
+}
+
+func observeRemovalProtectedSessionTarget(
+	ctx context.Context,
+	home string,
+	worktreePath string,
+	generation string,
+	claim *ProjectClaim,
+) (*removalProtectedSessionTarget, error) {
+	var target *removalProtectedSessionTarget
+	err := pullrequest.NewFileStore(filepath.Join(home, "pull-requests.json")).View(
+		ctx,
+		func(records map[string]pullrequest.Provenance) error {
+			for _, record := range records {
+				workspace := record.Workspace
+				if utils.PathKey(workspace.Path) != utils.PathKey(worktreePath) {
+					continue
+				}
+				if workspace.Generation != "" && workspace.Generation != generation {
+					continue
+				}
+				if claim == nil || !pullrequest.ProvenanceHasRepositoryIdentity(
+					record, claim.Identity,
+				) || !validProvenanceSession(record) {
+					return changedRemovalSessionTarget()
+				}
+				candidate := &removalProtectedSessionTarget{
+					branch:     workspace.Branch,
+					session:    workspace.SessionName,
+					socketName: tmux.ProtectedWorkspaceSocketName(workspace.SessionName, workspace.Path),
+				}
+				if target != nil && *target != *candidate {
+					return changedRemovalSessionTarget()
+				}
+				target = candidate
+			}
+			return nil
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("resolve protected tmux session authority: %w", err)
+	}
+	return target, nil
+}
+
+func validProvenanceSession(record pullrequest.Provenance) bool {
+	workspace := record.Workspace
+	if workspace.Branch == "" || workspace.SessionName == "" {
+		return false
+	}
+	for _, identity := range pullrequest.ProvenanceRepositoryIdentities(record) {
+		info, ok := repositoryurl.CanonicalRepositoryInfo(identity)
+		if ok && tmux.MatchesWorkspaceSessionName(
+			workspace.SessionName,
+			info,
+			workspace.Branch,
+			workspace.Path,
+		) {
+			return true
+		}
+	}
+	return false
+}
+
+func validateCurrentRemovalSessionTarget(
+	ctx context.Context,
+	worktreePath string,
+	claim *ProjectClaim,
+	protected *removalProtectedSessionTarget,
+	expansion ExpansionContext,
+	condition RemovalSessionCondition,
+) error {
+	projects := []models.Project(nil)
+	if claim != nil && claim.Registered {
+		projects = []models.Project{claim.Registration.Effective}
+	}
+	expectedSession, branch, err := ResolveCurrentWorktreeSessionIdentity(
+		ctx,
+		worktreePath,
+		projects,
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+	expectedSocketName := ""
+	validSocketDirectory := condition.SocketDirectory == ""
+	if protected != nil {
+		if protected.branch != branch {
+			return changedRemovalSessionTarget()
+		}
+		expectedSession = protected.session
+		expectedSocketName = protected.socketName
+		legacySocketDirectory := expansion.Environment[normalizedEnvironmentName("TMUX_TMPDIR")]
+		validSocketDirectory = condition.SocketDirectory == "" ||
+			(legacySocketDirectory != "" && condition.SocketDirectory == legacySocketDirectory)
+	}
+	if condition.SessionName != expectedSession ||
+		condition.SocketName != expectedSocketName ||
+		!validSocketDirectory {
+		return changedRemovalSessionTarget()
+	}
+	return nil
+}
+
+func changedRemovalSessionTarget() error {
+	return &RemovalSessionConditionError{
+		Reason: "worktree tmux session identity changed",
+	}
+}

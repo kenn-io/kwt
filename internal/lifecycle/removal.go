@@ -84,12 +84,17 @@ func (s *removalService) Remove(
 	if err != nil {
 		return result, classifyRemovalError(fmt.Errorf("resolve main repository: %w", err), result)
 	}
+	var (
+		projectClaim    *ProjectClaim
+		protectedTarget *removalProtectedSessionTarget
+	)
 	if request.Session != nil {
-		releaseProject, fenceErr := acquireRemovalProjectFence(
+		var releaseProject func() error
+		projectClaim, releaseProject, err = acquireRemovalProjectFence(
 			ctx, s.home, root, request.Expansion,
 		)
-		if fenceErr != nil {
-			return result, classifyRemovalError(fenceErr, result)
+		if err != nil {
+			return result, classifyRemovalError(err, result)
 		}
 		defer func() {
 			if releaseErr := releaseProject(); releaseErr != nil {
@@ -102,6 +107,12 @@ func (s *removalService) Remove(
 				)
 			}
 		}()
+		protectedTarget, err = observeRemovalProtectedSessionTarget(
+			ctx, s.home, request.Path, request.ExpectedGeneration, projectClaim,
+		)
+		if err != nil {
+			return result, classifyRemovalError(err, result)
+		}
 	}
 
 	reg, err := registry.NewAt(s.home)
@@ -151,6 +162,16 @@ func (s *removalService) Remove(
 		func(preflight func() error, remove func() error) (bool, error) {
 			return reg.RemoveIfMatchAfter(request.Path, record, func() error {
 				if request.Session != nil {
+					if err := validateCurrentRemovalSessionTarget(
+						ctx,
+						request.Path,
+						projectClaim,
+						protectedTarget,
+						request.Expansion,
+						*request.Session,
+					); err != nil {
+						return err
+					}
 					if err := quiescePreflightAndTerminate(
 						ctx, s.sessionGuard, *request.Session, preflight,
 					); err != nil {
@@ -219,12 +240,16 @@ func acquireRemovalProjectFence(
 	home string,
 	root string,
 	expansion ExpansionContext,
-) (func() error, error) {
+) (*ProjectClaim, func() error, error) {
 	claim, err := ObserveProjectClaim(ctx, home, root, expansion)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return AcquireRequiredProjectClaim(ctx, home, claim)
+	release, err := AcquireRequiredProjectClaim(ctx, home, claim)
+	if err != nil {
+		return nil, nil, err
+	}
+	return claim, release, nil
 }
 
 func removalInvalid(message string) error {

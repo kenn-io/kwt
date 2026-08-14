@@ -13,8 +13,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/git"
+	"go.kenn.io/kwt/internal/pullrequest"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/tmux"
+	internalworktree "go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/service"
 )
 
@@ -134,7 +136,7 @@ func TestRemovalServiceTerminatesConfirmedSessionBeforeRemovingWorktree(t *testi
 	registerRemovalRepository(t, home, repositoryPath)
 	guard := &recordingRemovalSessionGuard{path: worktreePath}
 	condition := RemovalSessionCondition{
-		SessionName: "kwt-workspace-guarded",
+		SessionName: removalSessionName(t, worktreePath, "guarded-remove"),
 		ServerPID:   "321",
 		SessionID:   "$7",
 		CreatedAt:   "1720000000",
@@ -173,7 +175,7 @@ func TestGuardedRemovalSupportsUnregisteredRepository(t *testing.T) {
 		Path:           worktreePath, ExpectedGeneration: generation,
 		Expansion: testExpansion(t),
 		Session: &RemovalSessionCondition{
-			SessionName: "kwt-workspace-unregistered", Absent: true,
+			SessionName: removalSessionName(t, worktreePath, "unregistered-guarded"), Absent: true,
 		},
 	})
 
@@ -199,13 +201,127 @@ func TestRemovalServicePreservesWorktreeWhenSessionConditionChanges(t *testing.T
 		RepositoryPath: repositoryPath,
 		Path:           worktreePath, ExpectedGeneration: generation,
 		Expansion: testExpansion(t),
-		Session:   &RemovalSessionCondition{SessionName: "kwt-workspace-guarded", Absent: true},
+		Session: &RemovalSessionCondition{
+			SessionName: removalSessionName(t, worktreePath, "guarded-conflict"), Absent: true,
+		},
 	})
 
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.Conflict))
 	assert.False(t, result.WorktreeRemoved)
 	assert.DirExists(t, worktreePath)
+}
+
+func TestRemovalServiceRejectsStaleSessionNameAfterBranchSwitch(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "branch-a")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	staleSessionName := removalSessionName(t, worktreePath, "branch-a")
+	runRemovalGit(t, worktreePath, "switch", "-c", "branch-b")
+	currentGeneration, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	require.Equal(t, generation, currentGeneration, "an in-place branch switch keeps the worktree generation")
+	home := t.TempDir()
+	registerRemovalRepository(t, home, repositoryPath)
+	guard := &recordingRemovalSessionGuard{}
+
+	result, err := NewRemovalService(RemovalServiceOptions{
+		Home: home, SessionGuard: guard,
+	}).Remove(context.Background(), RemovalRequest{
+		RepositoryPath:     repositoryPath,
+		Path:               worktreePath,
+		ExpectedGeneration: generation,
+		Expansion:          testExpansion(t),
+		Session: &RemovalSessionCondition{
+			SessionName: staleSessionName,
+			Absent:      true,
+		},
+	})
+
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.Conflict))
+	assert.False(t, guard.quiesced, "stale session authority must fail before tmux inspection")
+	assert.False(t, result.WorktreeRemoved)
+	assert.DirExists(t, worktreePath)
+}
+
+func TestRemovalServiceRejectsStaleSessionSocket(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "socket-changed")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	home := t.TempDir()
+	registerRemovalRepository(t, home, repositoryPath)
+	guard := &recordingRemovalSessionGuard{}
+
+	result, err := NewRemovalService(RemovalServiceOptions{
+		Home: home, SessionGuard: guard,
+	}).Remove(context.Background(), RemovalRequest{
+		RepositoryPath:     repositoryPath,
+		Path:               worktreePath,
+		ExpectedGeneration: generation,
+		Expansion:          testExpansion(t),
+		Session: &RemovalSessionCondition{
+			SessionName: removalSessionName(t, worktreePath, "socket-changed"),
+			SocketName:  "stale-protected-socket",
+			Absent:      true,
+		},
+	})
+
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.Conflict))
+	assert.False(t, guard.quiesced)
+	assert.False(t, result.WorktreeRemoved)
+	assert.DirExists(t, worktreePath)
+}
+
+func TestRemovalServiceAcceptsCurrentProtectedSessionEndpoint(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "protected-session")
+	runRemovalGit(t, repositoryPath, "remote", "add", "origin", "https://github.com/acme/widget.git")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	home := t.TempDir()
+	registerRemovalRepository(t, home, repositoryPath)
+	sessionName := removalSessionName(t, worktreePath, "protected-session")
+	socketName := tmux.ProtectedWorkspaceSocketName(sessionName, worktreePath)
+	record := pullrequest.Provenance{
+		Repository: "github.com/acme/widget",
+		Project: pullrequest.Project{
+			Identity: "github.com/acme/widget", Path: repositoryPath,
+		},
+		Workspace: pullrequest.Workspace{
+			Repository:  "github.com/acme/widget",
+			Branch:      "protected-session",
+			Path:        worktreePath,
+			Generation:  generation,
+			SessionName: sessionName,
+		},
+	}
+	require.NoError(t, pullrequest.NewFileStore(
+		filepath.Join(home, "pull-requests.json"),
+	).Update(context.Background(), func(records map[string]pullrequest.Provenance) error {
+		records["github:acme/widget#1"] = record
+		return nil
+	}))
+	guard := &recordingRemovalSessionGuard{}
+
+	result, err := NewRemovalService(RemovalServiceOptions{
+		Home: home, SessionGuard: guard,
+	}).Remove(context.Background(), RemovalRequest{
+		RepositoryPath:     repositoryPath,
+		Path:               worktreePath,
+		ExpectedGeneration: generation,
+		Expansion:          testExpansion(t),
+		Session: &RemovalSessionCondition{
+			SessionName: sessionName,
+			SocketName:  socketName,
+			Absent:      true,
+		},
+	})
+
+	require.NoError(t, err)
+	assert.True(t, guard.quiesced)
+	assert.Equal(t, socketName, guard.condition.SocketName)
+	assert.True(t, result.WorktreeRemoved)
 }
 
 func TestRemovalServicePreservesConfirmedSessionWhenDirtyWorktreeCannotBeRemoved(t *testing.T) {
@@ -227,7 +343,9 @@ func TestRemovalServicePreservesConfirmedSessionWhenDirtyWorktreeCannotBeRemoved
 		RepositoryPath: repositoryPath,
 		Path:           worktreePath, ExpectedGeneration: generation,
 		Expansion: testExpansion(t),
-		Session:   &RemovalSessionCondition{SessionName: "kwt-workspace-dirty", Absent: true},
+		Session: &RemovalSessionCondition{
+			SessionName: removalSessionName(t, worktreePath, "guarded-dirty"), Absent: true,
+		},
 	})
 
 	require.Error(t, err)
@@ -285,7 +403,9 @@ func TestRemovalServiceUsesClientExpansionForProjectFence(t *testing.T) {
 		RepositoryPath: repositoryPath,
 		Path:           worktreePath, ExpectedGeneration: generation,
 		Expansion: expansion,
-		Session:   &RemovalSessionCondition{SessionName: "expanded", Absent: true},
+		Session: &RemovalSessionCondition{
+			SessionName: removalSessionName(t, worktreePath, "expanded-project"), Absent: true,
+		},
 	})
 
 	require.NoError(t, err)
@@ -325,7 +445,7 @@ func TestRemovalServiceWaitsForProjectSessionStartupFence(t *testing.T) {
 			Path:           worktreePath, ExpectedGeneration: generation,
 			Expansion: testExpansion(t),
 			Session: &RemovalSessionCondition{
-				SessionName: "kwt-workspace-race", Absent: true,
+				SessionName: removalSessionName(t, worktreePath, "guarded-race"), Absent: true,
 			},
 		})
 		result <- removeErr
@@ -387,7 +507,7 @@ func TestRemovalServicePreservesConfirmedSessionForInitializedSubmodule(t *testi
 		Path:           worktreePath, ExpectedGeneration: generation,
 		Expansion: testExpansion(t),
 		Session: &RemovalSessionCondition{
-			SessionName: "kwt-workspace-submodule", Absent: true,
+			SessionName: removalSessionName(t, worktreePath, "guarded-submodule"), Absent: true,
 		},
 	})
 
@@ -414,7 +534,7 @@ func TestRemovalServiceResumesSessionWhenCheckoutChangesDuringQuiesce(t *testing
 		Path:           worktreePath, ExpectedGeneration: generation,
 		Expansion: testExpansion(t),
 		Session: &RemovalSessionCondition{
-			SessionName: "kwt-workspace-quiesce-race",
+			SessionName: removalSessionName(t, worktreePath, "guarded-quiesce-race"),
 			ServerPID:   "123", SessionID: "$4", CreatedAt: "1720000000",
 		},
 	})
@@ -536,4 +656,14 @@ func registerRemovalRepository(t *testing.T, home, repositoryPath string) {
 		repositoryPath,
 	)
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(contents), 0o600))
+}
+
+func removalSessionName(t *testing.T, worktreePath, branch string) string {
+	t.Helper()
+	info, err := internalworktree.RepositoryInfoWithProjects(
+		git.NewForInventory(context.Background(), worktreePath, nil),
+		nil,
+	)
+	require.NoError(t, err)
+	return tmux.WorkspaceSessionName(info, branch, worktreePath)
 }
