@@ -15,6 +15,8 @@ import (
 	"go.kenn.io/kwt/internal/credentials"
 )
 
+const minimumCrashPersistenceTimeout = time.Minute
+
 type PublicServiceOptions struct {
 	Home           string
 	Environment    func() []string
@@ -177,7 +179,8 @@ func (s *PublicService) initializeManager(idleTimeout time.Duration) error {
 	controlDirectory := filepath.Join(managerDirectory, "control")
 	privateDirectory := filepath.Join(managerDirectory, "private")
 	connectionOptions := openssh.DefaultConnectionOptions()
-	connectionOptions.ControlPersistTimeout = max(idleTimeout, time.Second)
+	persistenceTimeout := max(idleTimeout, minimumCrashPersistenceTimeout)
+	connectionOptions.ControlPersistTimeout = persistenceTimeout
 	persistent, err := s.newPersistent(controlDirectory, openssh.PersistentConfig{
 		ConnectionOptions: &connectionOptions,
 	})
@@ -190,8 +193,9 @@ func (s *PublicService) initializeManager(idleTimeout time.Duration) error {
 		Runner: func(request LeaseRequest, target ResolvedTarget) (openssh.RunSSH, error) {
 			return NewRunner(privateDirectory, request, target)
 		},
-		IdleTimeout: idleTimeout,
-		OnEvent:     s.onEvent,
+		IdleTimeout:        idleTimeout,
+		PersistenceTimeout: persistenceTimeout,
+		OnEvent:            s.onEvent,
 	})
 	s.managerDir = managerDirectory
 	return nil

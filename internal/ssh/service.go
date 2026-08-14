@@ -86,6 +86,7 @@ func (s *Service) Resolve(
 			DisplayTarget:         effective.Display(),
 			HostKeyAlias:          observed.Config.HostKeyAlias,
 			StrictHostKeyChecking: observed.Config.StrictHostKeyChecking,
+			ForwardAgent:          projected.ForwardAgent,
 			Projection: ExecutionProjection{
 				Arguments:     projected.Arguments,
 				PrivateConfig: projected.PrivateConfig,

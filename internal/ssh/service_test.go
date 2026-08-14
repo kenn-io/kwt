@@ -97,6 +97,25 @@ func TestServiceBuildsSnapshotFromCompletePrivateObservation(t *testing.T) {
 	assert.NotContains(t, snapshot.Targets[1].Projection.Arguments, "FutureOption=identity-only")
 }
 
+func TestServiceMarksProjectedAgentForwarding(t *testing.T) {
+	resolver := &fixedObservationResolver{observation: routeObservation{route: openssh.Route{{
+		Target: openssh.Target{Hostname: "build.example.test"},
+		Config: openssh.EffectiveConfig{
+			Hostname: "build.internal",
+			Options:  []openssh.Option{{Name: "forwardagent", Value: "yes"}},
+		},
+	}}}}
+	service := NewService(ServiceOptions{Resolver: resolver})
+
+	snapshot, err := service.Resolve(context.Background(), ResolveRequest{
+		Target: Target{Hostname: "build.example.test"},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, snapshot.Targets, 1)
+	assert.True(t, snapshot.Targets[0].ForwardAgent)
+}
+
 func TestServiceFullObservationChangesRouteIdentity(t *testing.T) {
 	base := openssh.Route{{
 		Target: openssh.Target{Hostname: "build.example.test"},

@@ -47,6 +47,7 @@ type ResolvedTarget struct {
 	DisplayTarget         string              `json:"display_target"`
 	HostKeyAlias          string              `json:"host_key_alias,omitempty"`
 	StrictHostKeyChecking string              `json:"strict_host_key_checking,omitempty"`
+	ForwardAgent          bool                `json:"forward_agent,omitempty"`
 	Projection            ExecutionProjection `json:"projection"`
 }
 

@@ -16,25 +16,28 @@ type PersistentManager interface {
 	ConnectWithRunner(context.Context, string, openssh.Target, openssh.RunSSH) (openssh.Generation, error)
 	ConnectionArguments(string, openssh.Generation) ([]string, error)
 	TouchActivity(string, openssh.Generation) bool
+	IsAlive(context.Context, string, openssh.Generation) (bool, error)
 	Disconnect(context.Context, string) error
 }
 
 type RunnerFactory func(LeaseRequest, ResolvedTarget) (openssh.RunSSH, error)
 
 type ManagerOptions struct {
-	Persistent       PersistentManager
-	Runner           RunnerFactory
-	PrivateDirectory string
-	IdleTimeout      time.Duration
-	OnEvent          func(Event)
+	Persistent         PersistentManager
+	Runner             RunnerFactory
+	PrivateDirectory   string
+	IdleTimeout        time.Duration
+	PersistenceTimeout time.Duration
+	OnEvent            func(Event)
 }
 
 type Manager struct {
-	persistent       PersistentManager
-	runner           RunnerFactory
-	privateDirectory string
-	idleTimeout      time.Duration
-	onEvent          func(Event)
+	persistent         PersistentManager
+	runner             RunnerFactory
+	privateDirectory   string
+	idleTimeout        time.Duration
+	persistenceTimeout time.Duration
+	onEvent            func(Event)
 
 	mu                   sync.Mutex
 	routes               map[string]*managedRoute
@@ -51,22 +54,26 @@ type identityOperation struct {
 }
 
 type managedRoute struct {
-	routeIdentity string
-	generation    openssh.Generation
-	leases        int
-	idle          *time.Timer
+	routeIdentity    string
+	generation       openssh.Generation
+	leases           int
+	idle             *time.Timer
+	keepAlive        *time.Timer
+	keepAliveEnabled bool
+	forwardAgent     bool
 }
 
 func NewManager(options ManagerOptions) *Manager {
 	return &Manager{
-		persistent:       options.Persistent,
-		runner:           options.Runner,
-		privateDirectory: options.PrivateDirectory,
-		idleTimeout:      options.IdleTimeout,
-		onEvent:          options.OnEvent,
-		routes:           make(map[string]*managedRoute),
-		operations:       make(map[string]*identityOperation),
-		masterless:       make(map[uint64]*masterlessLease),
+		persistent:         options.Persistent,
+		runner:             options.Runner,
+		privateDirectory:   options.PrivateDirectory,
+		idleTimeout:        options.IdleTimeout,
+		persistenceTimeout: options.PersistenceTimeout,
+		onEvent:            options.OnEvent,
+		routes:             make(map[string]*managedRoute),
+		operations:         make(map[string]*identityOperation),
+		masterless:         make(map[uint64]*masterlessLease),
 	}
 }
 
@@ -218,9 +225,13 @@ func (m *Manager) Acquire(
 	route := m.routes[identity]
 	newGeneration := route == nil || route.generation != generation
 	if newGeneration {
+		if route != nil {
+			m.stopPersistenceHeartbeat(route)
+		}
 		route = &managedRoute{
 			routeIdentity: request.Snapshot.RouteIdentity,
 			generation:    generation,
+			forwardAgent:  target.ForwardAgent,
 		}
 		m.routes[identity] = route
 	}
@@ -229,6 +240,7 @@ func (m *Manager) Acquire(
 		route.idle = nil
 	}
 	route.leases++
+	m.startPersistenceHeartbeat(identity, route)
 	m.mu.Unlock()
 	releaseIdentity()
 	if newGeneration {
@@ -304,6 +316,69 @@ func (l *managedLease) Release() error {
 	return l.manager.release(l.identity, l.generation)
 }
 
+// startPersistenceHeartbeat keeps OpenSSH's crash-fallback ControlPersist
+// timer from expiring while kwt still owns the route. Callers hold m.mu.
+func (m *Manager) startPersistenceHeartbeat(identity string, route *managedRoute) {
+	if m.persistenceTimeout <= 0 || m.closed {
+		return
+	}
+	route.keepAliveEnabled = true
+	m.schedulePersistenceHeartbeat(identity, route)
+}
+
+// schedulePersistenceHeartbeat schedules one generation-bound mux check.
+// Callers hold m.mu.
+func (m *Manager) schedulePersistenceHeartbeat(identity string, route *managedRoute) {
+	if !route.keepAliveEnabled || route.keepAlive != nil {
+		return
+	}
+	interval := m.persistenceTimeout / 3
+	if interval <= 0 {
+		interval = time.Millisecond
+	}
+	route.keepAlive = time.AfterFunc(interval, func() {
+		m.refreshPersistence(identity, route, interval)
+	})
+}
+
+func (m *Manager) refreshPersistence(
+	identity string,
+	route *managedRoute,
+	timeout time.Duration,
+) {
+	m.mu.Lock()
+	if m.closed || m.routes[identity] != route || !route.keepAliveEnabled {
+		m.mu.Unlock()
+		return
+	}
+	route.keepAlive = nil
+	generation := route.generation
+	m.mu.Unlock()
+
+	if timeout > 10*time.Second {
+		timeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	_, _ = m.persistent.IsAlive(ctx, identity, generation)
+	cancel()
+
+	m.mu.Lock()
+	if !m.closed && m.routes[identity] == route && route.keepAliveEnabled {
+		m.schedulePersistenceHeartbeat(identity, route)
+	}
+	m.mu.Unlock()
+}
+
+// stopPersistenceHeartbeat prevents an in-flight mux check from rescheduling
+// itself once route teardown begins. Callers hold m.mu.
+func (m *Manager) stopPersistenceHeartbeat(route *managedRoute) {
+	route.keepAliveEnabled = false
+	if route.keepAlive != nil {
+		route.keepAlive.Stop()
+		route.keepAlive = nil
+	}
+}
+
 func (m *Manager) release(identity string, generation openssh.Generation) error {
 	unlockIdentity := m.lockIdentity(identity)
 
@@ -324,7 +399,7 @@ func (m *Manager) release(identity string, generation openssh.Generation) error 
 		unlockIdentity()
 		return nil
 	}
-	if m.idleTimeout > 0 {
+	if m.idleTimeout > 0 && !route.forwardAgent {
 		route.idle = time.AfterFunc(m.idleTimeout, func() {
 			m.disconnectIdle(identity, generation)
 		})
@@ -332,7 +407,7 @@ func (m *Manager) release(identity string, generation openssh.Generation) error 
 		unlockIdentity()
 		return nil
 	}
-	delete(m.routes, identity)
+	m.stopPersistenceHeartbeat(route)
 	routeIdentity := route.routeIdentity
 	m.mu.Unlock()
 	if err := m.persistent.Disconnect(context.Background(), identity); err != nil {
@@ -341,6 +416,11 @@ func (m *Manager) release(identity string, generation openssh.Generation) error 
 		m.emitFailure(routeIdentity, generation, failure)
 		return failure
 	}
+	m.mu.Lock()
+	if m.routes[identity] == route {
+		delete(m.routes, identity)
+	}
+	m.mu.Unlock()
 	unlockIdentity()
 	m.emit(Event{
 		RouteIdentity: routeIdentity,
@@ -360,7 +440,8 @@ func (m *Manager) disconnectIdle(identity string, generation openssh.Generation)
 		unlockIdentity()
 		return
 	}
-	delete(m.routes, identity)
+	route.idle = nil
+	m.stopPersistenceHeartbeat(route)
 	routeIdentity := route.routeIdentity
 	m.mu.Unlock()
 	if err := m.persistent.Disconnect(context.Background(), identity); err != nil {
@@ -368,6 +449,11 @@ func (m *Manager) disconnectIdle(identity string, generation openssh.Generation)
 		m.emitFailure(routeIdentity, generation, cleanupFailed(err))
 		return
 	}
+	m.mu.Lock()
+	if m.routes[identity] == route {
+		delete(m.routes, identity)
+	}
+	m.mu.Unlock()
 	unlockIdentity()
 	m.emit(Event{
 		RouteIdentity: routeIdentity,
@@ -406,6 +492,7 @@ func (m *Manager) Close(ctx context.Context) error {
 				route.idle.Stop()
 				route.idle = nil
 			}
+			m.stopPersistenceHeartbeat(route)
 		}
 		operationIdentities := make([]string, 0, len(m.operations))
 		for identity := range m.operations {
@@ -484,6 +571,7 @@ func (m *Manager) closeAttempt(
 			if route.idle != nil {
 				route.idle.Stop()
 			}
+			m.stopPersistenceHeartbeat(route)
 		}
 		m.mu.Unlock()
 		if route == nil {
@@ -612,10 +700,10 @@ func (l *masterlessLease) Release() error {
 	if !l.released.CompareAndSwap(false, true) {
 		return nil
 	}
-	l.manager.mu.Lock()
-	delete(l.manager.masterless, l.generation)
-	l.manager.mu.Unlock()
 	if l.cleanup == nil {
+		l.manager.mu.Lock()
+		delete(l.manager.masterless, l.generation)
+		l.manager.mu.Unlock()
 		l.manager.emit(Event{
 			RouteIdentity: l.routeIdentity,
 			Generation:    l.generation,
@@ -628,6 +716,11 @@ func (l *masterlessLease) Release() error {
 		l.manager.emitFailure(l.routeIdentity, openssh.Generation(l.generation), failure)
 		return failure
 	}
+	l.manager.mu.Lock()
+	if l.manager.masterless[l.generation] == l {
+		delete(l.manager.masterless, l.generation)
+	}
+	l.manager.mu.Unlock()
 	l.manager.emit(Event{
 		RouteIdentity: l.routeIdentity,
 		Generation:    l.generation,

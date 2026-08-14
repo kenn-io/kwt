@@ -54,7 +54,10 @@ func (publicTestPersistentManager) ConnectionArguments(
 }
 
 func (publicTestPersistentManager) TouchActivity(string, openssh.Generation) bool { return true }
-func (publicTestPersistentManager) Disconnect(context.Context, string) error      { return nil }
+func (publicTestPersistentManager) IsAlive(context.Context, string, openssh.Generation) (bool, error) {
+	return true, nil
+}
+func (publicTestPersistentManager) Disconnect(context.Context, string) error { return nil }
 
 func TestPublicServiceReloadsConfiguredProtectedEnvironmentPerRequest(t *testing.T) {
 	home := t.TempDir()
