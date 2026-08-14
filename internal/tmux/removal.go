@@ -143,7 +143,8 @@ func (g *removalSessionGuard) Quiesce(
 				Reason: "tmux session for worktree remains live",
 			}
 		}
-		if row.workspaceGeneration == "" && IsKWTWorkspaceSessionName(row.sessionName) {
+		if row.workspaceGeneration == "" && row.workspaceIdentity == "" &&
+			IsKWTWorkspaceSessionName(row.sessionName) {
 			return nil, &RemovalSessionConditionError{
 				Reason: "legacy KWT session ownership is indeterminate",
 			}

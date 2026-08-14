@@ -238,7 +238,7 @@ func TestRemovalFailsClosedOnUnmarkedKWTSessionAfterWorktreeMove(t *testing.T) {
 			_ context.Context,
 			_ *TmuxCommand,
 		) (string, string, error) {
-			return "123|$1|1720000000|kwt-wt-kwt-topic-oldhash|old-path-id|\n", "", nil
+			return "123|$1|1720000000|kwt-wt-kwt-topic-oldhash||\n", "", nil
 		},
 	}
 
@@ -254,6 +254,31 @@ func TestRemovalFailsClosedOnUnmarkedKWTSessionAfterWorktreeMove(t *testing.T) {
 	var conditionErr *RemovalSessionConditionError
 	require.ErrorAs(t, err, &conditionErr)
 	assert.Contains(t, conditionErr.Reason, "ownership")
+}
+
+func TestRemovalAllowsUnrelatedDirectoryWorkspaceSession(t *testing.T) {
+	const directoryPath = "/registered/workspaces/notes"
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspect: func(
+			_ context.Context,
+			_ *TmuxCommand,
+		) (string, string, error) {
+			return "123|$1|1720000000|" +
+				DirWorkspaceSessionName("notes", directoryPath) + "|" +
+				workspacePathIdentity(directoryPath) + "|\n", "", nil
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName:         "kwt-wt-repo-topic-deadbeef",
+		WorkspacePath:       "/worktrees/topic",
+		WorkspaceGeneration: "0123456789abcdef0123456789abcdef",
+		Absent:              true,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, lease)
 }
 
 func TestProtectedRemovalFailsClosedOnUnexpectedCanonicalTopology(t *testing.T) {
