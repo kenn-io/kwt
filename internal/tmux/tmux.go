@@ -211,8 +211,14 @@ type SessionInfo struct {
 }
 
 func (t *TmuxCommand) KillSession(sessionName string) error {
-	args := []string{"kill-session", "-t", sessionName}
-	return t.runCommand(args...)
+	return t.KillSessionContext(context.Background(), sessionName)
+}
+
+func (t *TmuxCommand) KillSessionContext(
+	ctx context.Context,
+	sessionName string,
+) error {
+	return t.RunCommandContext(ctx, "kill-session", "-t", sessionName)
 }
 
 func (t *TmuxCommand) AttachSession(sessionName string) error {
@@ -270,9 +276,34 @@ func (t *TmuxCommand) attachSessionCmd(sessionName string) *exec.Cmd {
 }
 
 func (t *TmuxCommand) HasSession(sessionName string) bool {
-	args := []string{"has-session", "-t", sessionName}
-	err := t.runCommand(args...)
-	return err == nil
+	exists, _ := t.HasSessionContext(context.Background(), sessionName)
+	return exists
+}
+
+func (t *TmuxCommand) HasSessionContext(
+	ctx context.Context,
+	sessionName string,
+) (bool, error) {
+	_, stderr, err := t.runCommandOutputContextWithStderr(
+		ctx,
+		"has-session",
+		"-t",
+		sessionName,
+	)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return false, ctxErr
+	}
+	if err != nil {
+		if isExplicitlyAbsentTmuxDiagnostic(stderr) {
+			return false, nil
+		}
+		return false, fmt.Errorf(
+			"tmux has-session failed: %w, stderr: %s",
+			err,
+			strings.TrimSpace(stderr),
+		)
+	}
+	return true, nil
 }
 
 // SwitchClient switches the attached client to the given session (used when
@@ -363,8 +394,12 @@ func (t *TmuxCommand) runCommandOutputContextWithStderr(
 // the sanitized server state without interpreting platform-specific
 // connection errors. The empty server exits after the command sequence.
 func (t *TmuxCommand) GlobalEnvironment() (string, error) {
+	return t.GlobalEnvironmentContext(context.Background())
+}
+
+func (t *TmuxCommand) GlobalEnvironmentContext(ctx context.Context) (string, error) {
 	return t.RunCommandOutputContext(
-		context.Background(),
+		ctx,
 		"start-server",
 		";",
 		"show-environment",
@@ -382,14 +417,29 @@ func (t *TmuxCommand) GlobalEnvironment() (string, error) {
 // not up yet at the point the bootstrap set is derived); callers treat that
 // as "nothing to inspect" and fall back to the other sources.
 func (t *TmuxCommand) SessionEnvironment(session string) (string, error) {
-	return t.RunCommandOutputContext(context.Background(), "show-environment", "-t", session)
+	return t.SessionEnvironmentContext(context.Background(), session)
+}
+
+func (t *TmuxCommand) SessionEnvironmentContext(
+	ctx context.Context,
+	session string,
+) (string, error) {
+	return t.RunCommandOutputContext(ctx, "show-environment", "-t", session)
 }
 
 // sessionOption reads a session-local user option without falling back to a
 // global value. Missing options return the tmux command error to the caller.
 func (t *TmuxCommand) sessionOption(session, option string) (string, error) {
+	return t.sessionOptionContext(context.Background(), session, option)
+}
+
+func (t *TmuxCommand) sessionOptionContext(
+	ctx context.Context,
+	session string,
+	option string,
+) (string, error) {
 	return t.RunCommandOutputContext(
-		context.Background(),
+		ctx,
 		"show-options",
 		"-v",
 		"-t",
@@ -400,7 +450,7 @@ func (t *TmuxCommand) sessionOption(session, option string) (string, error) {
 
 // sessionUserOption reads a user option through tmux format expansion. Unlike
 // show-options, an unset user option is a successful empty value, allowing
-// legacy sessions without identity markers to be upgraded deliberately.
+// callers to distinguish a legacy unmarked session from a query failure.
 func (t *TmuxCommand) sessionUserOption(
 	ctx context.Context,
 	session string,
@@ -417,8 +467,15 @@ func (t *TmuxCommand) sessionUserOption(
 }
 
 func (t *TmuxCommand) globalOption(option string) (string, error) {
+	return t.globalOptionContext(context.Background(), option)
+}
+
+func (t *TmuxCommand) globalOptionContext(
+	ctx context.Context,
+	option string,
+) (string, error) {
 	return t.RunCommandOutputContext(
-		context.Background(),
+		ctx,
 		"show-options",
 		"-gv",
 		option,

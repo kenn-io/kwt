@@ -25,6 +25,8 @@ import (
 // pane-command invocation instead.
 type mockWorkspaceTmux struct {
 	hasSession          bool
+	hasSessionErr       error
+	queryContexts       map[string][]context.Context
 	calls               [][]string
 	paneSeq             int
 	switchedTo          string
@@ -38,6 +40,9 @@ type mockWorkspaceTmux struct {
 	runCalls            int
 	killSessionCalled   bool
 	killedSession       string
+	killContext         context.Context
+	killContextErr      error
+	killContextDeadline bool
 	sessionDefaultShell string
 	globalDefaultShell  string
 	globalEnv           string
@@ -53,20 +58,41 @@ type mockWorkspaceTmux struct {
 	sessionOptionErr    error
 }
 
-func (m *mockWorkspaceTmux) HasSession(string) bool {
-	return m.hasSession
+func (m *mockWorkspaceTmux) recordQueryContext(name string, ctx context.Context) {
+	if m.queryContexts == nil {
+		m.queryContexts = make(map[string][]context.Context)
+	}
+	m.queryContexts[name] = append(m.queryContexts[name], ctx)
 }
 
-func (m *mockWorkspaceTmux) GlobalEnvironment() (string, error) {
+func (m *mockWorkspaceTmux) HasSessionContext(
+	ctx context.Context,
+	_ string,
+) (bool, error) {
+	m.recordQueryContext("has_session", ctx)
+	return m.hasSession, m.hasSessionErr
+}
+
+func (m *mockWorkspaceTmux) GlobalEnvironmentContext(ctx context.Context) (string, error) {
+	m.recordQueryContext("global_environment", ctx)
 	return m.globalEnv, m.globalEnvErr
 }
 
-func (m *mockWorkspaceTmux) SessionEnvironment(string) (string, error) {
+func (m *mockWorkspaceTmux) SessionEnvironmentContext(
+	ctx context.Context,
+	_ string,
+) (string, error) {
+	m.recordQueryContext("session_environment", ctx)
 	m.sessionEnvQueried = true
 	return m.sessionEnv, m.sessionEnvErr
 }
 
-func (m *mockWorkspaceTmux) sessionOption(_ string, option string) (string, error) {
+func (m *mockWorkspaceTmux) sessionOptionContext(
+	ctx context.Context,
+	_ string,
+	option string,
+) (string, error) {
+	m.recordQueryContext("session_option", ctx)
 	switch option {
 	case workspacePathOption:
 		return m.sessionWorkspace, m.sessionOptionErr
@@ -82,10 +108,11 @@ func (m *mockWorkspaceTmux) sessionOption(_ string, option string) (string, erro
 }
 
 func (m *mockWorkspaceTmux) sessionUserOption(
-	_ context.Context,
+	ctx context.Context,
 	_ string,
 	option string,
 ) (string, error) {
+	m.recordQueryContext("session_user_option", ctx)
 	switch option {
 	case workspaceIdentityOption:
 		return m.sessionWorkspaceID, m.sessionOptionErr
@@ -116,6 +143,16 @@ func TestEnsureWithGenerationRejectsStaleExistingSessionIdentity(t *testing.T) {
 			existingGeneration: "fedcba9876543210fedcba9876543210",
 			want:               "generation",
 		},
+		{
+			name:               "workspace identity missing",
+			existingGeneration: generation,
+			want:               "identity markers",
+		},
+		{
+			name:              "generation missing",
+			workspaceIdentity: workspacePathIdentity("/new-worktree"),
+			want:              "identity markers",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			m := &mockWorkspaceTmux{
@@ -140,43 +177,100 @@ func TestEnsureWithGenerationRejectsStaleExistingSessionIdentity(t *testing.T) {
 	}
 }
 
-func TestEnsureWithGenerationReusesMatchingOrUnmarkedSession(t *testing.T) {
+func TestEnsureWithGenerationReusesMatchingSession(t *testing.T) {
 	const generation = "0123456789abcdef0123456789abcdef"
-	for _, test := range []struct {
-		name               string
-		workspaceIdentity  string
-		existingGeneration string
-	}{
-		{
-			name:               "matching markers",
-			workspaceIdentity:  workspacePathIdentity("/worktree"),
-			existingGeneration: generation,
-		},
-		{name: "legacy unmarked session"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			m := &mockWorkspaceTmux{
-				hasSession:         true,
-				sessionWorkspaceID: test.workspaceIdentity,
-				sessionGeneration:  test.existingGeneration,
-			}
-			runner := NewWorkspaceRunner(m, nil)
+	type operationContextKey struct{}
+	ctx := context.WithValue(context.Background(), operationContextKey{}, "operation")
+	m := &mockWorkspaceTmux{
+		hasSession:         true,
+		sessionWorkspaceID: workspacePathIdentity("/worktree"),
+		sessionGeneration:  generation,
+	}
+	runner := NewWorkspaceRunner(m, nil)
 
-			err := runner.EnsureWithGeneration(
-				context.Background(),
-				"workspace",
-				"/worktree",
-				generation,
-				BlankLayout(),
-			)
+	err := runner.EnsureWithGeneration(
+		ctx,
+		"workspace",
+		"/worktree",
+		generation,
+		BlankLayout(),
+	)
 
-			require.NoError(t, err)
-			assert.NotEmpty(t, m.calls)
-		})
+	require.NoError(t, err)
+	assert.NotEmpty(t, m.calls)
+	require.Len(t, m.queryContexts["session_user_option"], 2)
+	for _, queryCtx := range m.queryContexts["session_user_option"] {
+		assert.Same(t, ctx, queryCtx)
 	}
 }
 
-func (m *mockWorkspaceTmux) globalOption(option string) (string, error) {
+func TestEnsureWithGenerationRejectsUnmarkedSession(t *testing.T) {
+	m := &mockWorkspaceTmux{hasSession: true}
+	runner := NewWorkspaceRunner(m, nil)
+
+	err := runner.EnsureWithGeneration(
+		context.Background(),
+		"workspace",
+		"/worktree",
+		"0123456789abcdef0123456789abcdef",
+		BlankLayout(),
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "identity markers")
+	assert.Empty(t, m.calls, "unmarked sessions must not be adopted")
+}
+
+func TestEnsureUsesOperationContextForSessionExistence(t *testing.T) {
+	type operationContextKey struct{}
+	ctx := context.WithValue(context.Background(), operationContextKey{}, "operation")
+	m := &mockWorkspaceTmux{hasSessionErr: context.Canceled}
+	runner := NewWorkspaceRunner(m, nil)
+
+	err := runner.Ensure(
+		ctx,
+		"workspace",
+		"/worktree",
+		BlankLayout(),
+	)
+
+	assert.ErrorIs(t, err, context.Canceled)
+	require.Len(t, m.queryContexts["has_session"], 1)
+	assert.Same(t, ctx, m.queryContexts["has_session"][0])
+	assert.Empty(t, m.calls, "canceled existence checks must not create sessions")
+}
+
+func TestProtectedEnsureThreadsOperationContextThroughQueries(t *testing.T) {
+	type operationContextKey struct{}
+	ctx := context.WithValue(context.Background(), operationContextKey{}, "operation")
+	m := &mockWorkspaceTmux{
+		hasSession:       true,
+		sessionWorkspace: "/worktree",
+	}
+	runner := NewProtectedWorkspaceRunner(m, nil)
+
+	err := runner.Ensure(ctx, "workspace", "/worktree", BlankLayout())
+
+	require.NoError(t, err)
+	for _, query := range []string{
+		"has_session",
+		"global_environment",
+		"session_environment",
+		"session_option",
+		"global_option",
+	} {
+		require.NotEmpty(t, m.queryContexts[query], "%s was not queried", query)
+		for _, queryCtx := range m.queryContexts[query] {
+			assert.Same(t, ctx, queryCtx, "%s replaced the operation context", query)
+		}
+	}
+}
+
+func (m *mockWorkspaceTmux) globalOptionContext(
+	ctx context.Context,
+	option string,
+) (string, error) {
+	m.recordQueryContext("global_option", ctx)
 	if option == "update-environment" {
 		return m.globalUpdateEnv, nil
 	}
@@ -247,10 +341,30 @@ func (m *mockWorkspaceTmux) AttachSessionWithoutEnvironment(
 	return nil
 }
 
-func (m *mockWorkspaceTmux) KillSession(session string) error {
+func (m *mockWorkspaceTmux) KillSessionContext(
+	ctx context.Context,
+	session string,
+) error {
+	m.killContext = ctx
+	m.killContextErr = ctx.Err()
+	_, m.killContextDeadline = ctx.Deadline()
 	m.killSessionCalled = true
 	m.killedSession = session
 	return nil
+}
+
+func TestAbortUsesBoundedCleanupContextAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	m := &mockWorkspaceTmux{}
+	runner := NewWorkspaceRunner(m, nil)
+
+	err := runner.abort(ctx, "workspace", []string{"set-option"}, context.Canceled)
+
+	require.Error(t, err)
+	require.NotNil(t, m.killContext)
+	assert.NoError(t, m.killContextErr)
+	assert.True(t, m.killContextDeadline, "cleanup must remain bounded")
 }
 
 // The empty pane sits in the middle (index 1) rather than last: since
