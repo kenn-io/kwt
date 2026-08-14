@@ -1664,10 +1664,11 @@ func (b *tuiBackend) attachWorkspace(ctx context.Context, row dashboard.Row, lay
 	if row.Entry == nil && row.Workspace == nil {
 		return fmt.Errorf("no worktree selected")
 	}
-	if err := rejectProtectedWorkspaceOpen(
-		ctx,
-		rowPaneRoot(row),
-	); err != nil {
+	generation := ""
+	if row.Entry != nil {
+		generation = row.Entry.Generation
+	}
+	if err := rejectProtectedWorkspaceOpen(ctx, rowPaneRoot(row), generation); err != nil {
 		return err
 	}
 	if err := b.acknowledgeRemoteSource(rowPaneRoot(row)); err != nil {

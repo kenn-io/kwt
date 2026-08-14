@@ -100,25 +100,46 @@ func (g *removalSessionGuard) Quiesce(
 		}
 	}
 	if condition.ProtectedSocketTopology {
+		ordinaryCondition := condition
+		ordinaryCondition.SocketDirectory = ""
+		ordinaryCondition.SocketName = ""
+		ordinaryCondition.ProtectedSocketTopology = false
+		if err := g.validateOrdinaryAbsence(ctx, ordinaryCondition); err != nil {
+			return nil, err
+		}
 		return g.quiesceProtected(ctx, condition)
 	}
+	if err := g.validateOrdinaryAbsence(ctx, condition); err != nil {
+		return nil, err
+	}
+	return noRemovalSessionLease{}, nil
+}
+
+func (g *removalSessionGuard) validateOrdinaryAbsence(
+	ctx context.Context,
+	condition RemovalSessionCondition,
+) error {
 	command := newRemovalTmuxCommand(g.command, condition)
-	output, stderr, err := g.inspect(ctx, command)
+	inspect := g.inspect
+	if inspect == nil {
+		inspect = inspectRemovalSessions
+	}
+	output, stderr, err := inspect(ctx, command)
 	if contextErr := ctx.Err(); contextErr != nil {
-		return nil, errors.Join(contextErr, err)
+		return errors.Join(contextErr, err)
 	}
 	if err != nil {
 		if isExplicitlyAbsentTmuxDiagnostic(stderr) {
-			return noRemovalSessionLease{}, nil
+			return nil
 		}
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"inspect tmux sessions: %w, stderr: %s", err, strings.TrimSpace(stderr),
 		)
 	}
 
 	rows := strings.TrimSuffix(output, "\n")
 	if rows == "" {
-		return nil, fmt.Errorf("inspect tmux sessions: empty session inventory")
+		return fmt.Errorf("inspect tmux sessions: empty session inventory")
 	}
 	workspaceIdentity := ""
 	if condition.WorkspacePath != "" {
@@ -127,34 +148,34 @@ func (g *removalSessionGuard) Quiesce(
 	for _, line := range strings.Split(rows, "\n") {
 		row, parseErr := parseRemovalSessionRow(strings.TrimSuffix(line, "\r"))
 		if parseErr != nil {
-			return nil, fmt.Errorf("inspect tmux sessions: malformed session inventory")
+			return fmt.Errorf("inspect tmux sessions: malformed session inventory")
 		}
 		if row.sessionName == condition.SessionName {
-			return nil, &RemovalSessionConditionError{
+			return &RemovalSessionConditionError{
 				Reason: "tmux session started after confirmation",
 			}
 		}
 		if workspaceIdentity != "" &&
 			(row.workspaceIdentity == workspaceIdentity ||
 				MatchesLegacyWorkspaceSessionPath(row.sessionName, condition.WorkspacePath)) {
-			return nil, &RemovalSessionConditionError{
+			return &RemovalSessionConditionError{
 				Reason: "tmux session for worktree remains live",
 			}
 		}
 		if condition.WorkspaceGeneration != "" &&
 			row.workspaceGeneration == condition.WorkspaceGeneration {
-			return nil, &RemovalSessionConditionError{
+			return &RemovalSessionConditionError{
 				Reason: "tmux session for worktree remains live",
 			}
 		}
 		if row.workspaceGeneration == "" && row.workspaceIdentity == "" &&
 			IsKWTWorktreeSessionName(row.sessionName) {
-			return nil, &RemovalSessionConditionError{
+			return &RemovalSessionConditionError{
 				Reason: "legacy KWT session ownership is indeterminate",
 			}
 		}
 	}
-	return noRemovalSessionLease{}, nil
+	return nil
 }
 
 type removalSessionRow struct {

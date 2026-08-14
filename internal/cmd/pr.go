@@ -403,18 +403,14 @@ func importedWorkspaceProvenance(
 func rejectProtectedWorkspaceOpen(
 	ctx context.Context,
 	workspacePath string,
+	liveGeneration string,
 ) error {
-	var recordedGenerations []string
+	var recordedWorkspaces []pullrequest.Workspace
 	err := pullrequest.NewFileStore(prStorePath()).View(
 		ctx,
 		func(records map[string]pullrequest.Provenance) error {
 			for _, record := range records {
-				if samePRPath(record.Workspace.Path, workspacePath) {
-					recordedGenerations = append(
-						recordedGenerations,
-						record.Workspace.Generation,
-					)
-				}
+				recordedWorkspaces = append(recordedWorkspaces, record.Workspace)
 			}
 			return nil
 		},
@@ -425,24 +421,36 @@ func rejectProtectedWorkspaceOpen(
 			err,
 		)
 	}
-	if len(recordedGenerations) == 0 {
+	if len(recordedWorkspaces) == 0 {
 		return nil
 	}
-	liveGeneration, err := readPRWorkspaceGeneration(workspacePath)
-	if err != nil {
-		return fmt.Errorf(
-			"failed to verify live generation for pull-request workspace: %w",
-			err,
-		)
+	pathMatched := false
+	for _, workspace := range recordedWorkspaces {
+		pathMatched = pathMatched || samePRPath(workspace.Path, workspacePath)
 	}
-	if err := gitadapter.ValidateWorktreeGeneration(liveGeneration); err != nil {
-		return fmt.Errorf(
-			"failed to verify live generation for pull-request workspace: %w",
-			err,
-		)
+	if pathMatched {
+		liveGeneration, err = readPRWorkspaceGeneration(workspacePath)
+		if err != nil {
+			return fmt.Errorf(
+				"failed to verify live generation for pull-request workspace: %w",
+				err,
+			)
+		}
 	}
-	for _, recordedGeneration := range recordedGenerations {
-		if !provenanceGenerationMatches(recordedGeneration, liveGeneration) {
+	if liveGeneration != "" {
+		if err := gitadapter.ValidateWorktreeGeneration(liveGeneration); err != nil {
+			return fmt.Errorf(
+				"failed to verify live generation for pull-request workspace: %w",
+				err,
+			)
+		}
+	}
+	for _, workspace := range recordedWorkspaces {
+		generationMatch := workspace.Generation != "" &&
+			workspace.Generation == liveGeneration
+		legacyPathMatch := workspace.Generation == "" &&
+			samePRPath(workspace.Path, workspacePath)
+		if !generationMatch && !legacyPathMatch {
 			continue
 		}
 		return fmt.Errorf(

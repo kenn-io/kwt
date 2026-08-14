@@ -1264,7 +1264,7 @@ func TestProtectedWorkspaceOpenMatchesGeneration(t *testing.T) {
 				return tt.liveGeneration, nil
 			}
 
-			err := rejectProtectedWorkspaceOpen(context.Background(), path)
+			err := rejectProtectedWorkspaceOpen(context.Background(), path, "")
 
 			if tt.wantProtected {
 				assert.Error(t, err)
@@ -1295,7 +1295,7 @@ func TestProtectedWorkspaceOpenFailsClosedWhenLiveGenerationIsUnavailable(t *tes
 		return "", errors.New("generation unavailable")
 	}
 
-	err := rejectProtectedWorkspaceOpen(context.Background(), path)
+	err := rejectProtectedWorkspaceOpen(context.Background(), path, "")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "live generation")
@@ -1325,10 +1325,36 @@ func TestProtectedWorkspaceOpenUsesPlatformPathIdentity(t *testing.T) {
 		return generation, nil
 	}
 
-	err := rejectProtectedWorkspaceOpen(context.Background(), path)
+	err := rejectProtectedWorkspaceOpen(context.Background(), path, "")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "protected pull-request workspace")
+}
+
+func TestProtectedWorkspaceOpenRecognizesMovedWorkspaceByGeneration(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
+	originalPath := "/worktrees/original"
+	movedPath := "/worktrees/moved"
+	generation := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
+		context.Background(),
+		func(records map[string]pullrequest.Provenance) error {
+			records["record"] = pullrequest.Provenance{Workspace: pullrequest.Workspace{
+				Path: originalPath, Generation: generation,
+			}}
+			return nil
+		},
+	))
+	oldRead := readPRWorkspaceGeneration
+	t.Cleanup(func() { readPRWorkspaceGeneration = oldRead })
+	readPRWorkspaceGeneration = func(gotPath string) (string, error) {
+		return "", fmt.Errorf("unexpected generation read for %s", gotPath)
+	}
+
+	err := rejectProtectedWorkspaceOpen(context.Background(), movedPath, generation)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "kwt pr attach")
 }
 
 func TestProtectedWorkspaceOpenSkipsGenerationReadWithoutProvenance(t *testing.T) {
@@ -1344,6 +1370,7 @@ func TestProtectedWorkspaceOpenSkipsGenerationReadWithoutProvenance(t *testing.T
 	err := rejectProtectedWorkspaceOpen(
 		context.Background(),
 		"/worktrees/ordinary",
+		"",
 	)
 
 	require.NoError(t, err)

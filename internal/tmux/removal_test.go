@@ -231,6 +231,47 @@ func TestRemovalRejectsGenerationMarkedSessionAfterWorktreeMove(t *testing.T) {
 	assert.Contains(t, conditionErr.Reason, "worktree")
 }
 
+func TestProtectedRemovalRejectsOrdinaryGenerationMarkedSessionAfterWorktreeMove(t *testing.T) {
+	const generation = "0123456789abcdef0123456789abcdef"
+	ordinaryInspections := 0
+	protectedInspections := 0
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspect: func(
+			_ context.Context,
+			command *TmuxCommand,
+		) (string, string, error) {
+			ordinaryInspections++
+			assert.Empty(t, command.socketName)
+			return "123|$1|1720000000|kwt-wt-repo-topic-oldhash|old-path-id|" +
+				generation + "\n", "", nil
+		},
+		inspectProtected: func(
+			_ context.Context,
+			_ *TmuxCommand,
+			_ string,
+		) (ProtectedSessionState, error) {
+			protectedInspections++
+			return ProtectedSessionAbsent, nil
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName:             "kwt-wt-repo-topic-newhash",
+		WorkspacePath:           "/worktrees/moved-topic",
+		WorkspaceGeneration:     generation,
+		SocketName:              "kwt-pr-protected",
+		Absent:                  true,
+		ProtectedSocketTopology: true,
+	})
+
+	assert.Nil(t, lease)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "worktree remains live")
+	assert.Equal(t, 1, ordinaryInspections)
+	assert.Zero(t, protectedInspections, "ordinary ownership must fail before protected probing")
+}
+
 func TestRemovalFailsClosedOnUnmarkedKWTSessionAfterWorktreeMove(t *testing.T) {
 	guard := &removalSessionGuard{
 		command: "tmux",
@@ -295,6 +336,7 @@ func TestProtectedRemovalFailsClosedOnUnexpectedCanonicalTopology(t *testing.T) 
 	var inspected []*TmuxCommand
 	guard := &removalSessionGuard{
 		command: "tmux",
+		inspect: absentOrdinaryRemovalInspection,
 		inspectProtected: func(
 			_ context.Context,
 			command *TmuxCommand,
@@ -325,6 +367,7 @@ func TestProtectedRemovalCommandsStripRequestProtectedNames(t *testing.T) {
 	inspections := 0
 	guard := &removalSessionGuard{
 		command: "tmux",
+		inspect: absentOrdinaryRemovalInspection,
 		inspectProtected: func(
 			_ context.Context,
 			command *TmuxCommand,
@@ -359,6 +402,7 @@ func TestProtectedRemovalChecksCanonicalBeforeLegacyEndpoint(t *testing.T) {
 	var inspected []*TmuxCommand
 	guard := &removalSessionGuard{
 		command: "tmux",
+		inspect: absentOrdinaryRemovalInspection,
 		inspectProtected: func(
 			_ context.Context,
 			command *TmuxCommand,
@@ -385,4 +429,11 @@ func TestProtectedRemovalChecksCanonicalBeforeLegacyEndpoint(t *testing.T) {
 	require.Len(t, inspected, 2)
 	assert.Empty(t, inspected[0].socketTempDir)
 	assert.Equal(t, "/tmp/legacy-tmux", inspected[1].socketTempDir)
+}
+
+func absentOrdinaryRemovalInspection(
+	context.Context,
+	*TmuxCommand,
+) (string, string, error) {
+	return "", "no server running on /tmp/tmux/default", errors.New("tmux exited")
 }

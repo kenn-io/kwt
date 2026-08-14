@@ -376,6 +376,7 @@ func openSelectedWorktree(
 	if err := rejectProtectedWorkspaceOpen(
 		commandCtx,
 		entry.Path,
+		entry.Generation,
 	); err != nil {
 		return err
 	}
@@ -557,6 +558,7 @@ func openSelectedDirectoryWorkspace(
 	if err := rejectProtectedWorkspaceOpen(
 		commandCtx,
 		workspace.Path,
+		"",
 	); err != nil {
 		return err
 	}
