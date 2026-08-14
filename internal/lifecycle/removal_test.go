@@ -459,6 +459,59 @@ func TestRemovalServiceAcceptsCurrentProtectedSessionEndpoint(t *testing.T) {
 	assert.True(t, result.WorktreeRemoved)
 }
 
+func TestRemovalServiceFindsProtectedProvenanceAfterWorktreeMove(t *testing.T) {
+	repositoryPath, originalPath := removalRepository(t, "moved-protected")
+	runRemovalGit(t, repositoryPath, "remote", "add", "origin", "https://github.com/acme/widget.git")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(originalPath)
+	require.NoError(t, err)
+	home := t.TempDir()
+	registerRemovalRepository(t, home, repositoryPath)
+	sessionName := removalSessionName(t, originalPath, "moved-protected")
+	socketName := tmux.ProtectedWorkspaceSocketName(sessionName, originalPath)
+	record := pullrequest.Provenance{
+		Repository: "github.com/acme/widget",
+		Project: pullrequest.Project{
+			Identity: "github.com/acme/widget", Path: repositoryPath,
+		},
+		Workspace: pullrequest.Workspace{
+			Repository:  "github.com/acme/widget",
+			Branch:      "moved-protected",
+			Path:        originalPath,
+			Generation:  generation,
+			SessionName: sessionName,
+		},
+	}
+	require.NoError(t, pullrequest.NewFileStore(
+		filepath.Join(home, "pull-requests.json"),
+	).Update(context.Background(), func(records map[string]pullrequest.Provenance) error {
+		records["github:acme/widget#2"] = record
+		return nil
+	}))
+	movedPath := originalPath + "-new-location"
+	runRemovalGit(t, repositoryPath, "worktree", "move", originalPath, movedPath)
+	guard := &recordingRemovalSessionGuard{}
+
+	result, err := NewRemovalService(RemovalServiceOptions{
+		Home: home, SessionGuard: guard,
+	}).Remove(context.Background(), RemovalRequest{
+		RepositoryPath:     repositoryPath,
+		Path:               movedPath,
+		ExpectedGeneration: generation,
+		Expansion:          testExpansion(t),
+		Session: &RemovalSessionCondition{
+			SessionName: sessionName,
+			SocketName:  socketName,
+			Absent:      true,
+		},
+	})
+
+	require.NoError(t, err)
+	assert.True(t, guard.quiesced)
+	assert.Equal(t, socketName, guard.condition.SocketName)
+	assert.True(t, guard.condition.ProtectedSocketTopology)
+	assert.True(t, result.WorktreeRemoved)
+}
+
 func TestRemovalServicePreservesConfirmedSessionWhenDirtyWorktreeCannotBeRemoved(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "guarded-dirty")
 	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)

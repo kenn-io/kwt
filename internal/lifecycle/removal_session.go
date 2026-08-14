@@ -31,10 +31,11 @@ func observeRemovalProtectedSessionTarget(
 		func(records map[string]pullrequest.Provenance) error {
 			for _, record := range records {
 				workspace := record.Workspace
-				if utils.PathKey(workspace.Path) != utils.PathKey(worktreePath) {
-					continue
-				}
-				if workspace.Generation != "" && workspace.Generation != generation {
+				generationMatch := workspace.Generation != "" &&
+					workspace.Generation == generation
+				legacyPathMatch := workspace.Generation == "" &&
+					utils.PathKey(workspace.Path) == utils.PathKey(worktreePath)
+				if !generationMatch && !legacyPathMatch {
 					continue
 				}
 				if claim == nil || !pullrequest.ProvenanceHasRepositoryIdentity(
