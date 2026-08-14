@@ -16,23 +16,31 @@ import (
 )
 
 type fakePersistentManager struct {
-	mu              sync.Mutex
-	generation      openssh.Generation
-	connectErr      error
-	argumentErr     error
-	connectCalls    int
-	argumentCalls   int
-	touchCalls      int
-	aliveCalls      int
-	disconnectCalls int
-	disconnectErr   error
-	disconnectStart chan struct{}
-	disconnectWait  <-chan struct{}
-	disconnectOnce  sync.Once
-	connectStart    chan struct{}
-	connectWait     <-chan struct{}
-	connectOnce     sync.Once
-	connectWaitFor  string
+	mu                        sync.Mutex
+	generation                openssh.Generation
+	connectErr                error
+	argumentErr               error
+	connectCalls              int
+	argumentCalls             int
+	touchCalls                int
+	aliveCalls                int
+	aliveStart                chan struct{}
+	aliveCanceled             chan struct{}
+	aliveExit                 chan struct{}
+	aliveExitWait             <-chan struct{}
+	aliveStartOnce            sync.Once
+	aliveCancelOnce           sync.Once
+	aliveExitOnce             sync.Once
+	disconnectCalls           int
+	disconnectBeforeAliveExit bool
+	disconnectErr             error
+	disconnectStart           chan struct{}
+	disconnectWait            <-chan struct{}
+	disconnectOnce            sync.Once
+	connectStart              chan struct{}
+	connectWait               <-chan struct{}
+	connectOnce               sync.Once
+	connectWaitFor            string
 }
 
 func (m *fakePersistentManager) ConnectWithRunner(
@@ -77,13 +85,31 @@ func (m *fakePersistentManager) TouchActivity(string, openssh.Generation) bool {
 }
 
 func (m *fakePersistentManager) IsAlive(
-	context.Context,
-	string,
-	openssh.Generation,
+	ctx context.Context,
+	_ string,
+	_ openssh.Generation,
 ) (bool, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.aliveCalls++
+	aliveStart := m.aliveStart
+	aliveCanceled := m.aliveCanceled
+	aliveExit := m.aliveExit
+	aliveExitWait := m.aliveExitWait
+	m.mu.Unlock()
+	if aliveStart != nil {
+		m.aliveStartOnce.Do(func() { close(aliveStart) })
+	}
+	if aliveExit != nil {
+		<-ctx.Done()
+		if aliveCanceled != nil {
+			m.aliveCancelOnce.Do(func() { close(aliveCanceled) })
+		}
+		if aliveExitWait != nil {
+			<-aliveExitWait
+		}
+		m.aliveExitOnce.Do(func() { close(aliveExit) })
+		return false, ctx.Err()
+	}
 	return true, nil
 }
 
@@ -93,6 +119,13 @@ func (m *fakePersistentManager) Disconnect(context.Context, string) error {
 	disconnectErr := m.disconnectErr
 	disconnectStart := m.disconnectStart
 	disconnectWait := m.disconnectWait
+	if m.aliveExit != nil {
+		select {
+		case <-m.aliveExit:
+		default:
+			m.disconnectBeforeAliveExit = true
+		}
+	}
 	m.mu.Unlock()
 	if disconnectStart != nil {
 		m.disconnectOnce.Do(func() { close(disconnectStart) })
@@ -240,6 +273,81 @@ func TestManagerRefreshesOpenSSHPersistenceWhileRouteIsTracked(t *testing.T) {
 		return persistent.aliveCalls > activeHeartbeats
 	}, time.Second, 5*time.Millisecond)
 	require.NoError(t, manager.Close(context.Background()))
+}
+
+func TestManagerWaitsForPersistenceHeartbeatBeforeTeardown(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		stop func(*Manager, Lease) error
+	}{
+		{name: "final release", stop: func(_ *Manager, lease Lease) error {
+			return lease.Release()
+		}},
+		{name: "manager close", stop: func(manager *Manager, _ Lease) error {
+			return manager.Close(context.Background())
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			aliveStarted := make(chan struct{})
+			aliveCanceled := make(chan struct{})
+			aliveExited := make(chan struct{})
+			allowAliveExit := make(chan struct{})
+			persistent := &fakePersistentManager{
+				generation:    18,
+				aliveStart:    aliveStarted,
+				aliveCanceled: aliveCanceled,
+				aliveExit:     aliveExited,
+				aliveExitWait: allowAliveExit,
+			}
+			manager := NewManager(ManagerOptions{
+				Persistent:         persistent,
+				PersistenceTimeout: 30 * time.Millisecond,
+				Runner: func(LeaseRequest, ResolvedTarget) (openssh.RunSSH, error) {
+					return func(context.Context, []string) (int, error) { return 0, nil }, nil
+				},
+			})
+			snapshot := directSnapshot("route-with-active-heartbeat")
+			lease, err := manager.Acquire(
+				context.Background(),
+				LeaseRequest{Snapshot: snapshot},
+				func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
+			)
+			require.NoError(t, err)
+			select {
+			case <-aliveStarted:
+			case <-time.After(time.Second):
+				t.Fatal("persistence heartbeat did not start")
+			}
+
+			stopDone := make(chan error, 1)
+			go func() { stopDone <- test.stop(manager, lease) }()
+			select {
+			case <-aliveCanceled:
+			case <-time.After(time.Second):
+				t.Fatal("teardown did not cancel the persistence heartbeat")
+			}
+			select {
+			case <-stopDone:
+				t.Fatal("teardown returned before the persistence heartbeat exited")
+			default:
+			}
+			persistent.mu.Lock()
+			disconnects := persistent.disconnectCalls
+			persistent.mu.Unlock()
+			assert.Equal(t, 0, disconnects)
+			close(allowAliveExit)
+			require.NoError(t, <-stopDone)
+			select {
+			case <-aliveExited:
+			default:
+				t.Fatal("teardown returned before the persistence heartbeat exited")
+			}
+			persistent.mu.Lock()
+			disconnectedEarly := persistent.disconnectBeforeAliveExit
+			persistent.mu.Unlock()
+			assert.False(t, disconnectedEarly)
+		})
+	}
 }
 
 func TestManagerRetriesFailedFinalAndIdleCleanupOnClose(t *testing.T) {

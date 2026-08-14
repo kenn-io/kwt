@@ -60,6 +60,8 @@ type managedRoute struct {
 	idle             *time.Timer
 	keepAlive        *time.Timer
 	keepAliveEnabled bool
+	heartbeatCancel  context.CancelFunc
+	heartbeatDone    chan struct{}
 	forwardAgent     bool
 }
 
@@ -346,6 +348,9 @@ func (m *Manager) refreshPersistence(
 	route *managedRoute,
 	timeout time.Duration,
 ) {
+	if timeout > 10*time.Second {
+		timeout = 10 * time.Second
+	}
 	m.mu.Lock()
 	if m.closed || m.routes[identity] != route || !route.keepAliveEnabled {
 		m.mu.Unlock()
@@ -353,29 +358,50 @@ func (m *Manager) refreshPersistence(
 	}
 	route.keepAlive = nil
 	generation := route.generation
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	done := make(chan struct{})
+	route.heartbeatCancel = cancel
+	route.heartbeatDone = done
 	m.mu.Unlock()
 
-	if timeout > 10*time.Second {
-		timeout = 10 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	_, _ = m.persistent.IsAlive(ctx, identity, generation)
 	cancel()
 
 	m.mu.Lock()
-	if !m.closed && m.routes[identity] == route && route.keepAliveEnabled {
-		m.schedulePersistenceHeartbeat(identity, route)
+	if route.heartbeatDone == done {
+		route.heartbeatCancel = nil
+		route.heartbeatDone = nil
+		if !m.closed && m.routes[identity] == route && route.keepAliveEnabled {
+			m.schedulePersistenceHeartbeat(identity, route)
+		}
 	}
 	m.mu.Unlock()
+	close(done)
 }
 
 // stopPersistenceHeartbeat prevents an in-flight mux check from rescheduling
 // itself once route teardown begins. Callers hold m.mu.
-func (m *Manager) stopPersistenceHeartbeat(route *managedRoute) {
+func (m *Manager) stopPersistenceHeartbeat(route *managedRoute) <-chan struct{} {
 	route.keepAliveEnabled = false
 	if route.keepAlive != nil {
 		route.keepAlive.Stop()
 		route.keepAlive = nil
+	}
+	if route.heartbeatCancel != nil {
+		route.heartbeatCancel()
+	}
+	return route.heartbeatDone
+}
+
+func waitPersistenceHeartbeat(ctx context.Context, done <-chan struct{}) error {
+	if done == nil {
+		return nil
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -407,9 +433,10 @@ func (m *Manager) release(identity string, generation openssh.Generation) error 
 		unlockIdentity()
 		return nil
 	}
-	m.stopPersistenceHeartbeat(route)
+	heartbeatDone := m.stopPersistenceHeartbeat(route)
 	routeIdentity := route.routeIdentity
 	m.mu.Unlock()
+	_ = waitPersistenceHeartbeat(context.Background(), heartbeatDone)
 	if err := m.persistent.Disconnect(context.Background(), identity); err != nil {
 		failure := cleanupFailed(err)
 		unlockIdentity()
@@ -441,9 +468,10 @@ func (m *Manager) disconnectIdle(identity string, generation openssh.Generation)
 		return
 	}
 	route.idle = nil
-	m.stopPersistenceHeartbeat(route)
+	heartbeatDone := m.stopPersistenceHeartbeat(route)
 	routeIdentity := route.routeIdentity
 	m.mu.Unlock()
+	_ = waitPersistenceHeartbeat(context.Background(), heartbeatDone)
 	if err := m.persistent.Disconnect(context.Background(), identity); err != nil {
 		unlockIdentity()
 		m.emitFailure(routeIdentity, generation, cleanupFailed(err))
@@ -567,16 +595,22 @@ func (m *Manager) closeAttempt(
 		}
 		m.mu.Lock()
 		route := m.routes[identity]
+		var heartbeatDone <-chan struct{}
 		if route != nil {
 			if route.idle != nil {
 				route.idle.Stop()
 			}
-			m.stopPersistenceHeartbeat(route)
+			heartbeatDone = m.stopPersistenceHeartbeat(route)
 		}
 		m.mu.Unlock()
 		if route == nil {
 			unlockIdentity()
 			continue
+		}
+		if err = waitPersistenceHeartbeat(ctx, heartbeatDone); err != nil {
+			unlockIdentity()
+			closeErr = errors.Join(closeErr, err)
+			break
 		}
 		err = m.persistent.Disconnect(ctx, identity)
 		unlockIdentity()
