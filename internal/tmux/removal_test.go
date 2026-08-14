@@ -70,3 +70,62 @@ func TestRemovalSessionInspectionPreservesCancellation(t *testing.T) {
 		})
 	}
 }
+
+func TestProtectedRemovalFailsClosedOnUnexpectedCanonicalTopology(t *testing.T) {
+	var inspected []*TmuxCommand
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspectProtected: func(
+			_ context.Context,
+			command *TmuxCommand,
+			_ string,
+		) (ProtectedSessionState, error) {
+			inspected = append(inspected, command)
+			return ProtectedSessionIndeterminate, errors.New("unexpected protected session")
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName:     "expected",
+		SocketName:      "kwt-pr-protected",
+		SocketDirectory: "/tmp/legacy-tmux",
+		Absent:          true,
+	})
+
+	assert.Nil(t, lease)
+	require.Error(t, err)
+	require.Len(t, inspected, 1, "indeterminate canonical topology must not fall through to legacy")
+	assert.Equal(t, "kwt-pr-protected", inspected[0].socketName)
+	assert.Empty(t, inspected[0].socketTempDir)
+}
+
+func TestProtectedRemovalChecksCanonicalBeforeLegacyEndpoint(t *testing.T) {
+	var inspected []*TmuxCommand
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspectProtected: func(
+			_ context.Context,
+			command *TmuxCommand,
+			_ string,
+		) (ProtectedSessionState, error) {
+			inspected = append(inspected, command)
+			if command.socketTempDir == "" {
+				return ProtectedSessionAbsent, nil
+			}
+			return ProtectedSessionLive, nil
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName:     "expected",
+		SocketName:      "kwt-pr-protected",
+		SocketDirectory: "/tmp/legacy-tmux",
+		Absent:          true,
+	})
+
+	assert.Nil(t, lease)
+	require.Error(t, err)
+	require.Len(t, inspected, 2)
+	assert.Empty(t, inspected[0].socketTempDir)
+	assert.Equal(t, "/tmp/legacy-tmux", inspected[1].socketTempDir)
+}

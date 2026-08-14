@@ -3627,6 +3627,10 @@ func TestTUIWorktreeAttachCannotRaceGuardedRemoval(t *testing.T) {
 	require.NoError(t, file.Close())
 	expansion, err := kwt.CaptureExpansionContext()
 	require.NoError(t, err)
+	removalSessionName, _, err := lifecycle.ResolveCurrentWorktreeSessionIdentity(
+		context.Background(), worktreePath, nil, nil,
+	)
+	require.NoError(t, err)
 	removalGuard := &blockingOpenRemovalGuard{
 		entered: make(chan struct{}), release: make(chan struct{}),
 	}
@@ -3639,7 +3643,7 @@ func TestTUIWorktreeAttachCannotRaceGuardedRemoval(t *testing.T) {
 			Path:           worktreePath, ExpectedGeneration: generation,
 			Expansion: expansion,
 			Session: &tmux.RemovalSessionCondition{
-				SessionName: "kwt-workspace-tui-open-race", Absent: true,
+				SessionName: removalSessionName, Absent: true,
 			},
 		})
 		removalDone <- removeErr

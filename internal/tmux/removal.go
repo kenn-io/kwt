@@ -48,8 +48,9 @@ type RemovalSessionGuard interface {
 }
 
 type removalSessionGuard struct {
-	command string
-	inspect func(context.Context, *TmuxCommand) (string, string, error)
+	command          string
+	inspect          func(context.Context, *TmuxCommand) (string, string, error)
+	inspectProtected func(context.Context, *TmuxCommand, string) (ProtectedSessionState, error)
 }
 
 var removalSocketSelectors = []string{"TMUX", "TMUX_TMPDIR"}
@@ -58,7 +59,11 @@ var removalSocketSelectors = []string{"TMUX", "TMUX_TMPDIR"}
 // request carries an explicit socket endpoint. Ambient tmux selectors are
 // never removal authority.
 func NewRemovalSessionGuard(command string) RemovalSessionGuard {
-	return &removalSessionGuard{command: command, inspect: inspectRemovalSessions}
+	return &removalSessionGuard{
+		command:          command,
+		inspect:          inspectRemovalSessions,
+		inspectProtected: probeProtectedSessionCommand,
+	}
 }
 
 func inspectRemovalSessions(
@@ -80,6 +85,9 @@ func (g *removalSessionGuard) Quiesce(
 		return nil, &RemovalSessionConditionError{
 			Reason: "stop the session before guarded worktree removal",
 		}
+	}
+	if condition.SocketName != "" {
+		return g.quiesceProtected(ctx, condition)
 	}
 	command := newRemovalTmuxCommand(g.command, condition)
 	output, stderr, err := g.inspect(ctx, command)
@@ -107,6 +115,46 @@ func (g *removalSessionGuard) Quiesce(
 		return noRemovalSessionLease{}, nil
 	}
 	return nil, &RemovalSessionConditionError{Reason: "tmux session started after confirmation"}
+}
+
+func (g *removalSessionGuard) quiesceProtected(
+	ctx context.Context,
+	condition RemovalSessionCondition,
+) (RemovalSessionLease, error) {
+	inspect := g.inspectProtected
+	if inspect == nil {
+		inspect = probeProtectedSessionCommand
+	}
+	canonical := NewTmuxCommandForSocketWithStripNames(
+		g.command,
+		condition.SocketName,
+		removalSocketSelectors,
+	)
+	state, err := inspect(ctx, canonical, condition.SessionName)
+	if state == ProtectedSessionAbsent && err == nil && condition.SocketDirectory != "" {
+		legacy := NewTmuxCommandForSocketInTempDirWithStripNames(
+			g.command,
+			condition.SocketName,
+			condition.SocketDirectory,
+			removalSocketSelectors,
+		)
+		state, err = inspect(ctx, legacy, condition.SessionName)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("inspect protected tmux session: %w", err)
+	}
+	switch state {
+	case ProtectedSessionAbsent:
+		return noRemovalSessionLease{}, nil
+	case ProtectedSessionLive:
+		return nil, &RemovalSessionConditionError{
+			Reason: "protected tmux session started after confirmation",
+		}
+	default:
+		return nil, &RemovalSessionConditionError{
+			Reason: "protected tmux session state is indeterminate",
+		}
+	}
 }
 
 type noRemovalSessionLease struct{}
