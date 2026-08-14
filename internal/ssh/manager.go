@@ -2,6 +2,8 @@ package ssh
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"sort"
 	"sync"
@@ -109,7 +111,7 @@ func (m *Manager) Acquire(
 	if err != nil {
 		return nil, connectionFailed(err)
 	}
-	identity := managerIdentity(request.Snapshot)
+	identity := managerIdentityForLease(request.Snapshot, request.Environment)
 	unlockIdentity, err := m.lockIdentityContext(ctx, identity)
 	if err != nil {
 		return nil, err
@@ -192,36 +194,45 @@ func (m *Manager) Acquire(
 	}
 	current, err = resolve(ctx)
 	if err != nil {
-		if cleanupErr := m.disconnectUnleased(
-			identity, generation,
-		); cleanupErr != nil {
+		event, cleanupErr := m.disconnectUnleased(
+			identity, generation, request.Snapshot.RouteIdentity, target.ForwardAgent,
+		)
+		if cleanupErr != nil {
 			releaseIdentity()
 			m.emitFailure(request.Snapshot.RouteIdentity, generation, cleanupErr)
 			return nil, cleanupErr
 		}
+		releaseIdentity()
+		m.emitOptional(event)
 		return nil, err
 	}
 	if !sameRoute(request.Snapshot, current) {
-		if cleanupErr := m.disconnectUnleased(
-			identity, generation,
-		); cleanupErr != nil {
+		event, cleanupErr := m.disconnectUnleased(
+			identity, generation, request.Snapshot.RouteIdentity, target.ForwardAgent,
+		)
+		if cleanupErr != nil {
 			releaseIdentity()
 			m.emitFailure(request.Snapshot.RouteIdentity, generation, cleanupErr)
 			return nil, cleanupErr
 		}
+		releaseIdentity()
+		m.emitOptional(event)
 		return nil, configurationChanged()
 	}
 
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		if cleanupErr := m.disconnectUnleased(
-			identity, generation,
-		); cleanupErr != nil {
+		event, cleanupErr := m.disconnectUnleased(
+			identity, generation, request.Snapshot.RouteIdentity, target.ForwardAgent,
+		)
+		if cleanupErr != nil {
 			releaseIdentity()
 			m.emitFailure(request.Snapshot.RouteIdentity, generation, cleanupErr)
 			return nil, cleanupErr
 		}
+		releaseIdentity()
+		m.emitOptional(event)
 		return nil, connectionChanged()
 	}
 	route := m.routes[identity]
@@ -260,21 +271,61 @@ func (m *Manager) Acquire(
 func (m *Manager) disconnectUnleased(
 	identity string,
 	generation openssh.Generation,
-) *service.Error {
+	routeIdentity string,
+	forwardAgent bool,
+) (*Event, *service.Error) {
 	m.mu.Lock()
 	route := m.routes[identity]
-	active := route != nil && route.generation == generation && route.leases > 0
-	m.mu.Unlock()
-	if !active {
-		if err := m.persistent.Disconnect(context.Background(), identity); err != nil {
-			return cleanupFailed(err)
-		}
+	if route != nil && route.generation != generation {
+		m.mu.Unlock()
+		return nil, connectionChanged()
 	}
-	return nil
+	if route != nil && route.leases > 0 {
+		m.mu.Unlock()
+		return nil, nil
+	}
+	if route == nil {
+		route = &managedRoute{
+			routeIdentity: routeIdentity,
+			generation:    generation,
+			forwardAgent:  forwardAgent,
+		}
+		m.routes[identity] = route
+	}
+	if route.idle != nil {
+		route.idle.Stop()
+		route.idle = nil
+	}
+	heartbeatDone := m.stopPersistenceHeartbeat(route)
+	m.mu.Unlock()
+	_ = waitPersistenceHeartbeat(context.Background(), heartbeatDone)
+	if err := m.persistent.Disconnect(context.Background(), identity); err != nil {
+		return nil, cleanupFailed(err)
+	}
+	m.mu.Lock()
+	if m.routes[identity] == route {
+		delete(m.routes, identity)
+	}
+	m.mu.Unlock()
+	return &Event{
+		RouteIdentity: route.routeIdentity,
+		Generation:    uint64(generation),
+		State:         EventStateDisconnected,
+	}, nil
 }
 
 func managerIdentity(snapshot RouteSnapshot) string {
 	return snapshot.ProjectionPolicy + ":" + snapshot.RouteIdentity
+}
+
+func managerIdentityForLease(snapshot RouteSnapshot, environment []string) string {
+	identity := managerIdentity(snapshot)
+	if len(snapshot.Targets) != 1 || !snapshot.Targets[0].ForwardAgent {
+		return identity
+	}
+	agentEndpoint, _ := environmentValue(environment, "SSH_AUTH_SOCK")
+	digest := sha256.Sum256([]byte(agentEndpoint))
+	return identity + ":agent:" + hex.EncodeToString(digest[:])
 }
 
 func sameRoute(expected, current RouteSnapshot) bool {
@@ -790,6 +841,12 @@ func (m *Manager) emitFailure(
 func (m *Manager) emit(event Event) {
 	if m.onEvent != nil {
 		m.onEvent(event)
+	}
+}
+
+func (m *Manager) emitOptional(event *Event) {
+	if event != nil {
+		m.emit(*event)
 	}
 }
 

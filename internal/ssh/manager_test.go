@@ -22,6 +22,7 @@ type fakePersistentManager struct {
 	connectErr                error
 	argumentErr               error
 	connectCalls              int
+	connectIdentities         []string
 	argumentCalls             int
 	touchCalls                int
 	aliveCalls                int
@@ -54,6 +55,7 @@ func (m *fakePersistentManager) ConnectWithRunner(
 ) (openssh.Generation, error) {
 	m.mu.Lock()
 	m.connectCalls++
+	m.connectIdentities = append(m.connectIdentities, identity)
 	generation := m.generation
 	connectErr := m.connectErr
 	connectStart := m.connectStart
@@ -147,6 +149,12 @@ func (m *fakePersistentManager) counts() (connect, arguments, touch, disconnect 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.connectCalls, m.argumentCalls, m.touchCalls, m.disconnectCalls
+}
+
+func (m *fakePersistentManager) identities() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.connectIdentities...)
 }
 
 func directSnapshot(identity string) RouteSnapshot {
@@ -245,6 +253,47 @@ func TestManagerDisconnectsForwardAgentRouteOnFinalRelease(t *testing.T) {
 	require.NoError(t, lease.Release())
 	_, _, _, disconnects := persistent.counts()
 	assert.Equal(t, 1, disconnects)
+}
+
+func TestManagerPartitionsForwardAgentRoutesByAgentEndpoint(t *testing.T) {
+	persistent := &fakePersistentManager{generation: 19}
+	manager := NewManager(ManagerOptions{
+		Persistent:  persistent,
+		IdleTimeout: time.Hour,
+		Runner: func(LeaseRequest, ResolvedTarget) (openssh.RunSSH, error) {
+			return func(context.Context, []string) (int, error) { return 0, nil }, nil
+		},
+	})
+	snapshot := directSnapshot("forwarded-agent-route")
+	snapshot.Targets[0].ForwardAgent = true
+	resolve := func(context.Context) (RouteSnapshot, error) { return snapshot, nil }
+
+	first, err := manager.Acquire(
+		context.Background(),
+		LeaseRequest{
+			Snapshot:    snapshot,
+			Environment: []string{"SSH_AUTH_SOCK=/tmp/agent-one"},
+		},
+		resolve,
+	)
+	require.NoError(t, err)
+	second, err := manager.Acquire(
+		context.Background(),
+		LeaseRequest{
+			Snapshot:    snapshot,
+			Environment: []string{"SSH_AUTH_SOCK=/tmp/agent-two"},
+		},
+		resolve,
+	)
+	require.NoError(t, err)
+
+	identities := persistent.identities()
+	require.Len(t, identities, 2)
+	assert.NotEqual(t, identities[0], identities[1])
+	require.NoError(t, first.Release())
+	require.NoError(t, second.Release())
+	_, _, _, disconnects := persistent.counts()
+	assert.Equal(t, 2, disconnects)
 }
 
 func TestManagerRefreshesOpenSSHPersistenceWhileRouteIsTracked(t *testing.T) {
@@ -823,6 +872,62 @@ func TestManagerRejectsRouteChangeAfterConnectionPreparation(t *testing.T) {
 	assert.Equal(t, 1, disconnects)
 }
 
+func TestManagerFullyTearsDownWarmRouteAfterPostConnectChange(t *testing.T) {
+	persistent := &fakePersistentManager{generation: 20}
+	events := make(chan Event, 4)
+	manager := NewManager(ManagerOptions{
+		Persistent:  persistent,
+		IdleTimeout: time.Hour,
+		OnEvent: func(event Event) {
+			events <- event
+		},
+		Runner: func(LeaseRequest, ResolvedTarget) (openssh.RunSSH, error) {
+			return func(context.Context, []string) (int, error) { return 0, nil }, nil
+		},
+	})
+	expected := directSnapshot("route-one")
+	lease, err := manager.Acquire(
+		context.Background(),
+		LeaseRequest{Snapshot: expected},
+		func(context.Context) (RouteSnapshot, error) { return expected, nil },
+	)
+	require.NoError(t, err)
+	require.NoError(t, lease.Release())
+
+	resolveCalls := 0
+	_, err = manager.Acquire(
+		context.Background(),
+		LeaseRequest{Snapshot: expected},
+		func(context.Context) (RouteSnapshot, error) {
+			resolveCalls++
+			if resolveCalls == 1 {
+				return expected, nil
+			}
+			return directSnapshot("route-two"), nil
+		},
+	)
+
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.SSHConfigurationChanged))
+	identity := managerIdentity(expected)
+	manager.mu.Lock()
+	_, tracked := manager.routes[identity]
+	manager.mu.Unlock()
+	assert.False(t, tracked)
+	require.NoError(t, manager.Close(context.Background()))
+	_, _, _, disconnects := persistent.counts()
+	assert.Equal(t, 1, disconnects)
+
+	var disconnected int
+	close(events)
+	for event := range events {
+		if event.State == EventStateDisconnected && event.RouteIdentity == expected.RouteIdentity {
+			disconnected++
+		}
+	}
+	assert.Equal(t, 1, disconnected)
+}
+
 func TestManagerExecutesFreshResolvedSnapshotInsteadOfCallerFields(t *testing.T) {
 	persistent := &fakePersistentManager{generation: 29}
 	current := directSnapshot("route-one")
@@ -883,6 +988,17 @@ func TestManagerReportsCleanupFailureAfterRouteChange(t *testing.T) {
 
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.SSHCleanupFailed))
+	identity := managerIdentity(expected)
+	manager.mu.Lock()
+	_, tracked := manager.routes[identity]
+	manager.mu.Unlock()
+	assert.True(t, tracked)
+	persistent.mu.Lock()
+	persistent.disconnectErr = nil
+	persistent.mu.Unlock()
+	require.NoError(t, manager.Close(context.Background()))
+	_, _, _, disconnects := persistent.counts()
+	assert.Equal(t, 2, disconnects)
 }
 
 func TestManagerDoesNotDisconnectSharedMasterWhenSecondLeaseChanges(t *testing.T) {
