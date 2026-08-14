@@ -118,22 +118,48 @@ func (g *removalSessionGuard) Quiesce(
 		workspaceIdentity = workspacePathIdentity(condition.WorkspacePath)
 	}
 	for _, line := range strings.Split(rows, "\n") {
-		parts := strings.SplitN(strings.TrimSuffix(line, "\r"), "|", 5)
-		if len(parts) != 5 {
+		row, parseErr := parseRemovalSessionRow(strings.TrimSuffix(line, "\r"))
+		if parseErr != nil {
 			return nil, fmt.Errorf("inspect tmux sessions: malformed session inventory")
 		}
-		if parts[3] == condition.SessionName {
+		if row.sessionName == condition.SessionName {
 			return nil, &RemovalSessionConditionError{
 				Reason: "tmux session started after confirmation",
 			}
 		}
-		if workspaceIdentity != "" && parts[4] == workspaceIdentity {
+		if workspaceIdentity != "" &&
+			(row.workspaceIdentity == workspaceIdentity ||
+				MatchesLegacyWorkspaceSessionPath(row.sessionName, condition.WorkspacePath)) {
 			return nil, &RemovalSessionConditionError{
 				Reason: "tmux session for worktree remains live",
 			}
 		}
 	}
 	return noRemovalSessionLease{}, nil
+}
+
+type removalSessionRow struct {
+	sessionName       string
+	workspaceIdentity string
+}
+
+func parseRemovalSessionRow(line string) (removalSessionRow, error) {
+	rest := line
+	for range 3 {
+		field, remaining, ok := strings.Cut(rest, "|")
+		if !ok || field == "" {
+			return removalSessionRow{}, errors.New("missing fixed field")
+		}
+		rest = remaining
+	}
+	lastDelimiter := strings.LastIndexByte(rest, '|')
+	if lastDelimiter < 0 || lastDelimiter == 0 {
+		return removalSessionRow{}, errors.New("missing session field")
+	}
+	return removalSessionRow{
+		sessionName:       rest[:lastDelimiter],
+		workspaceIdentity: rest[lastDelimiter+1:],
+	}, nil
 }
 
 func (g *removalSessionGuard) quiesceProtected(

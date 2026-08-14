@@ -153,6 +153,57 @@ func TestRemovalRejectsDifferentNamedSessionForWorkspacePath(t *testing.T) {
 	assert.Contains(t, conditionErr.Reason, "worktree")
 }
 
+func TestRemovalPreservesDelimiterInWorkspaceSessionName(t *testing.T) {
+	const workspacePath = "/worktrees/topic"
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspect: func(
+			_ context.Context,
+			_ *TmuxCommand,
+		) (string, string, error) {
+			return "123|$1|1720000000|kwt-wt-repo-feature|topic-deadbeef|" +
+				workspacePathIdentity(workspacePath) + "\n", "", nil
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName:   "kwt-wt-repo-feature|topic-deadbeef",
+		WorkspacePath: workspacePath,
+		Absent:        true,
+	})
+
+	assert.Nil(t, lease)
+	require.Error(t, err)
+	var conditionErr *RemovalSessionConditionError
+	require.ErrorAs(t, err, &conditionErr)
+	assert.Contains(t, conditionErr.Reason, "started after confirmation")
+}
+
+func TestRemovalRejectsUnmarkedLegacySessionAfterBranchChange(t *testing.T) {
+	const workspacePath = "/home/u/worktrees/github.com/wesm/kwt/feature/foo"
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspect: func(
+			_ context.Context,
+			_ *TmuxCommand,
+		) (string, string, error) {
+			return "123|$1|1720000000|kwt-wt-kwt-old-branch-9cc4e551|\n", "", nil
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName:   "kwt-wt-kwt-new-branch-9cc4e551",
+		WorkspacePath: workspacePath,
+		Absent:        true,
+	})
+
+	assert.Nil(t, lease)
+	require.Error(t, err)
+	var conditionErr *RemovalSessionConditionError
+	require.ErrorAs(t, err, &conditionErr)
+	assert.Contains(t, conditionErr.Reason, "worktree")
+}
+
 func TestProtectedRemovalFailsClosedOnUnexpectedCanonicalTopology(t *testing.T) {
 	var inspected []*TmuxCommand
 	guard := &removalSessionGuard{
