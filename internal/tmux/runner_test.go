@@ -87,9 +87,11 @@ func (m *mockWorkspaceTmux) globalOption(option string) (string, error) {
 // test process's own environment, plus any names the mock's server/session
 // tables contribute. It mirrors sessionStripNames deliberately so the
 // sequencing assertions stay valid in any test environment.
-func expectedBootstrapCommand(session string, tableDerived ...[]string) []string {
+func expectedBootstrapCommand(session, worktreeDir string, tableDerived ...[]string) []string {
 	sets := append([][]string{CanonicalStripExactNames(), StripEnvNames(os.Environ())}, tableDerived...)
-	return BuildSessionBootstrapCommand(session, MergeStripNames(sets...))
+	return buildWorkspaceSessionBootstrapCommand(
+		session, worktreeDir, MergeStripNames(sets...),
+	)
 }
 
 func (m *mockWorkspaceTmux) RunCommandContext(_ context.Context, args ...string) error {
@@ -174,7 +176,7 @@ func TestEnsureAndAttachCreatesSendsToCapturedIDsAndAttaches(t *testing.T) {
 	// exist.
 	want := [][]string{
 		{"new-session", "-d", "-P", "-F", "#{pane_id}", "-s", "s", "-c", "/wt", "sleep", "2147483647"},
-		expectedBootstrapCommand("s"),
+		expectedBootstrapCommand("s", "/wt"),
 		{"show-options", "-v", "-t", "s", "default-shell"},
 		{"show-options", "-gv", "default-shell"},
 		{"respawn-pane", "-k", "-c", "/wt", "-t", "%1", "/bin/sh", "-l"},
@@ -494,7 +496,7 @@ func TestEnsureAndAttachRepairsExistingSessionBootstrapWithoutConstructing(t *te
 	require.NoError(t, err)
 
 	want := [][]string{
-		expectedBootstrapCommand("s",
+		expectedBootstrapCommand("s", "/wt",
 			[]string{"KWT_GITHUB_TOKEN", "STARSHIP_SESSION_KEY"},
 			[]string{"VSCODE_GIT_IPC_HANDLE"}),
 	}
@@ -542,7 +544,7 @@ func TestEnsureAndAttachRepairSurvivesEnvReadFailures(t *testing.T) {
 		models.Layout{Arrange: "tiled", Panes: []string{""}}, false)
 	require.NoError(t, err)
 
-	want := [][]string{expectedBootstrapCommand("s")}
+	want := [][]string{expectedBootstrapCommand("s", "/wt")}
 	assert.Equal(t, want, m.calls,
 		"env-table read failures fall back to the launcher and exact sources")
 }

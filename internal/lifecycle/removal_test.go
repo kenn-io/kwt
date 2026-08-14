@@ -155,7 +155,9 @@ func TestRemovalServiceTerminatesConfirmedSessionBeforeRemovingWorktree(t *testi
 	assert.True(t, guard.quiesced)
 	assert.True(t, guard.terminated)
 	assert.True(t, guard.pathLive, "session guard must run before checkout removal")
-	assert.Equal(t, condition, guard.condition)
+	expectedCondition := condition
+	expectedCondition.WorkspacePath = worktreePath
+	assert.Equal(t, expectedCondition, guard.condition)
 	assert.True(t, result.WorktreeRemoved)
 	assert.NoDirExists(t, worktreePath)
 }
@@ -245,6 +247,47 @@ func TestRemovalServiceRejectsStaleSessionNameAfterBranchSwitch(t *testing.T) {
 	assert.DirExists(t, worktreePath)
 }
 
+func TestRemovalServiceRejectsOldBranchSessionForCurrentWorktree(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "old-branch")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	oldSessionName := removalSessionName(t, worktreePath, "old-branch")
+	runRemovalGit(t, worktreePath, "switch", "-c", "new-branch")
+	currentSessionName := removalSessionName(t, worktreePath, "new-branch")
+	require.NotEqual(t, oldSessionName, currentSessionName)
+	home := t.TempDir()
+	registerRemovalRepository(t, home, repositoryPath)
+	guard := &recordingRemovalSessionGuard{}
+	guard.onQuiesce = func() error {
+		if guard.condition.WorkspacePath == worktreePath &&
+			guard.condition.SessionName != oldSessionName {
+			return &RemovalSessionConditionError{
+				Reason: "worktree tmux session remains live",
+			}
+		}
+		return nil
+	}
+
+	result, err := NewRemovalService(RemovalServiceOptions{
+		Home: home, SessionGuard: guard,
+	}).Remove(context.Background(), RemovalRequest{
+		RepositoryPath:     repositoryPath,
+		Path:               worktreePath,
+		ExpectedGeneration: generation,
+		Expansion:          testExpansion(t),
+		Session: &RemovalSessionCondition{
+			SessionName: currentSessionName,
+			Absent:      true,
+		},
+	})
+
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.Conflict))
+	assert.True(t, guard.quiesced)
+	assert.False(t, result.WorktreeRemoved)
+	assert.DirExists(t, worktreePath)
+}
+
 func TestRemovalServiceRejectsStaleSessionSocket(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "socket-changed")
 	runRemovalGit(t, repositoryPath, "remote", "add", "origin", "https://github.com/acme/widget.git")
@@ -320,7 +363,9 @@ func TestRemovalServiceAcceptsOrdinarySessionOnExplicitSocketEndpoint(t *testing
 
 	require.NoError(t, err)
 	assert.True(t, guard.quiesced)
-	assert.Equal(t, condition, guard.condition)
+	expectedCondition := condition
+	expectedCondition.WorkspacePath = worktreePath
+	assert.Equal(t, expectedCondition, guard.condition)
 	assert.False(t, guard.condition.ProtectedSocketTopology)
 	assert.True(t, result.WorktreeRemoved)
 }

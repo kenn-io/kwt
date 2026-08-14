@@ -388,7 +388,7 @@ func (r *WorkspaceRunner) create(
 	paneIDs := make([]string, 0, len(layout.Panes))
 	paneIDs = append(paneIDs, strings.TrimSpace(firstPane))
 
-	bootCmd := BuildSessionBootstrapCommand(session, stripNames)
+	bootCmd := buildWorkspaceSessionBootstrapCommand(session, worktreeDir, stripNames)
 	if r.protected {
 		updateEnvironment, updateErr := r.protectedUpdateEnvironment(session)
 		if updateErr != nil {
@@ -462,7 +462,7 @@ func (r *WorkspaceRunner) repairBootstrap(
 	session, worktreeDir string,
 ) error {
 	stripNames := r.sessionStripNames(session, true)
-	bootCmd := BuildSessionBootstrapCommand(session, stripNames)
+	bootCmd := buildWorkspaceSessionBootstrapCommand(session, worktreeDir, stripNames)
 	if r.protected {
 		updateEnvironment, err := r.protectedUpdateEnvironment(session)
 		if err != nil {

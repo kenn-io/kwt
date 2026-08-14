@@ -80,7 +80,7 @@ func TestOrdinaryNamedSocketRemovalUsesSharedServerScan(t *testing.T) {
 			command *TmuxCommand,
 		) (string, string, error) {
 			inspected = command
-			return "123|$1|1720000000|another-session\n", "", nil
+			return "123|$1|1720000000|another-session|\n", "", nil
 		},
 		inspectProtected: func(
 			context.Context,
@@ -103,6 +103,54 @@ func TestOrdinaryNamedSocketRemovalUsesSharedServerScan(t *testing.T) {
 	require.NotNil(t, inspected)
 	assert.Equal(t, "team-server", inspected.socketName)
 	assert.Equal(t, "/srv/tmux", inspected.socketTempDir)
+}
+
+func TestRemovalFailsClosedOnMalformedWorkspaceInventory(t *testing.T) {
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspect: func(
+			context.Context,
+			*TmuxCommand,
+		) (string, string, error) {
+			return "123|$1|1720000000|truncated\n", "", nil
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName:   "expected",
+		WorkspacePath: "/worktrees/topic",
+		Absent:        true,
+	})
+
+	assert.Nil(t, lease)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "malformed session inventory")
+}
+
+func TestRemovalRejectsDifferentNamedSessionForWorkspacePath(t *testing.T) {
+	const workspacePath = "/worktrees/topic"
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspect: func(
+			_ context.Context,
+			_ *TmuxCommand,
+		) (string, string, error) {
+			return "123|$1|1720000000|kwt-workspace-old-branch|" +
+				workspacePathIdentity(workspacePath) + "\n", "", nil
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName:   "kwt-workspace-new-branch",
+		WorkspacePath: workspacePath,
+		Absent:        true,
+	})
+
+	assert.Nil(t, lease)
+	require.Error(t, err)
+	var conditionErr *RemovalSessionConditionError
+	require.ErrorAs(t, err, &conditionErr)
+	assert.Contains(t, conditionErr.Reason, "worktree")
 }
 
 func TestProtectedRemovalFailsClosedOnUnexpectedCanonicalTopology(t *testing.T) {

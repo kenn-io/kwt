@@ -163,6 +163,7 @@ func (s *removalService) Remove(
 			return reg.RemoveIfMatchAfter(request.Path, record, func() error {
 				if request.Session != nil {
 					sessionCondition := *request.Session
+					sessionCondition.WorkspacePath = request.Path
 					sessionCondition.ProtectedSocketTopology = protectedTarget != nil
 					if err := validateCurrentRemovalSessionTarget(
 						ctx,

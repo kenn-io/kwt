@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -351,6 +352,21 @@ func TestBuildSessionBootstrapCommand(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("BuildSessionBootstrapCommand() = %v, want %v", got, want)
+	}
+}
+
+func TestBuildWorkspaceSessionBootstrapCommandRecordsPathIdentity(t *testing.T) {
+	got := buildWorkspaceSessionBootstrapCommand("s", "/worktrees/topic", nil)
+
+	for _, want := range []string{
+		workspacePathOption,
+		"/worktrees/topic",
+		workspaceIdentityOption,
+		workspacePathIdentity("/worktrees/topic"),
+	} {
+		if !slices.Contains(got, want) {
+			t.Errorf("buildWorkspaceSessionBootstrapCommand() = %v, missing %q", got, want)
+		}
 	}
 }
 

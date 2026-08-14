@@ -1,8 +1,12 @@
 package tmux
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"sort"
 	"strings"
+
+	"go.kenn.io/kwt/internal/utils"
 )
 
 // FirstPanePlaceholderArgv is the inert command the first pane runs between
@@ -309,6 +313,28 @@ func BuildSessionBootstrapCommand(session string, stripNames []string) []string 
 }
 
 const workspacePathOption = "@kwt-workspace-path"
+const workspaceIdentityOption = "@kwt-workspace-id"
+
+func workspacePathIdentity(worktreeDir string) string {
+	digest := sha256.Sum256([]byte(utils.PathKey(worktreeDir)))
+	return hex.EncodeToString(digest[:])
+}
+
+// buildWorkspaceSessionBootstrapCommand records the worktree path alongside
+// the terminal environment policy. The path is stable across branch renames,
+// allowing guarded removal to find every KWT session still using a checkout.
+func buildWorkspaceSessionBootstrapCommand(
+	session, worktreeDir string,
+	stripNames []string,
+) []string {
+	cmd := BuildSessionBootstrapCommand(session, stripNames)
+	return append(
+		cmd,
+		";", "set-option", "-t", session, workspacePathOption, worktreeDir,
+		";", "set-option", "-t", session, workspaceIdentityOption,
+		workspacePathIdentity(worktreeDir),
+	)
+}
 
 // buildProtectedSessionBootstrapCommand records the workspace identity in the
 // same pre-shell bootstrap transaction as the session environment policy.
@@ -317,11 +343,7 @@ func buildProtectedSessionBootstrapCommand(
 	stripNames []string,
 	updateEnvironment string,
 ) []string {
-	cmd := BuildSessionBootstrapCommand(session, stripNames)
-	cmd = append(
-		cmd,
-		";", "set-option", "-t", session, workspacePathOption, worktreeDir,
-	)
+	cmd := buildWorkspaceSessionBootstrapCommand(session, worktreeDir, stripNames)
 	return append(
 		cmd,
 		";", "set-option", "-t", session, "update-environment", updateEnvironment,

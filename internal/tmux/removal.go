@@ -20,6 +20,9 @@ type RemovalSessionCondition struct {
 	CreatedAt       string `json:"created_at,omitempty"`
 	SocketDirectory string `json:"socket_directory,omitempty"`
 	SocketName      string `json:"socket_name,omitempty"`
+	// WorkspacePath is derived from the generation-locked removal target by
+	// the lifecycle service. It is never accepted as caller-supplied authority.
+	WorkspacePath string `json:"-"`
 	// ProtectedSocketTopology is derived from trusted worktree provenance by
 	// the lifecycle service. It is never accepted as caller-supplied authority.
 	ProtectedSocketTopology bool `json:"-"`
@@ -73,7 +76,7 @@ func inspectRemovalSessions(
 	ctx context.Context,
 	command *TmuxCommand,
 ) (string, string, error) {
-	const format = "#{pid}|#{session_id}|#{session_created}|#{session_name}"
+	const format = "#{pid}|#{session_id}|#{session_created}|#{session_name}|#{@kwt-workspace-id}"
 	return command.runCommandOutputContextWithStderr(ctx, "list-sessions", "-F", format)
 }
 
@@ -106,18 +109,31 @@ func (g *removalSessionGuard) Quiesce(
 		)
 	}
 
-	var matching []string
-	for _, line := range strings.Split(strings.TrimSuffix(output, "\n"), "\n") {
-		parts := strings.SplitN(line, "|", 4)
-		if len(parts) == 4 && parts[3] == condition.SessionName {
-			matching = parts
-			break
+	rows := strings.TrimSuffix(output, "\n")
+	if rows == "" {
+		return nil, fmt.Errorf("inspect tmux sessions: empty session inventory")
+	}
+	workspaceIdentity := ""
+	if condition.WorkspacePath != "" {
+		workspaceIdentity = workspacePathIdentity(condition.WorkspacePath)
+	}
+	for _, line := range strings.Split(rows, "\n") {
+		parts := strings.SplitN(strings.TrimSuffix(line, "\r"), "|", 5)
+		if len(parts) != 5 {
+			return nil, fmt.Errorf("inspect tmux sessions: malformed session inventory")
+		}
+		if parts[3] == condition.SessionName {
+			return nil, &RemovalSessionConditionError{
+				Reason: "tmux session started after confirmation",
+			}
+		}
+		if workspaceIdentity != "" && parts[4] == workspaceIdentity {
+			return nil, &RemovalSessionConditionError{
+				Reason: "tmux session for worktree remains live",
+			}
 		}
 	}
-	if matching == nil {
-		return noRemovalSessionLease{}, nil
-	}
-	return nil, &RemovalSessionConditionError{Reason: "tmux session started after confirmation"}
+	return noRemovalSessionLease{}, nil
 }
 
 func (g *removalSessionGuard) quiesceProtected(
