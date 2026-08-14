@@ -90,12 +90,13 @@ func isKWTSessionName(name string) bool {
 		strings.HasPrefix(name, "kwt-workspace-")
 }
 
-// IsKWTWorktreeSessionName reports whether name belongs to a Git-worktree
-// naming namespace. Directory workspaces deliberately use a separate prefix.
+// IsKWTWorktreeSessionName reports whether name may belong to a Git worktree.
+// The current kwt-wt namespace is unambiguous. The legacy kwt-workspace
+// namespace is not: its next component may be either a repository host or the
+// directory-workspace marker, and "dir" is a valid host alias. Callers may
+// exempt a directory session only when independent workspace markers prove it.
 func IsKWTWorktreeSessionName(name string) bool {
-	return strings.HasPrefix(name, "kwt-wt-") ||
-		(strings.HasPrefix(name, "kwt-workspace-") &&
-			!strings.HasPrefix(name, dirWorkspaceSessionPrefix))
+	return isKWTSessionName(name)
 }
 
 // sanitizeTmuxName replaces characters tmux disallows in a session name

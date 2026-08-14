@@ -360,14 +360,42 @@ func TestRemovalFailsClosedOnUnmarkedKWTSessionAfterWorktreeMove(t *testing.T) {
 	assert.Contains(t, conditionErr.Reason, "ownership")
 }
 
-func TestRemovalAllowsUnrelatedDirectoryWorkspaceSession(t *testing.T) {
+func TestRemovalFailsClosedOnUnmarkedLegacyDirHostSessionAfterMove(t *testing.T) {
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspect: func(
+			_ context.Context,
+			_ *TmuxCommand,
+		) (string, string, error) {
+			return removalInventoryOutput(removalSessionRow{
+				SessionName: "kwt-workspace-dir-owner-repo-old-branch-oldhash",
+			}), "", nil
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName:         "kwt-workspace-dir-owner-repo-topic-newhash",
+		WorkspacePath:       "/worktrees/moved-topic",
+		WorkspaceGeneration: "0123456789abcdef0123456789abcdef",
+		Absent:              true,
+	})
+
+	assert.Nil(t, lease)
+	require.Error(t, err)
+	var conditionErr *RemovalSessionConditionError
+	require.ErrorAs(t, err, &conditionErr)
+	assert.Contains(t, conditionErr.Reason, "ownership")
+}
+
+func TestRemovalRequiresMarkersToExemptUnrelatedDirectoryWorkspaceSession(t *testing.T) {
 	const directoryPath = "/registered/workspaces/notes"
 	for _, test := range []struct {
 		name              string
 		workspaceIdentity string
+		wantConflict      bool
 	}{
 		{name: "marked", workspaceIdentity: workspacePathIdentity(directoryPath)},
-		{name: "legacy unmarked"},
+		{name: "legacy unmarked", wantConflict: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			guard := &removalSessionGuard{
@@ -390,6 +418,12 @@ func TestRemovalAllowsUnrelatedDirectoryWorkspaceSession(t *testing.T) {
 				Absent:              true,
 			})
 
+			if test.wantConflict {
+				assert.Nil(t, lease)
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "ownership")
+				return
+			}
 			require.NoError(t, err)
 			require.NotNil(t, lease)
 		})

@@ -137,10 +137,10 @@ func TestMatchesLegacyWorkspaceSessionPathAfterBranchChange(t *testing.T) {
 	))
 }
 
-func TestWorktreeSessionNamespaceExcludesDirectoryWorkspaces(t *testing.T) {
+func TestWorktreeSessionNamespaceTreatsLegacyDirPrefixAsAmbiguous(t *testing.T) {
 	assert.True(t, IsKWTWorktreeSessionName("kwt-wt-repo-topic-deadbeef"))
 	assert.True(t, IsKWTWorktreeSessionName("kwt-workspace-host-owner-repo-topic-deadbeef"))
-	assert.False(t, IsKWTWorktreeSessionName("kwt-workspace-dir-notes-deadbeef"))
+	assert.True(t, IsKWTWorktreeSessionName("kwt-workspace-dir-notes-deadbeef"))
 }
 
 func TestDirWorkspaceSessionName(t *testing.T) {
