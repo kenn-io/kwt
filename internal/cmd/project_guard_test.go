@@ -5,11 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
@@ -45,6 +48,46 @@ func TestGuardedProjectOperationRejectsRemovedRegistration(t *testing.T) {
 
 	assert.True(t, service.IsCode(err, service.RegistrationChanged))
 	assert.False(t, called)
+}
+
+func TestWorktreeSessionEstablishmentCancelsWhileWaitingForMutationLock(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("KWT_HOME", home)
+	repoPath := newTUITestRepo(t)
+	generation, err := git.New(repoPath).WorktreeGeneration(repoPath)
+	require.NoError(t, err)
+	lock := flock.New(filepath.Join(repoPath, ".git", "kwt-worktree.lock"))
+	require.NoError(t, lock.Lock())
+	defer func() { _ = lock.Unlock() }()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reachedGuard := make(chan struct{})
+	originalHook := beforeProjectGuardAcquire
+	beforeProjectGuardAcquire = func() { close(reachedGuard) }
+	t.Cleanup(func() { beforeProjectGuardAcquire = originalHook })
+	done := make(chan error, 1)
+	called := false
+	go func() {
+		done <- runWorktreeSessionEstablishment(ctx, repoPath, generation, func() error {
+			called = true
+			return nil
+		})
+	}()
+	select {
+	case <-reachedGuard:
+	case <-time.After(time.Second):
+		t.Fatal("session establishment did not reach the project guard")
+	}
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		assert.ErrorIs(t, err, context.Canceled)
+		assert.False(t, called)
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("session establishment did not honor cancellation while waiting for the mutation lock")
+	}
 }
 
 func TestRequiredProjectGuardRejectsUnexpectedRepository(t *testing.T) {

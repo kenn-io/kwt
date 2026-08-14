@@ -20,7 +20,7 @@ func runWorktreeSessionEstablishment(
 	expectedGeneration string,
 	establish func() error,
 ) error {
-	mainPath, err := git.New(worktreePath).GetMainRepositoryPath()
+	mainPath, err := git.NewWithContext(ctx, worktreePath).GetMainRepositoryPath()
 	if err != nil {
 		return fmt.Errorf("resolve selected repository root: %w", err)
 	}
@@ -37,7 +37,7 @@ func runWorktreeSessionEstablishment(
 		return err
 	}
 	return guard.run(ctx, func() error {
-		return git.New(mainPath).WithWorktreeGeneration(
+		return git.NewWithContext(ctx, mainPath).WithWorktreeGeneration(
 			worktreePath,
 			expectedGeneration,
 			establish,

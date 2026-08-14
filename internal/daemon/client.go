@@ -166,6 +166,8 @@ func (c *Client) ApproveConfig(ctx context.Context, approval kwt.ConfigApproval)
 	return c.do(ctx, http.MethodPost, "/api/v1/config/trust", approval, nil)
 }
 
+var captureRemovalExpansionContext = kwt.CaptureExpansionContext
+
 func (c *Client) ResolveSSH(
 	ctx context.Context,
 	request kwt.SSHResolveRequest,
@@ -204,13 +206,15 @@ func (c *Client) RemoveWorktree(
 	ctx context.Context,
 	request kwt.RemovalRequest,
 ) (kwt.RemovalResult, error) {
-	expansion, err := kwt.CaptureExpansionContext()
-	if err != nil {
-		return kwt.RemovalResult{}, err
+	expansion, expansionErr := captureRemovalExpansionContext()
+	if expansionErr != nil && request.Session != nil {
+		return kwt.RemovalResult{}, expansionErr
 	}
-	request.Expansion = expansion
+	if expansionErr == nil {
+		request.Expansion = expansion
+	}
 	var result kwt.RemovalResult
-	err = c.doWith(
+	err := c.doWith(
 		ctx,
 		c.mutationHTTP,
 		controlResponseLimit,

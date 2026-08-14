@@ -261,3 +261,44 @@ func TestClientReportsEndpointSpecificResponseLimit(t *testing.T) {
 	require.ErrorIs(t, err, ErrResponseTooLarge)
 	assert.ErrorContains(t, err, "/api/v1/inventory exceeds 8 bytes")
 }
+
+func TestUnguardedRemovalContinuesWhenExpansionCaptureFails(t *testing.T) {
+	original := captureRemovalExpansionContext
+	captureRemovalExpansionContext = func() (kwt.ExpansionContext, error) {
+		return kwt.ExpansionContext{}, fmt.Errorf("expansion unavailable")
+	}
+	t.Cleanup(func() { captureRemovalExpansionContext = original })
+	var received kwt.RemovalRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+		require.NoError(t, json.NewEncoder(w).Encode(kwt.RemovalResult{
+			Path: received.Path, WorktreeRemoved: true,
+		}))
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+
+	result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{
+		RepositoryPath: "/repo", Path: "/repo/topic",
+		ExpectedGeneration: "0123456789abcdef0123456789abcdef",
+	})
+
+	require.NoError(t, err)
+	assert.True(t, result.WorktreeRemoved)
+	assert.Empty(t, received.Expansion.Environment)
+}
+
+func TestGuardedRemovalRequiresExpansionCapture(t *testing.T) {
+	original := captureRemovalExpansionContext
+	captureRemovalExpansionContext = func() (kwt.ExpansionContext, error) {
+		return kwt.ExpansionContext{}, fmt.Errorf("expansion unavailable")
+	}
+	t.Cleanup(func() { captureRemovalExpansionContext = original })
+	client := &Client{}
+
+	_, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{
+		Session: &kwt.RemovalSessionCondition{SessionName: "topic", Absent: true},
+	})
+
+	assert.ErrorContains(t, err, "expansion unavailable")
+}
