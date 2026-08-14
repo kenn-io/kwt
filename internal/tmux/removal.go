@@ -194,7 +194,7 @@ func (g *removalSessionGuard) validateOrdinaryAbsence(
 		return errors.Join(contextErr, err)
 	}
 	if err != nil {
-		if isExplicitlyAbsentTmuxDiagnostic(stderr) {
+		if isExplicitlyAbsentRemovalServerDiagnostic(stderr) {
 			return nil
 		}
 		return fmt.Errorf(
@@ -243,6 +243,15 @@ func (g *removalSessionGuard) validateOrdinaryAbsence(
 		}
 	}
 	return nil
+}
+
+func isExplicitlyAbsentRemovalServerDiagnostic(stderr string) bool {
+	diagnostic := strings.TrimSpace(stderr)
+	if strings.HasPrefix(diagnostic, "no server running on ") {
+		return true
+	}
+	return strings.HasPrefix(diagnostic, "error connecting to ") &&
+		strings.HasSuffix(diagnostic, "(No such file or directory)")
 }
 
 type removalSessionRow struct {

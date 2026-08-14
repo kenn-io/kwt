@@ -73,6 +73,24 @@ func TestRemovalSessionInspectionPreservesCancellation(t *testing.T) {
 	}
 }
 
+func TestRemovalSessionInspectionFailsClosedWhenListedSessionDisappears(t *testing.T) {
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspect: func(context.Context, *TmuxCommand) (string, string, error) {
+			return "", "can't find session: $1", errors.New("tmux exited")
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName: "topic",
+		Absent:      true,
+	})
+
+	assert.Nil(t, lease)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "inspect tmux sessions")
+}
+
 func TestOrdinaryNamedSocketRemovalUsesSharedServerScan(t *testing.T) {
 	var inspected *TmuxCommand
 	guard := &removalSessionGuard{
