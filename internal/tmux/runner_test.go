@@ -46,6 +46,8 @@ type mockWorkspaceTmux struct {
 	sessionEnvErr       error
 	sessionEnvQueried   bool
 	sessionWorkspace    string
+	sessionWorkspaceID  string
+	sessionGeneration   string
 	sessionUpdateEnv    string
 	globalUpdateEnv     string
 	sessionOptionErr    error
@@ -68,10 +70,109 @@ func (m *mockWorkspaceTmux) sessionOption(_ string, option string) (string, erro
 	switch option {
 	case workspacePathOption:
 		return m.sessionWorkspace, m.sessionOptionErr
+	case workspaceIdentityOption:
+		return m.sessionWorkspaceID, m.sessionOptionErr
+	case workspaceGenerationOption:
+		return m.sessionGeneration, m.sessionOptionErr
 	case "update-environment":
 		return m.sessionUpdateEnv, m.sessionOptionErr
 	default:
 		return "", m.sessionOptionErr
+	}
+}
+
+func (m *mockWorkspaceTmux) sessionUserOption(
+	_ context.Context,
+	_ string,
+	option string,
+) (string, error) {
+	switch option {
+	case workspaceIdentityOption:
+		return m.sessionWorkspaceID, m.sessionOptionErr
+	case workspaceGenerationOption:
+		return m.sessionGeneration, m.sessionOptionErr
+	default:
+		return "", m.sessionOptionErr
+	}
+}
+
+func TestEnsureWithGenerationRejectsStaleExistingSessionIdentity(t *testing.T) {
+	const generation = "0123456789abcdef0123456789abcdef"
+	for _, test := range []struct {
+		name               string
+		workspaceIdentity  string
+		existingGeneration string
+		want               string
+	}{
+		{
+			name:               "workspace identity changed",
+			workspaceIdentity:  workspacePathIdentity("/old-worktree"),
+			existingGeneration: generation,
+			want:               "workspace identity",
+		},
+		{
+			name:               "generation changed",
+			workspaceIdentity:  workspacePathIdentity("/new-worktree"),
+			existingGeneration: "fedcba9876543210fedcba9876543210",
+			want:               "generation",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m := &mockWorkspaceTmux{
+				hasSession:         true,
+				sessionWorkspaceID: test.workspaceIdentity,
+				sessionGeneration:  test.existingGeneration,
+			}
+			runner := NewWorkspaceRunner(m, nil)
+
+			err := runner.EnsureWithGeneration(
+				context.Background(),
+				"workspace",
+				"/new-worktree",
+				generation,
+				BlankLayout(),
+			)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), test.want)
+			assert.Empty(t, m.calls, "stale sessions must not be retagged")
+		})
+	}
+}
+
+func TestEnsureWithGenerationReusesMatchingOrUnmarkedSession(t *testing.T) {
+	const generation = "0123456789abcdef0123456789abcdef"
+	for _, test := range []struct {
+		name               string
+		workspaceIdentity  string
+		existingGeneration string
+	}{
+		{
+			name:               "matching markers",
+			workspaceIdentity:  workspacePathIdentity("/worktree"),
+			existingGeneration: generation,
+		},
+		{name: "legacy unmarked session"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m := &mockWorkspaceTmux{
+				hasSession:         true,
+				sessionWorkspaceID: test.workspaceIdentity,
+				sessionGeneration:  test.existingGeneration,
+			}
+			runner := NewWorkspaceRunner(m, nil)
+
+			err := runner.EnsureWithGeneration(
+				context.Background(),
+				"workspace",
+				"/worktree",
+				generation,
+				BlankLayout(),
+			)
+
+			require.NoError(t, err)
+			assert.NotEmpty(t, m.calls)
+		})
 	}
 }
 

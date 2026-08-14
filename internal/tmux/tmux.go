@@ -398,6 +398,24 @@ func (t *TmuxCommand) sessionOption(session, option string) (string, error) {
 	)
 }
 
+// sessionUserOption reads a user option through tmux format expansion. Unlike
+// show-options, an unset user option is a successful empty value, allowing
+// legacy sessions without identity markers to be upgraded deliberately.
+func (t *TmuxCommand) sessionUserOption(
+	ctx context.Context,
+	session string,
+	option string,
+) (string, error) {
+	return t.RunCommandOutputContext(
+		ctx,
+		"display-message",
+		"-p",
+		"-t",
+		"="+session+":",
+		"#{"+option+"}",
+	)
+}
+
 func (t *TmuxCommand) globalOption(option string) (string, error) {
 	return t.RunCommandOutputContext(
 		context.Background(),

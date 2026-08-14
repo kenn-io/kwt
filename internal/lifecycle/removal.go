@@ -50,6 +50,8 @@ type removalService struct {
 	sessionGuard tmux.RemovalSessionGuard
 }
 
+var newRemovalInventoryGit = git.NewForInventory
+
 func NewRemovalService(options RemovalServiceOptions) Remover {
 	guard := options.SessionGuard
 	if guard == nil {
@@ -80,8 +82,22 @@ func (s *removalService) Remove(
 	if err := ctx.Err(); err != nil {
 		return result, classifyRemovalError(err, result)
 	}
+	var protectedNames []string
+	if request.Session != nil {
+		configSnapshot, err := config.LoadGlobalSnapshotAtWithExpansion(
+			s.home,
+			request.Expansion.expandPath,
+		)
+		if err != nil {
+			return result, classifyRemovalError(
+				fmt.Errorf("reload removal credential policy: %w", err),
+				result,
+			)
+		}
+		protectedNames = credentials.ProtectedNames(configSnapshot.Config)
+	}
 
-	repository := git.NewForInventory(ctx, request.RepositoryPath, nil)
+	repository := newRemovalInventoryGit(ctx, request.RepositoryPath, protectedNames)
 	root, err := repository.GetMainRepositoryPath()
 	if err != nil {
 		return result, classifyRemovalError(fmt.Errorf("resolve main repository: %w", err), result)
@@ -89,7 +105,6 @@ func (s *removalService) Remove(
 	var (
 		projectClaim    *ProjectClaim
 		protectedTarget *removalProtectedSessionTarget
-		protectedNames  []string
 	)
 	if request.Session != nil {
 		var releaseProject func() error
@@ -116,17 +131,6 @@ func (s *removalService) Remove(
 		if err != nil {
 			return result, classifyRemovalError(err, result)
 		}
-		configSnapshot, err := config.LoadGlobalSnapshotAtWithExpansion(
-			s.home,
-			request.Expansion.expandPath,
-		)
-		if err != nil {
-			return result, classifyRemovalError(
-				fmt.Errorf("reload removal credential policy: %w", err),
-				result,
-			)
-		}
-		protectedNames = credentials.ProtectedNames(configSnapshot.Config)
 	}
 
 	reg, err := registry.NewAt(s.home)
@@ -162,10 +166,10 @@ func (s *removalService) Remove(
 
 	record, registered := reg.Get(request.Path)
 	var mutationErr error
-	transaction, committed, err := git.NewForInventory(
+	transaction, committed, err := newRemovalInventoryGit(
 		ctx,
 		root,
-		nil,
+		protectedNames,
 	).RemoveWorktreeTransactionAfterClaim(
 		request.Path,
 		request.ExpectedGeneration,

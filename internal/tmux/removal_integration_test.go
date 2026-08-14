@@ -76,6 +76,46 @@ func TestRemovalSessionGuardAcceptsMissingNamedSocketWhenAbsenceWasConfirmed(t *
 	require.NoError(t, err)
 }
 
+func TestRemovalSessionGuardRejectsDelimiterBearingWorkspaceMarker(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires POSIX tmux")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is not installed")
+	}
+
+	tempDir := t.TempDir()
+	command := NewTmuxCommandInTempDir("tmux", tempDir)
+	const session = "kwt-removal-marker-test"
+	require.NoError(t, command.RunCommandContext(
+		context.Background(), "new-session", "-d", "-s", session, "sleep", "30",
+	))
+	t.Cleanup(func() { _ = command.RunCommandContext(context.Background(), "kill-server") })
+	require.NoError(t, command.RunCommandContext(
+		context.Background(),
+		"set-option",
+		"-t",
+		session,
+		workspaceIdentityOption,
+		"attacker|"+strings.Repeat("a", 64),
+	))
+
+	lease, err := NewRemovalSessionGuard("tmux").Quiesce(
+		context.Background(),
+		RemovalSessionCondition{
+			SessionName:         "different-session",
+			WorkspacePath:       "/worktrees/topic",
+			WorkspaceGeneration: "0123456789abcdef0123456789abcdef",
+			SocketDirectory:     tempDir,
+			Absent:              true,
+		},
+	)
+
+	assert.Nil(t, lease)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "malformed session inventory")
+}
+
 func quiesceAndTerminateForTest(
 	guard RemovalSessionGuard,
 	condition RemovalSessionCondition,

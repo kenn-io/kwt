@@ -23,6 +23,7 @@ type workspaceTmux interface {
 	GlobalEnvironment() (string, error)
 	SessionEnvironment(session string) (string, error)
 	sessionOption(session, option string) (string, error)
+	sessionUserOption(context.Context, string, string) (string, error)
 	globalOption(option string) (string, error)
 }
 
@@ -152,6 +153,16 @@ func (r *WorkspaceRunner) ensure(
 		return err
 	}
 	sessionExists := r.tmux.HasSession(session)
+	if sessionExists && generation != "" {
+		if err := r.validateExistingWorktreeIdentity(
+			ctx,
+			session,
+			worktreeDir,
+			generation,
+		); err != nil {
+			return err
+		}
+	}
 	if r.protected {
 		if err := r.validateProtectedState(
 			session,
@@ -167,6 +178,45 @@ func (r *WorkspaceRunner) ensure(
 		}
 	} else if err := r.create(ctx, session, worktreeDir, generation, layout); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (r *WorkspaceRunner) validateExistingWorktreeIdentity(
+	ctx context.Context,
+	session string,
+	worktreeDir string,
+	generation string,
+) error {
+	workspaceIdentity, err := r.tmux.sessionUserOption(
+		ctx,
+		session,
+		workspaceIdentityOption,
+	)
+	if err != nil {
+		return fmt.Errorf("cannot inspect tmux workspace identity: %w", err)
+	}
+	workspaceIdentity = strings.TrimSpace(workspaceIdentity)
+	if workspaceIdentity != "" && workspaceIdentity != workspacePathIdentity(worktreeDir) {
+		return &SessionSafetyError{Reason: fmt.Sprintf(
+			"tmux session %q belongs to a different workspace identity",
+			session,
+		)}
+	}
+	existingGeneration, err := r.tmux.sessionUserOption(
+		ctx,
+		session,
+		workspaceGenerationOption,
+	)
+	if err != nil {
+		return fmt.Errorf("cannot inspect tmux workspace generation: %w", err)
+	}
+	existingGeneration = strings.TrimSpace(existingGeneration)
+	if existingGeneration != "" && existingGeneration != generation {
+		return &SessionSafetyError{Reason: fmt.Sprintf(
+			"tmux session %q belongs to a different worktree generation",
+			session,
+		)}
 	}
 	return nil
 }

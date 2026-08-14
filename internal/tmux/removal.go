@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	pathpkg "path"
@@ -83,8 +84,72 @@ func inspectRemovalSessions(
 	ctx context.Context,
 	command *TmuxCommand,
 ) (string, string, error) {
-	const format = "#{pid}|#{session_id}|#{session_created}|#{session_name}|#{@kwt-workspace-id}|#{@kwt-workspace-generation}"
-	return command.runCommandOutputContextWithStderr(ctx, "list-sessions", "-F", format)
+	idsOutput, stderr, err := command.runCommandOutputContextWithStderr(
+		ctx,
+		"list-sessions",
+		"-F",
+		"#{session_id}",
+	)
+	if err != nil {
+		return "", stderr, err
+	}
+	ids := strings.Split(strings.TrimSuffix(idsOutput, "\n"), "\n")
+	rows := make([]removalSessionRow, 0, len(ids))
+	for _, rawID := range ids {
+		id := strings.TrimSuffix(rawID, "\r")
+		if !validRemovalSessionID(id) {
+			return "", "", fmt.Errorf("tmux returned an invalid session id")
+		}
+		target := id
+		name, fieldStderr, fieldErr := command.runCommandOutputContextWithStderr(
+			ctx,
+			"display-message",
+			"-p",
+			"-t",
+			target,
+			"#{session_name}",
+		)
+		if fieldErr != nil {
+			return "", fieldStderr, fieldErr
+		}
+		identity, fieldStderr, fieldErr := command.runCommandOutputContextWithStderr(
+			ctx,
+			"display-message",
+			"-p",
+			"-t",
+			target,
+			"#{@kwt-workspace-id}",
+		)
+		if fieldErr != nil {
+			return "", fieldStderr, fieldErr
+		}
+		generation, fieldStderr, fieldErr := command.runCommandOutputContextWithStderr(
+			ctx,
+			"display-message",
+			"-p",
+			"-t",
+			target,
+			"#{@kwt-workspace-generation}",
+		)
+		if fieldErr != nil {
+			return "", fieldStderr, fieldErr
+		}
+		rows = append(rows, removalSessionRow{
+			SessionName:         trimTmuxField(name),
+			WorkspaceIdentity:   trimTmuxField(identity),
+			WorkspaceGeneration: trimTmuxField(generation),
+		})
+	}
+	encoded, err := json.Marshal(rows)
+	if err != nil {
+		return "", "", fmt.Errorf("encode tmux session inventory: %w", err)
+	}
+	return string(encoded), "", nil
+}
+
+func trimTmuxField(value string) string {
+	value = strings.TrimSuffix(value, "\n")
+	return strings.TrimSuffix(value, "\r")
 }
 
 func (g *removalSessionGuard) Quiesce(
@@ -137,39 +202,41 @@ func (g *removalSessionGuard) validateOrdinaryAbsence(
 		)
 	}
 
-	rows := strings.TrimSuffix(output, "\n")
-	if rows == "" {
+	var rows []removalSessionRow
+	if err := json.Unmarshal([]byte(output), &rows); err != nil {
+		return fmt.Errorf("inspect tmux sessions: malformed session inventory")
+	}
+	if len(rows) == 0 {
 		return fmt.Errorf("inspect tmux sessions: empty session inventory")
 	}
 	workspaceIdentity := ""
 	if condition.WorkspacePath != "" {
 		workspaceIdentity = workspacePathIdentity(condition.WorkspacePath)
 	}
-	for _, line := range strings.Split(rows, "\n") {
-		row, parseErr := parseRemovalSessionRow(strings.TrimSuffix(line, "\r"))
-		if parseErr != nil {
+	for _, row := range rows {
+		if err := validateRemovalSessionRow(row); err != nil {
 			return fmt.Errorf("inspect tmux sessions: malformed session inventory")
 		}
-		if row.sessionName == condition.SessionName {
+		if row.SessionName == condition.SessionName {
 			return &RemovalSessionConditionError{
 				Reason: "tmux session started after confirmation",
 			}
 		}
 		if workspaceIdentity != "" &&
-			(row.workspaceIdentity == workspaceIdentity ||
-				MatchesLegacyWorkspaceSessionPath(row.sessionName, condition.WorkspacePath)) {
+			(row.WorkspaceIdentity == workspaceIdentity ||
+				MatchesLegacyWorkspaceSessionPath(row.SessionName, condition.WorkspacePath)) {
 			return &RemovalSessionConditionError{
 				Reason: "tmux session for worktree remains live",
 			}
 		}
 		if condition.WorkspaceGeneration != "" &&
-			row.workspaceGeneration == condition.WorkspaceGeneration {
+			row.WorkspaceGeneration == condition.WorkspaceGeneration {
 			return &RemovalSessionConditionError{
 				Reason: "tmux session for worktree remains live",
 			}
 		}
-		if row.workspaceGeneration == "" && row.workspaceIdentity == "" &&
-			IsKWTWorktreeSessionName(row.sessionName) {
+		if row.WorkspaceGeneration == "" && row.WorkspaceIdentity == "" &&
+			IsKWTWorktreeSessionName(row.SessionName) {
 			return &RemovalSessionConditionError{
 				Reason: "legacy KWT session ownership is indeterminate",
 			}
@@ -179,35 +246,39 @@ func (g *removalSessionGuard) validateOrdinaryAbsence(
 }
 
 type removalSessionRow struct {
-	sessionName         string
-	workspaceIdentity   string
-	workspaceGeneration string
+	SessionName         string `json:"session_name"`
+	WorkspaceIdentity   string `json:"workspace_identity,omitempty"`
+	WorkspaceGeneration string `json:"workspace_generation,omitempty"`
 }
 
-func parseRemovalSessionRow(line string) (removalSessionRow, error) {
-	rest := line
-	for range 3 {
-		field, remaining, ok := strings.Cut(rest, "|")
-		if !ok || field == "" {
-			return removalSessionRow{}, errors.New("missing fixed field")
+func validateRemovalSessionRow(row removalSessionRow) error {
+	if row.SessionName == "" ||
+		(row.WorkspaceIdentity != "" && !validLowerHex(row.WorkspaceIdentity, 64)) ||
+		(row.WorkspaceGeneration != "" && !validLowerHex(row.WorkspaceGeneration, 32)) {
+		return errors.New("invalid tmux session inventory")
+	}
+	return nil
+}
+
+func validRemovalSessionID(value string) bool {
+	number, ok := strings.CutPrefix(value, "$")
+	if !ok || number == "" {
+		return false
+	}
+	parsed, err := strconv.ParseUint(number, 10, 64)
+	return err == nil && strconv.FormatUint(parsed, 10) == number
+}
+
+func validLowerHex(value string, length int) bool {
+	if len(value) != length {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
 		}
-		rest = remaining
 	}
-	lastDelimiter := strings.LastIndexByte(rest, '|')
-	if lastDelimiter < 0 {
-		return removalSessionRow{}, errors.New("missing session field")
-	}
-	workspaceGeneration := rest[lastDelimiter+1:]
-	rest = rest[:lastDelimiter]
-	identityDelimiter := strings.LastIndexByte(rest, '|')
-	if identityDelimiter < 0 || identityDelimiter == 0 {
-		return removalSessionRow{}, errors.New("missing session field")
-	}
-	return removalSessionRow{
-		sessionName:         rest[:identityDelimiter],
-		workspaceIdentity:   rest[identityDelimiter+1:],
-		workspaceGeneration: workspaceGeneration,
-	}, nil
+	return true
 }
 
 func (g *removalSessionGuard) quiesceProtected(

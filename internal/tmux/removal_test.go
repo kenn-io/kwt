@@ -2,7 +2,9 @@ package tmux
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,7 +82,9 @@ func TestOrdinaryNamedSocketRemovalUsesSharedServerScan(t *testing.T) {
 			command *TmuxCommand,
 		) (string, string, error) {
 			inspected = command
-			return "123|$1|1720000000|another-session||\n", "", nil
+			return removalInventoryOutput(removalSessionRow{
+				SessionName: "another-session",
+			}), "", nil
 		},
 		inspectProtected: func(
 			context.Context,
@@ -112,7 +116,7 @@ func TestRemovalFailsClosedOnMalformedWorkspaceInventory(t *testing.T) {
 			context.Context,
 			*TmuxCommand,
 		) (string, string, error) {
-			return "123|$1|1720000000|truncated\n", "", nil
+			return "not-json", "", nil
 		},
 	}
 
@@ -120,6 +124,33 @@ func TestRemovalFailsClosedOnMalformedWorkspaceInventory(t *testing.T) {
 		SessionName:   "expected",
 		WorkspacePath: "/worktrees/topic",
 		Absent:        true,
+	})
+
+	assert.Nil(t, lease)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "malformed session inventory")
+}
+
+func TestRemovalFailsClosedWhenWorkspaceMarkerContainsDelimiter(t *testing.T) {
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspect: func(
+			context.Context,
+			*TmuxCommand,
+		) (string, string, error) {
+			return removalInventoryOutput(removalSessionRow{
+				SessionName:         "other-session",
+				WorkspaceIdentity:   "attacker|" + strings.Repeat("a", 64),
+				WorkspaceGeneration: "fedcba9876543210fedcba9876543210",
+			}), "", nil
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName:         "expected",
+		WorkspacePath:       "/worktrees/topic",
+		WorkspaceGeneration: "0123456789abcdef0123456789abcdef",
+		Absent:              true,
 	})
 
 	assert.Nil(t, lease)
@@ -135,8 +166,10 @@ func TestRemovalRejectsDifferentNamedSessionForWorkspacePath(t *testing.T) {
 			_ context.Context,
 			_ *TmuxCommand,
 		) (string, string, error) {
-			return "123|$1|1720000000|kwt-workspace-old-branch|" +
-				workspacePathIdentity(workspacePath) + "|\n", "", nil
+			return removalInventoryOutput(removalSessionRow{
+				SessionName:       "kwt-workspace-old-branch",
+				WorkspaceIdentity: workspacePathIdentity(workspacePath),
+			}), "", nil
 		},
 	}
 
@@ -161,8 +194,10 @@ func TestRemovalPreservesDelimiterInWorkspaceSessionName(t *testing.T) {
 			_ context.Context,
 			_ *TmuxCommand,
 		) (string, string, error) {
-			return "123|$1|1720000000|kwt-wt-repo-feature|topic-deadbeef|" +
-				workspacePathIdentity(workspacePath) + "|\n", "", nil
+			return removalInventoryOutput(removalSessionRow{
+				SessionName:       "kwt-wt-repo-feature|topic-deadbeef",
+				WorkspaceIdentity: workspacePathIdentity(workspacePath),
+			}), "", nil
 		},
 	}
 
@@ -187,7 +222,9 @@ func TestRemovalRejectsUnmarkedLegacySessionAfterBranchChange(t *testing.T) {
 			_ context.Context,
 			_ *TmuxCommand,
 		) (string, string, error) {
-			return "123|$1|1720000000|kwt-wt-kwt-old-branch-9cc4e551||\n", "", nil
+			return removalInventoryOutput(removalSessionRow{
+				SessionName: "kwt-wt-kwt-old-branch-9cc4e551",
+			}), "", nil
 		},
 	}
 
@@ -212,8 +249,11 @@ func TestRemovalRejectsGenerationMarkedSessionAfterWorktreeMove(t *testing.T) {
 			_ context.Context,
 			_ *TmuxCommand,
 		) (string, string, error) {
-			return "123|$1|1720000000|kwt-wt-kwt-topic-oldhash|old-path-id|" +
-				generation + "\n", "", nil
+			return removalInventoryOutput(removalSessionRow{
+				SessionName:         "kwt-wt-kwt-topic-oldhash",
+				WorkspaceIdentity:   strings.Repeat("a", 64),
+				WorkspaceGeneration: generation,
+			}), "", nil
 		},
 	}
 
@@ -243,8 +283,11 @@ func TestProtectedRemovalRejectsOrdinaryGenerationMarkedSessionAfterWorktreeMove
 		) (string, string, error) {
 			ordinaryInspections++
 			assert.Empty(t, command.socketName)
-			return "123|$1|1720000000|kwt-wt-repo-topic-oldhash|old-path-id|" +
-				generation + "\n", "", nil
+			return removalInventoryOutput(removalSessionRow{
+				SessionName:         "kwt-wt-repo-topic-oldhash",
+				WorkspaceIdentity:   strings.Repeat("a", 64),
+				WorkspaceGeneration: generation,
+			}), "", nil
 		},
 		inspectProtected: func(
 			_ context.Context,
@@ -279,7 +322,9 @@ func TestRemovalFailsClosedOnUnmarkedKWTSessionAfterWorktreeMove(t *testing.T) {
 			_ context.Context,
 			_ *TmuxCommand,
 		) (string, string, error) {
-			return "123|$1|1720000000|kwt-wt-kwt-topic-oldhash||\n", "", nil
+			return removalInventoryOutput(removalSessionRow{
+				SessionName: "kwt-wt-kwt-topic-oldhash",
+			}), "", nil
 		},
 	}
 
@@ -313,9 +358,10 @@ func TestRemovalAllowsUnrelatedDirectoryWorkspaceSession(t *testing.T) {
 					_ context.Context,
 					_ *TmuxCommand,
 				) (string, string, error) {
-					return "123|$1|1720000000|" +
-						DirWorkspaceSessionName("notes", directoryPath) + "|" +
-						test.workspaceIdentity + "|\n", "", nil
+					return removalInventoryOutput(removalSessionRow{
+						SessionName:       DirWorkspaceSessionName("notes", directoryPath),
+						WorkspaceIdentity: test.workspaceIdentity,
+					}), "", nil
 				},
 			}
 
@@ -436,4 +482,12 @@ func absentOrdinaryRemovalInspection(
 	*TmuxCommand,
 ) (string, string, error) {
 	return "", "no server running on /tmp/tmux/default", errors.New("tmux exited")
+}
+
+func removalInventoryOutput(rows ...removalSessionRow) string {
+	encoded, err := json.Marshal(rows)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
 }

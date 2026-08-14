@@ -172,6 +172,20 @@ func TestRemovalServiceReloadsConfiguredProtectedNamesPerRequest(t *testing.T) {
 	home := t.TempDir()
 	guard := &recordingRemovalSessionGuard{}
 	service := NewRemovalService(RemovalServiceOptions{Home: home, SessionGuard: guard})
+	originalNewGit := newRemovalInventoryGit
+	t.Cleanup(func() { newRemovalInventoryGit = originalNewGit })
+	var gitProtectedNames [][]string
+	newRemovalInventoryGit = func(
+		ctx context.Context,
+		path string,
+		protectedNames []string,
+	) *git.Git {
+		gitProtectedNames = append(
+			gitProtectedNames,
+			append([]string(nil), protectedNames...),
+		)
+		return git.NewForInventory(ctx, path, protectedNames)
+	}
 	contents := fmt.Sprintf(
 		"[fleet]\ntoken_env = %q\n[[projects]]\nrepository = %q\nname = \"repository\"\npath = %q\n",
 		"CUSTOM_FLEET_TOKEN",
@@ -194,6 +208,10 @@ func TestRemovalServiceReloadsConfiguredProtectedNamesPerRequest(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.WorktreeRemoved)
 	assert.Contains(t, guard.condition.ProtectedNames, "CUSTOM_FLEET_TOKEN")
+	require.NotEmpty(t, gitProtectedNames)
+	for _, protectedNames := range gitProtectedNames {
+		assert.Contains(t, protectedNames, "CUSTOM_FLEET_TOKEN")
+	}
 }
 
 func TestGuardedRemovalSupportsUnregisteredRepository(t *testing.T) {
