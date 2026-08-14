@@ -278,5 +278,7 @@ func removalTestClient(t *testing.T, remover kwt.Remover) (*Client, func()) {
 		kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback},
 	)
 	require.NoError(t, err)
-	return newClient(endpoint, "secret", server.Client()), server.Close
+	client := newClient(endpoint, "secret", server.Client())
+	client.capabilities = []string{CapabilityRemoval, CapabilityGuardedRemoval}
+	return client, server.Close
 }

@@ -288,6 +288,78 @@ func TestUnguardedRemovalContinuesWhenExpansionCaptureFails(t *testing.T) {
 	assert.Empty(t, received.Expansion.Environment)
 }
 
+func TestVersionOneUnguardedRemovalPreservesLegacyPayload(t *testing.T) {
+	original := captureRemovalExpansionContext
+	captureRemovalExpansionContext = func() (kwt.ExpansionContext, error) {
+		return kwt.ExpansionContext{
+			WorkingDirectory: "/repo/topic",
+			HomeDirectory:    "/home/tester",
+			Environment:      map[string]string{"FLEET_TOKEN": "secret"},
+		}, nil
+	}
+	t.Cleanup(func() { captureRemovalExpansionContext = original })
+	type legacyRemovalRequest struct {
+		RepositoryPath     string `json:"repository_path"`
+		Path               string `json:"path"`
+		ExpectedGeneration string `json:"expected_generation"`
+		Force              bool   `json:"force,omitempty"`
+		DeleteBranch       bool   `json:"delete_branch,omitempty"`
+		ForceDeleteBranch  bool   `json:"force_delete_branch,omitempty"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		var received legacyRemovalRequest
+		require.NoError(t, decoder.Decode(&received))
+		assert.Equal(t, "/repo/topic", received.Path)
+		require.NoError(t, json.NewEncoder(w).Encode(kwt.RemovalResult{
+			Path: received.Path, WorktreeRemoved: true,
+		}))
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+
+	result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{
+		RepositoryPath: "/repo", Path: "/repo/topic",
+		ExpectedGeneration: "0123456789abcdef0123456789abcdef",
+	})
+
+	require.NoError(t, err)
+	assert.True(t, result.WorktreeRemoved)
+}
+
+func TestVersionTwoUnguardedRemovalIncludesExpansionContext(t *testing.T) {
+	original := captureRemovalExpansionContext
+	captureRemovalExpansionContext = func() (kwt.ExpansionContext, error) {
+		return kwt.ExpansionContext{
+			WorkingDirectory: "/repo/topic",
+			HomeDirectory:    "/home/tester",
+			Environment:      map[string]string{"FLEET_TOKEN": "secret"},
+		}, nil
+	}
+	t.Cleanup(func() { captureRemovalExpansionContext = original })
+	var received kwt.RemovalRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+		require.NoError(t, json.NewEncoder(w).Encode(kwt.RemovalResult{
+			Path: received.Path, WorktreeRemoved: true,
+		}))
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+	client.capabilities = []string{CapabilityRemoval, CapabilityGuardedRemoval}
+
+	result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{
+		RepositoryPath: "/repo", Path: "/repo/topic",
+		ExpectedGeneration: "0123456789abcdef0123456789abcdef",
+	})
+
+	require.NoError(t, err)
+	assert.True(t, result.WorktreeRemoved)
+	assert.Equal(t, "/repo/topic", received.Expansion.WorkingDirectory)
+	assert.Equal(t, "secret", received.Expansion.Environment["FLEET_TOKEN"])
+}
+
 func TestGuardedRemovalRequiresExpansionCapture(t *testing.T) {
 	original := captureRemovalExpansionContext
 	captureRemovalExpansionContext = func() (kwt.ExpansionContext, error) {

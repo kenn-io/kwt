@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	kitdaemon "go.kenn.io/kit/daemon"
@@ -26,6 +27,7 @@ import (
 type Client struct {
 	endpoint      kitdaemon.Endpoint
 	token         string
+	capabilities  []string
 	controlHTTP   *http.Client
 	inventoryHTTP *http.Client
 	mutationHTTP  *http.Client
@@ -40,6 +42,15 @@ type worktreeRemovedError struct {
 
 type refreshRequiredError struct {
 	err error
+}
+
+type removalRequestV1 struct {
+	RepositoryPath     string `json:"repository_path"`
+	Path               string `json:"path"`
+	ExpectedGeneration string `json:"expected_generation"`
+	Force              bool   `json:"force,omitempty"`
+	DeleteBranch       bool   `json:"delete_branch,omitempty"`
+	ForceDeleteBranch  bool   `json:"force_delete_branch,omitempty"`
 }
 
 func (e *worktreeRemovedError) Error() string {
@@ -206,12 +217,23 @@ func (c *Client) RemoveWorktree(
 	ctx context.Context,
 	request kwt.RemovalRequest,
 ) (kwt.RemovalResult, error) {
-	expansion, expansionErr := captureRemovalExpansionContext()
-	if expansionErr != nil && request.Session != nil {
-		return kwt.RemovalResult{}, expansionErr
-	}
-	if expansionErr == nil {
-		request.Expansion = expansion
+	payload := any(removalRequestV1{
+		RepositoryPath:     request.RepositoryPath,
+		Path:               request.Path,
+		ExpectedGeneration: request.ExpectedGeneration,
+		Force:              request.Force,
+		DeleteBranch:       request.DeleteBranch,
+		ForceDeleteBranch:  request.ForceDeleteBranch,
+	})
+	if request.Session != nil || slices.Contains(c.capabilities, CapabilityGuardedRemoval) {
+		expansion, expansionErr := captureRemovalExpansionContext()
+		if expansionErr != nil && request.Session != nil {
+			return kwt.RemovalResult{}, expansionErr
+		}
+		if expansionErr == nil {
+			request.Expansion = expansion
+		}
+		payload = request
 	}
 	var result kwt.RemovalResult
 	err := c.doWith(
@@ -220,7 +242,7 @@ func (c *Client) RemoveWorktree(
 		controlResponseLimit,
 		http.MethodPost,
 		"/api/v1/worktrees/remove",
-		request,
+		payload,
 		&result,
 	)
 	if err != nil {

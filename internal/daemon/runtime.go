@@ -208,6 +208,7 @@ func inspectLiveRecord(
 		observation.Err = err
 		return observation
 	}
+	client.capabilities = slices.Clone(status.Capabilities)
 	observation.Client = client
 	observation.Status = status
 	observation.State, observation.Err = classifyRuntimeStatus(status)
