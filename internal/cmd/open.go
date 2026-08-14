@@ -419,8 +419,8 @@ func openSelectedWorktree(
 		return err
 	}
 
-	session := tmux.WorkspaceSessionName(entry.RepositoryInfo, entry.Branch, entry.Path)
-	runner := newOpenWorkspaceRunner(credentials.ProtectedNames(ctx.Config))
+	protectedNames := credentials.ProtectedNames(ctx.Config)
+	runner := newOpenWorkspaceRunner(protectedNames)
 	if openExpectedRepository != "" {
 		return openExpectedWorktree(
 			commandCtx,
@@ -429,13 +429,15 @@ func openSelectedWorktree(
 			runner,
 			startSession,
 			os.Getenv("TMUX") != "",
+			protectedNames,
 		)
 	}
-	err = runWorktreeSessionEstablishment(
+	session, err := runWorktreeSessionEstablishment(
 		commandCtx,
 		entry.Path,
 		entry.Generation,
-		func() error {
+		protectedNames,
+		func(session string) error {
 			return runner.Ensure(commandCtx, session, entry.Path, layout)
 		},
 	)
@@ -452,6 +454,7 @@ func openExpectedWorktree(
 	runner openWorkspaceRunner,
 	startSession bool,
 	insideTmux bool,
+	protectedNames []string,
 ) error {
 	mainPath, err := git.New(entry.Path).GetMainRepositoryPath()
 	if err != nil {
@@ -496,10 +499,17 @@ func openExpectedWorktree(
 			currentSession != openExpectedSession {
 			return registrationChangedOpenError(nil)
 		}
-		generationErr := git.New(mainPath).WithWorktreeGeneration(
+		_, generationErr := withCurrentWorktreeSession(
+			ctx,
+			mainPath,
 			current.Path,
 			openExpectedGeneration,
-			func() error {
+			[]models.Project{guard.claim.Registration.Effective},
+			protectedNames,
+			func(lockedSession string) error {
+				if lockedSession != openExpectedSession {
+					return registrationChangedOpenError(nil)
+				}
 				if err := acknowledgeRemoteSourcePath(current.Path); err != nil {
 					return err
 				}

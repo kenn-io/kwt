@@ -1670,24 +1670,25 @@ func (b *tuiBackend) attachWorkspace(ctx context.Context, row dashboard.Row, lay
 	if err := b.acknowledgeRemoteSource(rowPaneRoot(row)); err != nil {
 		return err
 	}
-	sessionName, err := b.sessionName(row)
-	if err != nil {
-		return err
-	}
 	layout, err := b.resolveLayout(row, layoutName, interactive)
 	if err != nil {
 		return err
 	}
 	if row.Entry == nil {
+		sessionName, err := b.sessionName(row)
+		if err != nil {
+			return err
+		}
 		return b.ensureAndAttach(
 			ctx, sessionName, rowPaneRoot(row), layout, insideTmux,
 		)
 	}
-	err = runWorktreeSessionEstablishment(
+	sessionName, err := runWorktreeSessionEstablishment(
 		ctx,
 		row.Entry.Path,
 		row.Entry.Generation,
-		func() error {
+		b.protectedNames,
+		func(sessionName string) error {
 			return b.ensureWorkspace(
 				ctx, sessionName, row.Entry.Path, layout,
 			)

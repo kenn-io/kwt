@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/lifecycle"
+	"go.kenn.io/kwt/internal/tmux"
+	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
@@ -18,31 +21,90 @@ func runWorktreeSessionEstablishment(
 	ctx context.Context,
 	worktreePath string,
 	expectedGeneration string,
-	establish func() error,
-) error {
+	protectedNames []string,
+	establish func(string) error,
+) (string, error) {
 	mainPath, err := git.NewWithContext(ctx, worktreePath).GetMainRepositoryPath()
 	if err != nil {
-		return fmt.Errorf("resolve selected repository root: %w", err)
+		return "", fmt.Errorf("resolve selected repository root: %w", err)
 	}
 	home, err := config.CanonicalHome()
 	if err != nil {
-		return err
+		return "", err
 	}
 	expansion, err := kwt.CaptureExpansionContext()
 	if err != nil {
-		return err
+		return "", err
 	}
 	guard, err := observeGuardedProjectOperation(ctx, home, mainPath, expansion)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return guard.run(ctx, func() error {
-		return git.NewWithContext(ctx, mainPath).WithWorktreeGeneration(
+	projects := []models.Project(nil)
+	if guard.claim != nil {
+		projects = []models.Project{guard.claim.Registration.Effective}
+	}
+	var sessionName string
+	err = guard.run(ctx, func() error {
+		var establishErr error
+		sessionName, establishErr = withCurrentWorktreeSession(
+			ctx,
+			mainPath,
 			worktreePath,
 			expectedGeneration,
+			projects,
+			protectedNames,
 			establish,
 		)
+		return establishErr
 	})
+	return sessionName, err
+}
+
+func withCurrentWorktreeSession(
+	ctx context.Context,
+	mainPath string,
+	worktreePath string,
+	expectedGeneration string,
+	projects []models.Project,
+	protectedNames []string,
+	establish func(string) error,
+) (string, error) {
+	var sessionName string
+	err := git.NewWithContext(ctx, mainPath).WithWorktreeGeneration(
+		worktreePath,
+		expectedGeneration,
+		func() error {
+			currentGit := git.NewForInventory(ctx, worktreePath, protectedNames)
+			repositoryInfo, err := worktree.RepositoryInfoWithProjects(
+				worktree.NewCachedIdentityGit(currentGit),
+				projects,
+			)
+			if err != nil {
+				return fmt.Errorf("resolve current repository identity: %w", err)
+			}
+			branchOutput, err := currentGit.RunCommand("symbolic-ref", "--short", "HEAD")
+			if err != nil {
+				branchOutput, err = currentGit.RunCommand(
+					"rev-parse", "--abbrev-ref", "HEAD",
+				)
+				if err != nil {
+					return fmt.Errorf("resolve current worktree branch: %w", err)
+				}
+			}
+			branch := strings.TrimSpace(branchOutput)
+			if branch == "" {
+				return errors.New("current worktree branch is empty")
+			}
+			sessionName = tmux.WorkspaceSessionName(
+				repositoryInfo,
+				branch,
+				worktreePath,
+			)
+			return establish(sessionName)
+		},
+	)
+	return sessionName, err
 }
 
 func commandFlagChanged(cmd *cobra.Command, name string) bool {

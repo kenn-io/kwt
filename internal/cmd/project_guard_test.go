@@ -68,10 +68,17 @@ func TestWorktreeSessionEstablishmentCancelsWhileWaitingForMutationLock(t *testi
 	done := make(chan error, 1)
 	called := false
 	go func() {
-		done <- runWorktreeSessionEstablishment(ctx, repoPath, generation, func() error {
-			called = true
-			return nil
-		})
+		_, establishErr := runWorktreeSessionEstablishment(
+			ctx,
+			repoPath,
+			generation,
+			nil,
+			func(string) error {
+				called = true
+				return nil
+			},
+		)
+		done <- establishErr
 	}()
 	select {
 	case <-reachedGuard:

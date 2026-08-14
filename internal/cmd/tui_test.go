@@ -3691,6 +3691,57 @@ func TestTUIWorktreeAttachCannotRaceGuardedRemoval(t *testing.T) {
 	}
 }
 
+func TestTUIWorktreeAttachUsesBranchObservedInsideLifecycleGuard(t *testing.T) {
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "branch-switch-tui")
+	runTUITestGit(t, repoPath, "branch", "feature/original")
+	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/original")
+	generation := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
+	repositoryInfo, err := worktree.RepositoryInfoFromLocalPath(repoPath)
+	require.NoError(t, err)
+	initCommandTestConfig(t, t.TempDir())
+
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	var ensuredSession string
+	var attachedSession string
+	backend.ensureWorkspace = func(
+		_ context.Context, session string, _ string, _ models.Layout,
+	) error {
+		ensuredSession = session
+		return nil
+	}
+	backend.attachSession = func(session string, _ bool) error {
+		attachedSession = session
+		return nil
+	}
+	originalBeforeAcquire := beforeProjectGuardAcquire
+	t.Cleanup(func() { beforeProjectGuardAcquire = originalBeforeAcquire })
+	switched := false
+	beforeProjectGuardAcquire = func() {
+		if switched {
+			return
+		}
+		switched = true
+		runTUITestGit(t, worktreePath, "switch", "-c", "feature/current")
+	}
+
+	err = backend.attachWorkspace(
+		context.Background(),
+		dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
+			Path: worktreePath, Branch: "feature/original", Generation: generation,
+			RepositoryInfo: repositoryInfo,
+		}},
+		tmux.BlankLayoutName,
+		false,
+		false,
+	)
+
+	require.NoError(t, err)
+	expected := tmux.WorkspaceSessionName(repositoryInfo, "feature/current", worktreePath)
+	assert.Equal(t, expected, ensuredSession)
+	assert.Equal(t, expected, attachedSession)
+}
+
 func TestTUIBackendAttachAcknowledgesRemoteSourceBeforeWorkspaceLaunch(t *testing.T) {
 	workspacePath := t.TempDir()
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")

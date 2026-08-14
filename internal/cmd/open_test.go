@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
+	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
@@ -669,6 +670,58 @@ func TestOpenSelectedWorktreeStartsSessionWithoutAttaching(t *testing.T) {
 		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN", "CUSTOM_FLEET_TOKEN"},
 		protectedNames,
 	)
+}
+
+func TestOpenSelectedWorktreeUsesBranchObservedInsideLifecycleGuard(t *testing.T) {
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "branch-switch-open")
+	runTUITestGit(t, repoPath, "branch", "feature/original")
+	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/original")
+	generation := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
+	repositoryInfo, err := worktree.RepositoryInfoFromLocalPath(repoPath)
+	require.NoError(t, err)
+	initCommandTestConfig(t, t.TempDir())
+
+	runner := &recordingOpenWorkspaceRunner{}
+	originalRunner := newOpenWorkspaceRunner
+	originalBeforeAcquire := beforeProjectGuardAcquire
+	originalLayout := openLayout
+	originalExpectedRepository := openExpectedRepository
+	t.Cleanup(func() {
+		newOpenWorkspaceRunner = originalRunner
+		beforeProjectGuardAcquire = originalBeforeAcquire
+		openLayout = originalLayout
+		openExpectedRepository = originalExpectedRepository
+	})
+	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	openLayout = tmux.BlankLayoutName
+	openExpectedRepository = ""
+	switched := false
+	beforeProjectGuardAcquire = func() {
+		if switched {
+			return
+		}
+		switched = true
+		runTUITestGit(t, worktreePath, "switch", "-c", "feature/current")
+	}
+
+	err = openSelectedWorktree(
+		context.Background(),
+		&CommandContext{Config: &models.Config{}},
+		&discovery.GlobalWorktreeEntry{
+			Path: worktreePath, Branch: "feature/original", Generation: generation,
+			RepositoryInfo: repositoryInfo,
+		},
+		nil,
+		true,
+		false,
+	)
+
+	require.NoError(t, err)
+	assert.True(t, runner.ensured)
+	assert.Equal(t, tmux.WorkspaceSessionName(
+		repositoryInfo, "feature/current", worktreePath,
+	), runner.sessionName)
 }
 
 func TestOrdinaryOpenCannotRaceGuardedRemoval(t *testing.T) {
