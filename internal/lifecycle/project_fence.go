@@ -254,6 +254,20 @@ func projectClaimMatches(
 		if !candidate.SamePersistedEntry(claim.Registration) {
 			continue
 		}
+		if utils.PathKey(candidate.Effective.Path) != utils.PathKey(claim.MainPath) {
+			return false, nil
+		}
+		currentPathIdentity, pathErr := pathLifecycleIdentity(candidate.Effective.Path)
+		if pathErr != nil {
+			return false, pathErr
+		}
+		claimedPathIdentity, pathErr := pathLifecycleIdentity(claim.MainPath)
+		if pathErr != nil {
+			return false, pathErr
+		}
+		if !EqualProjectIdentity(currentPathIdentity, claimedPathIdentity) {
+			return false, nil
+		}
 		identity, identityErr := resolveProjectIdentity(
 			ctx, candidate, credentials.ProtectedNames(current.Config)...,
 		)

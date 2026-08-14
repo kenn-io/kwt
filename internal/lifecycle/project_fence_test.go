@@ -150,6 +150,35 @@ func TestRegisteredProjectClaimAlsoLocksMainPathIdentity(t *testing.T) {
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
+func TestRegisteredProjectClaimRejectsRetargetedConfiguredSymlink(t *testing.T) {
+	home := t.TempDir()
+	firstRepository, _ := removalRepository(t, "first-target")
+	secondRepository, _ := removalRepository(t, "second-target")
+	configuredPath := filepath.Join(t.TempDir(), "repository")
+	if err := os.Symlink(firstRepository, configuredPath); err != nil {
+		t.Skipf("symbolic links are not supported: %v", err)
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
+		"[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'widget'\npath = '"+configuredPath+"'\n",
+	), 0o600))
+	expansion := testExpansion(t)
+	claim, err := ObserveProjectClaim(
+		context.Background(), home, firstRepository, expansion,
+	)
+	require.NoError(t, err)
+	require.True(t, claim.Registered)
+	require.NoError(t, os.Remove(configuredPath))
+	require.NoError(t, os.Symlink(secondRepository, configuredPath))
+
+	release, err := AcquireRequiredProjectClaim(context.Background(), home, claim)
+	if release != nil {
+		require.NoError(t, release())
+	}
+
+	assert.Nil(t, release)
+	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+}
+
 func TestUnregisteredClaimRejectsRegistrationAddedWhileWaiting(t *testing.T) {
 	home := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), nil, 0o600))
