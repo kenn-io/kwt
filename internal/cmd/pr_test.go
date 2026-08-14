@@ -75,6 +75,11 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 	oldProject := prProject
 	oldState := prState
 	oldStartSession := prStartSession
+	oldAttachExpectedRepository := prAttachExpectedRepository
+	oldAttachExpectedRegistration := prAttachExpectedRegistration
+	oldAttachExpectedGeneration := prAttachExpectedGeneration
+	oldAttachExpectedSession := prAttachExpectedSession
+	oldAttachExpectedSocket := prAttachExpectedSocket
 	oldValidateSessionConfig := validatePRWorkspaceSessionConfig
 	oldStartWorkspaceSession := ensurePRWorkspaceSession
 	oldAttachWorkspaceSession := attachExistingPRWorkspaceSession
@@ -89,6 +94,11 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 		prProject = oldProject
 		prState = oldState
 		prStartSession = oldStartSession
+		prAttachExpectedRepository = oldAttachExpectedRepository
+		prAttachExpectedRegistration = oldAttachExpectedRegistration
+		prAttachExpectedGeneration = oldAttachExpectedGeneration
+		prAttachExpectedSession = oldAttachExpectedSession
+		prAttachExpectedSocket = oldAttachExpectedSocket
 		validatePRWorkspaceSessionConfig = oldValidateSessionConfig
 		ensurePRWorkspaceSession = oldStartWorkspaceSession
 		attachExistingPRWorkspaceSession = oldAttachWorkspaceSession
@@ -114,6 +124,11 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 	prProject = "widget"
 	prState = "open"
 	prStartSession = false
+	prAttachExpectedRepository = ""
+	prAttachExpectedRegistration = ""
+	prAttachExpectedGeneration = ""
+	prAttachExpectedSession = ""
+	prAttachExpectedSocket = ""
 	validatePRWorkspaceSessionConfig = func(*models.Config) error {
 		return nil
 	}
@@ -681,6 +696,80 @@ func TestRunPRAttachUsesPersistedWorkspaceIdentity(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, attached)
+}
+
+func TestRunPRAttachRejectsStaleGuardBeforeEnsuringSession(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("KWT_HOME", home)
+	project := pullrequest.Project{
+		Identity: "github.com/acme/widget",
+		Name:     "widget",
+		Path:     "/repos/widget",
+	}
+	workspace := pullrequest.Workspace{
+		Path:           "/worktrees/pr-guarded",
+		Branch:         "pr-guarded",
+		Repository:     project.Identity,
+		Generation:     "0123456789abcdef0123456789abcdef",
+		SessionName:    "kwt-workspace-pr-guarded",
+		TmuxSocketName: "kwt-pr-protected",
+	}
+	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
+		context.Background(),
+		func(records map[string]pullrequest.Provenance) error {
+			records["pr-guarded"] = pullrequest.Provenance{
+				Project: project, Workspace: workspace,
+			}
+			return nil
+		},
+	))
+	cfg := &models.Config{Projects: []models.Project{{
+		Repository: project.Identity, Name: project.Name, Path: project.Path,
+	}}}
+	withPRCommandDeps(t, cfg, &fakePRService{})
+	stubPRWorkspaceGeneration(t, workspace.Path, workspace.Generation)
+	inspectPRProjectClone = func(
+		context.Context,
+		pullrequest.Provenance,
+	) (pullrequest.Project, []pullrequest.Workspace, error) {
+		return project, []pullrequest.Workspace{workspace}, nil
+	}
+	snapshot, err := config.LoadGlobalSnapshotAt(home)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Projects, 1)
+	fingerprint, err := snapshot.Projects[0].Fingerprint()
+	require.NoError(t, err)
+	prAttachExpectedRepository = project.Identity
+	prAttachExpectedRegistration = fingerprint
+	prAttachExpectedGeneration = "fedcba9876543210fedcba9876543210"
+	prAttachExpectedSession = workspace.SessionName
+	prAttachExpectedSocket = workspace.TmuxSocketName
+	cmd, stdout, _ := prTestCommand()
+	markCommandFlagsChanged(
+		t, cmd,
+		"expected-repository",
+		"expected-registration",
+		"expected-generation",
+		"expected-session",
+		"expected-socket",
+	)
+	ensured := false
+	ensurePRWorkspaceSession = func(
+		context.Context,
+		pullrequest.Workspace,
+		*models.Config,
+	) (string, error) {
+		ensured = true
+		return workspace.TmuxSocketName, nil
+	}
+
+	err = runPRAttach(cmd, []string{workspace.Path})
+
+	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+	assert.False(t, ensured)
+	var envelope jsonErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	assert.Equal(t, service.RegistrationChanged, envelope.Error.Code)
 }
 
 func TestRunPRAttachRejectsRemovedRegistrationBeforeEnsuringSession(t *testing.T) {

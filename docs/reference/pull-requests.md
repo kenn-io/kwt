@@ -34,6 +34,25 @@ kwt's protected path:
 kwt pr attach <workspace.path>
 ```
 
+Automation clients that already hold a `kwt list --json` snapshot can bind
+session establishment to that exact authority by supplying all five expected
+values together:
+
+```sh
+kwt pr attach <workspace.path> \
+  --expected-repository <project.repository> \
+  --expected-registration <project.registration_fingerprint> \
+  --expected-generation <workspace.generation> \
+  --expected-session <workspace.session_name> \
+  --expected-socket <workspace.tmux_socket_name>
+```
+
+Kwt revalidates those values while holding the project lifecycle fence and
+before it creates or repairs the protected tmux session. A changed project,
+worktree incarnation, session name, or socket returns the retryable
+`registration_changed` error without touching tmux. The five flags are an
+all-or-nothing contract; ordinary interactive use may omit all of them.
+
 `kwt pr attach` is an interactive exception to the JSON automation contract.
 Validation and session-establishment failures that occur before attachment
 still use the structured error envelope and stable PR exit status. On

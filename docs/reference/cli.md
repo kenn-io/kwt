@@ -584,6 +584,12 @@ identity, creates or repairs that protected blank session when needed, and
 uses `attach-session -E`. This is an interactive exception to the PR JSON
 contract: failures before attachment remain structured, but after a successful
 Unix process replacement tmux owns terminal output and the final exit status.
+Automation clients may additionally pass `--expected-repository`,
+`--expected-registration`, `--expected-generation`, `--expected-session`, and
+`--expected-socket` together. Kwt revalidates that exact inventory authority
+under the project lifecycle fence before creating or repairing the protected
+session; a mismatch fails with retryable `registration_changed` and does not
+touch tmux. Omit all five flags for ordinary interactive attachment.
 Provenance with a durable generation applies only to that exact worktree
 incarnation. If the path is later reused, stale provenance neither protects the
 replacement from ordinary `kwt open` nor authorizes `kwt pr attach` or merged

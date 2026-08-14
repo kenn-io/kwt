@@ -36,6 +36,12 @@ var (
 	prJSON         bool
 	prStartSession bool
 
+	prAttachExpectedRepository   string
+	prAttachExpectedRegistration string
+	prAttachExpectedGeneration   string
+	prAttachExpectedSession      string
+	prAttachExpectedSocket       string
+
 	loadPRConfig                     = config.Load
 	loadPRTargetConfig               = config.LoadForTarget
 	newPRService                     = defaultNewPRService
@@ -105,6 +111,36 @@ func init() {
 		"start-session",
 		false,
 		"ensure the imported workspace's tmux session exists without attaching",
+	)
+	prAttachCmd.Flags().StringVar(
+		&prAttachExpectedRepository,
+		"expected-repository",
+		"",
+		"require this registered project identity before attaching",
+	)
+	prAttachCmd.Flags().StringVar(
+		&prAttachExpectedRegistration,
+		"expected-registration",
+		"",
+		"require this project registration fingerprint before attaching",
+	)
+	prAttachCmd.Flags().StringVar(
+		&prAttachExpectedGeneration,
+		"expected-generation",
+		"",
+		"require this worktree generation before attaching",
+	)
+	prAttachCmd.Flags().StringVar(
+		&prAttachExpectedSession,
+		"expected-session",
+		"",
+		"require this protected tmux session name before attaching",
+	)
+	prAttachCmd.Flags().StringVar(
+		&prAttachExpectedSocket,
+		"expected-socket",
+		"",
+		"require this protected tmux socket name before attaching",
 	)
 	prCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		return writePRError(cmd, pullrequest.NewError(pullrequest.CodeInvalidSelector, err.Error(), false, nil))
@@ -228,6 +264,10 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 	if len(args) != 1 {
 		return prExactArgs(1)(cmd, args)
 	}
+	guarded, err := validateExpectedPRAttachFlags(cmd)
+	if err != nil {
+		return writePRError(cmd, err)
+	}
 	record, err := importedWorkspaceProvenance(
 		cmd.Context(),
 		args[0],
@@ -252,10 +292,19 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return writePRError(cmd, err)
 	}
-	guard, err := observeRequiredGuardedProjectOperation(
-		cmd.Context(), home, record.Project.Path, expansion,
-		pullrequest.ProvenanceRepositoryIdentities(record)...,
-	)
+	var guard *guardedProjectOperation
+	if guarded {
+		guard, err = observeExpectedGuardedProjectOperation(
+			cmd.Context(), home, record.Project.Path, expansion,
+			prAttachExpectedRepository,
+			prAttachExpectedRegistration,
+		)
+	} else {
+		guard, err = observeRequiredGuardedProjectOperation(
+			cmd.Context(), home, record.Project.Path, expansion,
+			pullrequest.ProvenanceRepositoryIdentities(record)...,
+		)
+	}
 	if err != nil {
 		return writePRError(cmd, err)
 	}
@@ -271,6 +320,13 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 			return service.NewError(
 				service.RegistrationChanged,
 				"the imported workspace changed projects before attachment",
+				true, nil, nil,
+			)
+		}
+		if guarded && !expectedPRAttachMatches(current, guard.claim) {
+			return service.NewError(
+				service.RegistrationChanged,
+				"the imported workspace changed before attachment",
 				true, nil, nil,
 			)
 		}
@@ -302,6 +358,101 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 		))
 	}
 	return nil
+}
+
+func validateExpectedPRAttachFlags(cmd *cobra.Command) (bool, error) {
+	names := []string{
+		"expected-repository",
+		"expected-registration",
+		"expected-generation",
+		"expected-session",
+		"expected-socket",
+	}
+	values := []string{
+		prAttachExpectedRepository,
+		prAttachExpectedRegistration,
+		prAttachExpectedGeneration,
+		prAttachExpectedSession,
+		prAttachExpectedSocket,
+	}
+	changed := 0
+	for _, name := range names {
+		if commandFlagChanged(cmd, name) {
+			changed++
+		}
+	}
+	if changed == 0 {
+		return false, nil
+	}
+	if changed != len(names) {
+		return false, service.NewError(
+			service.InvalidRequest,
+			"expected repository, registration, generation, session, and socket must be provided together",
+			false, nil, nil,
+		)
+	}
+	for _, value := range values {
+		if value == "" {
+			return false, service.NewError(
+				service.InvalidRequest,
+				"expected repository, registration, generation, session, and socket must be nonempty",
+				false, nil, nil,
+			)
+		}
+	}
+	if !lifecycle.EqualProjectIdentity(
+		prAttachExpectedRepository,
+		prAttachExpectedRepository,
+	) {
+		return false, service.NewError(
+			service.InvalidRequest,
+			"expected repository identity is invalid",
+			false, nil, nil,
+		)
+	}
+	if !config.ValidProjectRegistrationFingerprint(prAttachExpectedRegistration) {
+		return false, service.NewError(
+			service.InvalidRequest,
+			"expected project registration fingerprint is invalid",
+			false, nil, nil,
+		)
+	}
+	if err := gitadapter.ValidateWorktreeGeneration(prAttachExpectedGeneration); err != nil {
+		return false, service.NewError(
+			service.InvalidRequest,
+			"expected worktree generation is invalid",
+			false, nil, err,
+		)
+	}
+	if strings.ContainsAny(prAttachExpectedSession, "\t\r\n") ||
+		strings.TrimSpace(prAttachExpectedSocket) != prAttachExpectedSocket ||
+		strings.ContainsAny(prAttachExpectedSocket, "\t\r\n/\\") {
+		return false, service.NewError(
+			service.InvalidRequest,
+			"expected protected session identity is invalid",
+			false, nil, nil,
+		)
+	}
+	return true, nil
+}
+
+func expectedPRAttachMatches(
+	record pullrequest.Provenance,
+	claim *lifecycle.ProjectClaim,
+) bool {
+	if claim == nil || !projectClaimHasExpectedIdentity(
+		claim,
+		[]string{prAttachExpectedRepository},
+	) {
+		return false
+	}
+	fingerprint, err := claim.Registration.Fingerprint()
+	if err != nil || fingerprint != prAttachExpectedRegistration {
+		return false
+	}
+	return record.Workspace.Generation == prAttachExpectedGeneration &&
+		record.Workspace.SessionName == prAttachExpectedSession &&
+		record.Workspace.TmuxSocketName == prAttachExpectedSocket
 }
 
 func provenanceMatchesProjectClaim(
