@@ -20,6 +20,9 @@ type RemovalSessionCondition struct {
 	CreatedAt       string `json:"created_at,omitempty"`
 	SocketDirectory string `json:"socket_directory,omitempty"`
 	SocketName      string `json:"socket_name,omitempty"`
+	// ProtectedSocketTopology is derived from trusted worktree provenance by
+	// the lifecycle service. It is never accepted as caller-supplied authority.
+	ProtectedSocketTopology bool `json:"-"`
 }
 
 // RemovalSessionConditionError reports that the live tmux state no longer
@@ -86,7 +89,7 @@ func (g *removalSessionGuard) Quiesce(
 			Reason: "stop the session before guarded worktree removal",
 		}
 	}
-	if condition.SocketName != "" {
+	if condition.ProtectedSocketTopology {
 		return g.quiesceProtected(ctx, condition)
 	}
 	command := newRemovalTmuxCommand(g.command, condition)

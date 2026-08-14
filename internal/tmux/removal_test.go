@@ -71,6 +71,40 @@ func TestRemovalSessionInspectionPreservesCancellation(t *testing.T) {
 	}
 }
 
+func TestOrdinaryNamedSocketRemovalUsesSharedServerScan(t *testing.T) {
+	var inspected *TmuxCommand
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspect: func(
+			_ context.Context,
+			command *TmuxCommand,
+		) (string, string, error) {
+			inspected = command
+			return "123|$1|1720000000|another-session\n", "", nil
+		},
+		inspectProtected: func(
+			context.Context,
+			*TmuxCommand,
+			string,
+		) (ProtectedSessionState, error) {
+			return ProtectedSessionIndeterminate, errors.New("strict protected probe used")
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName:     "expected",
+		SocketName:      "team-server",
+		SocketDirectory: "/srv/tmux",
+		Absent:          true,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, lease)
+	require.NotNil(t, inspected)
+	assert.Equal(t, "team-server", inspected.socketName)
+	assert.Equal(t, "/srv/tmux", inspected.socketTempDir)
+}
+
 func TestProtectedRemovalFailsClosedOnUnexpectedCanonicalTopology(t *testing.T) {
 	var inspected []*TmuxCommand
 	guard := &removalSessionGuard{
@@ -86,10 +120,11 @@ func TestProtectedRemovalFailsClosedOnUnexpectedCanonicalTopology(t *testing.T) 
 	}
 
 	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
-		SessionName:     "expected",
-		SocketName:      "kwt-pr-protected",
-		SocketDirectory: "/tmp/legacy-tmux",
-		Absent:          true,
+		SessionName:             "expected",
+		SocketName:              "kwt-pr-protected",
+		SocketDirectory:         "/tmp/legacy-tmux",
+		Absent:                  true,
+		ProtectedSocketTopology: true,
 	})
 
 	assert.Nil(t, lease)
@@ -117,10 +152,11 @@ func TestProtectedRemovalChecksCanonicalBeforeLegacyEndpoint(t *testing.T) {
 	}
 
 	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
-		SessionName:     "expected",
-		SocketName:      "kwt-pr-protected",
-		SocketDirectory: "/tmp/legacy-tmux",
-		Absent:          true,
+		SessionName:             "expected",
+		SocketName:              "kwt-pr-protected",
+		SocketDirectory:         "/tmp/legacy-tmux",
+		Absent:                  true,
+		ProtectedSocketTopology: true,
 	})
 
 	assert.Nil(t, lease)

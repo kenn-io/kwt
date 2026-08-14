@@ -162,18 +162,20 @@ func (s *removalService) Remove(
 		func(preflight func() error, remove func() error) (bool, error) {
 			return reg.RemoveIfMatchAfter(request.Path, record, func() error {
 				if request.Session != nil {
+					sessionCondition := *request.Session
+					sessionCondition.ProtectedSocketTopology = protectedTarget != nil
 					if err := validateCurrentRemovalSessionTarget(
 						ctx,
 						request.Path,
 						projectClaim,
 						protectedTarget,
 						request.Expansion,
-						*request.Session,
+						sessionCondition,
 					); err != nil {
 						return err
 					}
 					if err := quiescePreflightAndTerminate(
-						ctx, s.sessionGuard, *request.Session, preflight,
+						ctx, s.sessionGuard, sessionCondition, preflight,
 					); err != nil {
 						return err
 					}

@@ -101,20 +101,20 @@ func validateCurrentRemovalSessionTarget(
 	if err != nil {
 		return err
 	}
-	expectedSocketName := ""
-	validSocketDirectory := condition.SocketDirectory == ""
-	if protected != nil {
-		if protected.branch != branch {
+	if protected == nil {
+		if condition.SessionName != expectedSession {
 			return changedRemovalSessionTarget()
 		}
-		expectedSession = protected.session
-		expectedSocketName = protected.socketName
-		legacySocketDirectory := expansion.Environment[normalizedEnvironmentName("TMUX_TMPDIR")]
-		validSocketDirectory = condition.SocketDirectory == "" ||
-			(legacySocketDirectory != "" && condition.SocketDirectory == legacySocketDirectory)
+		return nil
 	}
-	if condition.SessionName != expectedSession ||
-		condition.SocketName != expectedSocketName ||
+	if protected.branch != branch {
+		return changedRemovalSessionTarget()
+	}
+	legacySocketDirectory := expansion.Environment[normalizedEnvironmentName("TMUX_TMPDIR")]
+	validSocketDirectory := condition.SocketDirectory == "" ||
+		(legacySocketDirectory != "" && condition.SocketDirectory == legacySocketDirectory)
+	if condition.SessionName != protected.session ||
+		condition.SocketName != protected.socketName ||
 		!validSocketDirectory {
 		return changedRemovalSessionTarget()
 	}
