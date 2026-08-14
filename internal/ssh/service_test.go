@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/openssh"
+	servicepkg "go.kenn.io/kwt/service"
 )
 
 type fixedObservationResolver struct {
@@ -16,6 +17,32 @@ type fixedObservationResolver struct {
 	err         error
 	calls       int
 }
+
+type fixedLeaseProvider struct {
+	lease Lease
+	calls int
+}
+
+func (p *fixedLeaseProvider) Acquire(
+	context.Context,
+	LeaseRequest,
+	func(context.Context) (RouteSnapshot, error),
+) (Lease, error) {
+	p.calls++
+	return p.lease, nil
+}
+
+type fixedLease struct{}
+
+func (fixedLease) Mode() LeaseMode    { return LeaseModeMultiplexed }
+func (fixedLease) Generation() uint64 { return 7 }
+
+func (fixedLease) Arguments(context.Context) ([]string, error) {
+	return []string{"-S", "socket"}, nil
+}
+
+func (fixedLease) Touch() error   { return nil }
+func (fixedLease) Release() error { return nil }
 
 func (r *fixedObservationResolver) Resolve(
 	context.Context,
@@ -70,6 +97,25 @@ func TestServiceBuildsSnapshotFromCompletePrivateObservation(t *testing.T) {
 	assert.NotContains(t, snapshot.Targets[1].Projection.Arguments, "FutureOption=identity-only")
 }
 
+func TestServiceMarksProjectedAgentForwarding(t *testing.T) {
+	resolver := &fixedObservationResolver{observation: routeObservation{route: openssh.Route{{
+		Target: openssh.Target{Hostname: "build.example.test"},
+		Config: openssh.EffectiveConfig{
+			Hostname: "build.internal",
+			Options:  []openssh.Option{{Name: "forwardagent", Value: "yes"}},
+		},
+	}}}}
+	service := NewService(ServiceOptions{Resolver: resolver})
+
+	snapshot, err := service.Resolve(context.Background(), ResolveRequest{
+		Target: Target{Hostname: "build.example.test"},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, snapshot.Targets, 1)
+	assert.True(t, snapshot.Targets[0].ForwardAgent)
+}
+
 func TestServiceFullObservationChangesRouteIdentity(t *testing.T) {
 	base := openssh.Route{{
 		Target: openssh.Target{Hostname: "build.example.test"},
@@ -113,4 +159,43 @@ func TestServicePreservesResolverCancellation(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, "internal failure", err.Error())
 	assert.ErrorIs(t, err, private)
+}
+
+func TestServiceRejectsChangedRouteBeforeAcquiringLease(t *testing.T) {
+	resolver := &fixedObservationResolver{observation: routeObservation{route: openssh.Route{{
+		Target: openssh.Target{Hostname: "build.example.test"},
+		Config: openssh.EffectiveConfig{Hostname: "first.internal"},
+	}}}}
+	provider := &fixedLeaseProvider{lease: fixedLease{}}
+	service := NewService(ServiceOptions{Resolver: resolver, Leases: provider})
+	snapshot, err := service.Resolve(context.Background(), ResolveRequest{
+		Target: Target{Hostname: "build.example.test"},
+	})
+	require.NoError(t, err)
+	resolver.observation.route[0].Config.Hostname = "second.internal"
+
+	_, err = service.Acquire(context.Background(), LeaseRequest{Snapshot: snapshot})
+
+	require.Error(t, err)
+	assert.Equal(t, 0, provider.calls)
+	assert.True(t, servicepkg.IsCode(err, servicepkg.SSHConfigurationChanged))
+}
+
+func TestServiceAcquiresLeaseForCurrentRoute(t *testing.T) {
+	resolver := &fixedObservationResolver{observation: routeObservation{route: openssh.Route{{
+		Target: openssh.Target{Hostname: "build.example.test"},
+		Config: openssh.EffectiveConfig{Hostname: "build.internal"},
+	}}}}
+	provider := &fixedLeaseProvider{lease: fixedLease{}}
+	service := NewService(ServiceOptions{Resolver: resolver, Leases: provider})
+	snapshot, err := service.Resolve(context.Background(), ResolveRequest{
+		Target: Target{Hostname: "build.example.test"},
+	})
+	require.NoError(t, err)
+
+	lease, err := service.Acquire(context.Background(), LeaseRequest{Snapshot: snapshot})
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, provider.calls)
+	assert.Equal(t, uint64(7), lease.Generation())
 }

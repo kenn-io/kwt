@@ -2,20 +2,33 @@ package ssh
 
 import (
 	"context"
+	"errors"
 	"time"
+
+	"go.kenn.io/kwt/service"
 )
 
 type observationResolver interface {
 	Resolve(context.Context, ResolveRequest) (routeObservation, error)
 }
 
+type leaseProvider interface {
+	Acquire(
+		context.Context,
+		LeaseRequest,
+		func(context.Context) (RouteSnapshot, error),
+	) (Lease, error)
+}
+
 type ServiceOptions struct {
 	Resolver observationResolver
+	Leases   leaseProvider
 	Now      func() time.Time
 }
 
 type Service struct {
 	resolver observationResolver
+	leases   leaseProvider
 	now      func() time.Time
 }
 
@@ -28,7 +41,27 @@ func NewService(options ServiceOptions) *Service {
 	if now == nil {
 		now = time.Now
 	}
-	return &Service{resolver: resolver, now: now}
+	return &Service{resolver: resolver, leases: options.Leases, now: now}
+}
+
+func (s *Service) Acquire(ctx context.Context, request LeaseRequest) (Lease, error) {
+	resolve := func(ctx context.Context) (RouteSnapshot, error) {
+		return s.Resolve(ctx, ResolveRequest{Target: request.Snapshot.LogicalTarget})
+	}
+	current, err := resolve(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !sameRoute(request.Snapshot, current) {
+		return nil, configurationChanged()
+	}
+	if s.leases == nil {
+		return nil, service.NewError(
+			service.Internal, "internal failure", false, nil,
+			errors.New("SSH lease provider is unavailable"),
+		)
+	}
+	return s.leases.Acquire(ctx, request, resolve)
 }
 
 func (s *Service) Resolve(
@@ -53,6 +86,7 @@ func (s *Service) Resolve(
 			DisplayTarget:         effective.Display(),
 			HostKeyAlias:          observed.Config.HostKeyAlias,
 			StrictHostKeyChecking: observed.Config.StrictHostKeyChecking,
+			ForwardAgent:          projected.ForwardAgent,
 			Projection: ExecutionProjection{
 				Arguments:     projected.Arguments,
 				PrivateConfig: projected.PrivateConfig,

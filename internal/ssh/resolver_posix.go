@@ -78,17 +78,21 @@ func (r *Resolver) resolveConfig(
 }
 
 func loginShellInvocation(shell string) ([]string, []byte) {
+	return shellCommandInvocation(shell, resolveCommandEnvironment)
+}
+
+func shellCommandInvocation(shell, commandEnvironment string) ([]string, []byte) {
 	switch strings.ToLower(filepath.Base(shell)) {
 	case "csh", "tcsh":
 		return []string{shell, "-l"}, []byte(
-			"exec /bin/sh -c \"$" + resolveCommandEnvironment + ":q\"\n",
+			"exec /bin/sh -c \"$" + commandEnvironment + ":q\"\n",
 		)
 	default:
 		return []string{
 			shell,
 			"-l",
 			"-c",
-			"exec /bin/sh -c \"$" + resolveCommandEnvironment + "\"",
+			"exec /bin/sh -c \"$" + commandEnvironment + "\"",
 		}, nil
 	}
 }

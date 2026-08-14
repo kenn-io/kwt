@@ -47,9 +47,15 @@ type DaemonConfig struct {
 	ReplacementGrace time.Duration `mapstructure:"replacement_grace" toml:"replacement_grace"`
 }
 
+// SSHConfig controls machine-level SSH connection lifecycle policy.
+type SSHConfig struct {
+	IdleTimeout time.Duration `mapstructure:"idle_timeout" toml:"idle_timeout"`
+}
+
 // Config represents the application configuration.
 type Config struct {
 	Daemon             DaemonConfig        `mapstructure:"daemon" toml:"daemon"`
+	SSH                SSHConfig           `mapstructure:"ssh" toml:"ssh"`
 	Worktree           WorktreeConfig      `mapstructure:"worktree"`                     // Worktree-related configuration
 	Fleet              FleetConfig         `mapstructure:"fleet" toml:"fleet"`           // Multi-machine sync configuration
 	Cd                 CdConfig            `mapstructure:"cd"`                           // Cd command configuration

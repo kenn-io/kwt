@@ -35,3 +35,23 @@ func routeUnreviewable(cause error) *service.Error {
 func normalizeSSHError(err error) *service.Error {
 	return service.AsError(err)
 }
+
+func configurationChanged() *service.Error {
+	return service.NewError(
+		service.SSHConfigurationChanged,
+		"SSH configuration changed",
+		true,
+		nil,
+		nil,
+	)
+}
+
+func connectionChanged() *service.Error {
+	return service.NewError(
+		service.SSHConnectionChanged,
+		"SSH connection changed",
+		true,
+		nil,
+		nil,
+	)
+}

@@ -17,6 +17,7 @@ type projection struct {
 	PolicyVersion string
 	Arguments     []string
 	PrivateConfig []string
+	ForwardAgent  bool
 }
 
 type projectionOption struct {
@@ -96,6 +97,9 @@ func projectConfig(config openssh.EffectiveConfig) (projection, error) {
 	}
 	for _, option := range projectionOptionsV1 {
 		for _, value := range values[option.name] {
+			if option.name == "forwardagent" && !strings.EqualFold(value, "no") {
+				result.ForwardAgent = true
+			}
 			if option.private {
 				line, err := privateConfigLine(option.openSSH, value)
 				if err != nil {

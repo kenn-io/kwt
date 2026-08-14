@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/kwt/internal/config"
+	internalssh "go.kenn.io/kwt/internal/ssh"
 	"golang.org/x/term"
 )
 
@@ -62,6 +63,16 @@ a fuzzy finder interface.`,
 
 // Execute adds all child commands to the root command and sets flags appropriately.
 func Execute() {
+	if exitCode, handled := internalssh.RunAskpassHelper(
+		os.Args,
+		os.Environ(),
+		os.Stdout,
+	); handled {
+		if exitCode != 0 {
+			os.Exit(exitCode)
+		}
+		return
+	}
 	err := rootCmd.Execute()
 	exitCode := 0
 	if err != nil {

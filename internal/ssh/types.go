@@ -1,9 +1,11 @@
 package ssh
 
 import (
+	"context"
 	"time"
 
 	"go.kenn.io/kit/openssh"
+	"go.kenn.io/kwt/service"
 )
 
 type Target struct {
@@ -45,6 +47,7 @@ type ResolvedTarget struct {
 	DisplayTarget         string              `json:"display_target"`
 	HostKeyAlias          string              `json:"host_key_alias,omitempty"`
 	StrictHostKeyChecking string              `json:"strict_host_key_checking,omitempty"`
+	ForwardAgent          bool                `json:"forward_agent,omitempty"`
 	Projection            ExecutionProjection `json:"projection"`
 }
 
@@ -57,6 +60,43 @@ type RouteSnapshot struct {
 	ProjectionPolicy string           `json:"projection_policy"`
 	ObservedAt       time.Time        `json:"observed_at"`
 }
+
+type LeaseRequest struct {
+	Snapshot         RouteSnapshot `json:"snapshot"`
+	WorkingDirectory string        `json:"working_directory"`
+	Environment      []string      `json:"environment"`
+	Prompt           PromptHandler `json:"-"`
+}
+
+type PromptHandler func(context.Context, service.OperationPrompt) (string, error)
+
+type LeaseMode string
+
+const (
+	LeaseModeMultiplexed LeaseMode = "multiplexed"
+	LeaseModeMasterless  LeaseMode = "masterless"
+)
+
+type Lease interface {
+	Mode() LeaseMode
+	Generation() uint64
+	Arguments(context.Context) ([]string, error)
+	Touch() error
+	Release() error
+}
+
+type Event struct {
+	RouteIdentity string              `json:"route_identity"`
+	Generation    uint64              `json:"generation"`
+	State         string              `json:"state"`
+	Failure       *service.Descriptor `json:"failure,omitempty"`
+}
+
+const (
+	EventStateConnected    = openssh.StateConnected
+	EventStateDisconnected = openssh.StateDisconnected
+	EventStateError        = openssh.StateError
+)
 
 // routeObservation is the private resolver result. The complete normalized
 // OpenSSH stream remains reachable only through this internal route and is

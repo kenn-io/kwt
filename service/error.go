@@ -42,6 +42,14 @@ const (
 	SSHResolutionFailed         Code = "ssh_resolution_failed"
 	SSHRouteUnreviewable        Code = "ssh_route_unreviewable"
 	SSHConfigurationChanged     Code = "ssh_configuration_changed"
+	SSHUnsupportedVersion       Code = "ssh_unsupported_version"
+	SSHInteractionRequired      Code = "ssh_interaction_required"
+	SSHPromptRejected           Code = "ssh_prompt_rejected"
+	SSHPromptTimedOut           Code = "ssh_prompt_timed_out"
+	SSHConnectionFailed         Code = "ssh_connection_failed"
+	SSHConnectionChanged        Code = "ssh_connection_changed"
+	SSHControlPathOccupied      Code = "ssh_control_path_occupied"
+	SSHCleanupFailed            Code = "ssh_cleanup_failed"
 	Internal                    Code = "internal"
 )
 

@@ -100,6 +100,19 @@ retains it in memory. Neither an operation ID nor a request digest authorizes a
 new daemon to adopt or replay work. Loss of that authority is reported as an
 unknown outcome rather than causing an automatic retry of a mutation.
 
+Interactive SSH preparation uses the running kwt executable as a forced
+OpenSSH askpass helper only when its process environment contains a fresh,
+one-time channel handle. Helper dispatch occurs before configuration or Cobra
+startup. On POSIX the channel is an owner-private Unix socket; on Windows it is
+a named pipe with a protected DACL granting the current user. The opaque handle
+also carries a random 256-bit secret, and every request must prove it before a
+prompt is forwarded. Prompt and response frames, concurrent connections,
+rounds, and deadlines are bounded. Responses cross only this local channel and
+stdout back to the waiting OpenSSH process; they are not placed in arguments,
+environment values, daemon events, logs, or persistent state. Deliberate empty
+responses remain distinct from rejection. Kwt creates no channel state unless
+the selected system OpenSSH satisfies the 8.4 forced-askpass floor.
+
 SSH route resolution validates user, hostname, and port before invoking
 OpenSSH. POSIX resolution quotes the validated argv into the account login
 shell and accepts stdout only between unpredictable, exact nonce markers;
