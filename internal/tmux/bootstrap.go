@@ -314,36 +314,47 @@ func BuildSessionBootstrapCommand(session string, stripNames []string) []string 
 
 const workspacePathOption = "@kwt-workspace-path"
 const workspaceIdentityOption = "@kwt-workspace-id"
+const workspaceGenerationOption = "@kwt-workspace-generation"
 
 func workspacePathIdentity(worktreeDir string) string {
 	digest := sha256.Sum256([]byte(utils.PathKey(worktreeDir)))
 	return hex.EncodeToString(digest[:])
 }
 
-// buildWorkspaceSessionBootstrapCommand records the worktree path alongside
-// the terminal environment policy. The path is stable across branch renames,
-// allowing guarded removal to find every KWT session still using a checkout.
+// buildWorkspaceSessionBootstrapCommand records the worktree path and durable
+// generation alongside the terminal environment policy. The path handles
+// branch renames; the generation continues to identify the checkout after a
+// git worktree move.
 func buildWorkspaceSessionBootstrapCommand(
-	session, worktreeDir string,
+	session, worktreeDir, generation string,
 	stripNames []string,
 ) []string {
 	cmd := BuildSessionBootstrapCommand(session, stripNames)
-	return append(
+	cmd = append(
 		cmd,
 		";", "set-option", "-t", session, workspacePathOption, worktreeDir,
 		";", "set-option", "-t", session, workspaceIdentityOption,
 		workspacePathIdentity(worktreeDir),
 	)
+	if generation != "" {
+		cmd = append(
+			cmd,
+			";", "set-option", "-t", session, workspaceGenerationOption, generation,
+		)
+	}
+	return cmd
 }
 
 // buildProtectedSessionBootstrapCommand records the workspace identity in the
 // same pre-shell bootstrap transaction as the session environment policy.
 func buildProtectedSessionBootstrapCommand(
-	session, worktreeDir string,
+	session, worktreeDir, generation string,
 	stripNames []string,
 	updateEnvironment string,
 ) []string {
-	cmd := buildWorkspaceSessionBootstrapCommand(session, worktreeDir, stripNames)
+	cmd := buildWorkspaceSessionBootstrapCommand(
+		session, worktreeDir, generation, stripNames,
+	)
 	return append(
 		cmd,
 		";", "set-option", "-t", session, "update-environment", updateEnvironment,

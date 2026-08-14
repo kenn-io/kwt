@@ -609,6 +609,7 @@ func TestAddLaunchPassesConfiguredCredentialName(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, runner.ensured)
 	assert.True(t, runner.attached)
+	assert.NotEmpty(t, runner.generation)
 	assert.ElementsMatch(
 		t,
 		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN", "Custom_Fleet_Token"},

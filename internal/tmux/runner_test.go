@@ -90,7 +90,7 @@ func (m *mockWorkspaceTmux) globalOption(option string) (string, error) {
 func expectedBootstrapCommand(session, worktreeDir string, tableDerived ...[]string) []string {
 	sets := append([][]string{CanonicalStripExactNames(), StripEnvNames(os.Environ())}, tableDerived...)
 	return buildWorkspaceSessionBootstrapCommand(
-		session, worktreeDir, MergeStripNames(sets...),
+		session, worktreeDir, "", MergeStripNames(sets...),
 	)
 }
 
@@ -354,6 +354,7 @@ func TestProtectedEnsureRepairsVerifiedExistingSession(t *testing.T) {
 	assert.Equal(t, [][]string{buildProtectedSessionBootstrapCommand(
 		"workspace",
 		"/wt",
+		"",
 		MergeStripNames(
 			CanonicalStripExactNames(),
 			[]string{"KWT_GITHUB_TOKEN", "CUSTOM_FLEET_TOKEN"},
@@ -384,6 +385,7 @@ func TestProtectedEnsureMarksCreatedSessionBeforeRespawn(t *testing.T) {
 	assert.Contains(t, m.calls, buildProtectedSessionBootstrapCommand(
 		"workspace",
 		"/wt",
+		"",
 		MergeStripNames(
 			CanonicalStripExactNames(),
 			[]string{"KWT_GITHUB_TOKEN"},
@@ -421,6 +423,7 @@ func TestProtectedAttachRepairsPolicyAndDisablesEnvironmentUpdate(t *testing.T) 
 	assert.Equal(t, [][]string{buildProtectedSessionBootstrapCommand(
 		"workspace",
 		"/wt",
+		"",
 		MergeStripNames(
 			CanonicalStripExactNames(),
 			[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN"},
@@ -459,6 +462,7 @@ func TestProtectedEnsureAndAttachCreatesMissingSession(t *testing.T) {
 	assert.Contains(t, m.calls, buildProtectedSessionBootstrapCommand(
 		"workspace",
 		"/wt",
+		"",
 		MergeStripNames(
 			CanonicalStripExactNames(),
 			[]string{"KWT_GITHUB_TOKEN"},

@@ -23,6 +23,9 @@ type RemovalSessionCondition struct {
 	// WorkspacePath is derived from the generation-locked removal target by
 	// the lifecycle service. It is never accepted as caller-supplied authority.
 	WorkspacePath string `json:"-"`
+	// WorkspaceGeneration is the durable identity of the generation-locked
+	// removal target. Unlike WorkspacePath, it survives git worktree move.
+	WorkspaceGeneration string `json:"-"`
 	// ProtectedSocketTopology is derived from trusted worktree provenance by
 	// the lifecycle service. It is never accepted as caller-supplied authority.
 	ProtectedSocketTopology bool `json:"-"`
@@ -76,7 +79,7 @@ func inspectRemovalSessions(
 	ctx context.Context,
 	command *TmuxCommand,
 ) (string, string, error) {
-	const format = "#{pid}|#{session_id}|#{session_created}|#{session_name}|#{@kwt-workspace-id}"
+	const format = "#{pid}|#{session_id}|#{session_created}|#{session_name}|#{@kwt-workspace-id}|#{@kwt-workspace-generation}"
 	return command.runCommandOutputContextWithStderr(ctx, "list-sessions", "-F", format)
 }
 
@@ -134,13 +137,25 @@ func (g *removalSessionGuard) Quiesce(
 				Reason: "tmux session for worktree remains live",
 			}
 		}
+		if condition.WorkspaceGeneration != "" &&
+			row.workspaceGeneration == condition.WorkspaceGeneration {
+			return nil, &RemovalSessionConditionError{
+				Reason: "tmux session for worktree remains live",
+			}
+		}
+		if row.workspaceGeneration == "" && IsKWTWorkspaceSessionName(row.sessionName) {
+			return nil, &RemovalSessionConditionError{
+				Reason: "legacy KWT session ownership is indeterminate",
+			}
+		}
 	}
 	return noRemovalSessionLease{}, nil
 }
 
 type removalSessionRow struct {
-	sessionName       string
-	workspaceIdentity string
+	sessionName         string
+	workspaceIdentity   string
+	workspaceGeneration string
 }
 
 func parseRemovalSessionRow(line string) (removalSessionRow, error) {
@@ -153,12 +168,19 @@ func parseRemovalSessionRow(line string) (removalSessionRow, error) {
 		rest = remaining
 	}
 	lastDelimiter := strings.LastIndexByte(rest, '|')
-	if lastDelimiter < 0 || lastDelimiter == 0 {
+	if lastDelimiter < 0 {
+		return removalSessionRow{}, errors.New("missing session field")
+	}
+	workspaceGeneration := rest[lastDelimiter+1:]
+	rest = rest[:lastDelimiter]
+	identityDelimiter := strings.LastIndexByte(rest, '|')
+	if identityDelimiter < 0 || identityDelimiter == 0 {
 		return removalSessionRow{}, errors.New("missing session field")
 	}
 	return removalSessionRow{
-		sessionName:       rest[:lastDelimiter],
-		workspaceIdentity: rest[lastDelimiter+1:],
+		sessionName:         rest[:identityDelimiter],
+		workspaceIdentity:   rest[identityDelimiter+1:],
+		workspaceGeneration: workspaceGeneration,
 	}, nil
 }
 

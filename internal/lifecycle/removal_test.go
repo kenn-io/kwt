@@ -157,6 +157,7 @@ func TestRemovalServiceTerminatesConfirmedSessionBeforeRemovingWorktree(t *testi
 	assert.True(t, guard.pathLive, "session guard must run before checkout removal")
 	expectedCondition := condition
 	expectedCondition.WorkspacePath = worktreePath
+	expectedCondition.WorkspaceGeneration = generation
 	assert.Equal(t, expectedCondition, guard.condition)
 	assert.True(t, result.WorktreeRemoved)
 	assert.NoDirExists(t, worktreePath)
@@ -365,9 +366,46 @@ func TestRemovalServiceAcceptsOrdinarySessionOnExplicitSocketEndpoint(t *testing
 	assert.True(t, guard.quiesced)
 	expectedCondition := condition
 	expectedCondition.WorkspacePath = worktreePath
+	expectedCondition.WorkspaceGeneration = generation
 	assert.Equal(t, expectedCondition, guard.condition)
 	assert.False(t, guard.condition.ProtectedSocketTopology)
 	assert.True(t, result.WorktreeRemoved)
+}
+
+func TestRemovalServiceCarriesDurableGenerationAfterWorktreeMove(t *testing.T) {
+	repositoryPath, originalPath := removalRepository(t, "moved-worktree")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(originalPath)
+	require.NoError(t, err)
+	movedPath := originalPath + "-new-location"
+	runRemovalGit(t, repositoryPath, "worktree", "move", originalPath, movedPath)
+	movedGeneration, err := git.New(repositoryPath).WorktreeGeneration(movedPath)
+	require.NoError(t, err)
+	require.Equal(t, generation, movedGeneration)
+
+	home := t.TempDir()
+	registerRemovalRepository(t, home, repositoryPath)
+	guard := &recordingRemovalSessionGuard{}
+	condition := RemovalSessionCondition{
+		SessionName: removalSessionName(t, movedPath, "moved-worktree"),
+		Absent:      true,
+	}
+
+	result, err := NewRemovalService(RemovalServiceOptions{
+		Home: home, SessionGuard: guard,
+	}).Remove(context.Background(), RemovalRequest{
+		RepositoryPath:     repositoryPath,
+		Path:               movedPath,
+		ExpectedGeneration: generation,
+		Expansion:          testExpansion(t),
+		Session:            &condition,
+	})
+
+	require.NoError(t, err)
+	assert.True(t, guard.quiesced)
+	assert.Equal(t, movedPath, guard.condition.WorkspacePath)
+	assert.Equal(t, generation, guard.condition.WorkspaceGeneration)
+	assert.True(t, result.WorktreeRemoved)
+	assert.NoDirExists(t, movedPath)
 }
 
 func TestRemovalServiceAcceptsCurrentProtectedSessionEndpoint(t *testing.T) {

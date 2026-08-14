@@ -81,9 +81,15 @@ func previousWorkspaceSessionName(
 // either can change while a legacy client remains attached to the worktree.
 func MatchesLegacyWorkspaceSessionPath(name, worktreePath string) bool {
 	suffix := "-" + template.ShortHash(worktreePath)
-	return (strings.HasPrefix(name, "kwt-wt-") ||
-		strings.HasPrefix(name, "kwt-workspace-")) &&
+	return IsKWTWorkspaceSessionName(name) &&
 		strings.HasSuffix(name, suffix)
+}
+
+// IsKWTWorkspaceSessionName reports whether name belongs to a KWT-managed
+// naming namespace. It does not establish which worktree owns the session.
+func IsKWTWorkspaceSessionName(name string) bool {
+	return strings.HasPrefix(name, "kwt-wt-") ||
+		strings.HasPrefix(name, "kwt-workspace-")
 }
 
 // sanitizeTmuxName replaces characters tmux disallows in a session name

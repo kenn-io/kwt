@@ -708,10 +708,11 @@ func defaultStartPRWorkspaceSession(
 	err = tmux.NewProtectedWorkspaceRunner(
 		tmuxCommand,
 		stripNames,
-	).Ensure(
+	).EnsureWithGeneration(
 		ctx,
 		workspace.SessionName,
 		workspace.Path,
+		workspace.Generation,
 		layout,
 	)
 	if err != nil {

@@ -130,6 +130,24 @@ func (r *WorkspaceRunner) Attach(session string, insideTmux bool) error {
 func (r *WorkspaceRunner) Ensure(
 	ctx context.Context, session, worktreeDir string, layout models.Layout,
 ) error {
+	return r.ensure(ctx, session, worktreeDir, "", layout)
+}
+
+// EnsureWithGeneration creates or repairs a worktree session and records its
+// durable Git generation so guarded removal remains safe after path moves.
+func (r *WorkspaceRunner) EnsureWithGeneration(
+	ctx context.Context,
+	session, worktreeDir, generation string,
+	layout models.Layout,
+) error {
+	return r.ensure(ctx, session, worktreeDir, generation, layout)
+}
+
+func (r *WorkspaceRunner) ensure(
+	ctx context.Context,
+	session, worktreeDir, generation string,
+	layout models.Layout,
+) error {
 	if err := ValidateStartDirectory(worktreeDir); err != nil {
 		return err
 	}
@@ -144,10 +162,10 @@ func (r *WorkspaceRunner) Ensure(
 		}
 	}
 	if sessionExists {
-		if err := r.repairBootstrap(ctx, session, worktreeDir); err != nil {
+		if err := r.repairBootstrap(ctx, session, worktreeDir, generation); err != nil {
 			return err
 		}
-	} else if err := r.create(ctx, session, worktreeDir, layout); err != nil {
+	} else if err := r.create(ctx, session, worktreeDir, generation, layout); err != nil {
 		return err
 	}
 	return nil
@@ -176,7 +194,7 @@ func (r *WorkspaceRunner) AttachProtected(
 	if err := r.validateProtectedState(session, worktreeDir, true); err != nil {
 		return err
 	}
-	if err := r.repairBootstrap(ctx, session, worktreeDir); err != nil {
+	if err := r.repairBootstrap(ctx, session, worktreeDir, ""); err != nil {
 		return err
 	}
 	return r.tmux.AttachSessionWithoutEnvironment(ctx, session)
@@ -374,7 +392,9 @@ func matchingProtectedNames(names, protectedNames []string) []string {
 // half-built workspace — including one whose only pane is still the
 // placeholder — behind for a later EnsureAndAttach to find and attach to.
 func (r *WorkspaceRunner) create(
-	ctx context.Context, session, worktreeDir string, layout models.Layout,
+	ctx context.Context,
+	session, worktreeDir, generation string,
+	layout models.Layout,
 ) error {
 	// The session does not exist yet, so only the launcher and server-global
 	// sources contribute strip names; querying the session table would be a
@@ -388,7 +408,9 @@ func (r *WorkspaceRunner) create(
 	paneIDs := make([]string, 0, len(layout.Panes))
 	paneIDs = append(paneIDs, strings.TrimSpace(firstPane))
 
-	bootCmd := buildWorkspaceSessionBootstrapCommand(session, worktreeDir, stripNames)
+	bootCmd := buildWorkspaceSessionBootstrapCommand(
+		session, worktreeDir, generation, stripNames,
+	)
 	if r.protected {
 		updateEnvironment, updateErr := r.protectedUpdateEnvironment(session)
 		if updateErr != nil {
@@ -399,6 +421,7 @@ func (r *WorkspaceRunner) create(
 		bootCmd = buildProtectedSessionBootstrapCommand(
 			session,
 			worktreeDir,
+			generation,
 			stripNames,
 			updateEnvironment,
 		)
@@ -459,10 +482,12 @@ func (r *WorkspaceRunner) create(
 // it.
 func (r *WorkspaceRunner) repairBootstrap(
 	ctx context.Context,
-	session, worktreeDir string,
+	session, worktreeDir, generation string,
 ) error {
 	stripNames := r.sessionStripNames(session, true)
-	bootCmd := buildWorkspaceSessionBootstrapCommand(session, worktreeDir, stripNames)
+	bootCmd := buildWorkspaceSessionBootstrapCommand(
+		session, worktreeDir, generation, stripNames,
+	)
 	if r.protected {
 		updateEnvironment, err := r.protectedUpdateEnvironment(session)
 		if err != nil {
@@ -471,6 +496,7 @@ func (r *WorkspaceRunner) repairBootstrap(
 		bootCmd = buildProtectedSessionBootstrapCommand(
 			session,
 			worktreeDir,
+			generation,
 			stripNames,
 			updateEnvironment,
 		)

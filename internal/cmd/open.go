@@ -38,6 +38,7 @@ var (
 
 type openWorkspaceRunner interface {
 	Ensure(context.Context, string, string, models.Layout) error
+	EnsureWithGeneration(context.Context, string, string, string, models.Layout) error
 	Attach(string, bool) error
 	EnsureAndAttach(
 		context.Context,
@@ -438,7 +439,9 @@ func openSelectedWorktree(
 		entry.Generation,
 		protectedNames,
 		func(session string) error {
-			return runner.Ensure(commandCtx, session, entry.Path, layout)
+			return runner.EnsureWithGeneration(
+				commandCtx, session, entry.Path, entry.Generation, layout,
+			)
 		},
 	)
 	if err != nil || startSession {
@@ -513,10 +516,11 @@ func openExpectedWorktree(
 				if err := acknowledgeRemoteSourcePath(current.Path); err != nil {
 					return err
 				}
-				return runner.Ensure(
+				return runner.EnsureWithGeneration(
 					ctx,
 					openExpectedSession,
 					current.Path,
+					openExpectedGeneration,
 					layout,
 				)
 			},

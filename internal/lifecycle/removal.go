@@ -164,6 +164,7 @@ func (s *removalService) Remove(
 				if request.Session != nil {
 					sessionCondition := *request.Session
 					sessionCondition.WorkspacePath = request.Path
+					sessionCondition.WorkspaceGeneration = request.ExpectedGeneration
 					sessionCondition.ProtectedSocketTopology = protectedTarget != nil
 					if err := validateCurrentRemovalSessionTarget(
 						ctx,

@@ -49,6 +49,7 @@ type tuiBackend struct {
 	collectStatuses           func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error)
 	listSessions              func() ([]string, error)
 	ensureWorkspace           func(context.Context, string, string, models.Layout) error
+	ensureWorktree            func(context.Context, string, string, string, models.Layout) error
 	attachSession             func(string, bool) error
 	ensureAndAttach           func(context.Context, string, string, models.Layout, bool) error
 	registerProject           func(context.Context, models.Project) error
@@ -89,6 +90,7 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 		collectStatuses:          collectTUIStatuses,
 		listSessions:             tmuxCmd.ListSessions,
 		ensureWorkspace:          runner.Ensure,
+		ensureWorktree:           runner.EnsureWithGeneration,
 		attachSession:            runner.Attach,
 		ensureAndAttach:          runner.EnsureAndAttach,
 		registerProject:          registerProjectWithLifecycle,
@@ -284,6 +286,7 @@ func (b *tuiBackend) applyInventoryConfig(effective *models.Config) error {
 	b.listSessions = b.tmux.ListSessions
 	runner := tmux.NewWorkspaceRunner(b.tmux, b.protectedNames)
 	b.ensureWorkspace = runner.Ensure
+	b.ensureWorktree = runner.EnsureWithGeneration
 	b.attachSession = runner.Attach
 	b.ensureAndAttach = runner.EnsureAndAttach
 	return nil
@@ -1689,8 +1692,8 @@ func (b *tuiBackend) attachWorkspace(ctx context.Context, row dashboard.Row, lay
 		row.Entry.Generation,
 		b.protectedNames,
 		func(sessionName string) error {
-			return b.ensureWorkspace(
-				ctx, sessionName, row.Entry.Path, layout,
+			return b.ensureWorktree(
+				ctx, sessionName, row.Entry.Path, row.Entry.Generation, layout,
 			)
 		},
 	)

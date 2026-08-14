@@ -378,8 +378,12 @@ func runAdd(cmd *cobra.Command, args []string) error {
 					projects,
 					protectedNames,
 					func(sessionName string) error {
-						return launchRunner.Ensure(
-							commandContext, sessionName, worktreePath, layout,
+						return launchRunner.EnsureWithGeneration(
+							commandContext,
+							sessionName,
+							worktreePath,
+							worktreeGeneration,
+							layout,
 						)
 					},
 				)

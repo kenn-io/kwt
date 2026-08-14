@@ -60,6 +60,14 @@ func (r *signalingOpenWorkspaceRunner) Ensure(
 	return nil
 }
 
+func (r *signalingOpenWorkspaceRunner) EnsureWithGeneration(
+	ctx context.Context,
+	sessionName, workingDirectory, _ string,
+	layout models.Layout,
+) error {
+	return r.Ensure(ctx, sessionName, workingDirectory, layout)
+}
+
 func (r *signalingOpenWorkspaceRunner) Attach(string, bool) error { return nil }
 
 func (r *signalingOpenWorkspaceRunner) EnsureAndAttach(
@@ -74,6 +82,7 @@ type recordingOpenWorkspaceRunner struct {
 	attached         bool
 	sessionName      string
 	workingDirectory string
+	generation       string
 	layout           models.Layout
 	insideTmux       bool
 }
@@ -96,6 +105,16 @@ func (r *recordingOpenWorkspaceRunner) Ensure(
 	r.workingDirectory = workingDirectory
 	r.layout = layout
 	return nil
+}
+
+func (r *recordingOpenWorkspaceRunner) EnsureWithGeneration(
+	ctx context.Context,
+	sessionName, workingDirectory, generation string,
+	layout models.Layout,
+) error {
+	err := r.Ensure(ctx, sessionName, workingDirectory, layout)
+	r.generation = generation
+	return err
 }
 
 func (r *recordingOpenWorkspaceRunner) EnsureAndAttach(

@@ -3653,7 +3653,9 @@ func TestTUIWorktreeAttachCannotRaceGuardedRemoval(t *testing.T) {
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
 	ensureCalled := make(chan struct{}, 1)
 	attachCalled := make(chan struct{}, 1)
-	backend.ensureWorkspace = func(context.Context, string, string, models.Layout) error {
+	backend.ensureWorktree = func(
+		context.Context, string, string, string, models.Layout,
+	) error {
 		ensureCalled <- struct{}{}
 		return nil
 	}
@@ -3708,8 +3710,8 @@ func TestTUIWorktreeAttachUsesBranchObservedInsideLifecycleGuard(t *testing.T) {
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
 	var ensuredSession string
 	var attachedSession string
-	backend.ensureWorkspace = func(
-		_ context.Context, session string, _ string, _ models.Layout,
+	backend.ensureWorktree = func(
+		_ context.Context, session string, _, _ string, _ models.Layout,
 	) error {
 		ensuredSession = session
 		return nil

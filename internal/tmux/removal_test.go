@@ -80,7 +80,7 @@ func TestOrdinaryNamedSocketRemovalUsesSharedServerScan(t *testing.T) {
 			command *TmuxCommand,
 		) (string, string, error) {
 			inspected = command
-			return "123|$1|1720000000|another-session|\n", "", nil
+			return "123|$1|1720000000|another-session||\n", "", nil
 		},
 		inspectProtected: func(
 			context.Context,
@@ -136,7 +136,7 @@ func TestRemovalRejectsDifferentNamedSessionForWorkspacePath(t *testing.T) {
 			_ *TmuxCommand,
 		) (string, string, error) {
 			return "123|$1|1720000000|kwt-workspace-old-branch|" +
-				workspacePathIdentity(workspacePath) + "\n", "", nil
+				workspacePathIdentity(workspacePath) + "|\n", "", nil
 		},
 	}
 
@@ -162,7 +162,7 @@ func TestRemovalPreservesDelimiterInWorkspaceSessionName(t *testing.T) {
 			_ *TmuxCommand,
 		) (string, string, error) {
 			return "123|$1|1720000000|kwt-wt-repo-feature|topic-deadbeef|" +
-				workspacePathIdentity(workspacePath) + "\n", "", nil
+				workspacePathIdentity(workspacePath) + "|\n", "", nil
 		},
 	}
 
@@ -187,7 +187,7 @@ func TestRemovalRejectsUnmarkedLegacySessionAfterBranchChange(t *testing.T) {
 			_ context.Context,
 			_ *TmuxCommand,
 		) (string, string, error) {
-			return "123|$1|1720000000|kwt-wt-kwt-old-branch-9cc4e551|\n", "", nil
+			return "123|$1|1720000000|kwt-wt-kwt-old-branch-9cc4e551||\n", "", nil
 		},
 	}
 
@@ -202,6 +202,58 @@ func TestRemovalRejectsUnmarkedLegacySessionAfterBranchChange(t *testing.T) {
 	var conditionErr *RemovalSessionConditionError
 	require.ErrorAs(t, err, &conditionErr)
 	assert.Contains(t, conditionErr.Reason, "worktree")
+}
+
+func TestRemovalRejectsGenerationMarkedSessionAfterWorktreeMove(t *testing.T) {
+	const generation = "0123456789abcdef0123456789abcdef"
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspect: func(
+			_ context.Context,
+			_ *TmuxCommand,
+		) (string, string, error) {
+			return "123|$1|1720000000|kwt-wt-kwt-topic-oldhash|old-path-id|" +
+				generation + "\n", "", nil
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName:         "kwt-wt-kwt-topic-newhash",
+		WorkspacePath:       "/worktrees/moved-topic",
+		WorkspaceGeneration: generation,
+		Absent:              true,
+	})
+
+	assert.Nil(t, lease)
+	require.Error(t, err)
+	var conditionErr *RemovalSessionConditionError
+	require.ErrorAs(t, err, &conditionErr)
+	assert.Contains(t, conditionErr.Reason, "worktree")
+}
+
+func TestRemovalFailsClosedOnUnmarkedKWTSessionAfterWorktreeMove(t *testing.T) {
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspect: func(
+			_ context.Context,
+			_ *TmuxCommand,
+		) (string, string, error) {
+			return "123|$1|1720000000|kwt-wt-kwt-topic-oldhash|old-path-id|\n", "", nil
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName:         "kwt-wt-kwt-topic-newhash",
+		WorkspacePath:       "/worktrees/moved-topic",
+		WorkspaceGeneration: "0123456789abcdef0123456789abcdef",
+		Absent:              true,
+	})
+
+	assert.Nil(t, lease)
+	require.Error(t, err)
+	var conditionErr *RemovalSessionConditionError
+	require.ErrorAs(t, err, &conditionErr)
+	assert.Contains(t, conditionErr.Reason, "ownership")
 }
 
 func TestProtectedRemovalFailsClosedOnUnexpectedCanonicalTopology(t *testing.T) {
