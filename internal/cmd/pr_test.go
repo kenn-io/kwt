@@ -733,6 +733,7 @@ func TestRunPRAttachPreservesLegacyGenerationForUnguardedSession(t *testing.T) {
 	))
 	cfg := testPRConfig()
 	withPRCommandDeps(t, cfg, &fakePRService{})
+	stubPRWorkspaceGeneration(t, recorded.Path, live.Generation)
 	inspectPRProjectClone = func(
 		context.Context,
 		pullrequest.Provenance,
@@ -1579,6 +1580,20 @@ func TestImportedWorkspaceProvenanceEvaluatesEachCandidateProject(t *testing.T) 
 }
 
 func TestImportedWorkspaceProvenanceDiscardsAnotherRepositoryOwner(t *testing.T) {
+	testImportedWorkspaceProvenanceDiscardsAnotherRepositoryOwner(t, true)
+}
+
+func TestImportedWorkspaceProvenanceDiscardsLegacyAnotherRepositoryOwner(
+	t *testing.T,
+) {
+	testImportedWorkspaceProvenanceDiscardsAnotherRepositoryOwner(t, false)
+}
+
+func testImportedWorkspaceProvenanceDiscardsAnotherRepositoryOwner(
+	t *testing.T,
+	staleHasGeneration bool,
+) {
+	t.Helper()
 	t.Setenv("KWT_HOME", t.TempDir())
 	staleRepo := newPRInspectionRepo(t)
 	currentRepo := newPRInspectionRepo(t)
@@ -1603,13 +1618,18 @@ func TestImportedWorkspaceProvenanceDiscardsAnotherRepositoryOwner(t *testing.T)
 	)
 	require.NoError(t, err)
 	require.NotEqual(t, staleGeneration, currentGeneration)
+	staleRecordGeneration := staleGeneration
+	if !staleHasGeneration {
+		staleRecordGeneration = ""
+	}
 	stale := pullrequest.Provenance{
 		Project: pullrequest.Project{
 			Identity: "github.com/acme/stale", Path: staleRepo,
 		},
 		Workspace: pullrequest.Workspace{
 			Path: worktreePath, Repository: "github.com/acme/stale",
-			Generation: staleGeneration, SessionName: "kwt-workspace-stale",
+			Generation:  staleRecordGeneration,
+			SessionName: "kwt-workspace-stale",
 		},
 	}
 	current := pullrequest.Provenance{

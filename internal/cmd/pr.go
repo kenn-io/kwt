@@ -568,10 +568,6 @@ func importedWorkspaceProvenance(
 	observations := make(map[string]generationObservation, len(pathMatches))
 	matches := make([]pullrequest.Provenance, 0, len(pathMatches))
 	for _, record := range pathMatches {
-		if record.Workspace.Generation == "" {
-			matches = append(matches, record)
-			continue
-		}
 		projectKey := utils.PathKey(record.Project.Path)
 		observation, observed := observations[projectKey]
 		if !observed {
@@ -597,7 +593,8 @@ func importedWorkspaceProvenance(
 				observation.err,
 			)
 		}
-		if record.Workspace.Generation == observation.generation {
+		if record.Workspace.Generation == "" ||
+			record.Workspace.Generation == observation.generation {
 			matches = append(matches, record)
 		}
 	}
