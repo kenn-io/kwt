@@ -167,6 +167,57 @@ func TestOperationHubRetainsImmutablePromptPayload(t *testing.T) {
 	_ = receiveOperationEvent(t, first.Events())
 }
 
+func TestOperationHubDeliversSSHPromptTargetDetails(t *testing.T) {
+	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	operation, _, err := hub.Start(OperationStart{
+		RequestDigest: "ssh-prompt-targets",
+		Run: func(ctx context.Context, operation *Operation) (json.RawMessage, error) {
+			_, promptErr := operation.Prompt(ctx, service.OperationPrompt{
+				Kind:      "ssh_host_key",
+				Message:   "Continue connecting?",
+				Sensitive: false,
+				Details: map[string]any{
+					"logical_target": map[string]any{
+						"hostname": "relay.example.test",
+					},
+					"effective_target": map[string]any{
+						"hostname": "192.0.2.10",
+						"user":     "deploy",
+						"port":     2200,
+					},
+					"display_target": "relay.example.test",
+					"hop_index":      0,
+					"hop_count":      1,
+				},
+			})
+			return json.RawMessage(`{}`), promptErr
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscription, err := hub.Subscribe(operation.ID(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscription.Close()
+	prompt := receiveOperationEvent(t, subscription.Events())
+	if prompt.Prompt == nil {
+		t.Fatalf("unexpected prompt event: %#v", prompt)
+	}
+	logical, ok := prompt.Prompt.Details["logical_target"].(map[string]any)
+	if !ok || logical["hostname"] != "relay.example.test" {
+		t.Fatalf("logical target details = %#v", prompt.Prompt.Details["logical_target"])
+	}
+	if err := hub.Respond(operation.ID(), service.OperationResponse{
+		PromptID: prompt.Prompt.ID,
+		Value:    "yes",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = receiveOperationEvent(t, subscription.Events())
+}
+
 func TestOperationHubResumesAfterSequence(t *testing.T) {
 	hub := NewOperationHub(context.Background(), OperationHubOptions{})
 	op, _, err := hub.Start(OperationStart{

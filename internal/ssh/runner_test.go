@@ -225,8 +225,14 @@ func TestRunnerClassifiesHostKeyConfirmationAndAttributesProxyHop(t *testing.T) 
 	assert.Equal(t, "ssh_host_key", captured.Kind)
 	assert.False(t, captured.Sensitive)
 	assert.Equal(t, "Continue connecting (yes/no)?", captured.Message)
-	assert.Equal(t, target.LogicalTarget, captured.Details["logical_target"])
-	assert.Equal(t, target.EffectiveTarget, captured.Details["effective_target"])
+	assert.Equal(t, map[string]any{
+		"hostname": target.LogicalTarget.Hostname,
+	}, captured.Details["logical_target"])
+	assert.Equal(t, map[string]any{
+		"hostname": target.EffectiveTarget.Hostname,
+		"user":     target.EffectiveTarget.User,
+		"port":     target.EffectiveTarget.Port,
+	}, captured.Details["effective_target"])
 	assert.Equal(t, target.DisplayTarget, captured.Details["display_target"])
 	assert.Equal(t, 0, captured.Details["hop_index"])
 	assert.Equal(t, 2, captured.Details["hop_count"])

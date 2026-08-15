@@ -72,8 +72,8 @@ func newRunner(
 					hopCount = 1
 				}
 				prompt.Details = map[string]any{
-					"logical_target":   target.LogicalTarget,
-					"effective_target": target.EffectiveTarget,
+					"logical_target":   promptTargetDetails(target.LogicalTarget),
+					"effective_target": promptTargetDetails(target.EffectiveTarget),
 					"display_target":   target.DisplayTarget,
 					"hop_index":        request.promptTargetIndex,
 					"hop_count":        hopCount,
@@ -94,6 +94,17 @@ func newRunner(
 		closeErr := askpass.Close()
 		return exitCode, errors.Join(runErr, askpass.Err(), closeErr, cleanup())
 	}, nil
+}
+
+func promptTargetDetails(target Target) map[string]any {
+	details := map[string]any{"hostname": target.Hostname}
+	if target.User != "" {
+		details["user"] = target.User
+	}
+	if target.Port != 0 {
+		details["port"] = target.Port
+	}
+	return details
 }
 
 func runSSHVersion(
