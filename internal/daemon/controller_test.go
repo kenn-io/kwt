@@ -128,6 +128,26 @@ func TestControllerStartsAbsentDaemonAndWaitsForReady(t *testing.T) {
 	assert.Equal(t, 1, launches)
 }
 
+func TestControllerDefaultStartupBudgetToleratesLoadedLaunch(t *testing.T) {
+	options := testControllerOptions(t)
+	options.StartTimeout = 0
+	options.Inspect = scriptedInspector(t, Observation{State: RuntimeAbsent})
+	launchCompleted := errors.New("launch completed")
+	insufficientBudget := errors.New("insufficient startup budget")
+	options.Launch = func(ctx context.Context) error {
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) < 9*time.Second {
+			return insufficientBudget
+		}
+		return launchCompleted
+	}
+
+	_, err := NewController(options).Start(context.Background())
+
+	assert.ErrorIs(t, err, launchCompleted)
+	assert.NotErrorIs(t, err, insufficientBudget)
+}
+
 func TestControllerLaunchFailsWhenDaemonReportsFailed(t *testing.T) {
 	options := testControllerOptions(t)
 	options.Inspect = scriptedInspector(

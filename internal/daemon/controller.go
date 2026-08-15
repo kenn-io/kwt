@@ -53,7 +53,7 @@ func NewController(options ControllerOptions) *Controller {
 		options.PollInterval = 50 * time.Millisecond
 	}
 	if options.StartTimeout <= 0 {
-		options.StartTimeout = 5 * time.Second
+		options.StartTimeout = 10 * time.Second
 	}
 	if options.CleanupAllowance <= 0 {
 		options.CleanupAllowance = 5 * time.Second
