@@ -1599,6 +1599,82 @@ func TestImportedWorkspaceProvenanceDiscardsLegacyAnotherRepositoryOwner(
 	testImportedWorkspaceProvenanceDiscardsAnotherRepositoryOwner(t, false)
 }
 
+func TestImportedWorkspaceProvenanceInitializesOwnedLegacyGeneration(
+	t *testing.T,
+) {
+	t.Setenv("KWT_HOME", t.TempDir())
+	repo := newPRInspectionRepo(t)
+	runPRInspectionGit(
+		t,
+		repo,
+		"remote",
+		"add",
+		"origin",
+		"https://github.com/acme/widget.git",
+	)
+	branch := "legacy-import"
+	worktreePath := filepath.Join(t.TempDir(), branch)
+	runPRInspectionGit(t, repo, "branch", branch)
+	runPRInspectionGit(t, repo, "worktree", "add", worktreePath, branch)
+	_, err := gitadapter.New(repo).ReadWorktreeGeneration(worktreePath)
+	require.ErrorIs(t, err, os.ErrNotExist)
+
+	repository := "github.com/acme/widget"
+	info, ok := urlutil.CanonicalRepositoryInfo(repository)
+	require.True(t, ok)
+	record := pullrequest.Provenance{
+		Repository: repository,
+		Project: pullrequest.Project{
+			Identity: repository,
+			Name:     "widget",
+			Path:     repo,
+		},
+		Workspace: pullrequest.Workspace{
+			Path:        worktreePath,
+			Branch:      branch,
+			Repository:  repository,
+			SessionName: tmux.WorkspaceSessionName(info, branch, worktreePath),
+		},
+	}
+	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
+		context.Background(),
+		func(records map[string]pullrequest.Provenance) error {
+			records[branch] = record
+			return nil
+		},
+	))
+	oldInspect := inspectPRProjectClone
+	oldLoad := loadPRConfig
+	t.Cleanup(func() {
+		inspectPRProjectClone = oldInspect
+		loadPRConfig = oldLoad
+	})
+	inspectPRProjectClone = defaultInspectPRProjectClone
+	loadPRConfig = func() (*models.Config, error) {
+		return &models.Config{Projects: []models.Project{{
+			Repository: repository,
+			Name:       record.Project.Name,
+			Path:       repo,
+		}}}, nil
+	}
+
+	verified, err := importedWorkspaceProvenance(
+		context.Background(),
+		worktreePath,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, record, verified.record)
+	require.NoError(t, gitadapter.ValidateWorktreeGeneration(
+		verified.liveGeneration,
+	))
+	persistedGeneration, err := gitadapter.New(repo).ReadWorktreeGeneration(
+		worktreePath,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, verified.liveGeneration, persistedGeneration)
+}
+
 func testImportedWorkspaceProvenanceDiscardsAnotherRepositoryOwner(
 	t *testing.T,
 	staleHasGeneration bool,

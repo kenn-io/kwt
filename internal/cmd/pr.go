@@ -578,6 +578,16 @@ func importedWorkspaceProvenance(
 			observations[projectKey] = observation
 		}
 		if observation.err != nil {
+			if record.Workspace.Generation == "" && errors.Is(
+				observation.err,
+				gitadapter.ErrWorktreeGenerationNotFound,
+			) {
+				// Ownership was proven before the missing marker was reported.
+				// The project inventory below initializes the generation under
+				// the repository worktree lock and verifies the legacy record.
+				matches = append(matches, record)
+				continue
+			}
 			if errors.Is(observation.err, gitadapter.ErrWorktreeNotFound) ||
 				errors.Is(
 					observation.err,

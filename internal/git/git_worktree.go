@@ -38,6 +38,9 @@ var (
 	ErrWorktreeRepositoryMismatch = errors.New(
 		"worktree belongs to a different repository",
 	)
+	// ErrWorktreeGenerationNotFound reports that the selected repository owns
+	// the worktree but its durable KWT generation has not been initialized.
+	ErrWorktreeGenerationNotFound = errors.New("worktree generation not found")
 )
 
 type worktreeCreationReservation struct {
@@ -1848,6 +1851,12 @@ func (g *Git) readWorktreeGenerationWithoutCredentials(
 	}
 	data, err := os.ReadFile(filepath.Join(gitDir, "kwt-generation"))
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf(
+				"read worktree identity: %w",
+				errors.Join(ErrWorktreeGenerationNotFound, err),
+			)
+		}
 		return "", fmt.Errorf("read worktree identity: %w", err)
 	}
 	generation := strings.TrimSpace(string(data))
