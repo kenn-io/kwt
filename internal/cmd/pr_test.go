@@ -1578,6 +1578,77 @@ func TestImportedWorkspaceProvenanceEvaluatesEachCandidateProject(t *testing.T) 
 	assert.True(t, inspectedProjects[stale.Project.Path])
 }
 
+func TestImportedWorkspaceProvenanceDiscardsAnotherRepositoryOwner(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
+	staleRepo := newPRInspectionRepo(t)
+	currentRepo := newPRInspectionRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "reused-worktree")
+	runPRInspectionGit(t, staleRepo, "branch", "stale-owner")
+	runPRInspectionGit(
+		t, staleRepo, "worktree", "add", worktreePath, "stale-owner",
+	)
+	staleGeneration, err := gitadapter.New(staleRepo).WorktreeGeneration(
+		worktreePath,
+	)
+	require.NoError(t, err)
+	runPRInspectionGit(
+		t, staleRepo, "worktree", "remove", "--force", worktreePath,
+	)
+	runPRInspectionGit(t, currentRepo, "branch", "current-owner")
+	runPRInspectionGit(
+		t, currentRepo, "worktree", "add", worktreePath, "current-owner",
+	)
+	currentGeneration, err := gitadapter.New(currentRepo).WorktreeGeneration(
+		worktreePath,
+	)
+	require.NoError(t, err)
+	require.NotEqual(t, staleGeneration, currentGeneration)
+	stale := pullrequest.Provenance{
+		Project: pullrequest.Project{
+			Identity: "github.com/acme/stale", Path: staleRepo,
+		},
+		Workspace: pullrequest.Workspace{
+			Path: worktreePath, Repository: "github.com/acme/stale",
+			Generation: staleGeneration, SessionName: "kwt-workspace-stale",
+		},
+	}
+	current := pullrequest.Provenance{
+		Project: pullrequest.Project{
+			Identity: "github.com/acme/current", Path: currentRepo,
+		},
+		Workspace: pullrequest.Workspace{
+			Path: worktreePath, Repository: "github.com/acme/current",
+			Generation: currentGeneration, SessionName: "kwt-workspace-current",
+		},
+	}
+	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
+		context.Background(),
+		func(records map[string]pullrequest.Provenance) error {
+			records["stale"] = stale
+			records["current"] = current
+			return nil
+		},
+	))
+	oldInspect := inspectPRProjectClone
+	t.Cleanup(func() { inspectPRProjectClone = oldInspect })
+	inspectPRProjectClone = func(
+		_ context.Context,
+		got pullrequest.Provenance,
+	) (pullrequest.Project, []pullrequest.Workspace, error) {
+		assert.Equal(t, current, got)
+		return current.Project, []pullrequest.Workspace{current.Workspace}, nil
+	}
+
+	verified, err := importedWorkspaceProvenance(
+		context.Background(),
+		worktreePath,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, current, verified.record)
+	assert.Equal(t, currentGeneration, verified.liveGeneration)
+}
+
 func TestProtectedAttachReleasesFenceBeforeBlockingClient(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("KWT_HOME", home)

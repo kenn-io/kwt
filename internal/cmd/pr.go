@@ -583,6 +583,10 @@ func importedWorkspaceProvenance(
 		}
 		if observation.err != nil {
 			if errors.Is(observation.err, gitadapter.ErrWorktreeNotFound) ||
+				errors.Is(
+					observation.err,
+					gitadapter.ErrWorktreeRepositoryMismatch,
+				) ||
 				prProjectCheckoutMissing(record.Project.Path) {
 				continue
 			}

@@ -1468,6 +1468,28 @@ func TestReadWorktreeGenerationClassifiesMissingWorktree(t *testing.T) {
 	assert.ErrorIs(t, err, ErrWorktreeNotFound)
 }
 
+func TestReadWorktreeGenerationClassifiesAnotherRepositoryOwner(t *testing.T) {
+	staleRepo := NewTestRepository(t)
+	currentRepo := NewTestRepository(t)
+	staleRepo.CreateBranch(t, "stale-owner")
+	currentRepo.CreateBranch(t, "current-owner")
+	worktreePath := filepath.Join(t.TempDir(), "reused-worktree")
+	staleRepo.CreateWorktree(t, worktreePath, "stale-owner")
+	_, err := New(staleRepo.Path).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	require.NoError(t, staleRepo.run(
+		"worktree", "remove", "--force", worktreePath,
+	))
+	currentRepo.CreateWorktree(t, worktreePath, "current-owner")
+	_, err = New(currentRepo.Path).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+
+	_, err = New(staleRepo.Path).ReadWorktreeGeneration(worktreePath)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrWorktreeRepositoryMismatch)
+}
+
 func TestWorktreeGitDirRejectsDuplicateAdministrativeBacklinks(t *testing.T) {
 	repo := NewTestRepository(t)
 	g := New(repo.Path)

@@ -33,6 +33,11 @@ var (
 	// ErrWorktreeNotFound reports that no worktree administrative record owns
 	// the requested path.
 	ErrWorktreeNotFound = errors.New("worktree not found")
+	// ErrWorktreeRepositoryMismatch reports that another repository owns the
+	// requested worktree path.
+	ErrWorktreeRepositoryMismatch = errors.New(
+		"worktree belongs to a different repository",
+	)
 )
 
 type worktreeCreationReservation struct {
@@ -1890,8 +1895,8 @@ func (g *Git) worktreeGitDirWithoutCredentials(
 				directCommonClaim = true
 			} else {
 				return "", fmt.Errorf(
-					"resolve worktree Git directory: %s belongs to a different repository",
-					path,
+					"resolve worktree Git directory for %s: %w",
+					path, ErrWorktreeRepositoryMismatch,
 				)
 			}
 		}
@@ -1931,8 +1936,8 @@ func (g *Git) worktreeGitDirWithoutCredentials(
 	}
 	if pointsOutsideCommon {
 		return "", fmt.Errorf(
-			"resolve worktree Git directory: %s belongs to a different repository",
-			path,
+			"resolve worktree Git directory for %s: %w",
+			path, ErrWorktreeRepositoryMismatch,
 		)
 	}
 
