@@ -201,11 +201,20 @@ func runPRImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return writePRError(cmd, err)
 	}
-	project, err := preparePRProject()
+	number, err := pullrequest.ParseSelectorNumber(args[0])
 	if err != nil {
 		return writePRError(cmd, err)
 	}
-	number, err := pullrequest.ParseSelectorNumber(args[0])
+	var home string
+	var project pullrequest.Project
+	if guarded {
+		home, err = config.CanonicalHome()
+		if err == nil {
+			project, err = prepareGuardedPRImportProject(cmd.Context(), home)
+		}
+	} else {
+		project, err = preparePRProject()
+	}
 	if err != nil {
 		return writePRError(cmd, err)
 	}
@@ -229,9 +238,11 @@ func runPRImport(cmd *cobra.Command, args []string) error {
 			))
 		}
 	}
-	home, err := config.CanonicalHome()
-	if err != nil {
-		return writePRError(cmd, err)
+	if home == "" {
+		home, err = config.CanonicalHome()
+		if err != nil {
+			return writePRError(cmd, err)
+		}
 	}
 	expansion, err := kwt.CaptureExpansionContext()
 	if err != nil {
@@ -997,6 +1008,71 @@ func preparePRProject() (pullrequest.Project, error) {
 		return pullrequest.Project{}, err
 	}
 	return project, nil
+}
+
+func prepareGuardedPRImportProject(
+	ctx context.Context,
+	home string,
+) (pullrequest.Project, error) {
+	snapshot, err := config.LoadGlobalSnapshotAt(home)
+	if err != nil {
+		return pullrequest.Project{}, pullrequest.NewError(
+			pullrequest.CodeWorkspaceCreation,
+			"failed to load kwt project registrations",
+			false,
+			err,
+		)
+	}
+
+	var expected *config.ProjectRegistration
+	for index := range snapshot.Projects {
+		fingerprint, fingerprintErr := snapshot.Projects[index].Fingerprint()
+		if fingerprintErr != nil {
+			return pullrequest.Project{}, pullrequest.NewError(
+				pullrequest.CodeWorkspaceCreation,
+				"failed to inspect kwt project registration",
+				false,
+				fingerprintErr,
+			)
+		}
+		if fingerprint == prImportExpectedRegistration {
+			expected = &snapshot.Projects[index]
+			break
+		}
+	}
+	if expected == nil {
+		return pullrequest.Project{}, changedPRImportRegistration(nil)
+	}
+
+	expectedIdentity, err := lifecycle.ResolveProjectRegistrationIdentity(
+		ctx,
+		*expected,
+		credentials.ProtectedNames(snapshot.Config)...,
+	)
+	if err != nil || !lifecycle.EqualProjectIdentity(
+		expectedIdentity,
+		prImportExpectedRepository,
+	) {
+		return pullrequest.Project{}, changedPRImportRegistration(err)
+	}
+
+	selected, err := resolvePRProject(snapshot.Config, prProject)
+	if err != nil || !samePRPath(selected.Path, expected.Effective.Path) ||
+		!lifecycle.EqualProjectIdentity(selected.Identity, expectedIdentity) {
+		return pullrequest.Project{}, changedPRImportRegistration(err)
+	}
+	selected.Identity = expectedIdentity
+	return selected, nil
+}
+
+func changedPRImportRegistration(cause error) error {
+	return service.NewError(
+		service.RegistrationChanged,
+		"the project registration changed before the operation began",
+		true,
+		nil,
+		cause,
+	)
 }
 
 func preparePRService(

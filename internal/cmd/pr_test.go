@@ -722,6 +722,87 @@ func TestGuardedPRImportRejectsRegistrationReplacementBeforeMutation(t *testing.
 	assert.Equal(t, service.RegistrationChanged, envelope.Error.Code)
 }
 
+func TestGuardedPRImportResolvesExpectedRegistrationBeforeProjectSelector(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		replacement *models.Project
+	}{
+		{name: "registration removed"},
+		{
+			name: "repository replaced under the same selector",
+			replacement: &models.Project{
+				Repository: "github.com/other/widget",
+				Name:       "widget",
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("KWT_HOME", home)
+			projectPath := filepath.Join(t.TempDir(), "widget")
+			original := models.Project{
+				Repository: "github.com/acme/widget",
+				Name:       "widget",
+				Path:       projectPath,
+			}
+			serviceImpl := &fakePRService{}
+			withPRCommandDeps(
+				t,
+				&models.Config{Projects: []models.Project{original}},
+				serviceImpl,
+			)
+			snapshot, err := config.LoadGlobalSnapshotAt(home)
+			require.NoError(t, err)
+			require.Len(t, snapshot.Projects, 1)
+			fingerprint, err := snapshot.Projects[0].Fingerprint()
+			require.NoError(t, err)
+
+			var replacementConfig *models.Config
+			var replacementProject *models.Project
+			if test.replacement != nil {
+				replacement := *test.replacement
+				replacement.Path = projectPath
+				replacementProject = &replacement
+				replacementConfig = &models.Config{
+					Projects: []models.Project{replacement},
+				}
+			}
+			changed, err := config.CompareAndSwapProjectAt(
+				home,
+				snapshot.Projects[0],
+				replacementProject,
+			)
+			require.NoError(t, err)
+			require.True(t, changed)
+			loadPRConfig = func() (*models.Config, error) {
+				if replacementConfig == nil {
+					return &models.Config{}, nil
+				}
+				return replacementConfig, nil
+			}
+
+			prImportExpectedRepository = original.Repository
+			prImportExpectedRegistration = fingerprint
+			prProject = original.Repository
+			cmd, stdout, _ := prTestCommand()
+			markCommandFlagsChanged(
+				t,
+				cmd,
+				"expected-repository",
+				"expected-registration",
+			)
+
+			err = runPRImport(cmd, []string{"17"})
+
+			assert.True(t, service.IsCode(err, service.RegistrationChanged))
+			assert.Empty(t, serviceImpl.gotSelector)
+			var envelope jsonErrorEnvelope
+			require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+			assert.Equal(t, service.RegistrationChanged, envelope.Error.Code)
+		})
+	}
+}
+
 func TestPRImportExpectedAuthorityIsAllOrNothing(t *testing.T) {
 	for _, test := range []struct {
 		name         string
