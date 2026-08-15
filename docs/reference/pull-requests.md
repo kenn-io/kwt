@@ -34,9 +34,19 @@ kwt's protected path:
 kwt pr attach <workspace.path>
 ```
 
-Automation clients that already hold a `kwt list --json` snapshot can bind
-session establishment to that exact authority by supplying all five expected
+Automation clients bind session establishment to current `kwt list --json` and
+`kwt projects --json` snapshots. The worktree list is flat and does not contain
+a nested project record or registration fingerprint. Match its `repository`
+field to the project record with the same `repository`, then supply these five
 values together:
+
+| Attach flag | Source |
+| --- | --- |
+| `--expected-repository` | Matching project's `repository` from `kwt projects --json` |
+| `--expected-registration` | Matching project's `registration_fingerprint` from `kwt projects --json` |
+| `--expected-generation` | Selected worktree's `generation` from `kwt list --json` |
+| `--expected-session` | Selected worktree's `session_name` from `kwt list --json` |
+| `--expected-socket` | Selected worktree's `tmux_socket_name` from `kwt list --json` |
 
 ```sh
 kwt pr attach <workspace.path> \
