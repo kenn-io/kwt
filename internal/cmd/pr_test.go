@@ -708,6 +708,65 @@ func TestRunPRAttachUsesPersistedWorkspaceIdentity(t *testing.T) {
 	assert.True(t, attached)
 }
 
+func TestRunPRAttachPreservesLegacyGenerationForUnguardedSession(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
+	recorded := pullrequest.Workspace{
+		Path:        "/worktrees/pr-legacy",
+		Branch:      "pr-legacy",
+		Repository:  "github.com/acme/widget",
+		SessionName: "kwt-workspace-pr-legacy",
+	}
+	live := recorded
+	live.Generation = "0123456789abcdef0123456789abcdef"
+	project := pullrequest.Project{
+		Identity: recorded.Repository,
+		Path:     "/repos/widget",
+	}
+	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
+		context.Background(),
+		func(records map[string]pullrequest.Provenance) error {
+			records[recorded.Branch] = pullrequest.Provenance{
+				Project: project, Workspace: recorded,
+			}
+			return nil
+		},
+	))
+	cfg := testPRConfig()
+	withPRCommandDeps(t, cfg, &fakePRService{})
+	inspectPRProjectClone = func(
+		context.Context,
+		pullrequest.Provenance,
+	) (pullrequest.Project, []pullrequest.Workspace, error) {
+		return project, []pullrequest.Workspace{live}, nil
+	}
+	ensurePRWorkspaceSession = func(
+		_ context.Context,
+		got pullrequest.Workspace,
+		_ *models.Config,
+	) (string, error) {
+		if got.Generation != "" {
+			return "", fmt.Errorf(
+				"legacy session cannot accept generation %q",
+				got.Generation,
+			)
+		}
+		return tmux.ProtectedWorkspaceSocketName(got.SessionName, got.Path), nil
+	}
+	attachExistingPRWorkspaceSession = func(
+		context.Context,
+		pullrequest.Workspace,
+		*models.Config,
+		string,
+	) error {
+		return nil
+	}
+	cmd, _, _ := prTestCommand()
+
+	err := runPRAttach(cmd, []string{recorded.Path})
+
+	require.NoError(t, err)
+}
+
 func TestRunPRAttachGuardUsesVerifiedLiveWorkspaceIdentity(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("KWT_HOME", home)
@@ -1179,6 +1238,82 @@ func TestRunPRAttachClassifiesDeletedWorkspaceAsRegistrationChanged(t *testing.T
 	assert.Equal(t, service.RegistrationChanged, envelope.Error.Code)
 }
 
+func TestRunPRAttachClassifiesDeletedProjectCheckoutAsChanged(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("KWT_HOME", home)
+	repo := newPRInspectionRepo(t)
+	branch := "pr-project-deleted"
+	workspacePath := filepath.Join(t.TempDir(), branch)
+	runPRInspectionGit(t, repo, "branch", branch)
+	runPRInspectionGit(t, repo, "worktree", "add", workspacePath, branch)
+	generation, err := gitadapter.New(repo).WorktreeGeneration(workspacePath)
+	require.NoError(t, err)
+	project := pullrequest.Project{
+		Identity: "github.com/acme/widget",
+		Name:     "widget",
+		Path:     repo,
+	}
+	workspace := pullrequest.Workspace{
+		Path:        workspacePath,
+		Branch:      branch,
+		Repository:  project.Identity,
+		Generation:  generation,
+		SessionName: "kwt-workspace-pr-project-deleted",
+	}
+	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
+		context.Background(),
+		func(records map[string]pullrequest.Provenance) error {
+			records[branch] = pullrequest.Provenance{
+				Project: project, Workspace: workspace,
+			}
+			return nil
+		},
+	))
+	registered, err := config.RegisterProjectWithIdentity(models.Project{
+		Repository: project.Identity,
+		Name:       project.Name,
+		Path:       project.Path,
+	})
+	require.NoError(t, err)
+	cfg := &models.Config{Projects: []models.Project{registered.Project}}
+	withPRCommandDeps(t, cfg, &fakePRService{})
+	prAttachExpectedRepository = project.Identity
+	prAttachExpectedRegistration = registered.Fingerprint
+	prAttachExpectedGeneration = generation
+	prAttachExpectedSession = workspace.SessionName
+	prAttachExpectedSocket = tmux.ProtectedWorkspaceSocketName(
+		workspace.SessionName,
+		workspace.Path,
+	)
+	cmd, stdout, _ := prTestCommand()
+	markCommandFlagsChanged(
+		t, cmd,
+		"expected-repository",
+		"expected-registration",
+		"expected-generation",
+		"expected-session",
+		"expected-socket",
+	)
+	require.NoError(t, os.RemoveAll(repo))
+	ensured := false
+	ensurePRWorkspaceSession = func(
+		context.Context,
+		pullrequest.Workspace,
+		*models.Config,
+	) (string, error) {
+		ensured = true
+		return "", nil
+	}
+
+	err = runPRAttach(cmd, []string{workspacePath})
+
+	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+	assert.False(t, ensured)
+	var envelope jsonErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	assert.Equal(t, service.RegistrationChanged, envelope.Error.Code)
+}
+
 func TestRunPRAttachClassifiesReplacedProjectRegistrationAsChanged(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("KWT_HOME", home)
@@ -1431,13 +1566,14 @@ func TestImportedWorkspaceProvenanceEvaluatesEachCandidateProject(t *testing.T) 
 		return current.Project, []pullrequest.Workspace{current.Workspace}, nil
 	}
 
-	record, err := importedWorkspaceProvenance(
+	verified, err := importedWorkspaceProvenance(
 		context.Background(),
 		workspacePath,
 	)
 
 	require.NoError(t, err)
-	assert.Equal(t, current, record)
+	assert.Equal(t, current, verified.record)
+	assert.Equal(t, currentGeneration, verified.liveGeneration)
 	assert.True(t, inspectedProjects[current.Project.Path])
 	assert.True(t, inspectedProjects[stale.Project.Path])
 }

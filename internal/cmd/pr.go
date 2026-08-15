@@ -30,6 +30,11 @@ type prService interface {
 	Import(context.Context, pullrequest.Project, string) (pullrequest.ImportResult, error)
 }
 
+type verifiedPRProvenance struct {
+	record         pullrequest.Provenance
+	liveGeneration string
+}
+
 var (
 	prProject      string
 	prState        string
@@ -272,13 +277,14 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return writePRError(cmd, err)
 	}
-	record, err := importedWorkspaceProvenance(
+	verified, err := importedWorkspaceProvenance(
 		cmd.Context(),
 		args[0],
 	)
 	if err != nil {
 		return writePRError(cmd, guardedPRAttachError(err, guarded))
 	}
+	record := verified.record
 	cfg, err := loadPRTargetConfig(record.Project.Path, false)
 	if err != nil {
 		return writePRError(cmd, pullrequest.NewError(
@@ -314,12 +320,13 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 	}
 	var socketName string
 	err = guard.run(cmd.Context(), func() error {
-		current, currentErr := importedWorkspaceProvenance(
+		currentVerified, currentErr := importedWorkspaceProvenance(
 			cmd.Context(), args[0],
 		)
 		if currentErr != nil {
 			return guardedPRAttachError(currentErr, guarded)
 		}
+		current := currentVerified.record
 		if !provenanceMatchesProjectClaim(current, guard.claim) {
 			return service.NewError(
 				service.RegistrationChanged,
@@ -327,12 +334,17 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 				true, nil, nil,
 			)
 		}
-		if guarded && !expectedPRAttachMatches(current, guard.claim) {
-			return service.NewError(
-				service.RegistrationChanged,
-				"the imported workspace changed before attachment",
-				true, nil, nil,
-			)
+		if guarded {
+			guardedCurrent := current
+			guardedCurrent.Workspace.Generation = currentVerified.liveGeneration
+			if !expectedPRAttachMatches(guardedCurrent, guard.claim) {
+				return service.NewError(
+					service.RegistrationChanged,
+					"the imported workspace changed before attachment",
+					true, nil, nil,
+				)
+			}
+			current.Workspace.Generation = currentVerified.liveGeneration
 		}
 		record = current
 		establish := func() error {
@@ -348,7 +360,7 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 			cmd.Context(),
 			record.Project.Path,
 			record.Workspace.Path,
-			record.Workspace.Generation,
+			currentVerified.liveGeneration,
 			establish,
 		)
 		var conditionErr *gitadapter.ConditionError
@@ -527,7 +539,7 @@ func provenanceMatchesProjectClaim(
 func importedWorkspaceProvenance(
 	ctx context.Context,
 	workspacePath string,
-) (pullrequest.Provenance, error) {
+) (verifiedPRProvenance, error) {
 	path := utils.CanonicalPath(workspacePath)
 	var pathMatches []pullrequest.Provenance
 	err := pullrequest.NewFileStore(prStorePath()).View(
@@ -542,7 +554,7 @@ func importedWorkspaceProvenance(
 		},
 	)
 	if err != nil {
-		return pullrequest.Provenance{}, pullrequest.NewError(
+		return verifiedPRProvenance{}, pullrequest.NewError(
 			pullrequest.CodeWorkspaceCreation,
 			"failed to read pull-request provenance",
 			false,
@@ -570,10 +582,11 @@ func importedWorkspaceProvenance(
 			observations[projectKey] = observation
 		}
 		if observation.err != nil {
-			if errors.Is(observation.err, gitadapter.ErrWorktreeNotFound) {
+			if errors.Is(observation.err, gitadapter.ErrWorktreeNotFound) ||
+				prProjectCheckoutMissing(record.Project.Path) {
 				continue
 			}
-			return pullrequest.Provenance{}, pullrequest.NewError(
+			return verifiedPRProvenance{}, pullrequest.NewError(
 				pullrequest.CodeWorkspaceCreation,
 				"failed to inspect live workspace generation",
 				false,
@@ -585,7 +598,7 @@ func importedWorkspaceProvenance(
 		}
 	}
 	if len(matches) != 1 {
-		return pullrequest.Provenance{}, pullrequest.NewError(
+		return verifiedPRProvenance{}, pullrequest.NewError(
 			pullrequest.CodeWorkspaceCreation,
 			"workspace is not a uniquely verified pull-request import",
 			false,
@@ -598,7 +611,7 @@ func importedWorkspaceProvenance(
 		record,
 	)
 	if err != nil {
-		return pullrequest.Provenance{}, pullrequest.NewError(
+		return verifiedPRProvenance{}, pullrequest.NewError(
 			pullrequest.CodeWorkspaceCreation,
 			"failed to verify imported workspace provenance",
 			false,
@@ -610,15 +623,25 @@ func importedWorkspaceProvenance(
 		record,
 	)
 	if !samePRProjectClone(record, liveProject) || !workspaceMatches {
-		return pullrequest.Provenance{}, pullrequest.NewError(
+		return verifiedPRProvenance{}, pullrequest.NewError(
 			pullrequest.CodeWorkspaceCreation,
 			"workspace no longer matches its pull-request provenance",
 			false,
 			errImportedPRWorkspaceChanged,
 		)
 	}
-	record.Workspace.Generation = verifiedWorkspace.Generation
-	return record, nil
+	return verifiedPRProvenance{
+		record:         record,
+		liveGeneration: verifiedWorkspace.Generation,
+	}, nil
+}
+
+func prProjectCheckoutMissing(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return errors.Is(err, os.ErrNotExist)
 }
 
 func rejectProtectedWorkspaceOpen(
