@@ -682,6 +682,9 @@ func TestRunPRAttachUsesPersistedWorkspaceIdentity(t *testing.T) {
 	cfg := testPRConfig()
 	cfg.Fleet.TokenEnv = "CUSTOM_FLEET_TOKEN"
 	withPRCommandDeps(t, cfg, &fakePRService{})
+	stubPRWorkspaceGeneration(
+		t, workspace.Path, "0123456789abcdef0123456789abcdef",
+	)
 	inspectPRProjectClone = func(
 		context.Context,
 		pullrequest.Provenance,
@@ -801,6 +804,7 @@ func TestRunPRAttachGuardUsesVerifiedLiveWorkspaceIdentity(t *testing.T) {
 		Repository: project.Identity, Name: project.Name, Path: project.Path,
 	}}}
 	withPRCommandDeps(t, cfg, &fakePRService{})
+	stubPRWorkspaceGeneration(t, recorded.Path, live.Generation)
 	inspectPRProjectClone = func(
 		context.Context,
 		pullrequest.Provenance,
@@ -953,6 +957,9 @@ func TestRunPRAttachRejectsRemovedRegistrationBeforeEnsuringSession(t *testing.T
 		Repository: project.Identity, Name: "widget", Path: project.Path,
 	}}}
 	withPRCommandDeps(t, cfg, &fakePRService{})
+	stubPRWorkspaceGeneration(
+		t, workspace.Path, "0123456789abcdef0123456789abcdef",
+	)
 	inspectPRProjectClone = func(
 		context.Context,
 		pullrequest.Provenance,
@@ -1021,6 +1028,9 @@ func TestRunPRAttachRejectsProvenanceReplacementWhileWaitingForProjectFence(t *t
 		Repository: projectA.Identity, Name: projectA.Name, Path: projectA.Path,
 	}}}
 	withPRCommandDeps(t, cfg, &fakePRService{})
+	stubPRWorkspaceGeneration(
+		t, workspace.Path, "0123456789abcdef0123456789abcdef",
+	)
 	inspectPRProjectClone = func(
 		_ context.Context,
 		got pullrequest.Provenance,
@@ -1703,6 +1713,9 @@ func TestProtectedAttachReleasesFenceBeforeBlockingClient(t *testing.T) {
 		Repository: project.Identity, Name: project.Name, Path: project.Path,
 	}}}
 	withPRCommandDeps(t, cfg, &fakePRService{})
+	stubPRWorkspaceGeneration(
+		t, workspace.Path, "0123456789abcdef0123456789abcdef",
+	)
 	inspectPRProjectClone = func(
 		context.Context,
 		pullrequest.Provenance,
@@ -1906,6 +1919,9 @@ func TestRunPRAttachUsesTransferredProvenanceAliasHistory(t *testing.T) {
 	cfg := testPRConfig()
 	cfg.Projects[0].Repository = registeredIdentity
 	withPRCommandDeps(t, cfg, &fakePRService{})
+	stubPRWorkspaceGeneration(
+		t, workspacePath, "0123456789abcdef0123456789abcdef",
+	)
 	inspectPRProjectClone = func(
 		_ context.Context,
 		got pullrequest.Provenance,
@@ -1967,6 +1983,9 @@ func TestRunPRAttachRejectsStaleProvenanceAgainstLiveInventory(t *testing.T) {
 		},
 	))
 	withPRCommandDeps(t, testPRConfig(), &fakePRService{})
+	stubPRWorkspaceGeneration(
+		t, recorded.Path, "0123456789abcdef0123456789abcdef",
+	)
 	inspectPRProjectClone = func(
 		context.Context,
 		pullrequest.Provenance,
