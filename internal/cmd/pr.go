@@ -54,6 +54,7 @@ var (
 	readPRWorkspaceGeneration        = func(projectPath, path string) (string, error) {
 		return gitadapter.New(projectPath).ReadWorktreeGeneration(path)
 	}
+	withPRWorkspaceGeneration     = defaultWithPRWorkspaceGeneration
 	errImportedPRWorkspaceChanged = errors.New(
 		"imported pull-request workspace changed",
 	)
@@ -334,9 +335,31 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 			)
 		}
 		record = current
-		socketName, currentErr = ensurePRWorkspaceSession(
-			cmd.Context(), record.Workspace, cfg,
+		establish := func() error {
+			socketName, currentErr = ensurePRWorkspaceSession(
+				cmd.Context(), record.Workspace, cfg,
+			)
+			return currentErr
+		}
+		if !guarded {
+			return establish()
+		}
+		currentErr = withPRWorkspaceGeneration(
+			cmd.Context(),
+			record.Project.Path,
+			record.Workspace.Path,
+			record.Workspace.Generation,
+			establish,
 		)
+		var conditionErr *gitadapter.ConditionError
+		if errors.As(currentErr, &conditionErr) &&
+			conditionErr.Reason == gitadapter.ReasonGenerationChanged {
+			return service.NewError(
+				service.RegistrationChanged,
+				"the imported workspace changed before attachment",
+				true, nil, currentErr,
+			)
+		}
 		return currentErr
 	})
 	if service.IsCode(err, service.RegistrationChanged) {
@@ -361,6 +384,20 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 		))
 	}
 	return nil
+}
+
+func defaultWithPRWorkspaceGeneration(
+	ctx context.Context,
+	projectPath string,
+	workspacePath string,
+	generation string,
+	establish func() error,
+) error {
+	return gitadapter.NewWithContext(ctx, projectPath).WithWorktreeGeneration(
+		workspacePath,
+		generation,
+		establish,
+	)
 }
 
 func guardedPRAttachError(err error, guarded bool) error {
@@ -512,36 +549,38 @@ func importedWorkspaceProvenance(
 			err,
 		)
 	}
-	liveGeneration := ""
+	type generationObservation struct {
+		generation string
+		err        error
+	}
+	observations := make(map[string]generationObservation, len(pathMatches))
+	matches := make([]pullrequest.Provenance, 0, len(pathMatches))
 	for _, record := range pathMatches {
 		if record.Workspace.Generation == "" {
+			matches = append(matches, record)
 			continue
 		}
-		liveGeneration, err = readPRWorkspaceGeneration(
-			record.Project.Path,
-			workspacePath,
-		)
-		if err != nil {
-			cause := err
-			if errors.Is(err, os.ErrNotExist) ||
-				errors.Is(err, gitadapter.ErrWorktreeNotFound) {
-				cause = fmt.Errorf("%w: %v", errImportedPRWorkspaceChanged, err)
+		projectKey := utils.PathKey(record.Project.Path)
+		observation, observed := observations[projectKey]
+		if !observed {
+			observation.generation, observation.err = readPRWorkspaceGeneration(
+				record.Project.Path,
+				workspacePath,
+			)
+			observations[projectKey] = observation
+		}
+		if observation.err != nil {
+			if errors.Is(observation.err, gitadapter.ErrWorktreeNotFound) {
+				continue
 			}
 			return pullrequest.Provenance{}, pullrequest.NewError(
 				pullrequest.CodeWorkspaceCreation,
 				"failed to inspect live workspace generation",
 				false,
-				cause,
+				observation.err,
 			)
 		}
-		break
-	}
-	matches := make([]pullrequest.Provenance, 0, len(pathMatches))
-	for _, record := range pathMatches {
-		if provenanceGenerationMatches(
-			record.Workspace.Generation,
-			liveGeneration,
-		) {
+		if record.Workspace.Generation == observation.generation {
 			matches = append(matches, record)
 		}
 	}
