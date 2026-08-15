@@ -51,8 +51,8 @@ var (
 	validatePRWorkspaceSessionConfig = defaultValidatePRWorkspaceSessionConfig
 	ensurePRWorkspaceSession         = defaultStartPRWorkspaceSession
 	attachExistingPRWorkspaceSession = defaultAttachExistingPRWorkspaceSession
-	readPRWorkspaceGeneration        = func(path string) (string, error) {
-		return gitadapter.New(path).ReadWorktreeGeneration(path)
+	readPRWorkspaceGeneration        = func(projectPath, path string) (string, error) {
+		return gitadapter.New(projectPath).ReadWorktreeGeneration(path)
 	}
 	errImportedPRWorkspaceChanged = errors.New(
 		"imported pull-request workspace changed",
@@ -517,7 +517,10 @@ func importedWorkspaceProvenance(
 		if record.Workspace.Generation == "" {
 			continue
 		}
-		liveGeneration, err = readPRWorkspaceGeneration(workspacePath)
+		liveGeneration, err = readPRWorkspaceGeneration(
+			record.Project.Path,
+			workspacePath,
+		)
 		if err != nil {
 			cause := err
 			if errors.Is(err, os.ErrNotExist) ||
@@ -608,7 +611,10 @@ func rejectProtectedWorkspaceOpen(
 		pathMatched = pathMatched || samePRPath(workspace.Path, workspacePath)
 	}
 	if pathMatched {
-		liveGeneration, err = readPRWorkspaceGeneration(workspacePath)
+		liveGeneration, err = readPRWorkspaceGeneration(
+			workspacePath,
+			workspacePath,
+		)
 		if err != nil {
 			return fmt.Errorf(
 				"failed to verify live generation for pull-request workspace: %w",
@@ -668,7 +674,8 @@ func defaultInspectPRProjectClone(
 	}
 	if len(registered) > 1 {
 		return pullrequest.Project{}, nil, fmt.Errorf(
-			"recorded project is not uniquely registered",
+			"%w: recorded project is not uniquely registered",
+			errImportedPRWorkspaceChanged,
 		)
 	}
 	if len(registered) == 1 &&
@@ -681,7 +688,8 @@ func defaultInspectPRProjectClone(
 			publishableProjectRepository(registered[0]),
 		) {
 		return pullrequest.Project{}, nil, fmt.Errorf(
-			"registered project conflicts with recorded identity",
+			"%w: registered project conflicts with recorded identity",
+			errImportedPRWorkspaceChanged,
 		)
 	}
 	g := gitadapter.New(project.Path)
@@ -714,7 +722,8 @@ func defaultInspectPRProjectClone(
 		project.Identity,
 	) {
 		return pullrequest.Project{}, nil, fmt.Errorf(
-			"live project conflicts with recorded identity",
+			"%w: live project conflicts with recorded identity",
+			errImportedPRWorkspaceChanged,
 		)
 	}
 	return project, livePRWorkspaces(info, project, live), nil
