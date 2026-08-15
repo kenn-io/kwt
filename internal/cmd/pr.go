@@ -1057,9 +1057,12 @@ func prepareGuardedPRImportProject(
 	}
 
 	selected, err := resolvePRProject(snapshot.Config, prProject)
-	if err != nil || !samePRPath(selected.Path, expected.Effective.Path) ||
+	if err != nil {
+		return pullrequest.Project{}, err
+	}
+	if !samePRPath(selected.Path, expected.Effective.Path) ||
 		!lifecycle.EqualProjectIdentity(selected.Identity, expectedIdentity) {
-		return pullrequest.Project{}, changedPRImportRegistration(err)
+		return pullrequest.Project{}, changedPRImportRegistration(nil)
 	}
 	selected.Identity = expectedIdentity
 	return selected, nil

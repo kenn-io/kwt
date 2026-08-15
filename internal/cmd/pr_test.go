@@ -803,6 +803,45 @@ func TestGuardedPRImportResolvesExpectedRegistrationBeforeProjectSelector(t *tes
 	}
 }
 
+func TestGuardedPRImportPreservesUnsupportedProviderError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("KWT_HOME", home)
+	project := models.Project{
+		Repository: "gitlab.com/acme/widget",
+		Name:       "widget",
+		Path:       filepath.Join(t.TempDir(), "widget"),
+	}
+	serviceImpl := &fakePRService{}
+	withPRCommandDeps(
+		t,
+		&models.Config{Projects: []models.Project{project}},
+		serviceImpl,
+	)
+	snapshot, err := config.LoadGlobalSnapshotAt(home)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Projects, 1)
+	fingerprint, err := snapshot.Projects[0].Fingerprint()
+	require.NoError(t, err)
+	prImportExpectedRepository = project.Repository
+	prImportExpectedRegistration = fingerprint
+	prProject = project.Repository
+	cmd, stdout, _ := prTestCommand()
+	markCommandFlagsChanged(
+		t,
+		cmd,
+		"expected-repository",
+		"expected-registration",
+	)
+
+	err = runPRImport(cmd, []string{"17"})
+
+	assertPRCode(t, err, pullrequest.CodeUnsupportedProvider)
+	assert.Empty(t, serviceImpl.gotSelector)
+	var envelope jsonErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	assert.Equal(t, string(pullrequest.CodeUnsupportedProvider), string(envelope.Error.Code))
+}
+
 func TestPRImportExpectedAuthorityIsAllOrNothing(t *testing.T) {
 	for _, test := range []struct {
 		name         string
