@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -205,14 +206,46 @@ func TestPublicServiceBuildsOneOwnerScopedPersistentManager(t *testing.T) {
 	require.NoError(t, service.Close(context.Background()))
 
 	assert.Equal(t, 1, created)
-	assert.True(t, strings.HasPrefix(
-		controlDirectory,
-		filepath.Join(home, "runtime")+string(filepath.Separator)+"ssh-",
-	))
-	assert.Equal(t, "control", filepath.Base(controlDirectory))
+	assert.NotEqual(t, home, filepath.Dir(filepath.Dir(controlDirectory)))
+	assert.Equal(t, "c", filepath.Base(controlDirectory))
 	require.NotNil(t, persistentConfig.ConnectionOptions)
 	assert.Equal(t, time.Hour, persistentConfig.ConnectionOptions.ControlPersistTimeout)
 	assert.NoDirExists(t, filepath.Dir(controlDirectory))
+}
+
+func TestPublicServiceControlPathLeavesOpenSSHTemporarySocketHeadroom(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows OpenSSH does not use Unix-domain control sockets")
+	}
+	home := t.TempDir()
+	snapshot := directSnapshot("route-one")
+	service := NewPublicService(PublicServiceOptions{
+		Home:              home,
+		AskpassExecutable: filepath.Join(home, "kwt"),
+	})
+	service.build = func(ResolverOptions) snapshotResolver {
+		return fixedPublicResolver{snapshot: snapshot}
+	}
+	controlDirectory := ""
+	service.newPersistent = func(
+		directory string,
+		_ openssh.PersistentConfig,
+	) (PersistentManager, error) {
+		controlDirectory = directory
+		return publicTestPersistentManager{}, nil
+	}
+
+	lease, err := service.Acquire(context.Background(), LeaseRequest{Snapshot: snapshot})
+	require.NoError(t, err)
+	require.NoError(t, lease.Release(context.Background()))
+	defer func() { require.NoError(t, service.Close(context.Background())) }()
+
+	controlPath := filepath.Join(
+		controlDirectory,
+		openssh.ControlName(strings.Repeat("route", 16))+".sock",
+	)
+	openSSHTemporaryPath := controlPath + "." + strings.Repeat("x", 16)
+	assert.LessOrEqual(t, len([]byte(openSSHTemporaryPath)), 103)
 }
 
 func TestPublicServiceClosePreventsManagerReinitialization(t *testing.T) {

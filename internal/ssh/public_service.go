@@ -2,8 +2,6 @@ package ssh
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -39,7 +37,6 @@ type PublicService struct {
 	askpassExecutable string
 	build             func(ResolverOptions) snapshotResolver
 	leases            *Manager
-	managerID         string
 	managerErr        error
 	managerMu         sync.Mutex
 	closed            bool
@@ -60,8 +57,8 @@ func NewPublicService(options PublicServiceOptions) *PublicService {
 	if environment == nil {
 		environment = os.Environ
 	}
-	managerID, managerErr := randomManagerID()
-	if managerErr == nil && options.AskpassExecutable == "" {
+	var managerErr error
+	if options.AskpassExecutable == "" {
 		managerErr = errors.New("SSH askpass helper executable is required")
 	}
 	if managerErr == nil && !filepath.IsAbs(options.AskpassExecutable) {
@@ -78,7 +75,6 @@ func NewPublicService(options PublicServiceOptions) *PublicService {
 				Now:      options.Now,
 			})
 		},
-		managerID:  managerID,
 		managerErr: managerErr,
 		onEvent:    options.OnEvent,
 		newPersistent: func(
@@ -88,14 +84,6 @@ func NewPublicService(options PublicServiceOptions) *PublicService {
 			return openssh.NewPersistentManager(directory, persistentConfig)
 		},
 	}
-}
-
-func randomManagerID() (string, error) {
-	var value [16]byte
-	if _, err := rand.Read(value[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(value[:]), nil
 }
 
 func (s *PublicService) Resolve(
@@ -186,9 +174,12 @@ func (s *PublicService) initializeManager(idleTimeout time.Duration) error {
 	if s.home == "" {
 		return connectionFailed(errors.New("kwt home is required for SSH lifecycle"))
 	}
-	managerDirectory := filepath.Join(s.home, "runtime", "ssh-"+s.managerID)
-	controlDirectory := filepath.Join(managerDirectory, "control")
-	privateDirectory := filepath.Join(managerDirectory, "private")
+	managerDirectory, err := newManagerDirectory()
+	if err != nil {
+		return connectionFailed(err)
+	}
+	controlDirectory := filepath.Join(managerDirectory, "c")
+	privateDirectory := filepath.Join(managerDirectory, "p")
 	connectionOptions := openssh.DefaultConnectionOptions()
 	persistenceTimeout := max(idleTimeout, minimumCrashPersistenceTimeout)
 	connectionOptions.ControlPersistTimeout = persistenceTimeout
@@ -196,7 +187,7 @@ func (s *PublicService) initializeManager(idleTimeout time.Duration) error {
 		ConnectionOptions: &connectionOptions,
 	})
 	if err != nil {
-		return connectionFailed(err)
+		return connectionFailed(errors.Join(err, os.RemoveAll(managerDirectory)))
 	}
 	s.leases = NewManager(ManagerOptions{
 		Persistent:       persistent,
