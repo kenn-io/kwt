@@ -28,6 +28,7 @@ func TestAskpassCarriesMultipleBoundRoundsIncludingEmptyResponse(t *testing.T) {
 			"PATH=/usr/bin",
 			"GHOSTHUB_AUTH=secret",
 			"SSH_ASKPASS=/old/helper",
+			"SSH_ASKPASS_PROMPT=confirm",
 		},
 		ProtectedNames: []string{"GHOSTHUB_AUTH"},
 		Prompt: func(_ context.Context, prompt service.OperationPrompt) (string, error) {
@@ -43,6 +44,7 @@ func TestAskpassCarriesMultipleBoundRoundsIncludingEmptyResponse(t *testing.T) {
 	assert.Contains(t, environment, "SSH_ASKPASS_REQUIRE=force")
 	assert.False(t, slices.Contains(environment, "GHOSTHUB_AUTH=secret"))
 	assert.False(t, slices.Contains(environment, "SSH_ASKPASS=/old/helper"))
+	assert.False(t, slices.Contains(environment, "SSH_ASKPASS_PROMPT=confirm"))
 
 	var first bytes.Buffer
 	exitCode, handled := RunAskpassHelper(

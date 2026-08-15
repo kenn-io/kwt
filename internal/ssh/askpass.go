@@ -166,6 +166,7 @@ func askpassEnvironment(options AskpassOptions, handle string) []string {
 	protected := append([]string(nil), options.ProtectedNames...)
 	protected = append(protected,
 		"SSH_ASKPASS",
+		"SSH_ASKPASS_PROMPT",
 		"SSH_ASKPASS_REQUIRE",
 		"DISPLAY",
 		askpassHandleEnvironment,
