@@ -41,6 +41,9 @@ var (
 	prJSON         bool
 	prStartSession bool
 
+	prImportExpectedRepository   string
+	prImportExpectedRegistration string
+
 	prAttachExpectedRepository   string
 	prAttachExpectedRegistration string
 	prAttachExpectedGeneration   string
@@ -121,6 +124,18 @@ func init() {
 		false,
 		"ensure the imported workspace's tmux session exists without attaching",
 	)
+	prImportCmd.Flags().StringVar(
+		&prImportExpectedRepository,
+		"expected-repository",
+		"",
+		"require this registered project identity before importing",
+	)
+	prImportCmd.Flags().StringVar(
+		&prImportExpectedRegistration,
+		"expected-registration",
+		"",
+		"require this project registration fingerprint before importing",
+	)
 	prAttachCmd.Flags().StringVar(
 		&prAttachExpectedRepository,
 		"expected-repository",
@@ -182,6 +197,10 @@ func runPRImport(cmd *cobra.Command, args []string) error {
 	if len(args) != 1 {
 		return prExactArgs(1)(cmd, args)
 	}
+	guarded, err := validateExpectedPRImportFlags(cmd)
+	if err != nil {
+		return writePRError(cmd, err)
+	}
 	project, err := preparePRProject()
 	if err != nil {
 		return writePRError(cmd, err)
@@ -218,10 +237,19 @@ func runPRImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return writePRError(cmd, err)
 	}
-	guard, err := observeRequiredGuardedProjectOperation(
-		cmd.Context(), home, project.Path, expansion,
-		registeredIdentity, project.Identity,
-	)
+	var guard *guardedProjectOperation
+	if guarded {
+		guard, err = observeExpectedGuardedProjectOperation(
+			cmd.Context(), home, project.Path, expansion,
+			prImportExpectedRepository,
+			prImportExpectedRegistration,
+		)
+	} else {
+		guard, err = observeRequiredGuardedProjectOperation(
+			cmd.Context(), home, project.Path, expansion,
+			registeredIdentity, project.Identity,
+		)
+	}
 	if err != nil {
 		return writePRError(cmd, err)
 	}
@@ -267,6 +295,46 @@ func runPRImport(cmd *cobra.Command, args []string) error {
 	}
 	result.PullRequest.Workspace = &result.Workspace
 	return writePRJSON(cmd, result)
+}
+
+func validateExpectedPRImportFlags(cmd *cobra.Command) (bool, error) {
+	repositoryChanged := commandFlagChanged(cmd, "expected-repository")
+	registrationChanged := commandFlagChanged(cmd, "expected-registration")
+	if !repositoryChanged && !registrationChanged {
+		return false, nil
+	}
+	if !repositoryChanged || !registrationChanged {
+		return false, service.NewError(
+			service.InvalidRequest,
+			"expected repository and registration must be provided together",
+			false, nil, nil,
+		)
+	}
+	if prImportExpectedRepository == "" || prImportExpectedRegistration == "" {
+		return false, service.NewError(
+			service.InvalidRequest,
+			"expected repository and registration must be nonempty",
+			false, nil, nil,
+		)
+	}
+	if !lifecycle.EqualProjectIdentity(
+		prImportExpectedRepository,
+		prImportExpectedRepository,
+	) {
+		return false, service.NewError(
+			service.InvalidRequest,
+			"expected repository identity is invalid",
+			false, nil, nil,
+		)
+	}
+	if !config.ValidProjectRegistrationFingerprint(prImportExpectedRegistration) {
+		return false, service.NewError(
+			service.InvalidRequest,
+			"expected project registration fingerprint is invalid",
+			false, nil, nil,
+		)
+	}
+	return true, nil
 }
 
 func runPRAttach(cmd *cobra.Command, args []string) error {

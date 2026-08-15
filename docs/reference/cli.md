@@ -43,6 +43,8 @@ kwt open /path/to/worktree --start-session
 kwt status
 kwt pr list --project github.com/acme/widget --json
 kwt pr import 17 --project github.com/acme/widget \
+  --expected-repository github.com/acme/widget \
+  --expected-registration <project.registration_fingerprint> \
   --start-session --json
 kwt sync status
 kwt exec fix/parser-race -- go test ./internal/parser
@@ -626,6 +628,11 @@ Every imported workspace record includes `tmux_socket_name`.
 `pr import --start-session` additionally establishes a blank shell-only
 session without attaching, for clients that provide their own ordinary tmux
 presentation. It does not execute configured layouts or agent commands.
+Automation clients may pass `--expected-repository` and
+`--expected-registration` together to bind an import to the selected
+`kwt projects --json` record. Kwt revalidates that authority under the project
+lifecycle fence before creating the worktree; a mismatch fails with retryable
+`registration_changed` and does not import anything.
 Attach with `kwt pr attach <workspace.path>`, which verifies the persisted
 identity, creates or repairs that protected blank session when needed, and
 uses `attach-session -E`. This is an interactive exception to the PR JSON

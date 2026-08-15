@@ -76,6 +76,8 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 	oldProject := prProject
 	oldState := prState
 	oldStartSession := prStartSession
+	oldImportExpectedRepository := prImportExpectedRepository
+	oldImportExpectedRegistration := prImportExpectedRegistration
 	oldAttachExpectedRepository := prAttachExpectedRepository
 	oldAttachExpectedRegistration := prAttachExpectedRegistration
 	oldAttachExpectedGeneration := prAttachExpectedGeneration
@@ -96,6 +98,8 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 		prProject = oldProject
 		prState = oldState
 		prStartSession = oldStartSession
+		prImportExpectedRepository = oldImportExpectedRepository
+		prImportExpectedRegistration = oldImportExpectedRegistration
 		prAttachExpectedRepository = oldAttachExpectedRepository
 		prAttachExpectedRegistration = oldAttachExpectedRegistration
 		prAttachExpectedGeneration = oldAttachExpectedGeneration
@@ -127,6 +131,8 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 	prProject = "widget"
 	prState = "open"
 	prStartSession = false
+	prImportExpectedRepository = ""
+	prImportExpectedRegistration = ""
 	prAttachExpectedRepository = ""
 	prAttachExpectedRegistration = ""
 	prAttachExpectedGeneration = ""
@@ -630,6 +636,141 @@ func TestRegisteredPRImportLosesToProjectRemoval(t *testing.T) {
 	var envelope jsonErrorEnvelope
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
 	assert.Equal(t, service.RegistrationChanged, envelope.Error.Code)
+}
+
+func TestGuardedPRImportRejectsStaleProjectAuthorityBeforeMutation(t *testing.T) {
+	for _, mismatch := range []string{"repository", "registration"} {
+		t.Run(mismatch, func(t *testing.T) {
+			t.Setenv("KWT_HOME", t.TempDir())
+			serviceImpl := &fakePRService{}
+			withPRCommandDeps(t, testPRConfig(), serviceImpl)
+			home, err := config.CanonicalHome()
+			require.NoError(t, err)
+			snapshot, err := config.LoadGlobalSnapshotAt(home)
+			require.NoError(t, err)
+			require.Len(t, snapshot.Projects, 1)
+			fingerprint, err := snapshot.Projects[0].Fingerprint()
+			require.NoError(t, err)
+			prImportExpectedRepository = "github.com/acme/widget"
+			prImportExpectedRegistration = fingerprint
+			if mismatch == "repository" {
+				prImportExpectedRepository = "github.com/other/widget"
+			} else {
+				prImportExpectedRegistration = "v1:" + strings.Repeat("a", 64)
+			}
+			cmd, stdout, _ := prTestCommand()
+			markCommandFlagsChanged(
+				t, cmd,
+				"expected-repository",
+				"expected-registration",
+			)
+
+			err = runPRImport(cmd, []string{"17"})
+
+			assert.True(t, service.IsCode(err, service.RegistrationChanged))
+			assert.Empty(t, serviceImpl.gotSelector)
+			var envelope jsonErrorEnvelope
+			require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+			assert.Equal(t, service.RegistrationChanged, envelope.Error.Code)
+		})
+	}
+}
+
+func TestGuardedPRImportRejectsRegistrationReplacementBeforeMutation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("KWT_HOME", home)
+	projectPath := filepath.Join(t.TempDir(), "widget")
+	cfg := &models.Config{Projects: []models.Project{{
+		Repository: "github.com/acme/widget", Name: "widget", Path: projectPath,
+	}}}
+	serviceImpl := &fakePRService{}
+	withPRCommandDeps(t, cfg, serviceImpl)
+	snapshot, err := config.LoadGlobalSnapshotAt(home)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Projects, 1)
+	fingerprint, err := snapshot.Projects[0].Fingerprint()
+	require.NoError(t, err)
+	prImportExpectedRepository = "github.com/acme/widget"
+	prImportExpectedRegistration = fingerprint
+	cmd, stdout, _ := prTestCommand()
+	markCommandFlagsChanged(
+		t, cmd,
+		"expected-repository",
+		"expected-registration",
+	)
+	oldBeforeAcquire := beforeProjectGuardAcquire
+	t.Cleanup(func() { beforeProjectGuardAcquire = oldBeforeAcquire })
+	beforeProjectGuardAcquire = func() {
+		replacement := models.Project{
+			Repository: "github.com/other/widget",
+			Name:       "widget",
+			Path:       projectPath,
+		}
+		changed, replaceErr := config.CompareAndSwapProjectAt(
+			home, snapshot.Projects[0], &replacement,
+		)
+		require.NoError(t, replaceErr)
+		require.True(t, changed)
+	}
+
+	err = runPRImport(cmd, []string{"17"})
+
+	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+	assert.Empty(t, serviceImpl.gotSelector)
+	var envelope jsonErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	assert.Equal(t, service.RegistrationChanged, envelope.Error.Code)
+}
+
+func TestPRImportExpectedAuthorityIsAllOrNothing(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		repository   string
+		registration string
+		changed      []string
+		wantGuarded  bool
+		wantCode     service.Code
+	}{
+		{
+			name:        "unguarded",
+			wantGuarded: false,
+		},
+		{
+			name:       "repository only",
+			repository: "github.com/acme/widget",
+			changed:    []string{"expected-repository"},
+			wantCode:   service.InvalidRequest,
+		},
+		{
+			name:     "empty values",
+			changed:  []string{"expected-repository", "expected-registration"},
+			wantCode: service.InvalidRequest,
+		},
+		{
+			name:         "valid authority",
+			repository:   "github.com/acme/widget",
+			registration: "v1:" + strings.Repeat("a", 64),
+			changed:      []string{"expected-repository", "expected-registration"},
+			wantGuarded:  true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			withPRCommandDeps(t, testPRConfig(), &fakePRService{})
+			prImportExpectedRepository = test.repository
+			prImportExpectedRegistration = test.registration
+			cmd, _, _ := prTestCommand()
+			markCommandFlagsChanged(t, cmd, test.changed...)
+
+			guarded, err := validateExpectedPRImportFlags(cmd)
+
+			assert.Equal(t, test.wantGuarded, guarded)
+			if test.wantCode == "" {
+				require.NoError(t, err)
+			} else {
+				assert.True(t, service.IsCode(err, test.wantCode))
+			}
+		})
+	}
 }
 
 func tryRequireWorkspace(

@@ -23,6 +23,22 @@ kwt pr import 17 --project github.com/acme/widget \
   --start-session --json
 ```
 
+Automation clients should bind the import to the project record that the user
+selected. Supply the matching `repository` and `registration_fingerprint`
+from `kwt projects --json` together:
+
+```sh
+kwt pr import 17 --project github.com/acme/widget \
+  --expected-repository <project.repository> \
+  --expected-registration <project.registration_fingerprint> \
+  --start-session --json
+```
+
+Kwt revalidates both values while holding the project lifecycle fence and
+before creating the worktree. A changed or replaced project returns the
+retryable `registration_changed` error without importing anything. The two
+flags are an all-or-nothing contract; ordinary interactive use may omit both.
+
 Every successful import response includes the deterministic
 `tmux_socket_name`, whether or not a session was started. `--start-session`
 creates or repairs the returned `session_name` as a single blank shell session
