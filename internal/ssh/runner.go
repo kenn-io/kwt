@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 
 	"go.kenn.io/kit/openssh"
 	"go.kenn.io/kit/safefileio"
@@ -78,11 +79,24 @@ func newRunner(
 					"hop_index":        request.promptTargetIndex,
 					"hop_count":        hopCount,
 				}
+				var hostKey *hostKeyPromptDetails
 				if prompt.Kind == "ssh_host_key" {
-					hostKey, err := parseHostKeyPrompt(message)
+					parsed, err := parseHostKeyPrompt(message)
 					if err != nil {
 						return service.OperationPrompt{}, err
 					}
+					hostKey = &parsed
+				} else if hint == "" && strings.EqualFold(
+					target.StrictHostKeyChecking,
+					"ask",
+				) {
+					if parsed, err := parseHostKeyPrompt(message); err == nil {
+						prompt.Kind = "ssh_host_key"
+						prompt.Sensitive = false
+						hostKey = &parsed
+					}
+				}
+				if hostKey != nil {
 					details["host_key"] = map[string]any{
 						"host":        hostKey.Host,
 						"algorithm":   hostKey.Algorithm,

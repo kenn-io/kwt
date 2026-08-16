@@ -126,11 +126,13 @@ responses remain distinct from rejection. Kwt creates no channel state unless
 the selected system OpenSSH satisfies the 8.4 forced-askpass floor.
 OpenSSH's own askpass confirmation hint distinguishes host-key confirmation
 from credential input before kwt parses the confirmation text into a reviewed
-host, algorithm, and fingerprint for native clients. Unhinted text is always
-treated as sensitive authentication input, even when it resembles a host-key
-prompt. Published prompt details contain only that host-key review identity,
-the already reviewed route targets, and hop position; they contain no
-credentials or environment values.
+host, algorithm, and fingerprint for native clients. When macOS omits that
+hint, kwt recognizes the complete standard confirmation shape only for a
+reviewed target whose effective policy is `StrictHostKeyChecking=ask`.
+Unhinted text on every other route remains sensitive authentication input.
+Published prompt details contain only that host-key review identity, the
+already reviewed route targets, and hop position; they contain no credentials
+or environment values.
 
 SSH route resolution validates user, hostname, and port before invoking
 OpenSSH. POSIX resolution quotes the validated argv into the account login
