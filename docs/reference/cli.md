@@ -199,7 +199,8 @@ include a `host_key` object containing the reviewed `host`, `algorithm`, and
 `fingerprint`, so native clients do not parse OpenSSH prose. The prompt message
 remains OpenSSH's original text. Other OpenSSH confirmation shapes are
 preserved as sensitive `ssh_authentication` prompts without a claimed host-key
-identity. The process keeps the lease alive
+identity. Unhinted prompts are always handled this way, even when their prose
+resembles a host-key question. The process keeps the lease alive
 while stdin remains open, touches it every ten seconds, and releases it when
 stdin reaches EOF or the command is canceled. Progress and warnings are written
 as they occur rather than buffered.

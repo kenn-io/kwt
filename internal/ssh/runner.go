@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"strings"
 
 	"go.kenn.io/kit/openssh"
 	"go.kenn.io/kit/safefileio"
@@ -86,15 +85,6 @@ func newRunner(
 						prompt.Kind = "ssh_authentication"
 						prompt.Sensitive = true
 					} else {
-						hostKey = &parsed
-					}
-				} else if hint == "" && strings.EqualFold(
-					target.StrictHostKeyChecking,
-					"ask",
-				) {
-					if parsed, err := parseHostKeyPrompt(message); err == nil {
-						prompt.Kind = "ssh_host_key"
-						prompt.Sensitive = false
 						hostKey = &parsed
 					}
 				}

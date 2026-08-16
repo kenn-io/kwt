@@ -178,92 +178,82 @@ func TestRunnerCarriesPromptThroughAskpassHelperProcess(t *testing.T) {
 }
 
 func TestRunnerClassifiesHostKeyConfirmationAndAttributesProxyHop(t *testing.T) {
-	for _, test := range []struct {
-		name string
-		hint string
-	}{
-		{name: "explicit confirmation hint", hint: "confirm"},
-		{name: "reviewed ask policy without hint"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			var captured service.OperationPrompt
-			request := LeaseRequest{
-				WorkingDirectory: t.TempDir(),
-				Environment:      []string{"PATH=" + os.Getenv("PATH")},
-				Prompt: func(_ context.Context, prompt service.OperationPrompt) (string, error) {
-					captured = prompt
-					return "yes", nil
-				},
-				promptTargetIndex: 0,
-				promptTargetCount: 2,
-			}
-			target := ResolvedTarget{
-				LogicalTarget:         Target{Hostname: "relay"},
-				EffectiveTarget:       Target{Hostname: "100.64.0.7", User: "jump", Port: 2201},
-				DisplayTarget:         "relay.example.test",
-				StrictHostKeyChecking: "ask",
-				Projection: ExecutionProjection{
-					Arguments: []string{"-F", os.DevNull},
-				},
-			}
-			runner, err := newRunner(t.TempDir(), request, target, runnerOptions{
-				Version: supportedAskpassVersion(),
-				Run: func(
-					_ context.Context,
-					_ []string,
-					_ string,
-					environment []string,
-				) (int, error) {
-					var output bytes.Buffer
-					promptEnvironment := append([]string(nil), environment...)
-					if test.hint != "" {
-						promptEnvironment = append(
-							promptEnvironment,
-							"SSH_ASKPASS_PROMPT="+test.hint,
-						)
-					}
-					exitCode, handled := RunAskpassHelper(
-						[]string{"kwt", `The authenticity of host 'relay.example.test (100.64.0.7)' can't be established.
+	t.Run("explicit confirmation hint", func(t *testing.T) {
+		var captured service.OperationPrompt
+		request := LeaseRequest{
+			WorkingDirectory: t.TempDir(),
+			Environment:      []string{"PATH=" + os.Getenv("PATH")},
+			Prompt: func(_ context.Context, prompt service.OperationPrompt) (string, error) {
+				captured = prompt
+				return "yes", nil
+			},
+			promptTargetIndex: 0,
+			promptTargetCount: 2,
+		}
+		target := ResolvedTarget{
+			LogicalTarget:         Target{Hostname: "relay"},
+			EffectiveTarget:       Target{Hostname: "100.64.0.7", User: "jump", Port: 2201},
+			DisplayTarget:         "relay.example.test",
+			StrictHostKeyChecking: "ask",
+			Projection: ExecutionProjection{
+				Arguments: []string{"-F", os.DevNull},
+			},
+		}
+		runner, err := newRunner(t.TempDir(), request, target, runnerOptions{
+			Version: supportedAskpassVersion(),
+			Run: func(
+				_ context.Context,
+				_ []string,
+				_ string,
+				environment []string,
+			) (int, error) {
+				var output bytes.Buffer
+				promptEnvironment := append([]string(nil), environment...)
+				promptEnvironment = append(
+					promptEnvironment,
+					"SSH_ASKPASS_PROMPT=confirm",
+				)
+				exitCode, handled := RunAskpassHelper(
+					[]string{"kwt", `The authenticity of host 'relay.example.test (100.64.0.7)' can't be established.
 ED25519 key fingerprint is SHA256:fixture.
 Are you sure you want to continue connecting (yes/no/[fingerprint])? `},
-						promptEnvironment,
-						&output,
-					)
-					require.True(t, handled)
-					assert.Equal(t, "yes\n", output.String())
-					return exitCode, nil
-				},
-			})
-			require.NoError(t, err)
-
-			exitCode, err := runner(context.Background(), []string{"-MNf", "--", "jump@100.64.0.7"})
-
-			require.NoError(t, err)
-			assert.Equal(t, 0, exitCode)
-			assert.Equal(t, "ssh_host_key", captured.Kind)
-			assert.False(t, captured.Sensitive)
-			assert.Contains(t, captured.Message, "The authenticity of host")
-			assert.Equal(t, map[string]any{
-				"hostname": target.LogicalTarget.Hostname,
-			}, captured.Details["logical_target"])
-			assert.Equal(t, map[string]any{
-				"hostname": target.EffectiveTarget.Hostname,
-				"user":     target.EffectiveTarget.User,
-				"port":     target.EffectiveTarget.Port,
-			}, captured.Details["effective_target"])
-			assert.Equal(t, target.DisplayTarget, captured.Details["display_target"])
-			assert.Equal(t, 0, captured.Details["hop_index"])
-			assert.Equal(t, 2, captured.Details["hop_count"])
-			assert.Equal(t, map[string]any{
-				"host":        "relay.example.test (100.64.0.7)",
-				"algorithm":   "ED25519",
-				"fingerprint": "SHA256:fixture",
-			}, captured.Details["host_key"])
+					promptEnvironment,
+					&output,
+				)
+				require.True(t, handled)
+				assert.Equal(t, "yes\n", output.String())
+				return exitCode, nil
+			},
 		})
-	}
+		require.NoError(t, err)
+
+		exitCode, err := runner(context.Background(), []string{"-MNf", "--", "jump@100.64.0.7"})
+
+		require.NoError(t, err)
+		assert.Equal(t, 0, exitCode)
+		assert.Equal(t, "ssh_host_key", captured.Kind)
+		assert.False(t, captured.Sensitive)
+		assert.Contains(t, captured.Message, "The authenticity of host")
+		assert.Equal(t, map[string]any{
+			"hostname": target.LogicalTarget.Hostname,
+		}, captured.Details["logical_target"])
+		assert.Equal(t, map[string]any{
+			"hostname": target.EffectiveTarget.Hostname,
+			"user":     target.EffectiveTarget.User,
+			"port":     target.EffectiveTarget.Port,
+		}, captured.Details["effective_target"])
+		assert.Equal(t, target.DisplayTarget, captured.Details["display_target"])
+		assert.Equal(t, 0, captured.Details["hop_index"])
+		assert.Equal(t, 2, captured.Details["hop_count"])
+		assert.Equal(t, map[string]any{
+			"host":        "relay.example.test (100.64.0.7)",
+			"algorithm":   "ED25519",
+			"fingerprint": "SHA256:fixture",
+		}, captured.Details["host_key"])
+	})
 }
 
-func TestRunnerKeepsUnsupportedConfirmationSensitive(t *testing.T) {
+func TestRunnerKeepsUntrustedConfirmationSensitive(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		message string
@@ -277,6 +267,12 @@ func TestRunnerKeepsUnsupportedConfirmationSensitive(t *testing.T) {
 		{
 			name: "unhinted server-controlled spoof",
 			message: `Password for The authenticity of host 'build.example.test' can't be established.
+ED25519 key fingerprint is SHA256:fixture.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? `,
+		},
+		{
+			name: "unhinted standard host-key text",
+			message: `The authenticity of host 'build.example.test' can't be established.
 ED25519 key fingerprint is SHA256:fixture.
 Are you sure you want to continue connecting (yes/no/[fingerprint])? `,
 		},
