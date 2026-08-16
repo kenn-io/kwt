@@ -36,6 +36,19 @@ Are you sure you want to continue connecting (yes/no/[fingerprint])? `,
 				Fingerprint: "SHA256:relay-fixture",
 			},
 		},
+		{
+			name: "host known by another address",
+			message: `The authenticity of host 'build.example.test (<no hostip for proxy command>)' can't be established.
+ED25519 key fingerprint is: SHA256:build-fixture
+This host key is known by the following other names/addresses:
+    /tmp/known_hosts:7: [127.0.0.1]:2200
+Are you sure you want to continue connecting (yes/no/[fingerprint])? `,
+			expectation: hostKeyPromptDetails{
+				Host:        "build.example.test (<no hostip for proxy command>)",
+				Algorithm:   "ED25519",
+				Fingerprint: "SHA256:build-fixture",
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -60,6 +73,10 @@ ED25519 key fingerprint is SHA256:fixture.`,
 ED25519 key fingerprint is SHA256:fixture.
 Are you sure you want to continue connecting (yes/no/[fingerprint])?
 Password:`,
+		`The authenticity of host 'build.example.test' can't be established.
+ED25519 key fingerprint is SHA256:fixture.
+Password:
+Are you sure you want to continue connecting (yes/no/[fingerprint])? `,
 	} {
 		_, err := parseHostKeyPrompt(message)
 

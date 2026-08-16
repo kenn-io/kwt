@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 )
 
@@ -34,8 +35,7 @@ func parseHostKeyPrompt(message string) (hostKeyPromptDetails, error) {
 		return hostKeyPromptDetails{}, errors.New("OpenSSH host-key prompt is missing review details")
 	}
 	reviewLines := lines[2 : len(lines)-1]
-	if len(reviewLines) > 1 ||
-		len(reviewLines) == 1 && reviewLines[0] != "This key is not known by any other names." {
+	if !validHostKeyReviewLines(reviewLines) {
 		return hostKeyPromptDetails{}, errors.New("OpenSSH host-key prompt is missing review details")
 	}
 
@@ -60,4 +60,35 @@ func parseHostKeyPrompt(message string) (hostKeyPromptDetails, error) {
 		return hostKeyPromptDetails{}, errors.New("OpenSSH host-key prompt is missing review details")
 	}
 	return details, nil
+}
+
+func validHostKeyReviewLines(lines []string) bool {
+	if len(lines) == 0 {
+		return true
+	}
+	if len(lines) == 1 {
+		return lines[0] == "This key is not known by any other names."
+	}
+	if lines[0] != "This host key is known by the following other names/addresses:" {
+		return false
+	}
+	for _, line := range lines[1:] {
+		if !strings.HasPrefix(line, "    ") {
+			return false
+		}
+		reference := strings.TrimSpace(line)
+		hostSeparator := strings.Index(reference, ": ")
+		if hostSeparator < 0 || strings.TrimSpace(reference[hostSeparator+2:]) == "" {
+			return false
+		}
+		location := reference[:hostSeparator]
+		lineColon := strings.LastIndex(location, ":")
+		if lineColon < 1 || strings.TrimSpace(location[:lineColon]) == "" {
+			return false
+		}
+		if _, err := strconv.ParseUint(location[lineColon+1:], 10, 64); err != nil {
+			return false
+		}
+	}
+	return true
 }
