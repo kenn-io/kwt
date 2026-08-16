@@ -227,6 +227,7 @@ ED25519 key fingerprint is SHA256:fixture.
 |                 |
 |                 |
 +----[SHA256]-----+
+Matching host key fingerprint found in DNS.
 Are you sure you want to continue connecting (yes/no/[fingerprint])? `},
 					promptEnvironment,
 					&output,

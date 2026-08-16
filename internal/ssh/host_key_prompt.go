@@ -68,6 +68,13 @@ func validHostKeyReviewLines(lines []string) bool {
 		return false
 	}
 	lines = remaining
+	if len(lines) > 0 {
+		switch lines[0] {
+		case "Matching host key fingerprint found in DNS.",
+			"No matching host key fingerprint found in DNS.":
+			lines = lines[1:]
+		}
+	}
 	if len(lines) == 0 {
 		return true
 	}

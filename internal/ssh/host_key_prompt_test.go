@@ -49,6 +49,18 @@ Are you sure you want to continue connecting (yes/no/[fingerprint])? `,
 				Fingerprint: "SHA256:build-fixture",
 			},
 		},
+		{
+			name: "matching SSHFP record",
+			message: `The authenticity of host 'build.example.test' can't be established.
+ED25519 key fingerprint is SHA256:dns-fixture.
+Matching host key fingerprint found in DNS.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? `,
+			expectation: hostKeyPromptDetails{
+				Host:        "build.example.test",
+				Algorithm:   "ED25519",
+				Fingerprint: "SHA256:dns-fixture",
+			},
+		},
 	}
 
 	for _, test := range tests {
