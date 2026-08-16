@@ -47,7 +47,7 @@ func parseHostKeyPrompt(message string) (hostKeyPromptDetails, error) {
 	}
 	for _, marker := range fingerprintMarkers {
 		index := strings.Index(lines[1], marker)
-		if index < 0 || !strings.HasSuffix(lines[1], ".") {
+		if index < 0 {
 			continue
 		}
 		details.Algorithm = strings.TrimSpace(lines[1][:index])

@@ -27,7 +27,7 @@ Are you sure you want to continue connecting (yes/no/[fingerprint])? `,
 		{
 			name: "host with effective address and colon marker",
 			message: `The authenticity of host 'relay.example.test (100.64.0.7)' can't be established.
-ECDSA key fingerprint is: SHA256:relay-fixture.
+ECDSA key fingerprint is: SHA256:relay-fixture
 This key is not known by any other names.
 Are you sure you want to continue connecting (yes/no/[fingerprint])? `,
 			expectation: hostKeyPromptDetails{
