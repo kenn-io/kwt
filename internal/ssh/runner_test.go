@@ -242,6 +242,11 @@ Are you sure you want to continue connecting (yes/no/[fingerprint])? `},
 	assert.Equal(t, target.DisplayTarget, captured.Details["display_target"])
 	assert.Equal(t, 0, captured.Details["hop_index"])
 	assert.Equal(t, 2, captured.Details["hop_count"])
+	assert.Equal(t, map[string]any{
+		"host":        "relay.example.test (100.64.0.7)",
+		"algorithm":   "ED25519",
+		"fingerprint": "SHA256:fixture",
+	}, captured.Details["host_key"])
 }
 
 func TestRunnerPropagatesPromptFailure(t *testing.T) {

@@ -194,8 +194,10 @@ the daemon's terminal timeout. OpenSSH confirmation requests use the
 requests use `ssh_authentication` and are sensitive. Every prompt includes its
 credential-free logical target, effective target, display target, zero-based
 hop index, and route hop count in `details`, so a native client can identify
-which direct or ProxyJump target controls the prompt. The prompt message remains
-OpenSSH's original text. The process keeps the lease alive
+which direct or ProxyJump target controls the prompt. Host-key prompts also
+include a `host_key` object containing the reviewed `host`, `algorithm`, and
+`fingerprint`, so native clients do not parse OpenSSH prose. The prompt message
+remains OpenSSH's original text. The process keeps the lease alive
 while stdin remains open, touches it every ten seconds, and releases it when
 stdin reaches EOF or the command is canceled. Progress and warnings are written
 as they occur rather than buffered.
