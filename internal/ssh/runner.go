@@ -65,8 +65,8 @@ func newRunner(
 			Executable:  options.Executable,
 			Environment: environment,
 			Prompt:      request.Prompt,
-			Describe: func(_ string, hint string) (service.OperationPrompt, error) {
-				prompt := describeSSHPrompt(hint)
+			Describe: func(message, hint string) (service.OperationPrompt, error) {
+				prompt := describeSSHPrompt(message, hint)
 				hopCount := request.promptTargetCount
 				if hopCount == 0 {
 					hopCount = 1

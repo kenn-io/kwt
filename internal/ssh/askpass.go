@@ -269,7 +269,7 @@ func (a *Askpass) prompt(message, hint string) (string, error) {
 	if round > a.options.MaxRounds {
 		return "", connectionFailed(errors.New("SSH prompt round limit exceeded"))
 	}
-	prompt := describeSSHPrompt(hint)
+	prompt := describeSSHPrompt(message, hint)
 	prompt.Message = message
 	if a.options.Describe != nil {
 		described, err := a.options.Describe(message, hint)
@@ -373,11 +373,25 @@ func RunAskpassHelper(arguments, environment []string, output io.Writer) (int, b
 	return 0, true
 }
 
-func describeSSHPrompt(hint string) service.OperationPrompt {
-	if hint == "confirm" {
+func describeSSHPrompt(message, hint string) service.OperationPrompt {
+	if hint == "confirm" || isOpenSSHHostKeyPrompt(message) {
 		return service.OperationPrompt{Kind: "ssh_host_key", Sensitive: false}
 	}
 	return service.OperationPrompt{Kind: "ssh_authentication", Sensitive: true}
+}
+
+func isOpenSSHHostKeyPrompt(message string) bool {
+	message = strings.TrimSpace(message)
+	return strings.HasPrefix(message, "The authenticity of host '") &&
+		strings.Contains(message, "\n") &&
+		strings.Contains(message, " key fingerprint is") &&
+		(strings.HasSuffix(
+			message,
+			"Are you sure you want to continue connecting (yes/no/[fingerprint])?",
+		) || strings.HasSuffix(
+			message,
+			"Are you sure you want to continue connecting (yes/no)?",
+		))
 }
 
 func encodeAskpassHandle(handle askpassHandle) (string, error) {

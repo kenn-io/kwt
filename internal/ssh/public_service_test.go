@@ -209,6 +209,7 @@ func TestPublicServiceBuildsOneOwnerScopedPersistentManager(t *testing.T) {
 	assert.NotEqual(t, home, filepath.Dir(filepath.Dir(controlDirectory)))
 	assert.Equal(t, "c", filepath.Base(controlDirectory))
 	require.NotNil(t, persistentConfig.ConnectionOptions)
+	assert.True(t, persistentConfig.ConnectionOptions.AllowInteraction)
 	assert.Equal(t, time.Hour, persistentConfig.ConnectionOptions.ControlPersistTimeout)
 	assert.NoDirExists(t, filepath.Dir(controlDirectory))
 }

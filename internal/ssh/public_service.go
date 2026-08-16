@@ -181,6 +181,7 @@ func (s *PublicService) initializeManager(idleTimeout time.Duration) error {
 	controlDirectory := filepath.Join(managerDirectory, "c")
 	privateDirectory := filepath.Join(managerDirectory, "p")
 	connectionOptions := openssh.DefaultConnectionOptions()
+	connectionOptions.AllowInteraction = true
 	persistenceTimeout := max(idleTimeout, minimumCrashPersistenceTimeout)
 	connectionOptions.ControlPersistTimeout = persistenceTimeout
 	persistent, err := s.newPersistent(controlDirectory, openssh.PersistentConfig{
