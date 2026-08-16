@@ -75,6 +75,41 @@ func TestRunnerAppliesProjectionAndPrivateConfigToEveryManagerCommand(t *testing
 	assert.NoFileExists(t, capturedArguments[1])
 }
 
+func TestRunnerAllowsAskpassAuthenticationForPersistentMasters(t *testing.T) {
+	request := LeaseRequest{
+		WorkingDirectory: t.TempDir(),
+		Environment:      []string{"PATH=/usr/bin"},
+	}
+	target := ResolvedTarget{Projection: ExecutionProjection{
+		Arguments: []string{"-F", os.DevNull},
+	}}
+	var capturedArguments []string
+	runner, err := newRunner(t.TempDir(), request, target, runnerOptions{
+		Version: supportedAskpassVersion(),
+		Run: func(
+			_ context.Context,
+			arguments []string,
+			_ string,
+			_ []string,
+		) (int, error) {
+			capturedArguments = append([]string(nil), arguments...)
+			return 0, nil
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = runner(context.Background(), []string{
+		"-MNf", "-o", "BatchMode=yes", "--", "build.internal",
+	})
+
+	require.NoError(t, err)
+	assert.True(t, strings.HasSuffix(
+		strings.Join(capturedArguments, " "),
+		"-MNf -o BatchMode=no -- build.internal",
+	))
+	assert.NotContains(t, capturedArguments, "BatchMode=yes")
+}
+
 func TestRunnerEnforcesResolvedHostKeyPolicyWithoutAmbientAskpass(t *testing.T) {
 	request := LeaseRequest{
 		WorkingDirectory: t.TempDir(),

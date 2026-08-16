@@ -84,7 +84,7 @@ func newRunner(
 		if err != nil {
 			return -1, errors.Join(err, cleanup())
 		}
-		arguments = append(arguments, managerArguments...)
+		arguments = append(arguments, allowAskpassAuthentication(managerArguments)...)
 		exitCode, runErr := run(
 			ctx,
 			arguments,
@@ -94,6 +94,16 @@ func newRunner(
 		closeErr := askpass.Close()
 		return exitCode, errors.Join(runErr, askpass.Err(), closeErr, cleanup())
 	}, nil
+}
+
+func allowAskpassAuthentication(arguments []string) []string {
+	resolved := append([]string(nil), arguments...)
+	for index := 0; index+1 < len(resolved); index++ {
+		if resolved[index] == "-o" && resolved[index+1] == "BatchMode=yes" {
+			resolved[index+1] = "BatchMode=no"
+		}
+	}
+	return resolved
 }
 
 func promptTargetDetails(target Target) map[string]any {
