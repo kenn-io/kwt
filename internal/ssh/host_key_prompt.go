@@ -63,6 +63,11 @@ func parseHostKeyPrompt(message string) (hostKeyPromptDetails, error) {
 }
 
 func validHostKeyReviewLines(lines []string) bool {
+	remaining, valid := consumeHostKeyRandomart(lines)
+	if !valid {
+		return false
+	}
+	lines = remaining
 	if len(lines) == 0 {
 		return true
 	}
@@ -87,6 +92,56 @@ func validHostKeyReviewLines(lines []string) bool {
 			return false
 		}
 		if _, err := strconv.ParseUint(location[lineColon+1:], 10, 64); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func consumeHostKeyRandomart(lines []string) ([]string, bool) {
+	const (
+		lineWidth  = 19
+		fieldLines = 9
+		blockLines = fieldLines + 2
+		fieldChars = " .o+=*BOX@%&#/^SE"
+	)
+	if len(lines) == 0 || !strings.HasPrefix(lines[0], "+") {
+		return lines, true
+	}
+	if len(lines) < blockLines ||
+		!validHostKeyRandomartFrame(lines[0], lineWidth) ||
+		!validHostKeyRandomartFrame(lines[blockLines-1], lineWidth) {
+		return nil, false
+	}
+	for _, line := range lines[1 : blockLines-1] {
+		if len(line) != lineWidth || line[0] != '|' || line[len(line)-1] != '|' {
+			return nil, false
+		}
+		for _, character := range line[1 : len(line)-1] {
+			if !strings.ContainsRune(fieldChars, character) {
+				return nil, false
+			}
+		}
+	}
+	return lines[blockLines:], true
+}
+
+func validHostKeyRandomartFrame(line string, width int) bool {
+	if len(line) != width || line[0] != '+' || line[len(line)-1] != '+' {
+		return false
+	}
+	labelStart := strings.IndexByte(line, '[')
+	labelEnd := strings.IndexByte(line, ']')
+	if labelStart < 1 || labelEnd <= labelStart+1 || labelEnd >= len(line)-1 {
+		return false
+	}
+	for _, character := range line[1:labelStart] + line[labelEnd+1:len(line)-1] {
+		if character != '-' {
+			return false
+		}
+	}
+	for _, character := range line[labelStart+1 : labelEnd] {
+		if character < 0x20 || character > 0x7e || character == '[' || character == ']' {
 			return false
 		}
 	}
