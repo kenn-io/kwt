@@ -130,6 +130,9 @@ host, algorithm, and fingerprint for native clients. When macOS omits that
 hint, kwt recognizes the complete standard confirmation shape only for a
 reviewed target whose effective policy is `StrictHostKeyChecking=ask`.
 Unhinted text on every other route remains sensitive authentication input.
+Confirmation requests outside the complete unknown-host shape also remain
+sensitive authentication input, so they reach the client without claiming a
+host-key identity or enabling echoed input.
 Published prompt details contain only that host-key review identity, the
 already reviewed route targets, and hop position; they contain no credentials
 or environment values.

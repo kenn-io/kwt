@@ -263,6 +263,82 @@ Are you sure you want to continue connecting (yes/no/[fingerprint])? `},
 	}
 }
 
+func TestRunnerKeepsUnsupportedConfirmationSensitive(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		message string
+		hint    string
+	}{
+		{
+			name:    "explicit unsupported confirmation",
+			message: "The host address key changed. Continue connecting?",
+			hint:    "confirm",
+		},
+		{
+			name: "unhinted server-controlled spoof",
+			message: `Password for The authenticity of host 'build.example.test' can't be established.
+ED25519 key fingerprint is SHA256:fixture.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? `,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var captured service.OperationPrompt
+			request := LeaseRequest{
+				WorkingDirectory: t.TempDir(),
+				Environment:      []string{"PATH=" + os.Getenv("PATH")},
+				Prompt: func(_ context.Context, prompt service.OperationPrompt) (string, error) {
+					captured = prompt
+					return "yes", nil
+				},
+			}
+			target := ResolvedTarget{
+				StrictHostKeyChecking: "ask",
+				Projection: ExecutionProjection{
+					Arguments: []string{"-F", os.DevNull},
+				},
+			}
+			runner, err := newRunner(t.TempDir(), request, target, runnerOptions{
+				Version: supportedAskpassVersion(),
+				Run: func(
+					_ context.Context,
+					_ []string,
+					_ string,
+					environment []string,
+				) (int, error) {
+					var output bytes.Buffer
+					promptEnvironment := append([]string(nil), environment...)
+					if test.hint != "" {
+						promptEnvironment = append(
+							promptEnvironment,
+							"SSH_ASKPASS_PROMPT="+test.hint,
+						)
+					}
+					exitCode, handled := RunAskpassHelper(
+						[]string{"kwt", test.message},
+						promptEnvironment,
+						&output,
+					)
+					require.True(t, handled)
+					assert.Equal(t, "yes\n", output.String())
+					return exitCode, nil
+				},
+			})
+			require.NoError(t, err)
+
+			exitCode, err := runner(
+				context.Background(),
+				[]string{"-MNf", "--", "build.internal"},
+			)
+
+			require.NoError(t, err)
+			assert.Equal(t, 0, exitCode)
+			assert.Equal(t, "ssh_authentication", captured.Kind)
+			assert.True(t, captured.Sensitive)
+			assert.NotContains(t, captured.Details, "host_key")
+		})
+	}
+}
+
 func TestRunnerPropagatesPromptFailure(t *testing.T) {
 	promptFailure := service.NewError(
 		service.SSHPromptRejected,

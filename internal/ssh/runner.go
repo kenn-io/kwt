@@ -83,9 +83,11 @@ func newRunner(
 				if prompt.Kind == "ssh_host_key" {
 					parsed, err := parseHostKeyPrompt(message)
 					if err != nil {
-						return service.OperationPrompt{}, err
+						prompt.Kind = "ssh_authentication"
+						prompt.Sensitive = true
+					} else {
+						hostKey = &parsed
 					}
-					hostKey = &parsed
 				} else if hint == "" && strings.EqualFold(
 					target.StrictHostKeyChecking,
 					"ask",

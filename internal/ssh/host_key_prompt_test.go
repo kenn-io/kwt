@@ -48,7 +48,20 @@ Are you sure you want to continue connecting (yes/no/[fingerprint])? `,
 }
 
 func TestParseHostKeyPromptRejectsUnstructuredConfirmation(t *testing.T) {
-	_, err := parseHostKeyPrompt("Continue connecting?")
+	for _, message := range []string{
+		"Continue connecting?",
+		`Password for The authenticity of host 'build.example.test' can't be established.
+ED25519 key fingerprint is SHA256:fixture.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? `,
+		`The authenticity of host 'build.example.test' can't be established.
+ED25519 key fingerprint is SHA256:fixture.`,
+		`The authenticity of host 'build.example.test' can't be established.
+ED25519 key fingerprint is SHA256:fixture.
+Are you sure you want to continue connecting (yes/no/[fingerprint])?
+Password:`,
+	} {
+		_, err := parseHostKeyPrompt(message)
 
-	require.Error(t, err)
+		require.Error(t, err)
+	}
 }
