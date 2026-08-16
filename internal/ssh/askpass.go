@@ -373,25 +373,11 @@ func RunAskpassHelper(arguments, environment []string, output io.Writer) (int, b
 	return 0, true
 }
 
-func describeSSHPrompt(message, hint string) service.OperationPrompt {
-	if hint == "confirm" || isOpenSSHHostKeyPrompt(message) {
+func describeSSHPrompt(_ string, hint string) service.OperationPrompt {
+	if hint == "confirm" {
 		return service.OperationPrompt{Kind: "ssh_host_key", Sensitive: false}
 	}
 	return service.OperationPrompt{Kind: "ssh_authentication", Sensitive: true}
-}
-
-func isOpenSSHHostKeyPrompt(message string) bool {
-	message = strings.TrimSpace(message)
-	return strings.HasPrefix(message, "The authenticity of host '") &&
-		strings.Contains(message, "\n") &&
-		strings.Contains(message, " key fingerprint is") &&
-		(strings.HasSuffix(
-			message,
-			"Are you sure you want to continue connecting (yes/no/[fingerprint])?",
-		) || strings.HasSuffix(
-			message,
-			"Are you sure you want to continue connecting (yes/no)?",
-		))
 }
 
 func encodeAskpassHandle(handle askpassHandle) (string, error) {

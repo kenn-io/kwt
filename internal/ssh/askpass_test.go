@@ -70,6 +70,34 @@ func TestAskpassCarriesMultipleBoundRoundsIncludingEmptyResponse(t *testing.T) {
 	assert.True(t, prompts[0].Sensitive)
 }
 
+func TestAskpassTreatsUnhintedHostKeyTextAsSensitive(t *testing.T) {
+	var captured service.OperationPrompt
+	transport, err := NewAskpass(context.Background(), t.TempDir(), AskpassOptions{
+		Version: supportedAskpassVersion(),
+		Prompt: func(_ context.Context, prompt service.OperationPrompt) (string, error) {
+			captured = prompt
+			return "credential", nil
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, transport.Close()) })
+
+	var output bytes.Buffer
+	exitCode, handled := RunAskpassHelper(
+		[]string{"kwt", `The authenticity of host 'example.test' can't be established.
+ED25519 key fingerprint is SHA256:fixture.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? `},
+		transport.Environment(),
+		&output,
+	)
+
+	assert.True(t, handled)
+	assert.Equal(t, 0, exitCode)
+	assert.Equal(t, "credential\n", output.String())
+	assert.Equal(t, "ssh_authentication", captured.Kind)
+	assert.True(t, captured.Sensitive)
+}
+
 func TestAskpassPreservesTypedPromptRejection(t *testing.T) {
 	transport, err := NewAskpass(context.Background(), t.TempDir(), AskpassOptions{
 		Version: supportedAskpassVersion(),
