@@ -4,7 +4,9 @@ package ssh
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -46,8 +48,10 @@ func TestRunClientProcessPreservesInteractiveTerminalJobControl(t *testing.T) {
 	require.NoError(t, err)
 	childGroup, err := os.ReadFile(resultPath + ".ready")
 	require.NoError(t, err)
-	require.Equal(t, string(parentGroup), string(childGroup))
-	require.NoError(t, syscall.Kill(-command.Process.Pid, syscall.SIGSTOP))
+	require.NotEqual(t, string(parentGroup), string(childGroup))
+	childGroupID, err := strconv.Atoi(string(childGroup))
+	require.NoError(t, err)
+	require.NoError(t, syscall.Kill(-childGroupID, syscall.SIGTSTP))
 	var status syscall.WaitStatus
 	_, err = syscall.Wait4(command.Process.Pid, &status, syscall.WUNTRACED, nil)
 	require.NoError(t, err)
@@ -69,6 +73,43 @@ func TestRunClientProcessPreservesInteractiveTerminalJobControl(t *testing.T) {
 	assert.Equal(t, "interactive input\n", string(output))
 }
 
+func TestRunClientProcessCancellationTerminatesInteractiveDescendants(t *testing.T) {
+	resultPath := t.TempDir() + "/cancel"
+	command := exec.Command(os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
+	command.Env = append(
+		os.Environ(),
+		interactiveClientProcessHelper+"=cancel-parent",
+		interactiveClientProcessResult+"="+resultPath,
+	)
+	terminal, err := pty.Start(command)
+	require.NoError(t, err)
+	var terminalOutput bytes.Buffer
+	drained := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&terminalOutput, terminal)
+		close(drained)
+	}()
+	t.Cleanup(func() {
+		_ = terminal.Close()
+		if command.Process != nil {
+			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+		}
+	})
+	waitErr := command.Wait()
+	require.NoError(t, terminal.Close())
+	<-drained
+	require.NoError(t, waitErr, terminalOutput.String())
+
+	encoded, err := os.ReadFile(resultPath + ".descendant")
+	require.NoError(t, err)
+	pid, err := strconv.Atoi(string(encoded))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+	require.Eventually(t, func() bool {
+		return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
+	}, time.Second, 10*time.Millisecond, "interactive descendant survived cancellation")
+}
+
 func TestSSHInteractiveClientProcessHelper(t *testing.T) {
 	mode := os.Getenv(interactiveClientProcessHelper)
 	if mode == "" {
@@ -86,6 +127,39 @@ func TestSSHInteractiveClientProcessHelper(t *testing.T) {
 			os.Exit(1)
 		}
 		if err := os.WriteFile(os.Getenv(interactiveClientProcessResult), []byte(value), 0o600); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	if mode == "cancel-parent" {
+		pidPath := os.Getenv(interactiveClientProcessResult) + ".descendant"
+		script := fmt.Sprintf(
+			`sleep 30 & child=$!; printf '%%s' "$child" > %s; wait`,
+			shellQuote(pidPath),
+		)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() {
+			for {
+				if _, err := os.Stat(pidPath); err == nil {
+					cancel()
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		}()
+		_, _, err := RunClientProcess(
+			ctx,
+			"/bin/sh",
+			[]string{"-c", script},
+			"",
+			os.Environ(),
+			os.Stdin,
+			os.Stdout,
+			os.Stderr,
+		)
+		if !errors.Is(err, context.Canceled) {
 			_, _ = fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}

@@ -3,6 +3,7 @@
 package ssh
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -14,12 +15,16 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+func newClientCommand(ctx context.Context, executable string, arguments ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, executable, arguments...)
+}
+
 func runResolverCommand(command *exec.Cmd) error {
-	_, err := runClientCommand(command)
+	_, err := runClientCommand(context.Background(), command)
 	return err
 }
 
-func runClientCommand(command *exec.Cmd) (bool, error) {
+func runClientCommand(_ context.Context, command *exec.Cmd) (bool, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return false, fmt.Errorf("create resolver job: %w", err)
