@@ -403,6 +403,8 @@ sessions remain distinguishable; JSON includes `tmux_socket_name` and
 `tmux_attach_mode`. New standalone sessions are created only on the dedicated
 server. Attach and kill retain the selected endpoint rather than inferring it
 from the session name.
+`kwt tmux run --context` rejects `wt` and `workspace`, which are reserved for
+managed worktree and directory-workspace session names.
 
 ## `kwt remove`
 

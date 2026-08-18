@@ -440,6 +440,75 @@ func TestAnnotateProtectedSocketsPreservesVerifiedPersistedEndpoint(t *testing.T
 	}
 }
 
+func TestSourceDashboardLaunchEntryRetainsProtectedEndpoint(t *testing.T) {
+	home := t.TempDir()
+	baseDirectory := t.TempDir()
+	repository := filepath.Join(baseDirectory, "widget")
+	for _, args := range [][]string{
+		{"init", "-b", "main", repository},
+		{"-C", repository, "-c", "user.name=Test", "-c", "user.email=test@example.com",
+			"commit", "--allow-empty", "-m", "initial"},
+		{"-C", repository, "remote", "add", "origin", "https://github.com/acme/widget.git"},
+	} {
+		command := exec.Command("git", args...)
+		require.NoError(t, command.Run())
+	}
+	var err error
+	baseDirectory, err = filepath.EvalSymlinks(baseDirectory)
+	require.NoError(t, err)
+	repository, err = filepath.EvalSymlinks(repository)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
+		"[worktree]\nbasedir = '"+baseDirectory+"'\n"+
+			"[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'widget'\npath = '"+
+			repository+"'\n",
+	), 0o600))
+	sessionName := "kwt-wt-widget-main-" + template.ShortHash(repository)
+	require.NoError(t, pullrequest.NewFileStore(
+		filepath.Join(home, "pull-requests.json"),
+	).Update(context.Background(), func(records map[string]pullrequest.Provenance) error {
+		records["github:github.com/acme/widget#1"] = pullrequest.Provenance{
+			Repository: "github.com/acme/widget",
+			Project:    pullrequest.Project{Identity: "github.com/acme/widget"},
+			Workspace: pullrequest.Workspace{
+				Repository: "github.com/acme/widget",
+				Path:       repository, Branch: "main", SessionName: sessionName,
+			},
+		}
+		return nil
+	}))
+	source := &currentSource{
+		home: home,
+		workspaceSessions: &tmux.WorkspaceSessionsOptions{
+			Command: "kwt-test-missing-tmux-binary",
+		},
+	}
+
+	result, err := source.Load(context.Background(), Request{
+		View: ViewDashboard, LaunchDirectory: repository,
+		IncludeProtectedSockets: true,
+		Expansion:               testExpansion(t),
+		UntrustedConfig:         IgnoreUntrustedConfig,
+	})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Snapshot.Entries)
+	require.NotEmpty(t, result.Snapshot.LaunchEntries)
+	wantSocket := tmux.ProtectedWorkspaceSocketName(sessionName, repository)
+	for _, group := range [][]Entry{result.Snapshot.Entries, result.Snapshot.LaunchEntries} {
+		var matched *Entry
+		for index := range group {
+			if group[index].Path == repository {
+				matched = &group[index]
+				break
+			}
+		}
+		require.NotNil(t, matched)
+		assert.Equal(t, models.TmuxAttachProtected, matched.TmuxAttachMode)
+		assert.Equal(t, wantSocket, matched.TmuxSocketName)
+	}
+}
+
 func TestAnnotateWorkspaceEndpointsUsesCanonicalStateWhenTmuxIsUnavailable(t *testing.T) {
 	options := tmux.WorkspaceSessionsOptions{Command: "kwt-test-missing-tmux-binary"}
 	source := &currentSource{

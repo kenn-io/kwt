@@ -118,6 +118,24 @@ func TestSessionManagerCreatesOnlyOnKWTServer(t *testing.T) {
 	assert.Equal(t, KWTServerSocketName, session.SocketName)
 }
 
+func TestSessionManagerRejectsWorkspaceNamespaceContexts(t *testing.T) {
+	for _, sessionContext := range []string{"wt", "workspace"} {
+		t.Run(sessionContext, func(t *testing.T) {
+			kwtServer := &recordingSessionManagerCommand{}
+			manager := newSessionManagerWithCommands(
+				DefaultSessionConfig(), kwtServer, &recordingSessionManagerCommand{},
+			)
+
+			_, err := manager.CreateSession(context.Background(), SessionOptions{
+				Context: sessionContext, Identifier: "standalone", WorkingDir: "/work",
+			})
+
+			require.ErrorContains(t, err, "reserved for workspace sessions")
+			assert.Empty(t, kwtServer.calls)
+		})
+	}
+}
+
 func TestSessionManagerUnionsKWTAndDefaultServerEndpoints(t *testing.T) {
 	kwtServer := &recordingSessionManagerCommand{detailed: []*SessionInfo{{
 		Name: "kwt-run-kwt-20260101120000",

@@ -126,7 +126,11 @@ func (s *currentSource) Load(ctx context.Context, request Request) (result Resul
 	}
 	result.Notes = append(result.Notes, notes...)
 	if request.IncludeProtectedSockets {
-		if err := s.annotateProtectedSockets(ctx, result.Snapshot.Entries); err != nil {
+		if err := s.annotateProtectedSockets(
+			ctx,
+			result.Snapshot.Entries,
+			result.Snapshot.LaunchEntries,
+		); err != nil {
 			return Result{}, inventorySourceFailure("failed to read pull-request provenance", err)
 		}
 	}
@@ -583,7 +587,10 @@ func publicNotes(notes []config.ConfigNote) []Note {
 	return result
 }
 
-func (s *currentSource) annotateProtectedSockets(ctx context.Context, entries []Entry) error {
+func (s *currentSource) annotateProtectedSockets(
+	ctx context.Context,
+	entryGroups ...[]Entry,
+) error {
 	records := make(map[string]pullrequest.Provenance)
 	err := pullrequest.NewFileStore(filepath.Join(s.home, "pull-requests.json")).View(
 		ctx,
@@ -597,6 +604,13 @@ func (s *currentSource) annotateProtectedSockets(ctx context.Context, entries []
 	if err != nil {
 		return fmt.Errorf("failed to read pull-request provenance: %w", err)
 	}
+	for _, entries := range entryGroups {
+		annotateProtectedEntries(records, entries)
+	}
+	return nil
+}
+
+func annotateProtectedEntries(records map[string]pullrequest.Provenance, entries []Entry) {
 	for index := range entries {
 		for _, record := range records {
 			workspace := record.Workspace
@@ -645,5 +659,4 @@ func (s *currentSource) annotateProtectedSockets(ctx context.Context, entries []
 			break
 		}
 	}
-	return nil
 }
