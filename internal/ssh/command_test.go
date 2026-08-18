@@ -16,7 +16,7 @@ const clientProcessHelper = "KWT_SSH_CLIENT_PROCESS_HELPER"
 
 func TestRunClientProcessStreamsStandardIO(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	exitCode, err := RunClientProcess(
+	exitCode, started, err := RunClientProcess(
 		context.Background(),
 		os.Args[0],
 		[]string{"-test.run=^TestSSHClientProcessHelper$"},
@@ -27,9 +27,26 @@ func TestRunClientProcessStreamsStandardIO(t *testing.T) {
 		&stderr,
 	)
 	require.NoError(t, err)
+	assert.True(t, started)
 	assert.Zero(t, exitCode)
 	assert.Equal(t, "stdout:request body", stdout.String())
 	assert.Equal(t, "stderr:request body", stderr.String())
+}
+
+func TestRunClientProcessReportsExecutableLookupBeforeStart(t *testing.T) {
+	exitCode, started, err := RunClientProcess(
+		context.Background(),
+		"kwt-missing-ssh-client",
+		nil,
+		t.TempDir(),
+		[]string{"PATH="},
+		strings.NewReader(""),
+		io.Discard,
+		io.Discard,
+	)
+	require.Error(t, err)
+	assert.Equal(t, -1, exitCode)
+	assert.False(t, started)
 }
 
 func TestSSHClientProcessHelper(t *testing.T) {

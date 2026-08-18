@@ -15,9 +15,14 @@ import (
 )
 
 func runResolverCommand(command *exec.Cmd) error {
+	_, err := runClientCommand(command)
+	return err
+}
+
+func runClientCommand(command *exec.Cmd) (bool, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
-		return fmt.Errorf("create resolver job: %w", err)
+		return false, fmt.Errorf("create resolver job: %w", err)
 	}
 	var closeJobOnce sync.Once
 	closeJob := func() {
@@ -35,7 +40,7 @@ func runResolverCommand(command *exec.Cmd) error {
 		uintptr(unsafe.Pointer(&limits)),
 		uint32(unsafe.Sizeof(limits)),
 	); err != nil {
-		return fmt.Errorf("configure resolver job: %w", err)
+		return false, fmt.Errorf("configure resolver job: %w", err)
 	}
 
 	if command.SysProcAttr == nil {
@@ -50,7 +55,7 @@ func runResolverCommand(command *exec.Cmd) error {
 		return command.Process.Kill()
 	}
 	if err := command.Start(); err != nil {
-		return err
+		return false, err
 	}
 	setupComplete := false
 	defer func() {
@@ -68,7 +73,7 @@ func runResolverCommand(command *exec.Cmd) error {
 		uint32(command.Process.Pid),
 	)
 	if err != nil {
-		return fmt.Errorf("open resolver process: %w", err)
+		return true, fmt.Errorf("open resolver process: %w", err)
 	}
 	processOpen := true
 	defer func() {
@@ -77,10 +82,10 @@ func runResolverCommand(command *exec.Cmd) error {
 		}
 	}()
 	if err := windows.AssignProcessToJobObject(job, process); err != nil {
-		return fmt.Errorf("assign resolver job: %w", err)
+		return true, fmt.Errorf("assign resolver job: %w", err)
 	}
 	if err := resumeResolverProcess(uint32(command.Process.Pid)); err != nil {
-		return err
+		return true, err
 	}
 
 	setupComplete = true
@@ -90,7 +95,7 @@ func runResolverCommand(command *exec.Cmd) error {
 		_ = windows.CloseHandle(process)
 		closeJob()
 	}()
-	return command.Wait()
+	return true, command.Wait()
 }
 
 func resumeResolverProcess(processID uint32) error {

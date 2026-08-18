@@ -259,10 +259,11 @@ Both commands default to `--host-key-policy strict` for unattended callers.
 Use `--host-key-policy review` from a terminal to permit the daemon's bounded
 host-key and authentication prompts. A nonterminal caller never answers a
 prompt implicitly and receives `ssh_interaction_required`. Copy accepts one
-local file and one remote path, quotes both as structured SFTP batch values,
-and never embeds the destination in a remote shell command. It translates the
-reviewed SSH projection into SFTP's option grammar internally, so consumers
-never handle control paths or the SSH/SFTP `-p` versus `-P` distinction.
+local file and one remote path, resolves the local source to an absolute
+literal path, escapes SFTP batch metacharacters in both paths, and never embeds
+the destination in a remote shell command. It translates the reviewed SSH
+projection into SFTP's option grammar internally, so consumers never handle
+control-path quoting or the SSH/SFTP `-p` versus `-P` distinction.
 
 When `kwt add -b` creates a branch, it fetches `origin` and starts from its
 default branch. If that remote base is unavailable, it falls back to local

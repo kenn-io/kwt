@@ -73,6 +73,9 @@ printf '%s\n' 'KWT_SSH_CONFIG_START_forged_stderr' >&2
 	}{
 		{name: "missing hostname", args: []string{"ssh", "resolve", "--json"}, code: "invalid_request"},
 		{name: "invalid port", args: []string{"ssh", "resolve", "build.example.test", "--port", "-1", "--json"}, code: "ssh_invalid_target"},
+		{name: "missing exec command", args: []string{"ssh", "exec", "--json", "build.example.test"}, code: "invalid_request"},
+		{name: "missing copy destination", args: []string{"ssh", "copy", "--json", "build.example.test", "artifact"}, code: "invalid_request"},
+		{name: "invalid exec flag", args: []string{"ssh", "exec", "--json", "--bogus"}, code: "invalid_request"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			failure := exec.Command(binary, test.args...)

@@ -97,15 +97,33 @@ var sshLeaseCmd = &cobra.Command{
 var sshExecCmd = &cobra.Command{
 	Use:   "exec <hostname> <command> [arguments...]",
 	Short: "Run a command through a daemon-owned SSH connection",
-	Args:  cobra.MinimumNArgs(2),
-	RunE:  withGracefulSignals(runSSHExec),
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) >= 2 {
+			return nil
+		}
+		return writeSSHClientFailure(cmd, "ssh exec", sshExecJSON, service.NewError(
+			service.InvalidRequest,
+			fmt.Sprintf("expected an SSH hostname and command, received %d arguments", len(args)),
+			false, nil, nil,
+		))
+	},
+	RunE: withGracefulSignals(runSSHExec),
 }
 
 var sshCopyCmd = &cobra.Command{
 	Use:   "copy <hostname> <source> <destination>",
 	Short: "Copy a file through a daemon-owned SSH connection",
-	Args:  cobra.ExactArgs(3),
-	RunE:  withGracefulSignals(runSSHCopy),
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 3 {
+			return nil
+		}
+		return writeSSHClientFailure(cmd, "ssh copy", sshCopyJSON, service.NewError(
+			service.InvalidRequest,
+			fmt.Sprintf("expected an SSH hostname, source, and destination, received %d arguments", len(args)),
+			false, nil, nil,
+		))
+	},
+	RunE: withGracefulSignals(runSSHCopy),
 }
 
 func init() {
@@ -151,6 +169,11 @@ func init() {
 	)
 	sshExecCmd.Flags().BoolVar(&sshExecQuiet, "quiet", false, "Suppress connection status output")
 	sshExecCmd.Flags().BoolVar(&sshExecJSON, "json", false, "Emit kwt failures as JSON on stdout")
+	sshExecCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return writeSSHClientFailure(cmd, "ssh exec", sshExecJSON, service.NewError(
+			service.InvalidRequest, err.Error(), false, nil, err,
+		))
+	})
 	sshCopyCmd.Flags().StringVar(&sshCopyUser, "user", "", "Override the SSH user")
 	sshCopyCmd.Flags().IntVar(&sshCopyPort, "port", 0, "Override the SSH port")
 	sshCopyCmd.Flags().StringVar(
@@ -159,6 +182,11 @@ func init() {
 	)
 	sshCopyCmd.Flags().BoolVar(&sshCopyQuiet, "quiet", false, "Suppress connection status output")
 	sshCopyCmd.Flags().BoolVar(&sshCopyJSON, "json", false, "Emit kwt failures as JSON on stdout")
+	sshCopyCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return writeSSHClientFailure(cmd, "ssh copy", sshCopyJSON, service.NewError(
+			service.InvalidRequest, err.Error(), false, nil, err,
+		))
+	})
 }
 
 type sshClientExitError struct{ code int }
@@ -198,16 +226,16 @@ func runSSHExec(cmd *cobra.Command, args []string) (returnErr error) {
 	arguments := append([]string(nil), result.Arguments...)
 	arguments = append(arguments, sshExecutionDestination(snapshot))
 	arguments = append(arguments, args[1:]...)
-	clientStarted = true
-	exitCode, err := runShortSSHClient(
+	exitCode, started, err := runShortSSHClient(
 		ctx, control, result.LeaseID,
-		func(processContext context.Context) (int, error) {
+		func(processContext context.Context) (int, bool, error) {
 			return runSSHClientProcess(
 				processContext, "ssh", arguments, workingDirectory, environment,
 				cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 			)
 		},
 	)
+	clientStarted = started
 	return sshClientProcessResult(cmd, exitCode, err)
 }
 
@@ -238,22 +266,26 @@ func runSSHCopy(cmd *cobra.Command, args []string) (returnErr error) {
 	if err != nil {
 		return err
 	}
-	batch, err := sftpPutBatch(args[1], args[2])
+	source := args[1]
+	if !filepath.IsAbs(source) {
+		source = filepath.Join(workingDirectory, source)
+	}
+	batch, err := sftpPutBatch(filepath.Clean(source), args[2])
 	if err != nil {
 		return service.NewError(service.InvalidRequest, err.Error(), false, nil, err)
 	}
 	arguments := sftpLeaseArguments(result.Arguments)
 	arguments = append(arguments, "-b", "-", sftpDestination(snapshot))
-	clientStarted = true
-	exitCode, err := runShortSSHClient(
+	exitCode, started, err := runShortSSHClient(
 		ctx, control, result.LeaseID,
-		func(processContext context.Context) (int, error) {
+		func(processContext context.Context) (int, bool, error) {
 			return runSSHClientProcess(
 				processContext, "sftp", arguments, workingDirectory, environment,
 				strings.NewReader(batch), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 			)
 		},
 	)
+	clientStarted = started
 	return sshClientProcessResult(cmd, exitCode, err)
 }
 
@@ -358,7 +390,7 @@ func sftpLeaseArguments(arguments []string) []string {
 	for index := 0; index < len(arguments); index++ {
 		argument := arguments[index]
 		if index+1 < len(arguments) && argument == "-S" {
-			result = append(result, "-o", "ControlPath="+arguments[index+1])
+			result = append(result, "-o", "ControlPath="+sshConfigQuotedValue(arguments[index+1]))
 			index++
 			continue
 		}
@@ -391,28 +423,35 @@ func sftpBatchPath(path string) (string, error) {
 	if strings.ContainsAny(path, "\x00\r\n") {
 		return "", errors.New("path contains a line or null character")
 	}
-	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(path)
+	escaped := strings.NewReplacer(
+		`\`, `\\`, `"`, `\"`, `*`, `\*`, `?`, `\?`, `[`, `\[`, `]`, `\]`,
+	).Replace(path)
 	return `"` + escaped + `"`, nil
+}
+
+func sshConfigQuotedValue(value string) string {
+	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value)
+	return `"` + escaped + `"`
 }
 
 func runShortSSHClient(
 	ctx context.Context,
 	control sshLeaseControl,
 	leaseID string,
-	run func(context.Context) (int, error),
-) (int, error) {
+	run func(context.Context) (int, bool, error),
+) (int, bool, error) {
 	processContext, cancel := context.WithCancel(ctx)
 	heartbeatDone := make(chan error, 1)
 	go func() {
 		heartbeatDone <- heartbeatShortSSHLease(processContext, control, leaseID, cancel)
 	}()
-	exitCode, processErr := run(processContext)
+	exitCode, started, processErr := run(processContext)
 	cancel()
 	heartbeatErr := <-heartbeatDone
 	if heartbeatErr != nil {
-		return -1, errors.Join(heartbeatErr, processErr)
+		return -1, started, errors.Join(heartbeatErr, processErr)
 	}
-	return exitCode, processErr
+	return exitCode, started, processErr
 }
 
 func heartbeatShortSSHLease(
@@ -470,7 +509,11 @@ func isSSHClientExit(err error) bool {
 
 func writeSSHClientFailure(cmd *cobra.Command, prefix string, jsonRequested bool, err error) error {
 	typed := service.AsError(err)
-	return writeCommandFailure(cmd, typed.Descriptor, 1, jsonRequested, prefix)
+	exitCode := 1
+	if typed.Code == service.InvalidRequest || typed.Code == service.SSHInvalidTarget {
+		exitCode = 2
+	}
+	return writeCommandFailure(cmd, typed.Descriptor, exitCode, jsonRequested, prefix)
 }
 
 func runSSHResolve(cmd *cobra.Command, args []string) error {

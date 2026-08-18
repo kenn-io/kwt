@@ -189,8 +189,9 @@ the reviewed route identity and projection policy. `kwt ssh exec` and
 `kwt ssh copy` use the combined form for one bounded command or transfer: the
 daemon owns route resolution, prompt handling, ProxyJump masters, and lease
 lifecycle, while the foreground kwt process owns the system SSH or SFTP child
-and streams its output directly. Copy uses SFTP rather than a remote shell;
-the child receives only the daemon's
+and streams its output directly. Copy uses SFTP rather than a remote shell,
+resolves the local source to an absolute literal path, and escapes SFTP batch
+metacharacters; the child receives only the daemon's
 generation-bound, fail-closed arguments. Consumers do not reconstruct those
 arguments or load SSH configuration again. Cancellation terminates the entire
 client process tree, the foreground process heartbeats the lease while the

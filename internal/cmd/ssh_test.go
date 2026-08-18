@@ -309,11 +309,11 @@ func TestSSHExecResolvesAcquiresAndRunsThroughLease(t *testing.T) {
 		_ io.Reader,
 		stdout io.Writer,
 		_ io.Writer,
-	) (int, error) {
+	) (int, bool, error) {
 		gotExecutable = executable
 		gotArguments = append([]string(nil), arguments...)
 		_, _ = io.WriteString(stdout, "remote output\n")
-		return 0, nil
+		return 0, true, nil
 	}
 	command, stdout, _ := sshResolveTestCommand()
 	command.SetIn(strings.NewReader("input"))
@@ -348,15 +348,15 @@ func TestSSHExecHeartbeatsLeaseWhileClientRuns(t *testing.T) {
 		_ io.Reader,
 		_ io.Writer,
 		_ io.Writer,
-	) (int, error) {
+	) (int, bool, error) {
 		for control.touches.Load() == 0 {
 			select {
 			case <-ctx.Done():
-				return -1, ctx.Err()
+				return -1, true, ctx.Err()
 			case <-time.After(time.Millisecond):
 			}
 		}
-		return 0, nil
+		return 0, true, nil
 	}
 	command, _, _ := sshResolveTestCommand()
 
@@ -386,9 +386,9 @@ func TestSSHExecStopsClientWhenLeaseHeartbeatFails(t *testing.T) {
 		_ io.Reader,
 		_ io.Writer,
 		_ io.Writer,
-	) (int, error) {
+	) (int, bool, error) {
 		<-ctx.Done()
-		return -1, ctx.Err()
+		return -1, true, ctx.Err()
 	}
 	command, _, stderr := sshResolveTestCommand()
 
@@ -435,7 +435,7 @@ func TestSSHCopyUsesStructuredSFTPBatch(t *testing.T) {
 		return kwtdaemon.SSHLeaseResult{
 			LeaseID: "lease-one",
 			Arguments: []string{
-				"-F", "/dev/null", "-S", `C:\\kwt control`, "-p", "2222",
+				"-F", "/dev/null", "-S", `C:\kwt control`, "-p", "2222",
 			},
 		}, control, nil
 	}
@@ -449,24 +449,24 @@ func TestSSHCopyUsesStructuredSFTPBatch(t *testing.T) {
 		stdin io.Reader,
 		_ io.Writer,
 		_ io.Writer,
-	) (int, error) {
+	) (int, bool, error) {
 		assert.Equal(t, "sftp", executable)
 		got = append([]string(nil), arguments...)
 		batch, err := io.ReadAll(stdin)
 		require.NoError(t, err)
 		assert.Equal(t,
-			"put \"/tmp/kwt \\\"build\\\"\" \"C:/Users/runner/kwt.exe; touch /tmp/pwn\"\n",
+			"put \"/work/-kwt \\*\\[build\\]\\?\" \"C:/Users/runner/kwt.exe; touch /tmp/pwn\"\n",
 			string(batch),
 		)
-		return 0, nil
+		return 0, true, nil
 	}
 	command, _, _ := sshResolveTestCommand()
 
 	require.NoError(t, runSSHCopy(command, []string{
-		"build.example.test", `/tmp/kwt "build"`, "C:/Users/runner/kwt.exe; touch /tmp/pwn",
+		"build.example.test", `-kwt *[build]?`, "C:/Users/runner/kwt.exe; touch /tmp/pwn",
 	}))
 	assert.Equal(t, []string{
-		"-F", "/dev/null", "-o", `ControlPath=C:\\kwt control`, "-P", "2222",
+		"-F", "/dev/null", "-o", `ControlPath="C:\\kwt control"`, "-P", "2222",
 		"-b", "-", "runner@[2001:db8::8]",
 	}, got)
 	assert.Equal(t, int32(1), control.releases.Load())
@@ -493,9 +493,9 @@ func TestSSHExecJSONKeepsRemoteOutputUnmodifiedWhenReleaseFails(t *testing.T) {
 		_ io.Reader,
 		stdout io.Writer,
 		_ io.Writer,
-	) (int, error) {
+	) (int, bool, error) {
 		_, _ = io.WriteString(stdout, "remote output\n")
-		return 0, nil
+		return 0, true, nil
 	}
 	command, stdout, stderr := sshResolveTestCommand()
 
@@ -533,6 +533,38 @@ func TestSSHExecJSONPreservesTypedPreExecutionFailure(t *testing.T) {
 	var envelope jsonErrorEnvelope
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
 	assert.Equal(t, service.SSHInteractionRequired, envelope.Error.Code)
+}
+
+func TestSSHExecJSONReportsClientStartFailure(t *testing.T) {
+	oldRun := runSSHClientProcess
+	oldJSON := sshExecJSON
+	t.Cleanup(func() {
+		runSSHClientProcess = oldRun
+		sshExecJSON = oldJSON
+	})
+	sshExecJSON = true
+	control := &fakeSSHLeaseControl{}
+	stubShortSSHLease(t, control)
+	runSSHClientProcess = func(
+		context.Context,
+		string,
+		[]string,
+		string,
+		[]string,
+		io.Reader,
+		io.Writer,
+		io.Writer,
+	) (int, bool, error) {
+		return -1, false, errors.New("SSH executable is unavailable")
+	}
+	command, stdout, _ := sshResolveTestCommand()
+
+	err := runSSHExec(command, []string{"build.example.test", "true"})
+	require.Error(t, err)
+	var envelope jsonErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	assert.Equal(t, service.Internal, envelope.Error.Code)
+	assert.Equal(t, int32(1), control.releases.Load())
 }
 
 func TestSSHLeaseHumanPromptEscapesTerminalControls(t *testing.T) {

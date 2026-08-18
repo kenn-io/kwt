@@ -18,10 +18,10 @@ func RunClientProcess(
 	stdin io.Reader,
 	stdout io.Writer,
 	stderr io.Writer,
-) (int, error) {
+) (int, bool, error) {
 	resolved, err := resolveExecutable(executable, environment, workingDirectory)
 	if err != nil {
-		return -1, err
+		return -1, false, err
 	}
 	command := exec.CommandContext(ctx, resolved, arguments...)
 	command.Dir = workingDirectory
@@ -29,15 +29,15 @@ func RunClientProcess(
 	command.Stdin = stdin
 	command.Stdout = stdout
 	command.Stderr = stderr
-	err = runResolverCommand(command)
+	started, err := runClientCommand(command)
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return -1, ctxErr
+		return -1, started, ctxErr
 	}
 	if err == nil {
-		return 0, nil
+		return 0, started, nil
 	}
 	if exitErr, ok := err.(*exec.ExitError); ok {
-		return exitErr.ExitCode(), err
+		return exitErr.ExitCode(), started, err
 	}
-	return -1, err
+	return -1, started, err
 }

@@ -10,6 +10,11 @@ import (
 )
 
 func runResolverCommand(command *exec.Cmd) error {
+	_, err := runClientCommand(command)
+	return err
+}
+
+func runClientCommand(command *exec.Cmd) (bool, error) {
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Cancel = func() error {
 		if command.Process == nil {
@@ -21,5 +26,8 @@ func runResolverCommand(command *exec.Cmd) error {
 		}
 		return err
 	}
-	return command.Run()
+	if err := command.Start(); err != nil {
+		return false, err
+	}
+	return true, command.Wait()
 }
