@@ -360,6 +360,35 @@ func TestSSHCopyTranslatesLeaseArgumentsForSCP(t *testing.T) {
 	assert.Equal(t, 1, control.releases)
 }
 
+func TestSSHExecJSONPreservesTypedPreExecutionFailure(t *testing.T) {
+	oldResolve := resolveSSHThroughDaemon
+	oldJSON := sshExecJSON
+	t.Cleanup(func() {
+		resolveSSHThroughDaemon = oldResolve
+		sshExecJSON = oldJSON
+	})
+	sshExecJSON = true
+	resolveSSHThroughDaemon = func(
+		context.Context,
+		kwt.SSHResolveRequest,
+	) (kwt.SSHRouteSnapshot, error) {
+		return kwt.SSHRouteSnapshot{}, service.NewError(
+			service.SSHInteractionRequired,
+			"SSH interaction is required",
+			false,
+			nil,
+			nil,
+		)
+	}
+	command, stdout, _ := sshResolveTestCommand()
+
+	err := runSSHExec(command, []string{"build.example.test", "true"})
+	require.Error(t, err)
+	var envelope jsonErrorEnvelope
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
+	assert.Equal(t, service.SSHInteractionRequired, envelope.Error.Code)
+}
+
 func TestSSHLeaseHumanPromptEscapesTerminalControls(t *testing.T) {
 	oldAcquire := acquireSSHLeaseThroughDaemon
 	oldJSON, oldIdentity := sshLeaseJSON, sshLeaseRouteIdentity

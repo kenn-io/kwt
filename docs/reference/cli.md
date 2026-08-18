@@ -249,6 +249,9 @@ fail-closed control-socket behavior. Remote stdout and stderr are streamed as
 they arrive; connection progress is streamed to stderr unless `--quiet` is
 set. An OpenSSH or SCP exit status is preserved, including SSH's status 255,
 while failures before client execution keep kwt's stable typed error surface.
+Machine callers add `--json`: a kwt failure before SSH or SCP starts writes the
+shared error envelope to stdout, while successful client execution continues
+to stream the remote command's unmodified output.
 
 Both commands default to `--host-key-policy strict` for unattended callers.
 Use `--host-key-policy review` from a terminal to permit the daemon's bounded

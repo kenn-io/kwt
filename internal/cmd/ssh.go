@@ -36,10 +36,12 @@ var (
 	sshExecPort              int
 	sshExecHostKeyPolicy     string
 	sshExecQuiet             bool
+	sshExecJSON              bool
 	sshCopyUser              string
 	sshCopyPort              int
 	sshCopyHostKeyPolicy     string
 	sshCopyQuiet             bool
+	sshCopyJSON              bool
 
 	resolveSSHThroughDaemon      = resolveSSHViaDaemon
 	acquireSSHLeaseThroughDaemon = acquireSSHLeaseViaDaemon
@@ -148,6 +150,7 @@ func init() {
 		"Host-key handling: review or strict",
 	)
 	sshExecCmd.Flags().BoolVar(&sshExecQuiet, "quiet", false, "Suppress connection status output")
+	sshExecCmd.Flags().BoolVar(&sshExecJSON, "json", false, "Emit kwt failures as JSON on stdout")
 	sshCopyCmd.Flags().StringVar(&sshCopyUser, "user", "", "Override the SSH user")
 	sshCopyCmd.Flags().IntVar(&sshCopyPort, "port", 0, "Override the SSH port")
 	sshCopyCmd.Flags().StringVar(
@@ -155,6 +158,7 @@ func init() {
 		"Host-key handling: review or strict",
 	)
 	sshCopyCmd.Flags().BoolVar(&sshCopyQuiet, "quiet", false, "Suppress connection status output")
+	sshCopyCmd.Flags().BoolVar(&sshCopyJSON, "json", false, "Emit kwt failures as JSON on stdout")
 }
 
 type sshClientExitError struct{ code int }
@@ -171,12 +175,12 @@ func runSSHExec(cmd *cobra.Command, args []string) (returnErr error) {
 		cmd, target, kwt.SSHHostKeyPolicy(sshExecHostKeyPolicy), sshExecQuiet,
 	)
 	if err != nil {
-		return writeSSHClientFailure(cmd, "ssh exec", err)
+		return writeSSHClientFailure(cmd, "ssh exec", sshExecJSON, err)
 	}
 	defer func() {
 		returnErr = errors.Join(returnErr, releaseShortSSHLease(ctx, control, result.LeaseID))
 		if returnErr != nil && !isSSHClientExit(returnErr) {
-			returnErr = writeSSHClientFailure(cmd, "ssh exec", returnErr)
+			returnErr = writeSSHClientFailure(cmd, "ssh exec", sshExecJSON, returnErr)
 		}
 	}()
 	workingDirectory, environment, err := captureSSHClientProcess()
@@ -200,12 +204,12 @@ func runSSHCopy(cmd *cobra.Command, args []string) (returnErr error) {
 		cmd, target, kwt.SSHHostKeyPolicy(sshCopyHostKeyPolicy), sshCopyQuiet,
 	)
 	if err != nil {
-		return writeSSHClientFailure(cmd, "ssh copy", err)
+		return writeSSHClientFailure(cmd, "ssh copy", sshCopyJSON, err)
 	}
 	defer func() {
 		returnErr = errors.Join(returnErr, releaseShortSSHLease(ctx, control, result.LeaseID))
 		if returnErr != nil && !isSSHClientExit(returnErr) {
-			returnErr = writeSSHClientFailure(cmd, "ssh copy", returnErr)
+			returnErr = writeSSHClientFailure(cmd, "ssh copy", sshCopyJSON, returnErr)
 		}
 	}()
 	workingDirectory, environment, err := captureSSHClientProcess()
@@ -362,9 +366,9 @@ func isSSHClientExit(err error) bool {
 	return errors.As(err, &exitErr)
 }
 
-func writeSSHClientFailure(cmd *cobra.Command, prefix string, err error) error {
+func writeSSHClientFailure(cmd *cobra.Command, prefix string, jsonRequested bool, err error) error {
 	typed := service.AsError(err)
-	return writeCommandFailure(cmd, typed.Descriptor, 1, false, prefix)
+	return writeCommandFailure(cmd, typed.Descriptor, 1, jsonRequested, prefix)
 }
 
 func runSSHResolve(cmd *cobra.Command, args []string) error {
