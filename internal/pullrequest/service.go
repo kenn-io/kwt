@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/kwt/internal/tmux"
 	repositoryurl "go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
+	"go.kenn.io/kwt/pkg/models"
 )
 
 type Provider interface {
@@ -223,6 +224,10 @@ func (s *Service) Import(ctx context.Context, project Project, selector string) 
 			}
 			return AsError(createErr, CodeWorkspaceCreation, "failed to create pull-request workspace")
 		}
+		workspace = protectedWorkspaceEndpoint(
+			workspace,
+			[]string{pr.Repository.Identity, project.Identity},
+		)
 		created = &workspace
 
 		newRecord := Provenance{
@@ -306,25 +311,41 @@ func matchingProvenanceWorkspace(byPath map[string]Workspace, record Provenance)
 			workspace.Generation != record.Workspace.Generation) {
 		return Workspace{}, false
 	}
-	for _, identity := range ProvenanceRepositoryIdentities(record) {
+	identities := ProvenanceRepositoryIdentities(record)
+	protected := protectedWorkspaceEndpoint(workspace, nil)
+	candidate := workspace
+	candidate.Path = record.Workspace.Path
+	candidate.SessionName = record.Workspace.SessionName
+	candidate = protectedWorkspaceEndpoint(candidate, identities)
+	if candidate.TmuxSocketName != "" {
+		return candidate, true
+	}
+	return protected, true
+}
+
+func protectedWorkspaceEndpoint(
+	workspace Workspace,
+	repositoryIdentities []string,
+) Workspace {
+	workspace.TmuxSocketName = ""
+	workspace.TmuxAttachMode = models.TmuxAttachProtected
+	for _, identity := range repositoryIdentities {
 		info, valid := repositoryurl.CanonicalRepositoryInfo(identity)
 		if !valid || !tmux.MatchesWorkspaceSessionName(
-			record.Workspace.SessionName,
+			workspace.SessionName,
 			info,
-			record.Workspace.Branch,
-			record.Workspace.Path,
+			workspace.Branch,
+			workspace.Path,
 		) {
 			continue
 		}
-		workspace.Path = record.Workspace.Path
-		workspace.SessionName = record.Workspace.SessionName
 		workspace.TmuxSocketName = tmux.ProtectedWorkspaceSocketName(
-			record.Workspace.SessionName,
-			record.Workspace.Path,
+			workspace.SessionName,
+			workspace.Path,
 		)
 		break
 	}
-	return workspace, true
+	return workspace
 }
 
 func (s *Service) provenanceSourceMatches(record Provenance, pr PullRequest) bool {

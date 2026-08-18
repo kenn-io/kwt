@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -23,6 +24,7 @@ var (
 	openLayout               string
 	openSelectLayout         bool
 	openStartSession         bool
+	openJSON                 bool
 	openExpectedRepository   string
 	openExpectedRegistration string
 	openExpectedGeneration   string
@@ -31,22 +33,14 @@ var (
 	discoverOpenWorktree = discovery.DiscoverWorktree
 
 	newOpenWorkspaceRunner = func(names []string) openWorkspaceRunner {
-		tmuxCommand := tmux.NewTmuxCommandWithStripNames("", names)
-		return tmux.NewWorkspaceRunner(tmuxCommand, names)
+		return newCommandWorkspaceSessions(names, os.Stderr)
 	}
 )
 
 type openWorkspaceRunner interface {
-	Ensure(context.Context, string, string, models.Layout) error
-	EnsureWithGeneration(context.Context, string, string, string, models.Layout) error
-	Attach(string, bool) error
-	EnsureAndAttach(
-		context.Context,
-		string,
-		string,
-		models.Layout,
-		bool,
-	) error
+	Establish(context.Context, string, string, models.Layout) (tmux.SessionEndpoint, error)
+	EstablishWithGeneration(context.Context, string, string, string, models.Layout) (tmux.SessionEndpoint, error)
+	Attach(context.Context, tmux.SessionEndpoint) error
 }
 
 var openCmd = &cobra.Command{
@@ -93,6 +87,7 @@ func init() {
 		false,
 		"ensure an exact workspace exists without attaching",
 	)
+	openCmd.Flags().BoolVar(&openJSON, "json", false, "emit the established tmux endpoint as JSON")
 	openCmd.Flags().StringVar(&openExpectedRepository, "expected-repository", "", "require this registered repository identity before opening")
 	openCmd.Flags().StringVar(&openExpectedRegistration, "expected-registration", "", "require this project registration fingerprint before opening")
 	openCmd.Flags().StringVar(&openExpectedGeneration, "expected-generation", "", "require this exact worktree generation before opening")
@@ -119,8 +114,8 @@ func runOpenWithContext(
 	if err := tmux.ValidateLayouts(ctx.Config.Layouts, ctx.Config.Agents); err != nil {
 		return err
 	}
-	if openStartSession && len(args) != 1 {
-		return fmt.Errorf("--start-session requires an exact workspace path")
+	if err := validateOpenOutputMode(args, openStartSession, openJSON); err != nil {
+		return err
 	}
 	finder := ctx.GetGlobalFinder()
 	selectLayout := func(layouts []models.Layout) (models.Layout, error) {
@@ -142,13 +137,14 @@ func runOpenWithContext(
 					false, nil, nil,
 				)
 			}
-			return openSelectedDirectoryWorkspace(
+			return openSelectedDirectoryWorkspaceWithResult(
 				cmd.Context(),
 				ctx,
 				workspace,
 				selectLayout,
 				openStartSession,
 				config.StdinInteractive(),
+				openResultCallback(cmd),
 			)
 		}
 	}
@@ -177,14 +173,50 @@ func runOpenWithContext(
 			requestedPath,
 		)
 	}
-	return openSelectedWorktree(
+	return openSelectedWorktreeWithResult(
 		cmd.Context(),
 		ctx,
 		entry,
 		selectLayout,
 		openStartSession,
 		config.StdinInteractive(),
+		openResultCallback(cmd),
 	)
+}
+
+type openSessionResult struct {
+	SessionName    string                `json:"session_name"`
+	TmuxSocketName string                `json:"tmux_socket_name,omitempty"`
+	TmuxAttachMode models.TmuxAttachMode `json:"tmux_attach_mode"`
+}
+
+func openSessionResultFromEndpoint(endpoint tmux.SessionEndpoint) openSessionResult {
+	return openSessionResult{
+		SessionName:    endpoint.SessionName,
+		TmuxSocketName: endpoint.SocketName,
+		TmuxAttachMode: models.TmuxAttachDirect,
+	}
+}
+
+func validateOpenOutputMode(args []string, startSession, jsonOutput bool) error {
+	if jsonOutput && !startSession {
+		return fmt.Errorf("--json requires --start-session")
+	}
+	if startSession && len(args) != 1 {
+		return fmt.Errorf("--start-session requires an exact workspace path")
+	}
+	return nil
+}
+
+func openResultCallback(cmd *cobra.Command) func(tmux.SessionEndpoint) error {
+	if !openJSON {
+		return nil
+	}
+	return func(endpoint tmux.SessionEndpoint) error {
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(
+			openSessionResultFromEndpoint(endpoint),
+		)
+	}
 }
 
 func resolveExpectedOpenWorktree(
@@ -373,6 +405,26 @@ func openSelectedWorktree(
 	startSession bool,
 	stdinInteractive bool,
 ) error {
+	return openSelectedWorktreeWithResult(
+		commandCtx,
+		ctx,
+		entry,
+		selectLayout,
+		startSession,
+		stdinInteractive,
+		nil,
+	)
+}
+
+func openSelectedWorktreeWithResult(
+	commandCtx context.Context,
+	ctx *CommandContext,
+	entry *discovery.GlobalWorktreeEntry,
+	selectLayout func([]models.Layout) (models.Layout, error),
+	startSession bool,
+	stdinInteractive bool,
+	onEstablished func(tmux.SessionEndpoint) error,
+) error {
 	if err := rejectProtectedWorkspaceOpen(
 		commandCtx,
 		entry.Path,
@@ -430,25 +482,34 @@ func openSelectedWorktree(
 			layout,
 			runner,
 			startSession,
-			os.Getenv("TMUX") != "",
 			protectedNames,
+			onEstablished,
 		)
 	}
-	session, err := runWorktreeSessionEstablishment(
+	var endpoint tmux.SessionEndpoint
+	_, err = runWorktreeSessionEstablishment(
 		commandCtx,
 		entry.Path,
 		entry.Generation,
 		protectedNames,
 		func(session string) error {
-			return runner.EnsureWithGeneration(
+			var establishErr error
+			endpoint, establishErr = runner.EstablishWithGeneration(
 				commandCtx, session, entry.Path, entry.Generation, layout,
 			)
+			return establishErr
 		},
 	)
-	if err != nil || startSession {
+	if err != nil {
 		return err
 	}
-	return runner.Attach(session, os.Getenv("TMUX") != "")
+	if startSession {
+		if onEstablished != nil {
+			return onEstablished(endpoint)
+		}
+		return nil
+	}
+	return runner.Attach(commandCtx, endpoint)
 }
 
 func openExpectedWorktree(
@@ -457,8 +518,8 @@ func openExpectedWorktree(
 	layout models.Layout,
 	runner openWorkspaceRunner,
 	startSession bool,
-	insideTmux bool,
 	protectedNames []string,
+	onEstablished func(tmux.SessionEndpoint) error,
 ) error {
 	mainPath, err := git.New(entry.Path).GetMainRepositoryPath()
 	if err != nil {
@@ -484,6 +545,7 @@ func openExpectedWorktree(
 		return err
 	}
 
+	var endpoint tmux.SessionEndpoint
 	err = guard.run(ctx, func() error {
 		current, discoverErr := discoverOpenWorktree(
 			entry.Path,
@@ -517,13 +579,15 @@ func openExpectedWorktree(
 				if err := acknowledgeRemoteSourcePath(current.Path); err != nil {
 					return err
 				}
-				return runner.EnsureWithGeneration(
+				var establishErr error
+				endpoint, establishErr = runner.EstablishWithGeneration(
 					ctx,
 					openExpectedSession,
 					current.Path,
 					openExpectedGeneration,
 					layout,
 				)
+				return establishErr
 			},
 		)
 		var conditionErr *git.ConditionError
@@ -533,10 +597,16 @@ func openExpectedWorktree(
 		}
 		return generationErr
 	})
-	if err != nil || startSession {
+	if err != nil {
 		return err
 	}
-	return runner.Attach(openExpectedSession, insideTmux)
+	if startSession {
+		if onEstablished != nil {
+			return onEstablished(endpoint)
+		}
+		return nil
+	}
+	return runner.Attach(ctx, endpoint)
 }
 
 func registrationChangedOpenError(cause error) error {
@@ -555,6 +625,26 @@ func openSelectedDirectoryWorkspace(
 	startSession bool,
 	stdinInteractive bool,
 ) error {
+	return openSelectedDirectoryWorkspaceWithResult(
+		commandCtx,
+		ctx,
+		workspace,
+		selectLayout,
+		startSession,
+		stdinInteractive,
+		nil,
+	)
+}
+
+func openSelectedDirectoryWorkspaceWithResult(
+	commandCtx context.Context,
+	ctx *CommandContext,
+	workspace models.Workspace,
+	selectLayout func([]models.Layout) (models.Layout, error),
+	startSession bool,
+	stdinInteractive bool,
+	onEstablished func(tmux.SessionEndpoint) error,
+) error {
 	if err := rejectProtectedWorkspaceOpen(
 		commandCtx,
 		workspace.Path,
@@ -565,11 +655,11 @@ func openSelectedDirectoryWorkspace(
 	if err := acknowledgeRemoteSourcePath(workspace.Path); err != nil {
 		return err
 	}
-	sessions, err := listWorkspaceSessions()
+	sessions, err := resolveDirectorySessions([]models.Workspace{workspace})
 	if err != nil {
 		return fmt.Errorf("failed to list tmux sessions: %w", err)
 	}
-	records := directoryWorkspaceRecords(
+	records := directoryWorkspaceRecordsFromSessions(
 		[]models.Workspace{workspace},
 		sessions,
 	)
@@ -588,21 +678,22 @@ func openSelectedDirectoryWorkspace(
 		return err
 	}
 	runner := newOpenWorkspaceRunner(credentials.ProtectedNames(ctx.Config))
-	if startSession {
-		return runner.Ensure(
-			commandCtx,
-			records[0].SessionName,
-			workspace.Path,
-			layout,
-		)
-	}
-	return runner.EnsureAndAttach(
+	endpoint, err := runner.Establish(
 		commandCtx,
 		records[0].SessionName,
 		workspace.Path,
 		layout,
-		os.Getenv("TMUX") != "",
 	)
+	if err != nil {
+		return err
+	}
+	if startSession {
+		if onEstablished != nil {
+			return onEstablished(endpoint)
+		}
+		return nil
+	}
+	return runner.Attach(commandCtx, endpoint)
 }
 
 func resolveDirectoryWorkspaceLayout(

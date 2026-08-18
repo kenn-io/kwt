@@ -174,6 +174,33 @@ func TestWriteConfigNotesWarnsWhenTrustStoreIsUnavailable(t *testing.T) {
 	assert.Equal(t, "kwt: failed to load trust store /home/trusted_configs.json (continuing empty)\n", stderr.String())
 }
 
+func TestWriteConfigNotesWarnsWhenTmuxEndpointDegrades(t *testing.T) {
+	var stderr bytes.Buffer
+	writeConfigNotes(&stderr, []kwt.Note{{
+		Code:    "tmux_endpoint_degraded",
+		Path:    "/work/widget",
+		Message: "session belongs to a different worktree generation",
+	}}, false, false)
+
+	assert.Equal(t,
+		"kwt: could not verify tmux endpoint for /work/widget: session belongs to a different worktree generation (using the dedicated kwt server)\n",
+		stderr.String(),
+	)
+}
+
+func TestWriteConfigNotesWarnsWhenTmuxLookupDegrades(t *testing.T) {
+	var stderr bytes.Buffer
+	writeConfigNotes(&stderr, []kwt.Note{{
+		Code:    "tmux_lookup_degraded",
+		Message: "default-server adoption lookup degraded",
+	}}, false, false)
+
+	assert.Equal(t,
+		"kwt: tmux lookup degraded: default-server adoption lookup degraded\n",
+		stderr.String(),
+	)
+}
+
 func TestTrustRequirementDecodesHTTPDetailTypes(t *testing.T) {
 	err := service.NewError(service.InteractionRequired, "trust", false, map[string]any{
 		"kind": "repository_config_trust", "path": "/repo/.kwt.toml",
@@ -219,4 +246,19 @@ func TestGuardedRemovalRejectsVersionOneDaemonBeforeMutation(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.DaemonIncompatible))
 	assert.False(t, mutated, "an older daemon must be rejected before removal is dispatched")
+}
+
+func TestInventoryRejectsVersionTwoDaemonBeforeRequest(t *testing.T) {
+	observation := kwtdaemon.Observation{
+		State: kwtdaemon.RuntimeReady,
+		Status: kwtdaemon.Status{Capabilities: []string{
+			"worktree.inventory.v2",
+		}},
+		Client: &kwtdaemon.Client{},
+	}
+
+	err := requireInventoryCapability(observation)
+
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.DaemonIncompatible))
 }

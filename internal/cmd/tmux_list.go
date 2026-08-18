@@ -125,13 +125,47 @@ func runTmuxListWatch(sessionManager *tmux.SessionManager, cfg *models.Config) e
 }
 
 func outputSessionsJSON(sessions []*tmux.Session) error {
+	records := make([]tmuxSessionRecord, 0, len(sessions))
+	for _, session := range sessions {
+		records = append(records, tmuxSessionRecordFromSession(session))
+	}
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(sessions)
+	return encoder.Encode(records)
+}
+
+type tmuxSessionRecord struct {
+	ID             string                `json:"id"`
+	SessionName    string                `json:"session_name"`
+	Context        string                `json:"context"`
+	Identifier     string                `json:"identifier"`
+	WorkingDir     string                `json:"working_dir"`
+	Command        string                `json:"command"`
+	StartTime      time.Time             `json:"start_time"`
+	HistorySize    int                   `json:"history_size"`
+	Metadata       map[string]string     `json:"metadata,omitempty"`
+	TmuxSocketName string                `json:"tmux_socket_name,omitempty"`
+	TmuxAttachMode models.TmuxAttachMode `json:"tmux_attach_mode"`
+}
+
+func tmuxSessionRecordFromSession(session *tmux.Session) tmuxSessionRecord {
+	return tmuxSessionRecord{
+		ID:             session.ID,
+		SessionName:    session.SessionName,
+		Context:        session.Context,
+		Identifier:     session.Identifier,
+		WorkingDir:     session.WorkingDir,
+		Command:        session.Command,
+		StartTime:      session.StartTime,
+		HistorySize:    session.HistorySize,
+		Metadata:       session.Metadata,
+		TmuxSocketName: session.SocketName,
+		TmuxAttachMode: models.TmuxAttachDirect,
+	}
 }
 
 func outputSessionsCSV(sessions []*tmux.Session) error {
-	t := table.New().Headers("context", "identifier", "duration", "command", "working_dir", "session_name")
+	t := table.New().Headers("context", "identifier", "endpoint", "duration", "command", "working_dir", "session_name")
 
 	// Write data
 	for _, session := range sessions {
@@ -139,6 +173,7 @@ func outputSessionsCSV(sessions []*tmux.Session) error {
 		t.Row(
 			session.Context,
 			session.Identifier,
+			tmux.SessionEndpointLabel(session),
 			duration,
 			session.Command,
 			session.WorkingDir,
@@ -158,7 +193,7 @@ func outputSessionsTable(sessions []*tmux.Session, printer *ui.Printer) error {
 	t := table.New().Headers("SESSION", "DURATION", "WORKING_DIR")
 
 	for _, session := range sessions {
-		sessionIdentifier := session.Context + "/" + session.Identifier
+		sessionIdentifier := formatTmuxSessionLabel(session)
 		duration := formatSessionDuration(session.StartTime)
 		workdir := formatWorkingDir(session.WorkingDir, printer)
 
@@ -166,6 +201,15 @@ func outputSessionsTable(sessions []*tmux.Session, printer *ui.Printer) error {
 	}
 
 	return t.Println()
+}
+
+func formatTmuxSessionLabel(session *tmux.Session) string {
+	return fmt.Sprintf(
+		"%s/%s [%s]",
+		session.Context,
+		session.Identifier,
+		tmux.SessionEndpointLabel(session),
+	)
 }
 
 func formatSessionDuration(startTime time.Time) string {

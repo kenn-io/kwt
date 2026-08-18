@@ -38,7 +38,7 @@ type tuiBackend struct {
 	// and the TUI runs the two as concurrent commands.
 	mu                        sync.Mutex
 	cfg                       *models.Config
-	tmux                      *tmux.TmuxCommand
+	workspaceSessions         *tmux.WorkspaceSessions
 	protectedNames            []string
 	launchDir                 string
 	launchProjectRegistered   bool
@@ -47,11 +47,13 @@ type tuiBackend struct {
 	discoverProjectWorktrees  func(string) ([]*discovery.GlobalWorktreeEntry, error)
 	discoverLaunchWorktrees   func(string) ([]*discovery.GlobalWorktreeEntry, error)
 	collectStatuses           func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error)
-	listSessions              func() ([]string, error)
-	ensureWorkspace           func(context.Context, string, string, models.Layout) error
-	ensureWorktree            func(context.Context, string, string, string, models.Layout) error
-	attachSession             func(string, bool) error
-	ensureAndAttach           func(context.Context, string, string, models.Layout, bool) error
+	resolveSessions           func(context.Context, []tmux.WorkspaceEndpointRequest) ([]tmux.WorkspaceSession, error)
+	liveEndpoints             func(context.Context, tmux.WorkspaceEndpointRequest) ([]tmux.SessionEndpoint, error)
+	ensureWorkspace           func(context.Context, string, string, models.Layout) (tmux.SessionEndpoint, error)
+	ensureWorktree            func(context.Context, string, string, string, models.Layout) (tmux.SessionEndpoint, error)
+	attachSession             func(context.Context, tmux.SessionEndpoint) error
+	killEndpoint              func(tmux.SessionEndpoint) error
+	killProtectedEndpoint     func(context.Context, tmux.SessionEndpoint) error
 	registerProject           func(context.Context, models.Project) error
 	registerWorkspace         func(models.Workspace) (models.Workspace, error)
 	unregisterWorkspace       func(name string) error
@@ -65,6 +67,19 @@ type tuiBackend struct {
 	stderr                    io.Writer
 }
 
+type tuiRemovalEndpoint struct {
+	Endpoint  tmux.SessionEndpoint
+	Protected bool
+}
+
+type removedWorktreeCleanupError struct{ err error }
+
+func (e *removedWorktreeCleanupError) Error() string { return e.err.Error() }
+func (e *removedWorktreeCleanupError) Unwrap() error { return e.err }
+func (*removedWorktreeCleanupError) WorktreeRemoved() bool {
+	return true
+}
+
 func newTUIBackend(cfg *models.Config) *tuiBackend {
 	launchDir, _ := os.Getwd()
 	return newTUIBackendWithLaunchDir(cfg, launchDir)
@@ -72,13 +87,12 @@ func newTUIBackend(cfg *models.Config) *tuiBackend {
 
 func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBackend {
 	protectedNames := credentials.ProtectedNames(cfg)
-	tmuxCmd := tmux.NewTmuxCommandWithStripNames("", protectedNames)
-	runner := tmux.NewWorkspaceRunner(tmuxCmd, protectedNames)
+	sessions := newCommandWorkspaceSessions(protectedNames, os.Stderr)
 	backend := &tuiBackend{
-		cfg:            cfg,
-		tmux:           tmuxCmd,
-		protectedNames: protectedNames,
-		launchDir:      launchDir,
+		cfg:               cfg,
+		workspaceSessions: sessions,
+		protectedNames:    protectedNames,
+		launchDir:         launchDir,
 		// Registered projects flow into base-dir discovery so a registered
 		// canonical identity wins over a fork origin (the same precedence
 		// applyProjectIdentityFallback applies to per-project discovery).
@@ -88,20 +102,25 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 		discoverProjectWorktrees: discoverLaunchRepoWorktrees,
 		discoverLaunchWorktrees:  discoverLaunchRepoWorktrees,
 		collectStatuses:          collectTUIStatuses,
-		listSessions:             tmuxCmd.ListSessions,
-		ensureWorkspace:          runner.Ensure,
-		ensureWorktree:           runner.EnsureWithGeneration,
-		attachSession:            runner.Attach,
-		ensureAndAttach:          runner.EnsureAndAttach,
-		registerProject:          registerProjectWithLifecycle,
-		registerWorkspace:        config.RegisterWorkspace,
-		unregisterWorkspace:      config.UnregisterWorkspace,
-		readFleetState:           readTUIFleetState,
-		acknowledgeRemoteSource:  acknowledgeRemoteSourcePath,
-		removeWorktree:           removeDaemonWorktree,
-		runProjectOperation:      runTUIProjectOperation,
-		now:                      time.Now,
+		resolveSessions: bestEffortDashboardSessionResolver(
+			sessions.ResolveAllBestEffort,
+			tmuxDiagnosticReporter(os.Stderr),
+		),
+		liveEndpoints:           sessions.LiveEndpoints,
+		ensureWorkspace:         sessions.Establish,
+		ensureWorktree:          sessions.EstablishWithGeneration,
+		attachSession:           sessions.Attach,
+		registerProject:         registerProjectWithLifecycle,
+		registerWorkspace:       config.RegisterWorkspace,
+		unregisterWorkspace:     config.UnregisterWorkspace,
+		readFleetState:          readTUIFleetState,
+		acknowledgeRemoteSource: acknowledgeRemoteSourcePath,
+		removeWorktree:          removeDaemonWorktree,
+		runProjectOperation:     runTUIProjectOperation,
+		now:                     time.Now,
 	}
+	backend.killEndpoint = sessions.Kill
+	backend.killProtectedEndpoint = backend.killProtectedTUIEndpoint
 	backend.loadTargetConfig = func(repoRoot string, interactive bool) (*models.Config, error) {
 		return config.LoadForTargetFrom(backend.cfg, repoRoot, interactive)
 	}
@@ -130,14 +149,12 @@ func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboar
 		entries           []*discovery.GlobalWorktreeEntry
 		registeredEntries []*discovery.GlobalWorktreeEntry
 		launchEntries     []*discovery.GlobalWorktreeEntry
-		sessions          []string
 		discoveryErr      error
 		registeredErr     error
 		launchErr         error
-		sessionsErr       error
 		startup           sync.WaitGroup
 	)
-	startup.Add(4)
+	startup.Add(3)
 	go func() {
 		defer startup.Done()
 		entries, discoveryErr = b.discoverGlobalWorktrees(
@@ -153,10 +170,6 @@ func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboar
 		defer startup.Done()
 		launchEntries, launchErr = b.discoverLaunchWorktrees(b.launchDir)
 	}()
-	go func() {
-		defer startup.Done()
-		sessions, sessionsErr = b.listSessions()
-	}()
 	startup.Wait()
 
 	if discoveryErr != nil {
@@ -171,14 +184,18 @@ func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboar
 	if launchErr != nil {
 		return nil, nil, fmt.Errorf("failed to discover launch repository worktrees: %w", launchErr)
 	}
-	if sessionsErr != nil {
-		return nil, nil, sessionsErr
-	}
-
 	entries = mergeTUIEntries(entries, registeredEntries)
 	b.registerLaunchProject(ctx, launchEntries)
 	b.registerLaunchWorkspace(launchEntries)
 	entries = mergeTUIEntries(entries, launchEntries)
+	worktreeSessions, directorySessions, err := b.resolveDashboardSessions(
+		ctx,
+		entries,
+		b.cfg.Workspaces,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	var statusByPath map[string]*models.WorktreeStatus
 	if includeStatuses {
@@ -192,20 +209,15 @@ func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboar
 		}
 	}
 
-	liveSessions := make(map[string]bool, len(sessions))
-	for _, session := range sessions {
-		liveSessions[session] = true
-	}
-
 	rows := make([]dashboard.Row, 0, len(entries))
-	for _, entry := range entries {
+	for index, entry := range entries {
 		st := statusByPath[entry.Path]
 		if st == nil {
 			st = unknownStatusForEntry(entry)
 		}
-		rows = append(rows, buildTUIRow(entry, st, liveSessions))
+		rows = append(rows, buildTUIRow(entry, st, worktreeSessions[index]))
 	}
-	rows = append(rows, b.workspaceRows(sessions)...)
+	rows = append(rows, workspaceRows(b.cfg.Workspaces, directorySessions)...)
 	return rows, nil, nil
 }
 
@@ -214,7 +226,8 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 		ctx,
 		kwt.Request{
 			View: kwt.ViewDashboard, LaunchDirectory: b.launchDir,
-			RequireCurrent: includeStatuses,
+			RequireCurrent:          includeStatuses,
+			IncludeProtectedSockets: true,
 		},
 		config.StdinInteractive(),
 		b.stderr,
@@ -225,10 +238,6 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 	entries := make([]*discovery.GlobalWorktreeEntry, 0, len(result.Snapshot.Entries))
 	for _, entry := range result.Snapshot.Entries {
 		entries = append(entries, dashboardInventoryEntry(entry))
-	}
-	sessions, err := b.listSessions()
-	if err != nil {
-		return nil, nil, err
 	}
 	renderWorkspaces := result.Snapshot.Workspaces
 	if includeStatuses && result.Freshness == kwt.Fresh {
@@ -250,19 +259,23 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 			return nil, nil, err
 		}
 	}
-	liveSessions := make(map[string]bool, len(sessions))
-	for _, session := range sessions {
-		liveSessions[session] = true
+	worktreeSessions, directorySessions, err := b.resolveDashboardSessions(
+		ctx,
+		entries,
+		renderWorkspaces,
+	)
+	if err != nil {
+		return nil, nil, err
 	}
 	rows := make([]dashboard.Row, 0, len(entries))
-	for _, entry := range entries {
+	for index, entry := range entries {
 		status := statusByPath[entry.Path]
 		if status == nil {
 			status = unknownStatusForEntry(entry)
 		}
-		rows = append(rows, buildTUIRow(entry, status, liveSessions))
+		rows = append(rows, buildTUIRow(entry, status, worktreeSessions[index]))
 	}
-	rows = append(rows, workspaceRows(renderWorkspaces, sessions)...)
+	rows = append(rows, workspaceRows(renderWorkspaces, directorySessions)...)
 	return rows, nil, nil
 }
 
@@ -282,14 +295,28 @@ func (b *tuiBackend) applyInventoryConfig(effective *models.Config) error {
 		*b.cfg = *effective
 	}
 	b.protectedNames = credentials.ProtectedNames(b.cfg)
-	b.tmux = tmux.NewTmuxCommandWithStripNames("", b.protectedNames)
-	b.listSessions = b.tmux.ListSessions
-	runner := tmux.NewWorkspaceRunner(b.tmux, b.protectedNames)
-	b.ensureWorkspace = runner.Ensure
-	b.ensureWorktree = runner.EnsureWithGeneration
-	b.attachSession = runner.Attach
-	b.ensureAndAttach = runner.EnsureAndAttach
+	b.workspaceSessions = tmux.NewWorkspaceSessions(tmux.WorkspaceSessionsOptions{
+		StripNames:       b.protectedNames,
+		ReportDiagnostic: b.reportTmuxDiagnostic,
+	})
+	b.resolveSessions = bestEffortDashboardSessionResolver(
+		b.workspaceSessions.ResolveAllBestEffort,
+		b.reportTmuxDiagnostic,
+	)
+	b.liveEndpoints = b.workspaceSessions.LiveEndpoints
+	b.ensureWorkspace = b.workspaceSessions.Establish
+	b.ensureWorktree = b.workspaceSessions.EstablishWithGeneration
+	b.attachSession = b.workspaceSessions.Attach
+	b.killEndpoint = b.workspaceSessions.Kill
 	return nil
+}
+
+func (b *tuiBackend) reportTmuxDiagnostic(err error) {
+	writer := b.stderr
+	if writer == nil {
+		writer = os.Stderr
+	}
+	tmuxDiagnosticReporter(writer)(err)
 }
 
 func dashboardInventoryEntry(entry kwt.Entry) *discovery.GlobalWorktreeEntry {
@@ -304,6 +331,104 @@ func dashboardInventoryEntry(entry kwt.Entry) *discovery.GlobalWorktreeEntry {
 		RepositoryURL: entry.Repository.URL, RepositoryInfo: info,
 		Path: entry.Path, Branch: entry.Branch, CommitHash: entry.CommitHash,
 		IsMain: entry.IsMain, CreatedAt: entry.CreatedAt, Generation: entry.Generation,
+		TmuxEndpoint: tmux.SessionEndpoint{
+			SessionName: entry.SessionName,
+			SocketName:  entry.TmuxSocketName,
+		},
+		TmuxSessionLive: entry.SessionLive,
+		TmuxResolved:    true,
+		Protected:       entry.TmuxAttachMode == models.TmuxAttachProtected,
+	}
+}
+
+func (b *tuiBackend) resolveDashboardSessions(
+	ctx context.Context,
+	entries []*discovery.GlobalWorktreeEntry,
+	workspaces []models.Workspace,
+) ([]tmux.WorkspaceSession, []tmux.WorkspaceSession, error) {
+	requests := make([]tmux.WorkspaceEndpointRequest, 0, len(entries)+len(workspaces))
+	entryIndexes := make([]int, 0, len(entries))
+	worktreeSessions := make([]tmux.WorkspaceSession, len(entries))
+	for index, entry := range entries {
+		if entry.TmuxResolved {
+			worktreeSessions[index] = tmux.WorkspaceSession{
+				Endpoint: entry.TmuxEndpoint,
+				Live:     entry.TmuxSessionLive,
+			}
+			continue
+		}
+		if entry.Protected {
+			worktreeSessions[index] = tmux.WorkspaceSession{
+				Endpoint: entry.TmuxEndpoint,
+			}
+			continue
+		}
+		sessionName := entry.TmuxEndpoint.SessionName
+		if entry.RepositoryInfo != nil {
+			sessionName = tmux.WorkspaceSessionName(
+				entry.RepositoryInfo,
+				entry.Branch,
+				entry.Path,
+			)
+		}
+		entryIndexes = append(entryIndexes, index)
+		requests = append(requests, tmux.WorkspaceEndpointRequest{
+			SessionName:         sessionName,
+			WorkspacePath:       entry.Path,
+			WorkspaceGeneration: entry.Generation,
+		})
+	}
+	directoryOffset := len(requests)
+	for _, workspace := range workspaces {
+		requests = append(requests, tmux.WorkspaceEndpointRequest{
+			SessionName:   tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
+			WorkspacePath: workspace.Path,
+		})
+	}
+	resolved, err := b.resolveSessions(ctx, requests)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(resolved) != len(requests) {
+		return nil, nil, fmt.Errorf(
+			"KWT tmux endpoint resolver returned %d results for %d workspaces",
+			len(resolved),
+			len(requests),
+		)
+	}
+	for offset, index := range entryIndexes {
+		worktreeSessions[index] = resolved[offset]
+	}
+	directorySessions := append(
+		[]tmux.WorkspaceSession(nil),
+		resolved[directoryOffset:]...,
+	)
+	return worktreeSessions, directorySessions, nil
+}
+
+func bestEffortDashboardSessionResolver(
+	resolve func(
+		context.Context,
+		[]tmux.WorkspaceEndpointRequest,
+	) ([]tmux.WorkspaceSessionResolution, error),
+	reportDiagnostic func(error),
+) func(context.Context, []tmux.WorkspaceEndpointRequest) ([]tmux.WorkspaceSession, error) {
+	return func(
+		ctx context.Context,
+		requests []tmux.WorkspaceEndpointRequest,
+	) ([]tmux.WorkspaceSession, error) {
+		resolutions, err := resolve(ctx, requests)
+		if err != nil {
+			return nil, err
+		}
+		sessions := make([]tmux.WorkspaceSession, len(resolutions))
+		for index, resolution := range resolutions {
+			sessions[index] = resolution.Session
+			if resolution.Err != nil && reportDiagnostic != nil {
+				reportDiagnostic(resolution.Err)
+			}
+		}
+		return sessions, nil
 	}
 }
 
@@ -495,23 +620,21 @@ func (b *tuiBackend) registerLaunchProject(
 	b.upsertProject(project)
 }
 
-func (b *tuiBackend) workspaceRows(sessions []string) []dashboard.Row {
-	if b.cfg == nil || len(b.cfg.Workspaces) == 0 {
-		return nil
-	}
-	return workspaceRows(b.cfg.Workspaces, sessions)
-}
-
-func workspaceRows(workspaces []models.Workspace, sessions []string) []dashboard.Row {
+func workspaceRows(workspaces []models.Workspace, sessions []tmux.WorkspaceSession) []dashboard.Row {
 	rows := make([]dashboard.Row, 0, len(workspaces))
-	for _, record := range directoryWorkspaceRecords(workspaces, sessions) {
+	for index, workspace := range workspaces {
+		if index >= len(sessions) {
+			break
+		}
+		session := sessions[index]
 		rows = append(rows, dashboard.Row{
 			Workspace: &dashboard.WorkspaceInfo{
-				Name: record.Name,
-				Path: record.Path,
+				Name: workspace.Name,
+				Path: workspace.Path,
 			},
-			SessionName: record.SessionName,
-			SessionLive: record.SessionLive,
+			SessionName:  session.Endpoint.SessionName,
+			SessionLive:  session.Live,
+			TmuxEndpoint: session.Endpoint,
 		})
 	}
 	return rows
@@ -908,19 +1031,14 @@ func tuiStatusCollectorOptions(baseDir string) status.StatusCollectorOptions {
 func buildTUIRow(
 	entry *discovery.GlobalWorktreeEntry,
 	st *models.WorktreeStatus,
-	liveSessions map[string]bool,
+	session tmux.WorkspaceSession,
 ) dashboard.Row {
-	sessionName := ""
-	sessionLive := false
-	if entry.RepositoryInfo != nil {
-		sessionName = tmux.WorkspaceSessionName(entry.RepositoryInfo, entry.Branch, entry.Path)
-		sessionLive = liveSessions[sessionName]
-	}
 	return dashboard.Row{
-		Entry:       entry,
-		Status:      st,
-		SessionName: sessionName,
-		SessionLive: sessionLive,
+		Entry:        entry,
+		Status:       st,
+		SessionName:  session.Endpoint.SessionName,
+		SessionLive:  session.Live,
+		TmuxEndpoint: session.Endpoint,
 	}
 }
 
@@ -1470,6 +1588,7 @@ func (b *tuiBackend) RemoveWorktree(ctx context.Context, row dashboard.Row, forc
 	if err != nil {
 		return err
 	}
+	endpointRequest := removalEndpointRequest(row)
 	result, removalErr := b.removeWorktree(ctx, kwt.RemovalRequest{
 		RepositoryPath: repoRoot,
 		Path:           row.Entry.Path, ExpectedGeneration: generation,
@@ -1488,15 +1607,97 @@ func (b *tuiBackend) RemoveWorktree(ctx context.Context, row dashboard.Row, forc
 
 	publishTUIFleetBestEffort(ctx, b.cfg)
 
-	if row.SessionLive && row.SessionName != "" {
-		if err := b.tmux.KillSession(row.SessionName); err != nil {
-			if removalErr != nil {
-				return errors.Join(removalErr, err)
-			}
-			return err
+	endpoints, cleanupErr := b.removalEndpoints(
+		ctx,
+		row,
+		endpointRequest,
+	)
+	for _, endpoint := range endpoints {
+		var err error
+		if endpoint.Protected {
+			err = b.killProtectedEndpoint(ctx, endpoint.Endpoint)
+		} else {
+			err = b.killEndpoint(endpoint.Endpoint)
+		}
+		if err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf(
+				"stop tmux session %q: %w",
+				endpoint.Endpoint.SessionName,
+				err,
+			))
 		}
 	}
-	return removalErr
+	joinedErr := errors.Join(removalErr, cleanupErr)
+	if joinedErr != nil && result.WorktreeRemoved && !git.WorktreeWasRemoved(joinedErr) {
+		return &removedWorktreeCleanupError{err: joinedErr}
+	}
+	return joinedErr
+}
+
+func removalEndpointRequest(row dashboard.Row) tmux.WorkspaceEndpointRequest {
+	sessionName := strings.TrimSpace(row.SessionName)
+	if sessionName == "" {
+		sessionName = strings.TrimSpace(row.TmuxEndpoint.SessionName)
+	}
+	if sessionName == "" && row.Entry != nil {
+		sessionName = strings.TrimSpace(row.Entry.TmuxEndpoint.SessionName)
+	}
+	return tmux.WorkspaceEndpointRequest{
+		SessionName:         sessionName,
+		WorkspacePath:       row.Entry.Path,
+		WorkspaceGeneration: row.Entry.Generation,
+	}
+}
+
+func (b *tuiBackend) removalEndpoints(
+	ctx context.Context,
+	row dashboard.Row,
+	request tmux.WorkspaceEndpointRequest,
+) ([]tuiRemovalEndpoint, error) {
+	removalEndpoints := make([]tuiRemovalEndpoint, 0, 3)
+	protectedEndpoint := row.TmuxEndpoint
+	if row.Entry.Protected &&
+		strings.TrimSpace(protectedEndpoint.SocketName) != "" &&
+		strings.TrimSpace(protectedEndpoint.SessionName) != "" {
+		removalEndpoints = append(removalEndpoints, tuiRemovalEndpoint{
+			Endpoint:  protectedEndpoint,
+			Protected: true,
+		})
+	}
+	endpoints, err := b.liveEndpoints(ctx, request)
+	if err != nil {
+		return removalEndpoints, fmt.Errorf("inspect workspace tmux sessions: %w", err)
+	}
+	for _, endpoint := range endpoints {
+		removalEndpoints = append(removalEndpoints, tuiRemovalEndpoint{
+			Endpoint: endpoint,
+		})
+	}
+	return removalEndpoints, nil
+}
+
+func (b *tuiBackend) killProtectedTUIEndpoint(
+	ctx context.Context,
+	endpoint tmux.SessionEndpoint,
+) error {
+	command, state, err := tmux.ResolveProtectedSessionCommand(
+		ctx,
+		endpoint.SocketName,
+		endpoint.SessionName,
+		b.protectedNames,
+		os.Getenv("TMUX_TMPDIR"),
+	)
+	if err != nil {
+		return err
+	}
+	switch state {
+	case tmux.ProtectedSessionAbsent:
+		return nil
+	case tmux.ProtectedSessionLive:
+		return command.KillSessionIfPresentContext(ctx, endpoint.SessionName)
+	default:
+		return fmt.Errorf("protected tmux session state is indeterminate")
+	}
 }
 
 func (b *tuiBackend) repositoryRootForRow(row dashboard.Row) (string, error) {
@@ -1634,15 +1835,15 @@ func (b *tuiBackend) KillSession(row dashboard.Row) error {
 	if row.SessionName == "" {
 		return fmt.Errorf("no live workspace")
 	}
-	return b.tmux.KillSession(row.SessionName)
+	return b.killEndpoint(row.TmuxEndpoint)
 }
 
 func (b *tuiBackend) OpenInTmux(ctx context.Context, row dashboard.Row, layoutName string) error {
-	return b.attachWorkspace(ctx, row, layoutName, true, false)
+	return b.attachWorkspace(ctx, row, layoutName, false)
 }
 
 func (b *tuiBackend) AttachOutsideTmux(row dashboard.Row, layoutName string) error {
-	return b.attachWorkspace(context.Background(), row, layoutName, false, config.StdinInteractive())
+	return b.attachWorkspace(context.Background(), row, layoutName, config.StdinInteractive())
 }
 
 // LayoutNames returns the names the TUI layout cycler offers: the reserved
@@ -1660,7 +1861,12 @@ func (b *tuiBackend) InsideTmux() bool {
 	return os.Getenv("TMUX") != ""
 }
 
-func (b *tuiBackend) attachWorkspace(ctx context.Context, row dashboard.Row, layoutName string, insideTmux bool, interactive bool) error {
+func (b *tuiBackend) attachWorkspace(
+	ctx context.Context,
+	row dashboard.Row,
+	layoutName string,
+	interactive bool,
+) error {
 	if row.Entry == nil && row.Workspace == nil {
 		return fmt.Errorf("no worktree selected")
 	}
@@ -1683,25 +1889,30 @@ func (b *tuiBackend) attachWorkspace(ctx context.Context, row dashboard.Row, lay
 		if err != nil {
 			return err
 		}
-		return b.ensureAndAttach(
-			ctx, sessionName, rowPaneRoot(row), layout, insideTmux,
-		)
+		endpoint, err := b.ensureWorkspace(ctx, sessionName, rowPaneRoot(row), layout)
+		if err != nil {
+			return err
+		}
+		return b.attachSession(ctx, endpoint)
 	}
-	sessionName, err := runWorktreeSessionEstablishment(
+	var endpoint tmux.SessionEndpoint
+	_, err = runWorktreeSessionEstablishment(
 		ctx,
 		row.Entry.Path,
 		row.Entry.Generation,
 		b.protectedNames,
 		func(sessionName string) error {
-			return b.ensureWorktree(
+			var establishErr error
+			endpoint, establishErr = b.ensureWorktree(
 				ctx, sessionName, row.Entry.Path, row.Entry.Generation, layout,
 			)
+			return establishErr
 		},
 	)
 	if err != nil {
 		return err
 	}
-	return b.attachSession(sessionName, insideTmux)
+	return b.attachSession(ctx, endpoint)
 }
 
 func rowPaneRoot(row dashboard.Row) string {

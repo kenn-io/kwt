@@ -273,12 +273,17 @@ func runPRImport(cmd *cobra.Command, args []string) error {
 		if importErr != nil {
 			return importErr
 		}
-		result.Workspace.TmuxSocketName = tmux.ProtectedWorkspaceSocketName(
-			result.Workspace.SessionName,
-			result.Workspace.Path,
-		)
 		result.PullRequest.Workspace = &result.Workspace
 		if !prStartSession {
+			return nil
+		}
+		if result.Workspace.TmuxSocketName == "" {
+			result.SessionStartError = pullrequest.NewError(
+				pullrequest.CodeWorkspaceCreation,
+				"imported workspace has no validated protected tmux endpoint",
+				false,
+				nil,
+			)
 			return nil
 		}
 		socketName, startErr := ensurePRWorkspaceSession(
@@ -1115,10 +1120,13 @@ func defaultStartPRWorkspaceSession(
 		return "", err
 	}
 	stripNames := credentials.ProtectedNames(cfg)
-	socketName := tmux.ProtectedWorkspaceSocketName(
-		workspace.SessionName,
-		workspace.Path,
-	)
+	socketName := workspace.TmuxSocketName
+	if socketName == "" {
+		socketName = tmux.ProtectedWorkspaceSocketName(
+			workspace.SessionName,
+			workspace.Path,
+		)
+	}
 	tmuxCommand, _, err := tmux.ResolveProtectedSessionCommand(
 		ctx,
 		socketName,

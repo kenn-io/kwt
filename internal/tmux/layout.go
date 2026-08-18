@@ -79,6 +79,19 @@ func BuildFirstPaneRespawnCommand(paneID, worktreeDir, shell string) []string {
 	return []string{"respawn-pane", "-k", "-c", worktreeDir, "-t", paneID, shell, "-l"}
 }
 
+// buildFirstPaneCommandRespawnCommand replaces the inert first-pane
+// placeholder with a caller-supplied command after the session bootstrap has
+// installed its environment removal markers. command remains one argv value
+// so tmux preserves new-session's command-string semantics and runs it through
+// the configured default shell.
+func buildFirstPaneCommandRespawnCommand(
+	paneID, worktreeDir, command string,
+) []string {
+	return []string{
+		"respawn-pane", "-k", "-c", worktreeDir, "-t", paneID, command,
+	}
+}
+
 // BuildRemainingPaneSequence returns the tmux invocations that create the
 // panes after the first (one split-window per extra pane) and arrange them
 // (select-layout, emitted only for multi-pane layouts). Each split-window

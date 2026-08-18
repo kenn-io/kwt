@@ -3,6 +3,7 @@ package tmux
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -36,11 +37,13 @@ type SessionManagerInterface interface {
 }
 
 type TmuxCommand struct {
-	command         string
-	socketName      string
-	socketTempDir   string
-	extraStripNames map[string]bool
-	attachProcess   attachProcessFunc
+	command            string
+	socketName         string
+	socketTempDir      string
+	clearSocketTempDir bool
+	extraStripNames    map[string]bool
+	stripParentTmux    bool
+	attachProcess      attachProcessFunc
 }
 
 type attachProcessFunc func(*exec.Cmd) error
@@ -60,7 +63,7 @@ func NewTmuxCommandWithStripNames(
 
 // NewTmuxCommandForSocketWithStripNames targets a named tmux socket for every
 // invocation. A named socket gives protected workspaces a server boundary
-// separate from the user's ordinary tmux server.
+// separate from the user's default tmux server.
 func NewTmuxCommandForSocketWithStripNames(
 	command string,
 	socketName string,
@@ -102,7 +105,16 @@ func NewTmuxCommandForSocketInTempDirWithStripNames(
 // NewTmuxCommandInTempDir targets the default socket beneath an explicit
 // TMUX_TMPDIR, ignoring any ambient socket selection inherited by the daemon.
 func NewTmuxCommandInTempDir(command, tempDir string) *TmuxCommand {
-	tmuxCommand := NewTmuxCommand(command)
+	return NewTmuxCommandInTempDirWithStripNames(command, tempDir, nil)
+}
+
+// NewTmuxCommandInTempDirWithStripNames targets the default socket beneath an
+// explicit TMUX_TMPDIR and removes caller-owned credential names.
+func NewTmuxCommandInTempDirWithStripNames(
+	command, tempDir string,
+	names []string,
+) *TmuxCommand {
+	tmuxCommand := NewTmuxCommandWithStripNames(command, names)
 	tmuxCommand.socketTempDir = strings.TrimSpace(tempDir)
 	return tmuxCommand
 }
@@ -145,13 +157,28 @@ func (t *TmuxCommand) SetOptionContext(ctx context.Context, sessionName, option 
 }
 
 func (t *TmuxCommand) ListSessions() ([]string, error) {
+	return t.ListSessionsContext(context.Background())
+}
+
+// ListSessionsContext returns exact session names on this command's endpoint.
+// An explicitly missing tmux server is an empty inventory.
+func (t *TmuxCommand) ListSessionsContext(ctx context.Context) ([]string, error) {
 	args := []string{"list-sessions", "-F", "#{session_name}"}
-	output, err := t.runCommandOutput(args...)
+	output, stderr, err := t.runCommandOutputContextWithStderr(ctx, args...)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, errors.Join(ctxErr, err)
+	}
 	if err != nil {
-		if strings.Contains(err.Error(), "no server running") {
+		var exited exitCoder
+		if errors.As(err, &exited) && exited.ExitCode() == 1 &&
+			isExplicitlyAbsentTmuxDiagnostic(stderr) {
 			return []string{}, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf(
+			"tmux list-sessions failed: %w, stderr: %s",
+			err,
+			strings.TrimSpace(stderr),
+		)
 	}
 
 	lines := strings.Split(strings.TrimSpace(output), "\n")
@@ -164,15 +191,54 @@ func (t *TmuxCommand) ListSessions() ([]string, error) {
 	return sessions, nil
 }
 
+// SessionUserOptionContext reads one session-local user option without
+// exposing the command implementation to endpoint resolvers.
+func (t *TmuxCommand) SessionUserOptionContext(
+	ctx context.Context,
+	session string,
+	option string,
+) (string, error) {
+	return t.sessionUserOption(ctx, session, option)
+}
+
+// SessionWorkspaceIdentityContext reads the marker binding a session to its
+// workspace path.
+func (t *TmuxCommand) SessionWorkspaceIdentityContext(
+	ctx context.Context,
+	session string,
+) (string, error) {
+	return t.sessionUserOption(ctx, session, workspaceIdentityOption)
+}
+
+// ServerPIDContext returns the tmux server PID format for this endpoint.
+func (t *TmuxCommand) ServerPIDContext(ctx context.Context) (string, error) {
+	output, err := t.RunCommandOutputContext(
+		ctx,
+		"display-message",
+		"-p",
+		"#{pid}",
+	)
+	return strings.TrimSpace(output), err
+}
+
 func (t *TmuxCommand) ListSessionsDetailed() ([]*SessionInfo, error) {
 	format := "#{session_name}:#{session_created}:#{session_activity}:#{session_attached}:#{pane_current_command}:#{pane_current_path}"
 	args := []string{"list-sessions", "-F", format}
-	output, err := t.runCommandOutput(args...)
+	output, stderr, err := t.runCommandOutputContextWithStderr(
+		context.Background(),
+		args...,
+	)
 	if err != nil {
-		if strings.Contains(err.Error(), "no server running") {
+		var exited exitCoder
+		if errors.As(err, &exited) && exited.ExitCode() == 1 &&
+			isExplicitlyAbsentTmuxDiagnostic(stderr) {
 			return []*SessionInfo{}, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf(
+			"tmux list-sessions failed: %w, stderr: %s",
+			err,
+			strings.TrimSpace(stderr),
+		)
 	}
 
 	lines := strings.Split(strings.TrimSpace(output), "\n")
@@ -221,6 +287,36 @@ func (t *TmuxCommand) KillSessionContext(
 	return t.RunCommandContext(ctx, "kill-session", "-t", sessionName)
 }
 
+// KillSessionIfPresentContext terminates a cleanup target while treating a
+// session or server that exited concurrently as an already-complete cleanup.
+func (t *TmuxCommand) KillSessionIfPresentContext(
+	ctx context.Context,
+	sessionName string,
+) error {
+	_, stderr, err := t.runCommandOutputContextWithStderr(
+		ctx,
+		"kill-session",
+		"-t",
+		sessionName,
+	)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return errors.Join(ctxErr, err)
+	}
+	if err == nil {
+		return nil
+	}
+	var exited exitCoder
+	if errors.As(err, &exited) && exited.ExitCode() == 1 &&
+		isExplicitlyAbsentTmuxDiagnostic(stderr) {
+		return nil
+	}
+	return fmt.Errorf(
+		"tmux kill-session failed: %w, stderr: %s",
+		err,
+		strings.TrimSpace(stderr),
+	)
+}
+
 func (t *TmuxCommand) AttachSession(sessionName string) error {
 	return t.runAttachProcess(
 		context.Background(),
@@ -236,6 +332,16 @@ func (t *TmuxCommand) AttachSessionWithoutEnvironment(
 		ctx,
 		t.attachSessionWithoutEnvironmentCmd(ctx, sessionName),
 	)
+}
+
+// AttachSessionNested attaches to a workspace on a different tmux
+// server. It removes the parent client's identity so tmux permits nesting,
+// while retaining normal environment synchronization for the target session.
+func (t *TmuxCommand) AttachSessionNested(
+	ctx context.Context,
+	sessionName string,
+) error {
+	return t.runAttachProcess(ctx, t.attachSessionNestedCmd(ctx, sessionName))
 }
 
 func (t *TmuxCommand) runAttachProcess(
@@ -262,6 +368,17 @@ func (t *TmuxCommand) attachSessionWithoutEnvironmentCmd(
 	// This command targets the protected workspace's isolated socket. A
 	// parent TMUX value tells tmux it is already inside a client on another
 	// server, which makes tmux reject the cross-server attachment as nested.
+	cmd.Env = filteredEnviron(cmd.Env, func(name string) bool {
+		return name == "TMUX" || name == "TMUX_PANE"
+	})
+	return cmd
+}
+
+func (t *TmuxCommand) attachSessionNestedCmd(
+	ctx context.Context,
+	sessionName string,
+) *exec.Cmd {
+	cmd := t.newAttachCmd(ctx, []string{"attach-session", "-t", sessionName})
 	cmd.Env = filteredEnviron(cmd.Env, func(name string) bool {
 		return name == "TMUX" || name == "TMUX_PANE"
 	})
@@ -323,7 +440,15 @@ func (t *TmuxCommand) SwitchClient(target string) error {
 // switchClientCmd builds the switch-client invocation through the
 // attach-class exec seam; split out so tests can pin the sanitizer choice.
 func (t *TmuxCommand) switchClientCmd(target string) *exec.Cmd {
-	return t.newAttachCmd(context.Background(), []string{"switch-client", "-t", target})
+	cmd := exec.CommandContext(
+		context.Background(),
+		t.command,
+		t.socketArgs([]string{"switch-client", "-t", target})...,
+	)
+	cmd.Env = t.socketEnvironmentPreservingClient(
+		AttachSanitizedEnviron(os.Environ()),
+	)
+	return cmd
 }
 
 func (t *TmuxCommand) runCommand(args ...string) error {
@@ -336,19 +461,6 @@ func (t *TmuxCommand) runCommand(args ...string) error {
 		return fmt.Errorf("tmux command failed: %w, stderr: %s", err, stderr.String())
 	}
 	return nil
-}
-
-func (t *TmuxCommand) runCommandOutput(args ...string) (string, error) {
-	cmd := t.newCmd(context.Background(), args)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		return "", fmt.Errorf("tmux command failed: %w, stderr: %s", err, stderr.String())
-	}
-	return stdout.String(), nil
 }
 
 func (t *TmuxCommand) RunCommandContext(ctx context.Context, args ...string) error {
@@ -514,18 +626,38 @@ func (t *TmuxCommand) socketArgs(args []string) []string {
 }
 
 func (t *TmuxCommand) stripExtraNames(env []string) []string {
-	if len(t.extraStripNames) == 0 && t.socketName == "" && t.socketTempDir == "" {
+	if len(t.extraStripNames) == 0 && t.socketName == "" &&
+		t.socketTempDir == "" && !t.clearSocketTempDir && !t.stripParentTmux {
 		return env
 	}
 	return filteredEnviron(env, func(name string) bool {
-		if (t.socketName != "" || t.socketTempDir != "") && strings.EqualFold(name, "TMUX_TMPDIR") {
+		if (t.socketName != "" || t.socketTempDir != "" || t.clearSocketTempDir) &&
+			strings.EqualFold(name, "TMUX_TMPDIR") {
 			return true
 		}
-		if t.socketTempDir != "" && strings.EqualFold(name, "TMUX") {
+		if (t.socketTempDir != "" || t.stripParentTmux) &&
+			(strings.EqualFold(name, "TMUX") || strings.EqualFold(name, "TMUX_PANE")) {
 			return true
 		}
 		return t.extraStripNames[strings.ToLower(name)]
 	})
+}
+
+func (t *TmuxCommand) socketEnvironmentPreservingClient(env []string) []string {
+	env = filteredEnviron(env, func(name string) bool {
+		if (t.socketName != "" || t.socketTempDir != "" || t.clearSocketTempDir) &&
+			strings.EqualFold(name, "TMUX_TMPDIR") {
+			return true
+		}
+		if strings.EqualFold(name, "TMUX") || strings.EqualFold(name, "TMUX_PANE") {
+			return false
+		}
+		return t.extraStripNames[strings.ToLower(name)]
+	})
+	if t.socketTempDir != "" {
+		env = append(env, "TMUX_TMPDIR="+t.socketTempDir)
+	}
+	return env
 }
 
 func (t *TmuxCommand) socketEnvironment(env []string) []string {

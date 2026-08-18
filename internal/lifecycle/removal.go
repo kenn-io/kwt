@@ -181,6 +181,12 @@ func (s *removalService) Remove(
 			return reg.RemoveIfMatchAfter(request.Path, record, func() error {
 				if request.Session != nil {
 					sessionCondition := *request.Session
+					// compat(kag1): default-server adoption
+					if sessionCondition.SocketDirectory == "" {
+						sessionCondition.SocketDirectory = removalSocketDirectory(
+							request.Expansion,
+						)
+					}
 					sessionCondition.WorkspacePath = request.Path
 					sessionCondition.WorkspaceGeneration = request.ExpectedGeneration
 					sessionCondition.ProtectedSocketTopology = protectedTarget != nil

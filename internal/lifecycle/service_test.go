@@ -241,7 +241,9 @@ func TestServiceFreshDashboardSurvivesCacheWriteFailure(t *testing.T) {
 		Now:    func() time.Time { return time.Unix(10, 0) },
 	})
 
-	result, err := service.Query(context.Background(), Request{View: ViewDashboard, RequireCurrent: true})
+	result, err := service.Query(context.Background(), Request{
+		View: ViewDashboard, RequireCurrent: true, IncludeProtectedSockets: true,
+	})
 
 	require.NoError(t, err)
 	assert.Equal(t, Fresh, result.Freshness)
@@ -249,6 +251,35 @@ func TestServiceFreshDashboardSurvivesCacheWriteFailure(t *testing.T) {
 	assert.Equal(t, "/new", result.Snapshot.Entries[0].Path)
 	require.NotNil(t, result.RefreshError)
 	assert.Contains(t, result.RefreshError.Message, cacheErr.Error())
+}
+
+func TestServiceDoesNotCacheDashboardWithoutProtectedSockets(t *testing.T) {
+	var calls atomic.Int32
+	source := sourceFunc(func(_ context.Context, request Request) (Result, error) {
+		calls.Add(1)
+		entry := Entry{Path: "/unenriched", TmuxAttachMode: models.TmuxAttachDirect}
+		if request.IncludeProtectedSockets {
+			entry = Entry{Path: "/enriched", TmuxAttachMode: models.TmuxAttachProtected}
+		}
+		return Result{Snapshot: Snapshot{Entries: []Entry{entry}}}, nil
+	})
+	cache := &testCache{}
+	service := NewInventoryService(InventoryServiceOptions{Source: source, Cache: cache})
+
+	_, err := service.Query(context.Background(), Request{
+		View: ViewDashboard, RequireCurrent: true,
+	})
+	require.NoError(t, err)
+	_, ok := cache.Current()
+	assert.False(t, ok)
+
+	result, err := service.Query(context.Background(), Request{
+		View: ViewDashboard, IncludeProtectedSockets: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Snapshot.Entries, 1)
+	assert.Equal(t, "/enriched", result.Snapshot.Entries[0].Path)
+	assert.Equal(t, int32(2), calls.Load())
 }
 
 func TestServiceResultsDoNotShareEffectiveConfig(t *testing.T) {
@@ -265,7 +296,7 @@ func TestServiceResultsDoNotShareEffectiveConfig(t *testing.T) {
 	})
 
 	result, err := service.Query(context.Background(), Request{
-		View: ViewDashboard, RequireCurrent: true,
+		View: ViewDashboard, RequireCurrent: true, IncludeProtectedSockets: true,
 	})
 	require.NoError(t, err)
 	result.Snapshot.Config.Worktree.BaseDir = "/mutated"
@@ -302,6 +333,7 @@ func TestServiceNewestDashboardRefreshOwnsSharedCache(t *testing.T) {
 	go func() {
 		_, err := service.Query(context.Background(), Request{
 			View: ViewDashboard, LaunchDirectory: "/old", RequireCurrent: true,
+			IncludeProtectedSockets: true,
 		})
 		oldDone <- err
 	}()
@@ -309,6 +341,7 @@ func TestServiceNewestDashboardRefreshOwnsSharedCache(t *testing.T) {
 	go func() {
 		_, err := service.Query(context.Background(), Request{
 			View: ViewDashboard, LaunchDirectory: "/new", RequireCurrent: true,
+			IncludeProtectedSockets: true,
 		})
 		newDone <- err
 	}()

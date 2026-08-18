@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -53,27 +55,22 @@ type signalingOpenWorkspaceRunner struct {
 	ensure chan struct{}
 }
 
-func (r *signalingOpenWorkspaceRunner) Ensure(
+func (r *signalingOpenWorkspaceRunner) Establish(
 	context.Context, string, string, models.Layout,
-) error {
+) (tmux.SessionEndpoint, error) {
 	r.ensure <- struct{}{}
-	return nil
+	return tmux.SessionEndpoint{}, nil
 }
 
-func (r *signalingOpenWorkspaceRunner) EnsureWithGeneration(
+func (r *signalingOpenWorkspaceRunner) EstablishWithGeneration(
 	ctx context.Context,
 	sessionName, workingDirectory, _ string,
 	layout models.Layout,
-) error {
-	return r.Ensure(ctx, sessionName, workingDirectory, layout)
+) (tmux.SessionEndpoint, error) {
+	return r.Establish(ctx, sessionName, workingDirectory, layout)
 }
 
-func (r *signalingOpenWorkspaceRunner) Attach(string, bool) error { return nil }
-
-func (r *signalingOpenWorkspaceRunner) EnsureAndAttach(
-	context.Context, string, string, models.Layout, bool,
-) error {
-	r.ensure <- struct{}{}
+func (r *signalingOpenWorkspaceRunner) Attach(context.Context, tmux.SessionEndpoint) error {
 	return nil
 }
 
@@ -84,7 +81,28 @@ type recordingOpenWorkspaceRunner struct {
 	workingDirectory string
 	generation       string
 	layout           models.Layout
-	insideTmux       bool
+	endpoint         tmux.SessionEndpoint
+	attachedEndpoint tmux.SessionEndpoint
+}
+
+func TestOpenSessionResultUsesEstablishedEndpoint(t *testing.T) {
+	for _, endpoint := range []tmux.SessionEndpoint{
+		testCanonicalSessionEndpoint("canonical"),
+		{SessionName: "default-server"},
+	} {
+		got := openSessionResultFromEndpoint(endpoint)
+
+		assert.Equal(t, endpoint.SessionName, got.SessionName)
+		assert.Equal(t, endpoint.SocketName, got.TmuxSocketName)
+		assert.Equal(t, models.TmuxAttachDirect, got.TmuxAttachMode)
+	}
+}
+
+func TestOpenJSONRequiresStartSessionAndExactPath(t *testing.T) {
+	require.Error(t, validateOpenOutputMode(nil, false, true))
+	require.Error(t, validateOpenOutputMode([]string{"workspace"}, false, true))
+	require.Error(t, validateOpenOutputMode(nil, true, true))
+	require.NoError(t, validateOpenOutputMode([]string{"/work/widget"}, true, true))
 }
 
 func markCommandFlagsChanged(t *testing.T, cmd *cobra.Command, names ...string) {
@@ -97,38 +115,37 @@ func markCommandFlagsChanged(t *testing.T, cmd *cobra.Command, names ...string) 
 	}
 }
 
-func (r *recordingOpenWorkspaceRunner) Ensure(
+func (r *recordingOpenWorkspaceRunner) Establish(
 	_ context.Context, sessionName, workingDirectory string, layout models.Layout,
-) error {
+) (tmux.SessionEndpoint, error) {
 	r.ensured = true
 	r.sessionName = sessionName
 	r.workingDirectory = workingDirectory
 	r.layout = layout
-	return nil
+	endpoint := r.endpoint
+	if endpoint.SessionName == "" {
+		endpoint = testCanonicalSessionEndpoint(sessionName)
+	}
+	r.endpoint = endpoint
+	return endpoint, nil
 }
 
-func (r *recordingOpenWorkspaceRunner) EnsureWithGeneration(
+func (r *recordingOpenWorkspaceRunner) EstablishWithGeneration(
 	ctx context.Context,
 	sessionName, workingDirectory, generation string,
 	layout models.Layout,
-) error {
-	err := r.Ensure(ctx, sessionName, workingDirectory, layout)
+) (tmux.SessionEndpoint, error) {
+	endpoint, err := r.Establish(ctx, sessionName, workingDirectory, layout)
 	r.generation = generation
-	return err
+	return endpoint, err
 }
 
-func (r *recordingOpenWorkspaceRunner) EnsureAndAttach(
+func (r *recordingOpenWorkspaceRunner) Attach(
 	_ context.Context,
-	sessionName string,
-	workingDirectory string,
-	layout models.Layout,
-	insideTmux bool,
+	endpoint tmux.SessionEndpoint,
 ) error {
 	r.attached = true
-	r.sessionName = sessionName
-	r.workingDirectory = workingDirectory
-	r.layout = layout
-	r.insideTmux = insideTmux
+	r.attachedEndpoint = endpoint
 	return nil
 }
 
@@ -204,7 +221,9 @@ func TestOpenSelectedDirectoryWorkspaceEnsuresOrAttaches(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			resetWorkspaceCommandDeps(t)
 			workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
-			listWorkspaceSessions = func() ([]string, error) { return nil, nil }
+			resolveDirectorySessions = func(workspaces []models.Workspace) ([]tmux.WorkspaceSession, error) {
+				return testDirectorySessions(workspaces, ""), nil
+			}
 			runner := &recordingOpenWorkspaceRunner{}
 			originalRunner := newOpenWorkspaceRunner
 			originalLayout := openLayout
@@ -238,7 +257,7 @@ func TestOpenSelectedDirectoryWorkspaceEnsuresOrAttaches(t *testing.T) {
 				tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
 				runner.sessionName,
 			)
-			assert.Equal(t, tt.startSession, runner.ensured)
+			assert.True(t, runner.ensured)
 			assert.Equal(t, !tt.startSession, runner.attached)
 		})
 	}
@@ -248,8 +267,8 @@ func TestOpenSelectedDirectoryWorkspaceUsesRenamedLiveSession(t *testing.T) {
 	resetWorkspaceCommandDeps(t)
 	workspace := models.Workspace{Name: "renamed", Path: t.TempDir()}
 	liveName := tmux.DirWorkspaceSessionName("old-name", workspace.Path)
-	listWorkspaceSessions = func() ([]string, error) {
-		return []string{liveName}, nil
+	resolveDirectorySessions = func(workspaces []models.Workspace) ([]tmux.WorkspaceSession, error) {
+		return testDirectorySessions(workspaces, liveName), nil
 	}
 	runner := &recordingOpenWorkspaceRunner{}
 	originalRunner := newOpenWorkspaceRunner
@@ -274,6 +293,80 @@ func TestOpenSelectedDirectoryWorkspaceUsesRenamedLiveSession(t *testing.T) {
 	assert.Equal(t, liveName, runner.sessionName)
 }
 
+func TestOpenAttachesToEndpointReturnedByEstablishment(t *testing.T) {
+	resetWorkspaceCommandDeps(t)
+	workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
+	resolveDirectorySessions = func(workspaces []models.Workspace) ([]tmux.WorkspaceSession, error) {
+		return testDirectorySessions(workspaces, ""), nil
+	}
+	want := tmux.SessionEndpoint{
+		SessionName: tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
+		SocketName:  tmux.KWTServerSocketName,
+	}
+	runner := &recordingOpenWorkspaceRunner{endpoint: want}
+	originalRunner := newOpenWorkspaceRunner
+	originalLayout := openLayout
+	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	openLayout = tmux.BlankLayoutName
+	t.Cleanup(func() {
+		newOpenWorkspaceRunner = originalRunner
+		openLayout = originalLayout
+	})
+
+	err := openSelectedDirectoryWorkspace(
+		context.Background(),
+		&CommandContext{Config: &models.Config{}},
+		workspace,
+		nil,
+		false,
+		false,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, want, runner.attachedEndpoint)
+}
+
+func TestOpenStartSessionJSONWritesEstablishedEndpointOnly(t *testing.T) {
+	resetWorkspaceCommandDeps(t)
+	workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
+	resolveDirectorySessions = func(workspaces []models.Workspace) ([]tmux.WorkspaceSession, error) {
+		return testDirectorySessions(workspaces, ""), nil
+	}
+	want := tmux.SessionEndpoint{
+		SessionName: tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
+		SocketName:  tmux.KWTServerSocketName,
+	}
+	runner := &recordingOpenWorkspaceRunner{endpoint: want}
+	originalRunner := newOpenWorkspaceRunner
+	originalLayout, originalJSON := openLayout, openJSON
+	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	openLayout, openJSON = tmux.BlankLayoutName, true
+	t.Cleanup(func() {
+		newOpenWorkspaceRunner = originalRunner
+		openLayout, openJSON = originalLayout, originalJSON
+	})
+	command := &cobra.Command{}
+	var stdout bytes.Buffer
+	command.SetOut(&stdout)
+
+	err := openSelectedDirectoryWorkspaceWithResult(
+		context.Background(),
+		&CommandContext{Config: &models.Config{}},
+		workspace,
+		nil,
+		true,
+		false,
+		openResultCallback(command),
+	)
+
+	require.NoError(t, err)
+	assert.False(t, runner.attached)
+	assert.True(t, json.Valid(stdout.Bytes()))
+	var got openSessionResult
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &got))
+	assert.Equal(t, openSessionResultFromEndpoint(want), got)
+}
+
 func TestOpenSelectedDirectoryWorkspaceUsesDirectoryLayoutDefault(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -292,7 +385,9 @@ func TestOpenSelectedDirectoryWorkspaceUsesDirectoryLayoutDefault(t *testing.T) 
 	)
 	require.NoError(t, err)
 	require.NoError(t, trustStore.Add(resolvedConfigPath, hex.EncodeToString(sum[:])))
-	listWorkspaceSessions = func() ([]string, error) { return nil, nil }
+	resolveDirectorySessions = func(workspaces []models.Workspace) ([]tmux.WorkspaceSession, error) {
+		return testDirectorySessions(workspaces, ""), nil
+	}
 	runner := &recordingOpenWorkspaceRunner{}
 	originalRunner := newOpenWorkspaceRunner
 	originalLayout := openLayout
@@ -328,7 +423,9 @@ func TestRunOpenWithContextChoosesRegisteredDirectory(t *testing.T) {
 		t.Run(map[bool]string{false: "attach", true: "start only"}[startSession], func(t *testing.T) {
 			resetWorkspaceCommandDeps(t)
 			workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
-			listWorkspaceSessions = func() ([]string, error) { return nil, nil }
+			resolveDirectorySessions = func(workspaces []models.Workspace) ([]tmux.WorkspaceSession, error) {
+				return testDirectorySessions(workspaces, ""), nil
+			}
 			runner := &recordingOpenWorkspaceRunner{}
 			originalRunner := newOpenWorkspaceRunner
 			originalLayout := openLayout
@@ -357,7 +454,7 @@ func TestRunOpenWithContextChoosesRegisteredDirectory(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, workspace.Path, runner.workingDirectory)
-			assert.Equal(t, startSession, runner.ensured)
+			assert.True(t, runner.ensured)
 			assert.Equal(t, !startSession, runner.attached)
 		})
 	}
@@ -743,7 +840,7 @@ func TestOpenSelectedWorktreeUsesBranchObservedInsideLifecycleGuard(t *testing.T
 	), runner.sessionName)
 }
 
-func TestOrdinaryOpenCannotRaceGuardedRemoval(t *testing.T) {
+func TestDirectOpenCannotRaceGuardedRemoval(t *testing.T) {
 	repoPath := newTUITestRepo(t)
 	worktreePath := filepath.Join(t.TempDir(), "open-race")
 	runTUITestGit(t, repoPath, "branch", "open-race")
@@ -806,7 +903,7 @@ func TestOrdinaryOpenCannotRaceGuardedRemoval(t *testing.T) {
 
 	select {
 	case <-runner.ensure:
-		t.Fatal("ordinary open established a session during guarded removal")
+		t.Fatal("direct open established a session during guarded removal")
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(removalGuard.release)
@@ -814,19 +911,9 @@ func TestOrdinaryOpenCannotRaceGuardedRemoval(t *testing.T) {
 	require.Error(t, <-openDone)
 	select {
 	case <-runner.ensure:
-		t.Fatal("ordinary open established a session after its worktree was removed")
+		t.Fatal("direct open established a session after its worktree was removed")
 	default:
 	}
-}
-
-func (r *recordingOpenWorkspaceRunner) Attach(
-	sessionName string,
-	insideTmux bool,
-) error {
-	r.attached = true
-	r.sessionName = sessionName
-	r.insideTmux = insideTmux
-	return nil
 }
 
 func TestExpectedOpenRejectsReplacementBeforeSessionEnsure(t *testing.T) {

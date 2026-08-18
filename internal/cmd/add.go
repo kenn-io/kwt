@@ -37,8 +37,7 @@ var (
 	addExpectedRegistration string
 
 	newAddWorkspaceRunner = func(names []string) openWorkspaceRunner {
-		tmuxCommand := tmux.NewTmuxCommandWithStripNames("", names)
-		return tmux.NewWorkspaceRunner(tmuxCommand, names)
+		return newCommandWorkspaceSessions(names, os.Stderr)
 	}
 )
 
@@ -295,7 +294,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 		var expiresAt *time.Time
 		var launchRunner openWorkspaceRunner
-		var launchSession string
+		var launchEndpoint tmux.SessionEndpoint
 		var protectedNames []string
 		if launch {
 			protectedNames = credentials.ProtectedNames(ctx.Config)
@@ -370,7 +369,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 				if guard.claim != nil {
 					projects = []models.Project{guard.claim.Registration.Effective}
 				}
-				launchSession, mutationErr = withCurrentWorktreeSession(
+				_, mutationErr = withCurrentWorktreeSession(
 					commandContext,
 					mainPath,
 					worktreePath,
@@ -378,13 +377,15 @@ func runAdd(cmd *cobra.Command, args []string) error {
 					projects,
 					protectedNames,
 					func(sessionName string) error {
-						return launchRunner.EnsureWithGeneration(
+						var establishErr error
+						launchEndpoint, establishErr = launchRunner.EstablishWithGeneration(
 							commandContext,
 							sessionName,
 							worktreePath,
 							worktreeGeneration,
 							layout,
 						)
+						return establishErr
 					},
 				)
 				return mutationErr
@@ -396,7 +397,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		}
 
 		if launch {
-			return launchRunner.Attach(launchSession, os.Getenv("TMUX") != "")
+			return launchRunner.Attach(commandContext, launchEndpoint)
 		}
 		return nil
 	})(cmd, args)

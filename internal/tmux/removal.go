@@ -54,9 +54,11 @@ type RemovalSessionLease interface {
 	Resume() error
 }
 
-// RemovalSessionGuard validates that one exact tmux session remains absent.
-// Live-session removal is rejected because tmux has no atomic primitive that
-// can both freeze a shared server's topology and hand control back to KWT.
+// RemovalSessionGuard validates that one exact tmux session remains absent on
+// both the KWT and default-server endpoints, or on its protected endpoint and
+// both shared endpoints. Live-session removal is rejected because tmux has no
+// atomic primitive that can both freeze a shared server's topology and hand
+// control back to KWT.
 type RemovalSessionGuard interface {
 	Quiesce(context.Context, RemovalSessionCondition) (RemovalSessionLease, error)
 }
@@ -65,13 +67,14 @@ type removalSessionGuard struct {
 	command          string
 	inspect          func(context.Context, *TmuxCommand) (string, string, error)
 	inspectProtected func(context.Context, *TmuxCommand, string) (ProtectedSessionState, error)
+	serverCommands   func(RemovalSessionCondition) serverCommands
 }
 
 var removalSocketSelectors = []string{"TMUX", "TMUX_TMPDIR"}
 
-// NewRemovalSessionGuard targets the canonical default tmux server unless the
-// request carries an explicit socket endpoint. Ambient tmux selectors are
-// never removal authority.
+// NewRemovalSessionGuard probes both the KWT server and the temporary
+// default-server adoption endpoint. Protected topology is derived by the
+// lifecycle layer; ambient tmux selectors are never removal authority.
 func NewRemovalSessionGuard(command string) RemovalSessionGuard {
 	return &removalSessionGuard{
 		command:          command,
@@ -165,26 +168,55 @@ func (g *removalSessionGuard) Quiesce(
 		}
 	}
 	if condition.ProtectedSocketTopology {
-		ordinaryCondition := condition
-		ordinaryCondition.SocketDirectory = ""
-		ordinaryCondition.SocketName = ""
-		ordinaryCondition.ProtectedSocketTopology = false
-		if err := g.validateOrdinaryAbsence(ctx, ordinaryCondition); err != nil {
+		sharedCondition := condition
+		sharedCondition.SocketName = ""
+		sharedCondition.ProtectedSocketTopology = false
+		if err := g.validateSharedServerAbsence(ctx, sharedCondition); err != nil {
 			return nil, err
 		}
 		return g.quiesceProtected(ctx, condition)
 	}
-	if err := g.validateOrdinaryAbsence(ctx, condition); err != nil {
+	if err := g.validateSharedServerAbsence(ctx, condition); err != nil {
 		return nil, err
 	}
 	return noRemovalSessionLease{}, nil
 }
 
-func (g *removalSessionGuard) validateOrdinaryAbsence(
+func (g *removalSessionGuard) validateSharedServerAbsence(
 	ctx context.Context,
 	condition RemovalSessionCondition,
 ) error {
-	command := newRemovalTmuxCommand(g.command, condition)
+	servers := g.removalServerCommands(condition)
+	commands := []*TmuxCommand{servers.kwtServer()}
+	// compat(kag1): default-server adoption
+	commands = append(commands, servers.defaultServer())
+	for _, command := range commands {
+		if err := g.validateSharedEndpointAbsence(ctx, condition, command); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (g *removalSessionGuard) removalServerCommands(
+	condition RemovalSessionCondition,
+) serverCommands {
+	if g.serverCommands != nil {
+		return g.serverCommands(condition)
+	}
+	return newServerCommands(WorkspaceSessionsOptions{
+		Command:                 g.command,
+		DefaultServerTempDir:    condition.SocketDirectory,
+		DefaultServerTempDirSet: true,
+		StripNames:              removalStripNames(condition),
+	})
+}
+
+func (g *removalSessionGuard) validateSharedEndpointAbsence(
+	ctx context.Context,
+	condition RemovalSessionCondition,
+	command *TmuxCommand,
+) error {
 	inspect := g.inspect
 	if inspect == nil {
 		inspect = inspectRemovalSessions
@@ -335,26 +367,6 @@ type noRemovalSessionLease struct{}
 
 func (noRemovalSessionLease) Terminate(context.Context) error { return nil }
 func (noRemovalSessionLease) Resume() error                   { return nil }
-
-func newRemovalTmuxCommand(command string, condition RemovalSessionCondition) *TmuxCommand {
-	stripNames := removalStripNames(condition)
-	if condition.SocketName != "" {
-		if condition.SocketDirectory != "" {
-			return NewTmuxCommandForSocketInTempDirWithStripNames(
-				command,
-				condition.SocketName,
-				condition.SocketDirectory,
-				stripNames,
-			)
-		}
-		return NewTmuxCommandForSocketWithStripNames(
-			command, condition.SocketName, stripNames,
-		)
-	}
-	tmuxCommand := NewTmuxCommandWithStripNames(command, stripNames)
-	tmuxCommand.socketTempDir = condition.SocketDirectory
-	return tmuxCommand
-}
 
 func removalStripNames(condition RemovalSessionCondition) []string {
 	names := make([]string, 0, len(removalSocketSelectors)+len(condition.ProtectedNames))

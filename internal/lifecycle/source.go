@@ -30,15 +30,39 @@ type repositoryScanResult struct {
 }
 
 type SourceOptions struct {
-	Home string
+	Home                     string
+	resolveWorkspaceSessions func(
+		context.Context,
+		tmux.WorkspaceSessionsOptions,
+		[]tmux.WorkspaceEndpointRequest,
+	) ([]tmux.WorkspaceSessionResolution, error)
 }
 
 type currentSource struct {
-	home string
+	home                     string
+	workspaceSessions        *tmux.WorkspaceSessionsOptions
+	resolveWorkspaceSessions func(
+		context.Context,
+		tmux.WorkspaceSessionsOptions,
+		[]tmux.WorkspaceEndpointRequest,
+	) ([]tmux.WorkspaceSessionResolution, error)
 }
 
 func NewSource(options SourceOptions) Source {
-	return &currentSource{home: options.Home}
+	resolveWorkspaceSessions := options.resolveWorkspaceSessions
+	if resolveWorkspaceSessions == nil {
+		resolveWorkspaceSessions = func(
+			ctx context.Context,
+			options tmux.WorkspaceSessionsOptions,
+			requests []tmux.WorkspaceEndpointRequest,
+		) ([]tmux.WorkspaceSessionResolution, error) {
+			return tmux.NewWorkspaceSessions(options).ResolveAllBestEffort(ctx, requests)
+		}
+	}
+	return &currentSource{
+		home:                     options.Home,
+		resolveWorkspaceSessions: resolveWorkspaceSessions,
+	}
 }
 
 func (s *currentSource) Load(ctx context.Context, request Request) (result Result, err error) {
@@ -90,12 +114,109 @@ func (s *currentSource) Load(ctx context.Context, request Request) (result Resul
 			return Result{}, inventorySourceFailure("load dashboard inventory", err)
 		}
 	}
+	notes, err := s.annotateWorkspaceEndpoints(
+		ctx,
+		expansion,
+		protectedNames,
+		result.Snapshot.Entries,
+		result.Snapshot.LaunchEntries,
+	)
+	if err != nil {
+		return Result{}, inventorySourceFailure("inspect KWT tmux endpoints", err)
+	}
+	result.Notes = append(result.Notes, notes...)
 	if request.IncludeProtectedSockets {
 		if err := s.annotateProtectedSockets(ctx, result.Snapshot.Entries); err != nil {
 			return Result{}, inventorySourceFailure("failed to read pull-request provenance", err)
 		}
 	}
 	return result, nil
+}
+
+func (s *currentSource) annotateWorkspaceEndpoints(
+	ctx context.Context,
+	expansion ExpansionContext,
+	stripNames []string,
+	entries []Entry,
+	launchEntries []Entry,
+) ([]Note, error) {
+	total := len(entries) + len(launchEntries)
+	if total == 0 {
+		return nil, nil
+	}
+	requests := make([]tmux.WorkspaceEndpointRequest, 0, total)
+	for _, group := range [][]Entry{entries, launchEntries} {
+		for _, entry := range group {
+			requests = append(requests, tmux.WorkspaceEndpointRequest{
+				SessionName:         entry.SessionName,
+				WorkspacePath:       entry.Path,
+				WorkspaceGeneration: entry.Generation,
+			})
+		}
+	}
+
+	options := tmux.WorkspaceSessionsOptions{
+		StripNames:              stripNames,
+		DefaultServerTempDir:    expansion.Environment[normalizedEnvironmentName("TMUX_TMPDIR")],
+		DefaultServerTempDirSet: true,
+	}
+	if s.workspaceSessions != nil {
+		options = *s.workspaceSessions
+	}
+	var resolverDiagnostics []error
+	existingReportDiagnostic := options.ReportDiagnostic
+	options.ReportDiagnostic = func(err error) {
+		resolverDiagnostics = append(resolverDiagnostics, err)
+		if existingReportDiagnostic != nil {
+			existingReportDiagnostic(err)
+		}
+	}
+	resolve := s.resolveWorkspaceSessions
+	if resolve == nil {
+		resolve = func(
+			ctx context.Context,
+			options tmux.WorkspaceSessionsOptions,
+			requests []tmux.WorkspaceEndpointRequest,
+		) ([]tmux.WorkspaceSessionResolution, error) {
+			return tmux.NewWorkspaceSessions(options).ResolveAllBestEffort(ctx, requests)
+		}
+	}
+	resolutions, err := resolve(ctx, options, requests)
+	if err != nil {
+		return nil, err
+	}
+	if len(resolutions) != total {
+		return nil, fmt.Errorf(
+			"KWT tmux endpoint resolver returned %d results for %d workspaces",
+			len(resolutions),
+			total,
+		)
+	}
+	notes := make([]Note, 0, len(resolverDiagnostics))
+	for _, diagnostic := range resolverDiagnostics {
+		notes = append(notes, Note{
+			Code:    "tmux_lookup_degraded",
+			Message: boundedDiagnostic(diagnostic),
+		})
+	}
+	apply := func(group []Entry, offset int) {
+		for index := range group {
+			resolution := resolutions[offset+index]
+			group[index].SessionLive = resolution.Session.Live
+			group[index].TmuxSocketName = resolution.Session.Endpoint.SocketName
+			group[index].TmuxAttachMode = models.TmuxAttachDirect
+			if resolution.Err != nil {
+				notes = append(notes, Note{
+					Code:    "tmux_endpoint_degraded",
+					Path:    group[index].Path,
+					Message: boundedDiagnostic(resolution.Err),
+				})
+			}
+		}
+	}
+	apply(entries, 0)
+	apply(launchEntries, len(entries))
+	return notes, nil
 }
 
 func inventorySourceFailure(message string, err error) error {
@@ -496,6 +617,11 @@ func (s *currentSource) annotateProtectedSockets(ctx context.Context, entries []
 			if workspace.Generation != "" && workspace.Generation != entries[index].Generation {
 				continue
 			}
+			entries[index].TmuxSocketName = ""
+			entries[index].TmuxAttachMode = models.TmuxAttachProtected
+			// Shared-server liveness was observed for a different endpoint. Protected
+			// liveness is not part of inventory's provenance-only annotation.
+			entries[index].SessionLive = false
 			verifiedSession := false
 			for _, identity := range pullrequest.ProvenanceRepositoryIdentities(record) {
 				info, ok := repositoryurl.CanonicalRepositoryInfo(identity)
@@ -509,11 +635,13 @@ func (s *currentSource) annotateProtectedSockets(ctx context.Context, entries []
 					break
 				}
 			}
-			if !verifiedSession {
-				continue
+			if verifiedSession {
+				entries[index].SessionName = workspace.SessionName
+				entries[index].TmuxSocketName = tmux.ProtectedWorkspaceSocketName(
+					workspace.SessionName,
+					workspace.Path,
+				)
 			}
-			entries[index].SessionName = workspace.SessionName
-			entries[index].TmuxSocketName = tmux.ProtectedWorkspaceSocketName(workspace.SessionName, workspace.Path)
 			break
 		}
 	}

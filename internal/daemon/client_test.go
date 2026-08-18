@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	kitdaemon "go.kenn.io/kit/daemon"
 	kwt "go.kenn.io/kwt"
+	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
 
@@ -239,6 +240,66 @@ func TestClientAllowsInventoryResponseLargerThanControlPlaneLimit(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, result.Notes, 1)
 	assert.Equal(t, largePath, result.Notes[0].Path)
+}
+
+func TestClientRejectsUnknownInventoryAttachModes(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		result kwt.Result
+	}{
+		{
+			name: "missing entry mode",
+			result: kwt.Result{Snapshot: kwt.Snapshot{Entries: []kwt.Entry{{
+				Path: "/work/widget",
+			}}}},
+		},
+		{
+			name: "unknown entry mode",
+			result: kwt.Result{Snapshot: kwt.Snapshot{Entries: []kwt.Entry{{
+				Path: "/work/widget", TmuxAttachMode: "sideways",
+			}}}},
+		},
+		{
+			name: "unknown launch entry mode",
+			result: kwt.Result{Snapshot: kwt.Snapshot{LaunchEntries: []kwt.Entry{{
+				Path: "/work/widget", TmuxAttachMode: "sideways",
+			}}}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				require.NoError(t, json.NewEncoder(w).Encode(test.result))
+			}))
+			defer server.Close()
+			client := clientForUnverifiedServer(t, server, "secret")
+
+			_, err := client.Inventory(context.Background(), kwt.Request{View: kwt.ViewDashboard})
+
+			require.Error(t, err)
+			assert.True(t, service.IsCode(err, service.DaemonIncompatible), err)
+		})
+	}
+}
+
+func TestClientAcceptsKnownInventoryAttachModes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(kwt.Result{
+			Snapshot: kwt.Snapshot{Entries: []kwt.Entry{
+				{Path: "/work/direct", TmuxAttachMode: models.TmuxAttachDirect},
+				{Path: "/work/protected", TmuxAttachMode: models.TmuxAttachProtected},
+			}, LaunchEntries: []kwt.Entry{{
+				Path: "/work/launch", TmuxAttachMode: models.TmuxAttachDirect,
+			}}},
+		}))
+	}))
+	defer server.Close()
+	client := clientForUnverifiedServer(t, server, "secret")
+
+	result, err := client.Inventory(context.Background(), kwt.Request{View: kwt.ViewDashboard})
+
+	require.NoError(t, err)
+	require.Len(t, result.Snapshot.Entries, 2)
+	require.Len(t, result.Snapshot.LaunchEntries, 1)
 }
 
 func TestClientReportsEndpointSpecificResponseLimit(t *testing.T) {

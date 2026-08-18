@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,13 +18,27 @@ var (
 	workspaceAddName string
 	workspaceJSON    bool
 
-	registerWorkspace     = config.RegisterWorkspace
-	unregisterWorkspace   = config.UnregisterWorkspace
-	loadWorkspaceConfig   = config.Load
-	listWorkspaceSessions = func() ([]string, error) {
-		return tmux.NewTmuxCommand("").ListSessions()
-	}
+	registerWorkspace        = config.RegisterWorkspace
+	unregisterWorkspace      = config.UnregisterWorkspace
+	loadWorkspaceConfig      = config.Load
+	resolveDirectorySessions = resolveRegisteredDirectorySessions
 )
+
+func resolveRegisteredDirectorySessions(
+	workspaces []models.Workspace,
+) ([]tmux.WorkspaceSession, error) {
+	requests := make([]tmux.WorkspaceEndpointRequest, len(workspaces))
+	for index, workspace := range workspaces {
+		requests[index] = tmux.WorkspaceEndpointRequest{
+			SessionName:   tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
+			WorkspacePath: workspace.Path,
+		}
+	}
+	return newCommandWorkspaceSessions(nil, os.Stderr).ResolveAll(
+		context.Background(),
+		requests,
+	)
+}
 
 var workspaceCmd = &cobra.Command{
 	Use:   "workspace",
@@ -96,11 +111,11 @@ func runWorkspaceList(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no workspaces registered")
 		return nil
 	}
-	sessions, err := listWorkspaceSessions()
+	sessions, err := resolveDirectorySessions(cfg.Workspaces)
 	if err != nil {
 		return fmt.Errorf("failed to list tmux sessions: %w", err)
 	}
-	records := directoryWorkspaceRecords(cfg.Workspaces, sessions)
+	records := directoryWorkspaceRecordsFromSessions(cfg.Workspaces, sessions)
 	if workspaceJSON {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(records)
 	}
@@ -131,13 +146,25 @@ func runWorkspaceRemove(cmd *cobra.Command, args []string) error {
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "unregistered workspace %s\n", name)
 	if livePath != "" {
-		sessions, err := listWorkspaceSessions()
+		sessions, err := resolveDirectorySessions(
+			[]models.Workspace{{Name: name, Path: livePath}},
+		)
 		if err != nil {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not check for a live session: %v\n", err)
-		} else if session, ok := tmux.MatchDirWorkspaceSession(sessions, livePath); ok {
+		} else if records := directoryWorkspaceRecordsFromSessions(
+			[]models.Workspace{{Name: name, Path: livePath}},
+			sessions,
+		); len(records) == 1 && records[0].SessionLive {
+			record := records[0]
+			killCommand := tmux.KillCommandHint(tmux.SessionEndpoint{
+				SessionName: record.SessionName,
+				SocketName:  record.TmuxSocketName,
+			})
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-				"its tmux session %s is still running; kill it with: tmux kill-session -t %s\n",
-				session, session)
+				"its tmux session %s is still running; kill it with: %s\n",
+				record.SessionName,
+				killCommand,
+			)
 		}
 	}
 	return nil

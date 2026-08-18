@@ -181,20 +181,23 @@ type Repository struct {
 }
 
 type Entry struct {
-	Path           string     `json:"path"`
-	Branch         string     `json:"branch"`
-	CommitHash     string     `json:"commit_hash"`
-	IsMain         bool       `json:"is_main"`
-	CreatedAt      time.Time  `json:"created_at"`
-	Generation     string     `json:"generation"`
-	Repository     Repository `json:"repository"`
-	SessionName    string     `json:"session_name"`
-	TmuxSocketName string     `json:"tmux_socket_name,omitempty"`
+	Path           string                `json:"path"`
+	Branch         string                `json:"branch"`
+	CommitHash     string                `json:"commit_hash"`
+	IsMain         bool                  `json:"is_main"`
+	CreatedAt      time.Time             `json:"created_at"`
+	Generation     string                `json:"generation"`
+	Repository     Repository            `json:"repository"`
+	SessionName    string                `json:"session_name"`
+	SessionLive    bool                  `json:"session_live"`
+	TmuxSocketName string                `json:"tmux_socket_name,omitempty"`
+	TmuxAttachMode models.TmuxAttachMode `json:"tmux_attach_mode"`
 }
 
 type Note struct {
-	Code string `json:"code"`
-	Path string `json:"path"`
+	Code    string `json:"code"`
+	Path    string `json:"path"`
+	Message string `json:"message,omitempty"`
 }
 
 type Diagnostic struct {

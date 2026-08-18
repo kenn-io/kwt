@@ -21,7 +21,7 @@ func TestRemovalSessionGuardRejectsLiveSessionWithoutChangingIt(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux is not installed")
 	}
-	tempDir := t.TempDir()
+	tempDir := shortRemovalTmuxTempDir(t)
 	outputPath := filepath.Join(tempDir, "activity")
 	scriptPath := filepath.Join(tempDir, "activity.sh")
 	require.NoError(t, os.WriteFile(scriptPath, []byte(
@@ -66,11 +66,13 @@ func TestRemovalSessionGuardAcceptsMissingNamedSocketWhenAbsenceWasConfirmed(t *
 		t.Skip("tmux is not installed")
 	}
 
-	guard := NewRemovalSessionGuard("tmux")
+	tempDir := shortRemovalTmuxTempDir(t)
+	guard := isolatedRemovalSessionGuard(tempDir)
 	err := quiesceAndTerminateForTest(guard, RemovalSessionCondition{
-		SessionName: "kwt-missing-protected-session",
-		Absent:      true,
-		SocketName:  "kwt-missing-protected-socket",
+		SessionName:             "kwt-missing-protected-session",
+		Absent:                  true,
+		SocketName:              "kwt-missing-protected-socket",
+		ProtectedSocketTopology: true,
 	})
 
 	require.NoError(t, err)
@@ -84,7 +86,7 @@ func TestRemovalSessionGuardRejectsDelimiterBearingWorkspaceMarker(t *testing.T)
 		t.Skip("tmux is not installed")
 	}
 
-	tempDir := t.TempDir()
+	tempDir := shortRemovalTmuxTempDir(t)
 	command := NewTmuxCommandInTempDir("tmux", tempDir)
 	const session = "kwt-removal-marker-test"
 	require.NoError(t, command.RunCommandContext(
@@ -100,7 +102,7 @@ func TestRemovalSessionGuardRejectsDelimiterBearingWorkspaceMarker(t *testing.T)
 		"attacker|"+strings.Repeat("a", 64),
 	))
 
-	lease, err := NewRemovalSessionGuard("tmux").Quiesce(
+	lease, err := isolatedRemovalSessionGuard(tempDir).Quiesce(
 		context.Background(),
 		RemovalSessionCondition{
 			SessionName:         "different-session",
@@ -114,6 +116,30 @@ func TestRemovalSessionGuardRejectsDelimiterBearingWorkspaceMarker(t *testing.T)
 	assert.Nil(t, lease)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "malformed session inventory")
+}
+
+func isolatedRemovalSessionGuard(tempDir string) RemovalSessionGuard {
+	return &removalSessionGuard{
+		command:          "tmux",
+		inspect:          inspectRemovalSessions,
+		inspectProtected: probeProtectedSessionCommand,
+		serverCommands: func(condition RemovalSessionCondition) serverCommands {
+			return newServerCommands(WorkspaceSessionsOptions{
+				Command:              "tmux",
+				KWTServerTempDir:     tempDir,
+				DefaultServerTempDir: tempDir,
+				StripNames:           removalStripNames(condition),
+			})
+		},
+	}
+}
+
+func shortRemovalTmuxTempDir(t *testing.T) string {
+	t.Helper()
+	directory, err := os.MkdirTemp("/tmp", "kwt-rm-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(directory)) })
+	return directory
 }
 
 func quiesceAndTerminateForTest(

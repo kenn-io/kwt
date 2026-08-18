@@ -331,6 +331,7 @@ func TestGenerateSessionPreview(t *testing.T) {
 
 	expectedContent := []string{
 		"Session: test-session",
+		"Endpoint: default",
 		"Context: test-context",
 		"Identifier: test-id",
 		"Command: vim test.go",
@@ -594,6 +595,7 @@ func TestBuildSessionFinderOptions_WithoutPreview(t *testing.T) {
 func TestFormatSessionForDisplay(t *testing.T) {
 	sessions := []*tmux.Session{
 		{
+			SocketName: tmux.KWTServerSocketName,
 			Context:    "project1",
 			Identifier: "session1",
 			Command:    "vim main.go",
@@ -609,13 +611,13 @@ func TestFormatSessionForDisplay(t *testing.T) {
 	formatter := finder.formatSessionForDisplay(sessions)
 
 	result0 := formatter(0)
-	expected0 := "project1/session1 - vim main.go"
+	expected0 := "project1/session1 [kwt] - vim main.go"
 	if result0 != expected0 {
 		t.Errorf("formatSessionForDisplay(0) = %s, expected %s", result0, expected0)
 	}
 
 	result1 := formatter(1)
-	expected1 := "project2/session2 - make test"
+	expected1 := "project2/session2 [default] - make test"
 	if result1 != expected1 {
 		t.Errorf("formatSessionForDisplay(1) = %s, expected %s", result1, expected1)
 	}

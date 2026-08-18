@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"io"
 	"path/filepath"
 	"testing"
@@ -12,8 +13,30 @@ import (
 	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/discovery"
+	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/pkg/models"
 )
+
+func TestTUIBackendApplyInventoryConfigRewiresCleanupResolver(t *testing.T) {
+	t.Setenv("PATH", filepath.Join(t.TempDir(), "missing"))
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	backend.liveEndpoints = func(
+		context.Context,
+		tmux.WorkspaceEndpointRequest,
+	) ([]tmux.SessionEndpoint, error) {
+		return nil, errors.New("stale cleanup resolver")
+	}
+
+	err := backend.applyInventoryConfig(&models.Config{})
+	require.NoError(t, err)
+	endpoints, err := backend.liveEndpoints(
+		context.Background(),
+		tmux.WorkspaceEndpointRequest{SessionName: "workspace", WorkspacePath: "/work"},
+	)
+
+	require.NoError(t, err)
+	assert.Empty(t, endpoints)
+}
 
 func TestTUIBackendMutationUsesLatestDaemonConfiguration(t *testing.T) {
 	t.Setenv("KWT_HOME", t.TempDir())
@@ -30,7 +53,7 @@ func TestTUIBackendMutationUsesLatestDaemonConfiguration(t *testing.T) {
 	runTUITestGit(t, repository, "remote", "add", "origin", "https://github.com/acme/widget.git")
 	currentBase := filepath.Join(t.TempDir(), "current")
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error) {
 		return map[string]*models.WorktreeStatus{}, nil
 	}
@@ -74,7 +97,7 @@ func TestTUIBackendDaemonInventoryUsesCacheThenCurrent(t *testing.T) {
 		Workspaces: []models.Workspace{{Name: "live", Path: "/live/workspace"}},
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, "/launch")
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	var statusBaseDirectory string
 	backend.collectStatuses = func(_ context.Context, baseDirectory string, _ []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error) {
 		statusBaseDirectory = baseDirectory
@@ -145,13 +168,87 @@ func TestTUIBackendDaemonInventoryUsesCacheThenCurrent(t *testing.T) {
 	require.Len(t, requests, 2)
 	assert.False(t, requests[0].RequireCurrent)
 	assert.True(t, requests[1].RequireCurrent)
+	assert.True(t, requests[0].IncludeProtectedSockets)
+	assert.True(t, requests[1].IncludeProtectedSockets)
+}
+
+func TestTUIBackendDaemonInventoryRetainsProtectedEndpoint(t *testing.T) {
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	backend.resolveSessions = func(
+		_ context.Context,
+		requests []tmux.WorkspaceEndpointRequest,
+	) ([]tmux.WorkspaceSession, error) {
+		assert.Empty(t, requests, "protected workspaces must bypass shared-server resolution")
+		return nil, nil
+	}
+	var request kwt.Request
+	backend.queryInventory = func(
+		_ context.Context,
+		got kwt.Request,
+		_ bool,
+		_ io.Writer,
+	) (kwt.Result, error) {
+		request = got
+		return kwt.Result{Snapshot: kwt.Snapshot{Entries: []kwt.Entry{{
+			Path:           "/work/protected",
+			Branch:         "feature/protected",
+			Repository:     kwt.Repository{FullPath: "github.com/acme/widget", Name: "widget"},
+			SessionName:    "kwt-wt-widget-feature-protected-01234567",
+			TmuxSocketName: "kwt-pr-0123456789abcdef",
+			TmuxAttachMode: models.TmuxAttachProtected,
+		}}}}, nil
+	}
+
+	rows, _, err := backend.ListFast(context.Background())
+
+	require.NoError(t, err)
+	assert.True(t, request.IncludeProtectedSockets)
+	require.Len(t, rows, 1)
+	require.NotNil(t, rows[0].Entry)
+	assert.True(t, rows[0].Entry.Protected)
+	assert.Equal(t, "kwt-pr-0123456789abcdef", rows[0].TmuxEndpoint.SocketName)
+	assert.Equal(t, "kwt-wt-widget-feature-protected-01234567", rows[0].TmuxEndpoint.SessionName)
+}
+
+func TestTUIBackendDaemonInventoryReusesPublishedDirectSession(t *testing.T) {
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	backend.resolveSessions = func(
+		_ context.Context,
+		requests []tmux.WorkspaceEndpointRequest,
+	) ([]tmux.WorkspaceSession, error) {
+		assert.Empty(t, requests, "daemon worktrees must not be resolved twice")
+		return nil, nil
+	}
+	backend.queryInventory = func(
+		context.Context,
+		kwt.Request,
+		bool,
+		io.Writer,
+	) (kwt.Result, error) {
+		return kwt.Result{Snapshot: kwt.Snapshot{Entries: []kwt.Entry{{
+			Path:           "/work/adopted",
+			Branch:         "feature/adopted",
+			Repository:     kwt.Repository{FullPath: "github.com/acme/widget", Name: "widget"},
+			SessionName:    "kwt-wt-widget-feature-adopted-01234567",
+			SessionLive:    true,
+			TmuxAttachMode: models.TmuxAttachDirect,
+		}}}}, nil
+	}
+
+	rows, _, err := backend.ListFast(context.Background())
+
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.True(t, rows[0].SessionLive)
+	assert.Empty(t, rows[0].TmuxEndpoint.SocketName)
+	assert.Equal(t, "kwt-wt-widget-feature-adopted-01234567", rows[0].SessionName)
 }
 
 func TestTUIBackendRegistersOnlyCurrentLaunchInventory(t *testing.T) {
 	backend := newTUIBackendWithLaunchDir(&models.Config{
 		Worktree: models.WorktreeConfig{BaseDir: t.TempDir()},
 	}, "/launch")
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error) {
 		return map[string]*models.WorktreeStatus{}, nil
 	}
@@ -208,7 +305,7 @@ func TestTUIBackendCurrentInventoryIncludesNewLaunchWorkspace(t *testing.T) {
 	backend := newTUIBackendWithLaunchDir(&models.Config{
 		Worktree: models.WorktreeConfig{BaseDir: t.TempDir()},
 	}, "/launch")
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error) {
 		return map[string]*models.WorktreeStatus{}, nil
 	}

@@ -9,16 +9,19 @@ import (
 	"go.kenn.io/kwt/internal/url"
 )
 
+// Session is KWT's internal observation of one managed tmux session. Wire
+// commands map it to their own response types rather than serializing it.
 type Session struct {
-	ID          string            `json:"id"`
-	SessionName string            `json:"session_name"`
-	Context     string            `json:"context"`
-	Identifier  string            `json:"identifier"`
-	WorkingDir  string            `json:"working_dir"`
-	Command     string            `json:"command"`
-	StartTime   time.Time         `json:"start_time"`
-	HistorySize int               `json:"history_size"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	SessionName string
+	SocketName  string
+	ID          string
+	Context     string
+	Identifier  string
+	WorkingDir  string
+	Command     string
+	StartTime   time.Time
+	HistorySize int
+	Metadata    map[string]string
 }
 
 type SessionOptions struct {
@@ -33,6 +36,15 @@ type SessionConfig struct {
 	Enabled      bool   `toml:"enabled" json:"enabled"`
 	TmuxCommand  string `toml:"tmux_command" json:"tmux_command"`
 	HistoryLimit int    `toml:"history_limit" json:"history_limit"`
+}
+
+// SessionEndpointLabel returns the human-readable server identity for a KWT
+// tmux session.
+func SessionEndpointLabel(session *Session) string {
+	if session == nil || session.SocketName == "" {
+		return "default"
+	}
+	return session.SocketName
 }
 
 func DefaultSessionConfig() *SessionConfig {
@@ -108,6 +120,12 @@ func sanitizeTmuxName(s string) string {
 }
 
 const dirWorkspaceSessionPrefix = "kwt-workspace-dir-"
+
+// IsKWTDirectoryWorkspaceSessionName reports whether name is in the managed
+// directory-workspace namespace.
+func IsKWTDirectoryWorkspaceSessionName(name string) bool {
+	return strings.HasPrefix(name, dirWorkspaceSessionPrefix)
+}
 
 // DirWorkspaceSessionName returns a stable, tmux-safe session name for a
 // directory workspace: kwt-workspace-dir-{name}-{hash}. The hash is computed

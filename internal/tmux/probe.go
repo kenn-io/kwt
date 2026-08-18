@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 )
 
@@ -91,6 +92,9 @@ func classifyProtectedSessionProbe(
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return ProtectedSessionIndeterminate, err
+		}
+		if errors.Is(err, exec.ErrNotFound) {
+			return ProtectedSessionAbsent, nil
 		}
 		var exited exitCoder
 		if errors.As(err, &exited) && exited.ExitCode() == 1 &&

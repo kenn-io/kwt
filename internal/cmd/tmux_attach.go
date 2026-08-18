@@ -6,13 +6,20 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/finder"
 	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/pkg/models"
 )
 
 var (
-	tmuxAttachInteractive bool
+	tmuxAttachInteractive       bool
+	newTmuxAttachSessionManager = func(
+		config *tmux.SessionConfig,
+		stripNames ...string,
+	) tmux.SessionManagerInterface {
+		return tmux.NewSessionManager(config, stripNames...)
+	}
 )
 
 var tmuxAttachCmd = &cobra.Command{
@@ -48,7 +55,10 @@ func runTmuxAttach(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	sessionManager := tmux.NewSessionManager(nil)
+	sessionManager := newTmuxAttachSessionManager(
+		nil,
+		credentials.ProtectedNames(cfg)...,
+	)
 
 	sessions, err := sessionManager.ListSessions()
 	if err != nil {

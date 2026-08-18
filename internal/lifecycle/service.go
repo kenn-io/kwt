@@ -95,7 +95,11 @@ func (s *InventoryService) Query(ctx context.Context, request Request) (Result, 
 		result.ObservedAt = s.now()
 		result.RefreshError = nil
 		if request.View == ViewDashboard {
-			result.RefreshError = s.publishDashboard(generation, result)
+			result.RefreshError = s.publishDashboard(
+				generation,
+				request.IncludeProtectedSockets,
+				result,
+			)
 		}
 		return cloneResult(result), nil
 	})
@@ -110,14 +114,18 @@ func (s *InventoryService) Query(ctx context.Context, request Request) (Result, 
 	}
 }
 
-func (s *InventoryService) publishDashboard(generation uint64, result Result) *Diagnostic {
+func (s *InventoryService) publishDashboard(
+	generation uint64,
+	includesProtectedSockets bool,
+	result Result,
+) *Diagnostic {
 	s.publishMu.Lock()
 	defer s.publishMu.Unlock()
 	if !s.isLatestDashboard(generation) {
 		return nil
 	}
 	var diagnostic *Diagnostic
-	if s.cache != nil {
+	if s.cache != nil && includesProtectedSockets {
 		if err := s.cache.Store(result); err != nil {
 			diagnostic = &Diagnostic{At: s.now(), Message: boundedDiagnostic(err)}
 		}

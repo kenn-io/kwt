@@ -26,12 +26,12 @@ func resetWorkspaceCommandDeps(t *testing.T) {
 	origRegister := registerWorkspace
 	origUnregister := unregisterWorkspace
 	origLoad := loadWorkspaceConfig
-	origSessions := listWorkspaceSessions
+	origSessions := resolveDirectorySessions
 	t.Cleanup(func() {
 		registerWorkspace = origRegister
 		unregisterWorkspace = origUnregister
 		loadWorkspaceConfig = origLoad
-		listWorkspaceSessions = origSessions
+		resolveDirectorySessions = origSessions
 	})
 }
 
@@ -84,8 +84,11 @@ func TestWorkspaceListShowsLiveState(t *testing.T) {
 			{Name: "scratch", Path: "/Users/me/scratch"},
 		}}, nil
 	}
-	listWorkspaceSessions = func() ([]string, error) {
-		return []string{tmuxDirSessionNameForTest("notes", "/Users/me/notes")}, nil
+	resolveDirectorySessions = func(workspaces []models.Workspace) ([]tmux.WorkspaceSession, error) {
+		return testDirectorySessions(
+			workspaces,
+			tmuxDirSessionNameForTest("notes", "/Users/me/notes"),
+		), nil
 	}
 
 	cmd, stdout, _ := fleetTestCommand()
@@ -111,8 +114,8 @@ func TestWorkspaceListJSONReportsCanonicalAndEffectiveSessions(t *testing.T) {
 		return &models.Config{Workspaces: workspaces}, nil
 	}
 	oldLiveName := tmux.DirWorkspaceSessionName("old-name", workspaces[0].Path)
-	listWorkspaceSessions = func() ([]string, error) {
-		return []string{oldLiveName}, nil
+	resolveDirectorySessions = func(got []models.Workspace) ([]tmux.WorkspaceSession, error) {
+		return testDirectorySessions(got, oldLiveName), nil
 	}
 
 	cmd, stdout, _ := fleetTestCommand()
@@ -122,20 +125,63 @@ func TestWorkspaceListJSONReportsCanonicalAndEffectiveSessions(t *testing.T) {
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &got))
 	require.Len(t, got, 2)
 	assert.Equal(t, directoryWorkspaceRecord{
-		Name:        "renamed",
-		Path:        "/Users/me/notes",
-		SessionName: oldLiveName,
-		SessionLive: true,
+		Name:           "renamed",
+		Path:           "/Users/me/notes",
+		SessionName:    oldLiveName,
+		SessionLive:    true,
+		TmuxSocketName: tmux.KWTServerSocketName,
+		TmuxAttachMode: models.TmuxAttachDirect,
 	}, got[0])
 	assert.Equal(t, directoryWorkspaceRecord{
-		Name: "scratch",
-		Path: "/Users/me/scratch",
+		Name: "scratch", Path: "/Users/me/scratch",
 		SessionName: tmux.DirWorkspaceSessionName(
 			"scratch",
 			"/Users/me/scratch",
 		),
-		SessionLive: false,
+		SessionLive:    false,
+		TmuxSocketName: tmux.KWTServerSocketName,
+		TmuxAttachMode: models.TmuxAttachDirect,
 	}, got[1])
+}
+
+func TestDirectoryWorkspaceRecordsRetainResolvedLiveEndpoint(t *testing.T) {
+	workspace := models.Workspace{Name: "renamed", Path: "/Users/me/notes"}
+	liveName := tmux.DirWorkspaceSessionName("old-name", workspace.Path)
+
+	records := directoryWorkspaceRecordsFromSessions(
+		[]models.Workspace{workspace},
+		[]tmux.WorkspaceSession{{
+			Endpoint: tmux.SessionEndpoint{
+				SessionName: liveName,
+			},
+			Live: true,
+		}},
+	)
+
+	require.Len(t, records, 1)
+	assert.Equal(t, liveName, records[0].SessionName)
+	assert.True(t, records[0].SessionLive)
+	assert.Empty(t, records[0].TmuxSocketName)
+	assert.Equal(t, models.TmuxAttachDirect, records[0].TmuxAttachMode)
+}
+
+func TestDirectoryWorkspaceRecordsUseResolvedStoppedSession(t *testing.T) {
+	workspace := models.Workspace{Name: "notes", Path: "/Users/me/notes"}
+	liveName := tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path)
+
+	records := directoryWorkspaceRecordsFromSessions(
+		[]models.Workspace{workspace},
+		[]tmux.WorkspaceSession{{
+			Endpoint: tmux.SessionEndpoint{
+				SessionName: liveName,
+				SocketName:  tmux.KWTServerSocketName,
+			},
+		}},
+	)
+
+	require.Len(t, records, 1)
+	assert.False(t, records[0].SessionLive)
+	assert.Equal(t, tmux.KWTServerSocketName, records[0].TmuxSocketName)
 }
 
 func TestWorkspaceListJSONEmptyRegistryEmitsArray(t *testing.T) {
@@ -177,8 +223,11 @@ func TestWorkspaceRemoveReportsLiveSession(t *testing.T) {
 	loadWorkspaceConfig = func() (*models.Config, error) {
 		return &models.Config{Workspaces: []models.Workspace{{Name: "notes", Path: "/Users/me/notes"}}}, nil
 	}
-	listWorkspaceSessions = func() ([]string, error) {
-		return []string{tmuxDirSessionNameForTest("notes", "/Users/me/notes")}, nil
+	resolveDirectorySessions = func(workspaces []models.Workspace) ([]tmux.WorkspaceSession, error) {
+		return testDirectorySessions(
+			workspaces,
+			tmuxDirSessionNameForTest("notes", "/Users/me/notes"),
+		), nil
 	}
 	unregisterWorkspace = func(name string) error {
 		assert.Equal(t, "notes", name)
@@ -190,12 +239,12 @@ func TestWorkspaceRemoveReportsLiveSession(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Contains(t, stdout.String(), "still running")
+	assert.Contains(t, stdout.String(), "tmux -L kwt kill-session")
 }
 
 func TestWorkspaceRemovePropagatesUnknownNameError(t *testing.T) {
 	resetWorkspaceCommandDeps(t)
 	loadWorkspaceConfig = func() (*models.Config, error) { return &models.Config{}, nil }
-	listWorkspaceSessions = func() ([]string, error) { return nil, nil }
 	unregisterWorkspace = func(name string) error {
 		return errors.New(`no workspace named "nope"; no workspaces registered`)
 	}
@@ -212,8 +261,11 @@ func TestWorkspaceRemoveReportsLiveSessionCaseInsensitive(t *testing.T) {
 	loadWorkspaceConfig = func() (*models.Config, error) {
 		return &models.Config{Workspaces: []models.Workspace{{Name: "Notes", Path: "/Users/me/notes"}}}, nil
 	}
-	listWorkspaceSessions = func() ([]string, error) {
-		return []string{tmuxDirSessionNameForTest("Notes", "/Users/me/notes")}, nil
+	resolveDirectorySessions = func(workspaces []models.Workspace) ([]tmux.WorkspaceSession, error) {
+		return testDirectorySessions(
+			workspaces,
+			tmuxDirSessionNameForTest("Notes", "/Users/me/notes"),
+		), nil
 	}
 	unregisterWorkspace = func(name string) error {
 		assert.Equal(t, "notes", name)
@@ -229,6 +281,30 @@ func TestWorkspaceRemoveReportsLiveSessionCaseInsensitive(t *testing.T) {
 
 func tmuxDirSessionNameForTest(name, path string) string {
 	return tmux.DirWorkspaceSessionName(name, path)
+}
+
+func testCanonicalSessionEndpoint(name string) tmux.SessionEndpoint {
+	return tmux.SessionEndpoint{
+		SessionName: name,
+		SocketName:  tmux.KWTServerSocketName,
+	}
+}
+
+func testDirectorySessions(
+	workspaces []models.Workspace,
+	liveName string,
+) []tmux.WorkspaceSession {
+	sessions := make([]tmux.WorkspaceSession, len(workspaces))
+	for index, workspace := range workspaces {
+		sessions[index] = tmux.WorkspaceSession{Endpoint: testCanonicalSessionEndpoint(
+			tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
+		)}
+	}
+	if liveName != "" && len(sessions) > 0 {
+		sessions[0].Endpoint.SessionName = liveName
+		sessions[0].Live = true
+	}
+	return sessions
 }
 
 // TestWorkspaceCmdIsolatesFromCwdConfig guards the config-isolation invariant:
@@ -249,7 +325,7 @@ func TestWorkspaceListPropagatesSessionError(t *testing.T) {
 	loadWorkspaceConfig = func() (*models.Config, error) {
 		return &models.Config{Workspaces: []models.Workspace{{Name: "notes", Path: "/Users/me/notes"}}}, nil
 	}
-	listWorkspaceSessions = func() ([]string, error) {
+	resolveDirectorySessions = func([]models.Workspace) ([]tmux.WorkspaceSession, error) {
 		return nil, errors.New("tmux: no such file or directory")
 	}
 
@@ -265,7 +341,7 @@ func TestWorkspaceRemoveWarnsOnSessionCheckError(t *testing.T) {
 	loadWorkspaceConfig = func() (*models.Config, error) {
 		return &models.Config{Workspaces: []models.Workspace{{Name: "notes", Path: "/Users/me/notes"}}}, nil
 	}
-	listWorkspaceSessions = func() ([]string, error) {
+	resolveDirectorySessions = func([]models.Workspace) ([]tmux.WorkspaceSession, error) {
 		return nil, errors.New("tmux: no such file or directory")
 	}
 	unregisterWorkspace = func(name string) error {

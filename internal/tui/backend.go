@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"go.kenn.io/kwt/internal/discovery"
+	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/pkg/models"
 )
 
@@ -22,13 +23,14 @@ type Handoff struct {
 }
 
 type Row struct {
-	Entry       *discovery.GlobalWorktreeEntry
-	Status      *models.WorktreeStatus
-	Fleet       *FleetInfo
-	Workspace   *WorkspaceInfo
-	SessionName string
-	SessionLive bool
-	Creating    bool
+	Entry        *discovery.GlobalWorktreeEntry
+	Status       *models.WorktreeStatus
+	Fleet        *FleetInfo
+	Workspace    *WorkspaceInfo
+	SessionName  string
+	SessionLive  bool
+	TmuxEndpoint tmux.SessionEndpoint
+	Creating     bool
 }
 
 // WorkspaceInfo is the TUI-facing view of one registered directory workspace.

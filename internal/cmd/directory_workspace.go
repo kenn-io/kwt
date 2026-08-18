@@ -7,35 +7,31 @@ import (
 )
 
 type directoryWorkspaceRecord struct {
-	Name        string `json:"name"`
-	Path        string `json:"path"`
-	SessionName string `json:"session_name"`
-	SessionLive bool   `json:"session_live"`
+	Name           string                `json:"name"`
+	Path           string                `json:"path"`
+	SessionName    string                `json:"session_name"`
+	SessionLive    bool                  `json:"session_live"`
+	TmuxSocketName string                `json:"tmux_socket_name,omitempty"`
+	TmuxAttachMode models.TmuxAttachMode `json:"tmux_attach_mode"`
 }
 
-func directoryWorkspaceRecords(
+func directoryWorkspaceRecordsFromSessions(
 	workspaces []models.Workspace,
-	sessions []string,
+	sessions []tmux.WorkspaceSession,
 ) []directoryWorkspaceRecord {
 	records := make([]directoryWorkspaceRecord, 0, len(workspaces))
-	for _, workspace := range workspaces {
-		sessionName := tmux.DirWorkspaceSessionName(
-			workspace.Name,
-			workspace.Path,
-		)
-		sessionLive := false
-		if live, ok := tmux.MatchDirWorkspaceSession(
-			sessions,
-			workspace.Path,
-		); ok {
-			sessionName = live
-			sessionLive = true
+	for index, workspace := range workspaces {
+		if index >= len(sessions) {
+			break
 		}
+		selected := sessions[index]
 		records = append(records, directoryWorkspaceRecord{
-			Name:        workspace.Name,
-			Path:        workspace.Path,
-			SessionName: sessionName,
-			SessionLive: sessionLive,
+			Name:           workspace.Name,
+			Path:           workspace.Path,
+			SessionName:    selected.Endpoint.SessionName,
+			SessionLive:    selected.Live,
+			TmuxSocketName: selected.Endpoint.SocketName,
+			TmuxAttachMode: models.TmuxAttachDirect,
 		})
 	}
 	return records

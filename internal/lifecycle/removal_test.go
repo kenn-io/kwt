@@ -142,13 +142,14 @@ func TestRemovalServiceTerminatesConfirmedSessionBeforeRemovingWorktree(t *testi
 		SessionID:   "$7",
 		CreatedAt:   "1720000000",
 	}
+	expansion := testExpansion(t)
 
 	result, err := NewRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
 	}).Remove(context.Background(), RemovalRequest{
 		RepositoryPath: repositoryPath,
 		Path:           worktreePath, ExpectedGeneration: generation,
-		Expansion: testExpansion(t),
+		Expansion: expansion,
 		Session:   &condition,
 	})
 
@@ -157,6 +158,7 @@ func TestRemovalServiceTerminatesConfirmedSessionBeforeRemovingWorktree(t *testi
 	assert.True(t, guard.terminated)
 	assert.True(t, guard.pathLive, "session guard must run before checkout removal")
 	expectedCondition := condition
+	expectedCondition.SocketDirectory = removalSocketDirectory(expansion)
 	expectedCondition.WorkspacePath = worktreePath
 	expectedCondition.WorkspaceGeneration = generation
 	expectedCondition.ProtectedNames = credentials.ProtectedNames(nil)
@@ -389,7 +391,7 @@ func TestRemovalServiceRejectsStaleSessionSocket(t *testing.T) {
 	assert.DirExists(t, worktreePath)
 }
 
-func TestRemovalServiceAcceptsOrdinarySessionOnExplicitSocketEndpoint(t *testing.T) {
+func TestRemovalServiceAcceptsDirectSessionOnCanonicalSocketEndpoint(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "custom-endpoint")
 	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
 	require.NoError(t, err)
@@ -398,10 +400,12 @@ func TestRemovalServiceAcceptsOrdinarySessionOnExplicitSocketEndpoint(t *testing
 	guard := &recordingRemovalSessionGuard{}
 	condition := RemovalSessionCondition{
 		SessionName:     removalSessionName(t, worktreePath, "custom-endpoint"),
-		SocketName:      "team-server",
+		SocketName:      tmux.KWTServerSocketName,
 		SocketDirectory: "/srv/tmux",
 		Absent:          true,
 	}
+	expansion := testExpansion(t)
+	expansion.Environment[normalizedEnvironmentName("TMUX_TMPDIR")] = "/srv/tmux"
 
 	result, err := NewRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
@@ -409,7 +413,7 @@ func TestRemovalServiceAcceptsOrdinarySessionOnExplicitSocketEndpoint(t *testing
 		RepositoryPath:     repositoryPath,
 		Path:               worktreePath,
 		ExpectedGeneration: generation,
-		Expansion:          testExpansion(t),
+		Expansion:          expansion,
 		Session:            &condition,
 	})
 
@@ -422,6 +426,97 @@ func TestRemovalServiceAcceptsOrdinarySessionOnExplicitSocketEndpoint(t *testing
 	assert.Equal(t, expectedCondition, guard.condition)
 	assert.False(t, guard.condition.ProtectedSocketTopology)
 	assert.True(t, result.WorktreeRemoved)
+}
+
+func TestRemovalServiceRejectsDirectSessionSocketDirectoryOutsideRequest(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "wrong-socket-directory")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	home := t.TempDir()
+	registerRemovalRepository(t, home, repositoryPath)
+	guard := &recordingRemovalSessionGuard{}
+	expansion := testExpansion(t)
+	expansion.Environment[normalizedEnvironmentName("TMUX_TMPDIR")] = "/srv/expected-tmux"
+
+	result, err := NewRemovalService(RemovalServiceOptions{
+		Home: home, SessionGuard: guard,
+	}).Remove(context.Background(), RemovalRequest{
+		RepositoryPath:     repositoryPath,
+		Path:               worktreePath,
+		ExpectedGeneration: generation,
+		Expansion:          expansion,
+		Session: &RemovalSessionCondition{
+			SessionName:     removalSessionName(t, worktreePath, "wrong-socket-directory"),
+			SocketName:      tmux.KWTServerSocketName,
+			SocketDirectory: "/srv/unrelated-tmux",
+			Absent:          true,
+		},
+	})
+
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.Conflict))
+	assert.False(t, guard.quiesced)
+	assert.False(t, result.WorktreeRemoved)
+	assert.DirExists(t, worktreePath)
+}
+
+func TestRemovalServiceUsesRequestSocketDirectoryWhenConditionOmitsIt(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "implicit-socket-directory")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	home := t.TempDir()
+	registerRemovalRepository(t, home, repositoryPath)
+	guard := &recordingRemovalSessionGuard{}
+	expansion := testExpansion(t)
+	expansion.Environment[normalizedEnvironmentName("TMUX_TMPDIR")] = "/srv/request-tmux"
+
+	result, err := NewRemovalService(RemovalServiceOptions{
+		Home: home, SessionGuard: guard,
+	}).Remove(context.Background(), RemovalRequest{
+		RepositoryPath:     repositoryPath,
+		Path:               worktreePath,
+		ExpectedGeneration: generation,
+		Expansion:          expansion,
+		Session: &RemovalSessionCondition{
+			SessionName: removalSessionName(t, worktreePath, "implicit-socket-directory"),
+			SocketName:  tmux.KWTServerSocketName,
+			Absent:      true,
+		},
+	})
+
+	require.NoError(t, err)
+	assert.True(t, guard.quiesced)
+	assert.Equal(t, "/srv/request-tmux", guard.condition.SocketDirectory)
+	assert.True(t, result.WorktreeRemoved)
+}
+
+func TestRemovalServiceRejectsDirectSessionOnArbitraryNamedSocket(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "arbitrary-endpoint")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	home := t.TempDir()
+	registerRemovalRepository(t, home, repositoryPath)
+	guard := &recordingRemovalSessionGuard{}
+
+	result, err := NewRemovalService(RemovalServiceOptions{
+		Home: home, SessionGuard: guard,
+	}).Remove(context.Background(), RemovalRequest{
+		RepositoryPath:     repositoryPath,
+		Path:               worktreePath,
+		ExpectedGeneration: generation,
+		Expansion:          testExpansion(t),
+		Session: &RemovalSessionCondition{
+			SessionName: removalSessionName(t, worktreePath, "arbitrary-endpoint"),
+			SocketName:  "team-server",
+			Absent:      true,
+		},
+	})
+
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.Conflict))
+	assert.False(t, guard.quiesced)
+	assert.False(t, result.WorktreeRemoved)
+	assert.DirExists(t, worktreePath)
 }
 
 func TestRemovalServiceCarriesDurableGenerationAfterWorktreeMove(t *testing.T) {
@@ -596,7 +691,7 @@ func TestRemovalServicePreservesConfirmedSessionWhenDirtyWorktreeCannotBeRemoved
 }
 
 func TestRemovalServicePreservesNativeDirtyErrorWithoutSessionGuard(t *testing.T) {
-	repositoryPath, worktreePath := removalRepository(t, "ordinary-dirty")
+	repositoryPath, worktreePath := removalRepository(t, "direct-dirty")
 	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(

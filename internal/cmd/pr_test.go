@@ -503,9 +503,13 @@ func TestDefaultNewPRServiceRejectsNestedRepositoryIdentity(t *testing.T) {
 func TestRunPRImportWritesCreatedAndAlreadyImportedResults(t *testing.T) {
 	for _, status := range []pullrequest.ImportStatus{pullrequest.ImportCreated, pullrequest.ImportExisting} {
 		t.Run(string(status), func(t *testing.T) {
+			const socketName = "kwt-pr-validated"
 			service := &fakePRService{result: pullrequest.ImportResult{
 				Status: status, Project: pullrequest.Project{Identity: "github.com/acme/widget"},
-				Workspace: pullrequest.Workspace{ID: "ws", Path: "/worktrees/ws", SessionName: "kwt-workspace-ws"},
+				Workspace: pullrequest.Workspace{
+					ID: "ws", Path: "/worktrees/ws", SessionName: "kwt-workspace-ws",
+					TmuxSocketName: socketName, TmuxAttachMode: models.TmuxAttachProtected,
+				},
 			}}
 			withPRCommandDeps(t, testPRConfig(), service)
 			cmd, stdout, _ := prTestCommand()
@@ -517,11 +521,8 @@ func TestRunPRImportWritesCreatedAndAlreadyImportedResults(t *testing.T) {
 			require.NoError(t, json.Unmarshal(stdout.Bytes(), &got))
 			assert.Equal(t, status, got.Status)
 			assert.Equal(t, "17", service.gotSelector)
-			socketName := tmux.ProtectedWorkspaceSocketName(
-				got.Workspace.SessionName,
-				got.Workspace.Path,
-			)
 			assert.Equal(t, socketName, got.Workspace.TmuxSocketName)
+			assert.Equal(t, models.TmuxAttachProtected, got.Workspace.TmuxAttachMode)
 			assert.Equal(
 				t,
 				socketName,
@@ -529,6 +530,27 @@ func TestRunPRImportWritesCreatedAndAlreadyImportedResults(t *testing.T) {
 			)
 		})
 	}
+}
+
+func TestRunPRImportPreservesUnverifiedWorkspaceEndpoint(t *testing.T) {
+	service := &fakePRService{result: pullrequest.ImportResult{
+		Status: pullrequest.ImportExisting,
+		Workspace: pullrequest.Workspace{
+			ID: "ws", Path: "/worktrees/ws", SessionName: "unrecognized-session",
+			TmuxAttachMode: models.TmuxAttachProtected,
+		},
+	}}
+	withPRCommandDeps(t, testPRConfig(), service)
+	cmd, stdout, _ := prTestCommand()
+
+	err := runPRImport(cmd, []string{"17"})
+
+	require.NoError(t, err)
+	var got pullrequest.ImportResult
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &got))
+	assert.Empty(t, got.Workspace.TmuxSocketName)
+	assert.Equal(t, models.TmuxAttachProtected, got.Workspace.TmuxAttachMode)
+	assert.Empty(t, tryRequireWorkspace(t, got.PullRequest.Workspace).TmuxSocketName)
 }
 
 func TestProtectedPRWorkspaceSessionIgnoresConfiguredLayout(t *testing.T) {
@@ -549,10 +571,13 @@ func TestProtectedPRWorkspaceSessionIgnoresConfiguredLayout(t *testing.T) {
 	assert.Equal(t, tmux.BlankLayout(), layout)
 }
 
-func TestRunPRImportStartsCanonicalWorkspaceSessionOnRequest(t *testing.T) {
+func TestRunPRImportStartsValidatedWorkspaceSessionOnRequest(t *testing.T) {
+	const socketName = "kwt-pr-validated"
 	workspace := pullrequest.Workspace{
 		ID: "ws", Path: "/worktrees/ws",
-		SessionName: "kwt-workspace-ws",
+		SessionName:    "kwt-workspace-ws",
+		TmuxSocketName: socketName,
+		TmuxAttachMode: models.TmuxAttachProtected,
 	}
 	service := &fakePRService{result: pullrequest.ImportResult{
 		Status:    pullrequest.ImportCreated,
@@ -571,14 +596,7 @@ func TestRunPRImportStartsCanonicalWorkspaceSessionOnRequest(t *testing.T) {
 		started = true
 		assert.Equal(t, workspace.Path, got.Path)
 		assert.Equal(t, workspace.SessionName, got.SessionName)
-		assert.Equal(
-			t,
-			tmux.ProtectedWorkspaceSocketName(
-				workspace.SessionName,
-				workspace.Path,
-			),
-			got.TmuxSocketName,
-		)
+		assert.Equal(t, socketName, got.TmuxSocketName)
 		assert.Same(t, cfg, gotConfig)
 		return "kwt-pr-0123456789abcdef", nil
 	}
@@ -594,12 +612,45 @@ func TestRunPRImportStartsCanonicalWorkspaceSessionOnRequest(t *testing.T) {
 	var got pullrequest.ImportResult
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &got))
 	assert.Equal(t, "kwt-pr-0123456789abcdef", got.Workspace.TmuxSocketName)
+	assert.Equal(t, models.TmuxAttachProtected, got.Workspace.TmuxAttachMode)
 	importedWorkspace := tryRequireWorkspace(t, got.PullRequest.Workspace)
 	assert.Equal(
 		t,
 		"kwt-pr-0123456789abcdef",
 		importedWorkspace.TmuxSocketName,
 	)
+}
+
+func TestRunPRImportRejectsSessionStartWithoutValidatedEndpoint(t *testing.T) {
+	service := &fakePRService{result: pullrequest.ImportResult{
+		Status: pullrequest.ImportCreated,
+		Workspace: pullrequest.Workspace{
+			ID: "ws", Path: "/worktrees/ws", SessionName: "unrecognized-session",
+			TmuxAttachMode: models.TmuxAttachProtected,
+		},
+	}}
+	withPRCommandDeps(t, testPRConfig(), service)
+	prStartSession = true
+	started := false
+	ensurePRWorkspaceSession = func(
+		context.Context,
+		pullrequest.Workspace,
+		*models.Config,
+	) (string, error) {
+		started = true
+		return "kwt-pr-unverified", nil
+	}
+	cmd, stdout, _ := prTestCommand()
+
+	err := runPRImport(cmd, []string{"17"})
+
+	require.NoError(t, err)
+	assert.False(t, started)
+	var got pullrequest.ImportResult
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &got))
+	assert.Empty(t, got.Workspace.TmuxSocketName)
+	require.NotNil(t, got.SessionStartError)
+	assert.Equal(t, pullrequest.CodeWorkspaceCreation, got.SessionStartError.Code)
 }
 
 func TestRegisteredPRImportLosesToProjectRemoval(t *testing.T) {
@@ -2938,7 +2989,9 @@ func TestRunPRImportReportsDurableImportWithSessionFailure(t *testing.T) {
 		Status: pullrequest.ImportCreated,
 		Workspace: pullrequest.Workspace{
 			ID: "ws", Path: "/worktrees/ws",
-			SessionName: "kwt-workspace-ws",
+			SessionName:    "kwt-workspace-ws",
+			TmuxSocketName: "kwt-pr-validated",
+			TmuxAttachMode: models.TmuxAttachProtected,
 		},
 	}}
 	withPRCommandDeps(t, testPRConfig(), service)
@@ -2972,7 +3025,9 @@ func TestRunPRImportReportsSessionSafetyFailure(t *testing.T) {
 		Status: pullrequest.ImportExisting,
 		Workspace: pullrequest.Workspace{
 			ID: "ws", Path: "/worktrees/ws",
-			SessionName: "kwt-workspace-ws",
+			SessionName:    "kwt-workspace-ws",
+			TmuxSocketName: "kwt-pr-validated",
+			TmuxAttachMode: models.TmuxAttachProtected,
 		},
 	}}
 	withPRCommandDeps(t, testPRConfig(), service)

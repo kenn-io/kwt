@@ -13,8 +13,20 @@ import (
 	"github.com/stretchr/testify/require"
 	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/tmux"
+	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
+
+func TestListedWorktreeCopiesEndpointFields(t *testing.T) {
+	got := listedWorktree(kwt.Entry{
+		TmuxSocketName: tmux.KWTServerSocketName,
+		TmuxAttachMode: models.TmuxAttachDirect,
+	})
+
+	assert.Equal(t, tmux.KWTServerSocketName, got.TmuxSocketName)
+	assert.Equal(t, models.TmuxAttachDirect, got.TmuxAttachMode)
+}
 
 func captureListStdout(t *testing.T, run func() error) (string, error) {
 	t.Helper()
@@ -51,8 +63,10 @@ func TestRunListRequestsCurrentInventoryAndPreservesJSONShape(t *testing.T) {
 		gotRequest = request
 		return kwt.Result{Snapshot: kwt.Snapshot{Entries: []kwt.Entry{{
 			Path: repository, Branch: "main",
-			Repository:  kwt.Repository{FullPath: "github.com/acme/repo"},
-			SessionName: "kwt-workspace-repo-main",
+			Repository:     kwt.Repository{FullPath: "github.com/acme/repo"},
+			SessionName:    "kwt-workspace-repo-main",
+			TmuxSocketName: tmux.KWTServerSocketName,
+			TmuxAttachMode: models.TmuxAttachDirect,
 		}}}}, nil
 	}
 	previousJSON, previousGlobal := listJSON, listGlobal
@@ -75,7 +89,9 @@ func TestRunListRequestsCurrentInventoryAndPreservesJSONShape(t *testing.T) {
       "created_at": "0001-01-01T00:00:00Z",
       "generation": "",
       "repository": "github.com/acme/repo",
-      "session_name": "kwt-workspace-repo-main"
+      "session_name": "kwt-workspace-repo-main",
+      "tmux_socket_name": "kwt",
+      "tmux_attach_mode": "direct"
     }]`, stdout)
 }
 

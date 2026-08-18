@@ -15,7 +15,7 @@ kwt pr import github:github.com/acme/widget#17 \
   --project github.com/acme/widget --json
 ```
 
-Clients that present their own ordinary tmux client can ask kwt to establish
+Clients that present their own direct tmux client can ask kwt to establish
 the canonical workspace session without attaching kwt's process:
 
 ```sh
@@ -39,12 +39,20 @@ before creating the worktree. A changed or replaced project returns the
 retryable `registration_changed` error without importing anything. The two
 flags are an all-or-nothing contract; ordinary interactive use may omit both.
 
-Every successful import response includes the deterministic
-`tmux_socket_name`, whether or not a session was started. `--start-session`
-creates or repairs the returned `session_name` as a single blank shell session
-and leaves it detached for the caller. It never runs configured layouts, agent
-commands, or commands from the imported checkout. Clients must attach through
-kwt's protected path:
+Every successful import response includes `tmux_attach_mode: "protected"`.
+When repository identity verifies the session name, it also includes the
+deterministic `tmux_socket_name`. A protected result with no socket is protected
+but unresolved: it is not the default tmux server, and clients must not attach
+or create a session from that result. `--start-session` reports a
+`session_start_error` for this state. `kwt pr attach` may resolve the endpoint
+later, but only after it revalidates the live workspace provenance.
+
+The socket name selects the endpoint; the attach mode selects Kwt's protected
+attachment policy and must not be inferred from the presence of a named socket.
+`--start-session` creates or repairs the returned `session_name` as a single
+blank shell session and leaves it detached for the caller. It never runs
+configured layouts, agent commands, or commands from the imported checkout.
+Clients must attach through Kwt's protected path:
 
 ```sh
 kwt pr attach <workspace.path>
@@ -56,13 +64,13 @@ a nested project record or registration fingerprint. Match its `repository`
 field to the project record with the same `repository`, then supply these five
 values together:
 
-| Attach flag | Source |
-| --- | --- |
-| `--expected-repository` | Matching project's `repository` from `kwt projects --json` |
+| Attach flag               | Source                                                                   |
+| ------------------------- | ------------------------------------------------------------------------ |
+| `--expected-repository`   | Matching project's `repository` from `kwt projects --json`               |
 | `--expected-registration` | Matching project's `registration_fingerprint` from `kwt projects --json` |
-| `--expected-generation` | Selected worktree's `generation` from `kwt list --json` |
-| `--expected-session` | Selected worktree's `session_name` from `kwt list --json` |
-| `--expected-socket` | Selected worktree's `tmux_socket_name` from `kwt list --json` |
+| `--expected-generation`   | Selected worktree's `generation` from `kwt list --json`                  |
+| `--expected-session`      | Selected worktree's `session_name` from `kwt list --json`                |
+| `--expected-socket`       | Selected worktree's `tmux_socket_name` from `kwt list --json`            |
 
 ```sh
 kwt pr attach <workspace.path> \
@@ -96,14 +104,16 @@ never runs configured layout or agent commands. This makes the command converge
 imports created without `--start-session`, imports whose startup failed, and
 sessions that disappeared after import. A parent tmux client identity is
 removed before attachment, so the command also works when invoked from a pane
-connected to another tmux server. A
+connected to another tmux server. This nests the protected client; detaching
+returns to the outer server, and the shared prefix may need to be sent twice to
+reach the inner client. A
 deleted project, reused path, or branch, repository, or session-name mismatch
 fails closed. Prunable entries and paths without a live Git worktree are not
 accepted. The registered project's canonical identity remains authoritative
 when its checkout's origin points to a fork, matching kwt's other inventory
 surfaces. An import created from an unregistered repository remains attachable
 when its live Git identity matches the recorded repository; ambiguous or
-conflicting registrations fail closed. Ordinary `kwt open` and dashboard open
+conflicting registrations fail closed. Direct `kwt open` and dashboard open
 actions refuse imported workspaces because they use the normal tmux server;
 use `kwt pr attach <workspace.path>` instead. The protected attach path is
 idempotent for an already imported worktree or a verified session that kwt
@@ -133,8 +143,9 @@ present and present the session failure separately. `kwt pr attach
 also converges on `already_imported`.
 
 Kwt runs each protected PR workspace on a deterministic, workspace-specific
-tmux socket rather than the user's ordinary tmux server. Before invoking that
-server, kwt removes `KWT_GITHUB_TOKEN`, `KWT_FLEET_TOKEN`, and the variable
+tmux socket rather than the shared dedicated `kwt` server or the
+default server. Before invoking that server, kwt removes `KWT_GITHUB_TOKEN`,
+`KWT_FLEET_TOKEN`, and the variable
 named by `fleet.token_env` from the subprocess environment. It installs
 matching session remove-markers before any imported-workspace shell starts.
 Because tmux options are mutable by processes with socket access, filtering
@@ -148,9 +159,9 @@ environments are credential-free. A rejected protected session must be
 removed before retrying.
 
 `kwt list --json` reads the same provenance store before it labels worktrees
-with `tmux_socket_name`. If that store cannot be read or decoded, listing fails
-instead of emitting an imported workspace without its safety-critical socket
-identity.
+with `tmux_socket_name` and `tmux_attach_mode`. If that store cannot be read or
+decoded, listing fails instead of emitting an imported workspace without its
+safety-critical endpoint and attachment policy.
 
 `--project` accepts a repository identity from `kwt projects --json`, a
 registered project name, or its absolute canonical main-repository path.

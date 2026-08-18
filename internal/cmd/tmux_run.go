@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/tmux"
@@ -22,6 +23,8 @@ var (
 	tmuxRunDetach      bool
 	tmuxRunAutoCleanup bool
 )
+
+var newTmuxRunSessionManager = tmux.NewSessionManager
 
 var tmuxRunCmd = &cobra.Command{
 	Use:   "run [command]",
@@ -93,7 +96,10 @@ func runTmuxRun(cmd *cobra.Command, args []string) error {
 		finalCommand = fmt.Sprintf("(%s); tmux kill-session -t $TMUX_PANE", command)
 	}
 
-	sessionManager := tmux.NewSessionManager(nil)
+	sessionManager := newTmuxRunSessionManager(
+		nil,
+		credentials.ProtectedNames(cfg)...,
+	)
 
 	opts := tmux.SessionOptions{
 		Context:    context,

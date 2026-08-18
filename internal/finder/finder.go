@@ -244,6 +244,7 @@ func layoutItemLabel(l models.Layout) string {
 func (f *Finder) generateSessionPreview(session *tmux.Session, maxLines int) string {
 	preview := []string{
 		fmt.Sprintf("Session: %s", session.SessionName),
+		fmt.Sprintf("Endpoint: %s", tmux.SessionEndpointLabel(session)),
 		fmt.Sprintf("Context: %s", session.Context),
 		fmt.Sprintf("Identifier: %s", session.Identifier),
 		fmt.Sprintf("Command: %s", session.Command),
@@ -402,6 +403,12 @@ func (f *Finder) buildSessionFinderOptions(sessions []*tmux.Session) []fuzzyfind
 func (f *Finder) formatSessionForDisplay(sessions []*tmux.Session) func(int) string {
 	return func(i int) string {
 		session := sessions[i]
-		return fmt.Sprintf("%s/%s - %s", session.Context, session.Identifier, session.Command)
+		return fmt.Sprintf(
+			"%s/%s [%s] - %s",
+			session.Context,
+			session.Identifier,
+			tmux.SessionEndpointLabel(session),
+			session.Command,
+		)
 	}
 }

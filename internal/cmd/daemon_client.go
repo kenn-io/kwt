@@ -437,6 +437,19 @@ func detailInt(details map[string]any, key string) int {
 
 func writeConfigNotes(stderr io.Writer, notes []kwt.Note, interactive, declined bool) {
 	for _, note := range notes {
+		if note.Code == "tmux_lookup_degraded" {
+			_, _ = fmt.Fprintf(stderr, "kwt: tmux lookup degraded: %s\n", note.Message)
+			continue
+		}
+		if note.Code == "tmux_endpoint_degraded" {
+			_, _ = fmt.Fprintf(
+				stderr,
+				"kwt: could not verify tmux endpoint for %s: %s (using the dedicated kwt server)\n",
+				note.Path,
+				note.Message,
+			)
+			continue
+		}
 		if note.Code == "trust_store_unavailable" {
 			_, _ = fmt.Fprintf(
 				stderr,

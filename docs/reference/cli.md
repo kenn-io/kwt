@@ -6,6 +6,10 @@ stable command surface.
 Kwt requires Git 2.20 or newer. `kwt doctor` and the `kwt prune --expired` or
 `--merged` policies require Git 2.31 or newer: maintenance inventory relies on
 `git worktree list --expire`, and structural repair uses `git worktree repair`.
+Workspace attachment requires tmux 2.1 or newer. Kwt identifies the current
+client's server with tmux's `#{pid}` format; it does not run a separate version
+preflight. A non-numeric PID response blocks attachment with tmux 2.1 guidance.
+Other PID lookup failures report the underlying tmux error.
 
 | Command          | Purpose                                                |
 | ---------------- | ------------------------------------------------------ |
@@ -297,29 +301,50 @@ acknowledgement that opts in to its layout and pane commands.
 With no argument, `kwt open` fuzzy-picks a worktree. A pattern narrows the
 cross-project list and opens the sole match directly. An exact registered
 directory workspace path resolves before Git worktree discovery. Kwt creates
-or repairs the canonical tmux workspace with its resolved layout before
-attaching.
+or repairs the canonical tmux workspace on the dedicated `kwt` server with its
+resolved layout before attaching. On POSIX systems, the equivalent manual
+inventory command is:
+
+```sh
+env -u TMUX_TMPDIR tmux -L kwt list-sessions
+```
+
+Kwt deliberately removes `TMUX_TMPDIR` for the canonical server, so clients
+that attach independently, including remote clients, must do the same.
 
 An exact worktree-root path is resolved directly from Git before pattern
 matching, including registered primary checkouts and linked worktrees outside
 the configured global worktree base.
 
-On Unix-like systems, an external ordinary or protected attachment replaces
+On Unix-like systems, an external direct or protected attachment replaces
 the `kwt` process with the tmux client. tmux therefore owns signal handling and
 the final exit status, and no waiting `kwt` parent remains. Windows retains a
 waiting parent because it has no Unix process-replacement primitive.
-An ordinary open from inside tmux switches the current client instead.
-Protected attachment always remains external because it targets a separate
-workspace-specific socket.
+A direct open from a client already on the resolved server switches that
+client. From a different tmux server, kwt removes `TMUX` and `TMUX_PANE` and
+starts a nested client on the resolved endpoint. Detaching returns to the outer
+server; because both clients normally use the same prefix, reaching the inner
+client may require sending the prefix twice. Protected attachment uses the same
+cross-server nesting mechanism while retaining its stricter environment rules.
 
 `kwt open <exact-workspace-path> --start-session` performs the same layout and
 session bootstrap without attaching a client. Use it before an external
-ordinary tmux client attaches to a session that may not exist yet. Registered
+direct tmux client attaches to a session that may not exist yet. Registered
 directory paths resolve from the workspace registry; worktree paths resolve
 directly from Git rather than the global worktree base. This keeps automation
 noninteractive and supports both plain directories and linked worktrees stored
 outside that base.
 Protected pull-request imports remain restricted to `kwt pr attach`.
+
+During rollout, a verified matching session on the default server is adopted
+instead of creating a parallel session. If matching sessions
+exist on both servers, the `kwt` server wins. Mixed old and new Kwt binaries can
+still create parallel same-name sessions because older binaries neither use nor
+inspect the dedicated server. Once a new binary has created canonical sessions,
+do not run destructive workspace operations such as remove, prune, or repair
+with an older Kwt binary: its removal guard cannot see those sessions. A
+coordinated upgrade of all cooperating clients is required before enabling the
+new topology on a shared host.
 
 ## `kwt workspace`
 
@@ -342,21 +367,42 @@ remote shell invokes kwt. Its human output and machine-readable schema are
 unchanged; freshness metadata stays in the daemon API envelope and is not
 added to the top-level JSON array.
 
-`--json` emits an array of objects with `path`, `branch`, `commit_hash`, `is_main`,
-`created_at` (worktree directory mtime), `generation` (the durable identity for
-conditional removal), `repository` (the `host/owner/name` slug, or a
-`local/<path>` fallback for a repository without a usable remote — see below),
-and `session_name` (the tmux workspace session name kwt attaches to).
-An imported pull-request worktree additionally includes `tmux_socket_name` for
-its protected workspace-specific server. To converge on the same session, run
-`kwt open <path> --start-session` before an ordinary attach-only client, or
-`kwt pr attach <path>` when `tmux_socket_name` is present. This lets kwt create
-the session when needed without a client creating it bare or bypassing its
-protected attach policy. See [Attaching from other
-tools](#attaching-from-other-tools) before using `new-session`.
+`--json` emits an array of objects with `path`, `branch`, `commit_hash`,
+`is_main`, `created_at` (worktree directory mtime), `generation` (the durable
+identity for conditional removal), `repository` (the `host/owner/name` slug,
+or a `local/<path>` fallback for a repository without a usable remote — see
+below), `session_name`, `tmux_socket_name`, and `tmux_attach_mode`.
+`tmux_socket_name` selects the endpoint; `tmux_attach_mode` selects direct or
+protected attachment behavior. For a stopped workspace, inventory
+reports the intended `kwt`/`direct` endpoint. It reports the empty default
+socket with `direct` only while a matching adopted session is live. Protected
+pull-request worktrees report their workspace-specific socket with
+`protected` once provenance verifies that endpoint. An unresolved protected
+entry omits `tmux_socket_name`; clients must use `tmux_attach_mode` to
+distinguish that unattachable state from an adopted default-server session.
+
+Inventory is a snapshot. `kwt open <exact-path> --start-session --json` is the
+authority for the immediately following direct attachment because it reports
+the endpoint where the session was actually established. Run it before an
+attach-only client, or use `kwt pr attach <path>` when
+`tmux_attach_mode` is `protected`. This lets kwt create the session when needed
+without a client creating it bare or bypassing protected attach policy. See
+[Attaching from other tools](#attaching-from-other-tools) before using
+`new-session`.
 `kwt open` and dashboard open actions refuse protected pull-request imports
 and direct the user through `kwt pr attach`.
 `created_at` and `generation` are populated in both local and `-g` mode.
+
+## `kwt tmux`
+
+`kwt tmux list` temporarily unions Kwt-managed standalone and workspace
+sessions from the dedicated `kwt` server and the default server during the
+adoption window. Human,
+picker, attach, and kill surfaces display `[kwt]` or `[default]` so equal-name
+sessions remain distinguishable; JSON includes `tmux_socket_name` and
+`tmux_attach_mode`. New standalone sessions are created only on the dedicated
+server. Attach and kill retain the selected endpoint rather than inferring it
+from the session name.
 
 ## `kwt remove`
 
@@ -622,7 +668,7 @@ protected endpoints, including connected repository-transfer aliases, under
 the shared project fence before performing a final raw registry
 compare-and-swap. Any persisted-field change, including `last_touched`,
 invalidates the fingerprint. A live protected tmux session or incomplete
-endpoint authority fails closed. Ordinary/default-server tmux sessions do not
+endpoint authority fails closed. KWT/default-server tmux sessions do not
 block removal and are never killed.
 
 Unregistration is metadata-only: it never deletes repositories or worktrees
@@ -671,9 +717,12 @@ for pull-request clients. kwt owns provider calls, ref handling, branch and
 workspace naming, normal worktree creation and setup, push configuration,
 provenance, and tmux session naming. See [Pull-request
 automation](pull-requests.md) for the JSON and exit-status contract.
-Every imported workspace record includes `tmux_socket_name`.
+Every imported workspace record includes `tmux_attach_mode: "protected"`.
+An attachable record also includes `tmux_socket_name`; an empty socket means the
+protected endpoint is unresolved, not that the default tmux server should be
+used.
 `pr import --start-session` additionally establishes a blank shell-only
-session without attaching, for clients that provide their own ordinary tmux
+session without attaching, for clients that provide their own direct tmux
 presentation. It does not execute configured layouts or agent commands.
 Automation clients may pass `--expected-repository` and
 `--expected-registration` together to bind an import to the selected
@@ -784,9 +833,16 @@ match kwt's until repaired.
 
 Two rules keep external tools consistent with kwt:
 
-- **When the session already exists, attach only:** use `tmux attach-session -t
-<session_name>` (or `switch-client -t` from inside tmux). Attach-only commands
-  never create a bare session, so there is nothing to repair.
+- **When the session already exists, attach only:** for the canonical direct
+  endpoint on POSIX, unset `TMUX_TMPDIR`, then run
+  `tmux -L kwt attach-session -t <session_name>`.
+  Use the empty/default endpoint only when the immediately preceding Kwt JSON
+  result returned `tmux_attach_mode: "direct"` with an empty
+  `tmux_socket_name`. A protected result with an empty socket is unresolved and
+  must not be attached. From a client
+  on the same server, `switch-client -t <session_name>` is sufficient.
+  Attach-only commands never create a bare session, so there is nothing to
+  repair.
 - **If your tool creates the session itself, apply the equivalent bootstrap:**
   set `default-command` to `""` and add a session-scoped remove-marker
   (`set-environment -r <name>`) for each launcher variable listed above
@@ -801,6 +857,20 @@ already running, it re-applies the safe bootstrap subset (`default-command`
 plus the remove-markers — never construction or pane commands), so a session
 another tool created bare converges on consistent behavior for windows opened
 after that attach.
+
+The canonical endpoint ignores ambient `TMUX_TMPDIR`; this is why the manual
+commands above explicitly unset it. A remote client must follow the same rule
+as the remote Kwt process or it will address a different socket path.
+
+An external client must also sanitize every attach and reconnect environment;
+unsetting only `TMUX_TMPDIR` is insufficient because tmux can copy client
+variables named by `update-environment` into session state. Apply the same
+policy as Kwt's `AttachSanitizedEnviron`: remove every launcher variable listed
+above, Kwt's GitHub and fleet token variables, and the dynamically configured
+`fleet.token_env` name before executing tmux. This requirement applies to
+shared `direct` endpoints as well as protected ones. A client that cannot
+reproduce the current policy should delegate attachment to Kwt instead of
+launching tmux directly.
 
 PR imports use a stricter reuse boundary. Every import reports a deterministic,
 workspace-specific socket. `pr import --start-session` and `pr attach` create

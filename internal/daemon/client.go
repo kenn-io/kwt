@@ -170,7 +170,41 @@ func (c *Client) inventory(ctx context.Context, request kwt.Request) (kwt.Result
 		request,
 		&result,
 	)
-	return result, err
+	if err != nil {
+		return result, err
+	}
+	if err := validateInventoryAttachModes(result); err != nil {
+		return kwt.Result{}, service.NewError(
+			service.DaemonIncompatible,
+			"the running kwt daemon returned an unsupported tmux attachment mode",
+			false,
+			nil,
+			err,
+		)
+	}
+	return result, nil
+}
+
+func validateInventoryAttachModes(result kwt.Result) error {
+	groups := [][]kwt.Entry{
+		result.Snapshot.Entries,
+		result.Snapshot.LaunchEntries,
+	}
+	for _, entries := range groups {
+		for index, entry := range entries {
+			switch entry.TmuxAttachMode {
+			case models.TmuxAttachDirect, models.TmuxAttachProtected:
+				continue
+			default:
+				return fmt.Errorf(
+					"inventory entry %d has tmux attachment mode %q",
+					index,
+					entry.TmuxAttachMode,
+				)
+			}
+		}
+	}
+	return nil
 }
 
 func (c *Client) ApproveConfig(ctx context.Context, approval kwt.ConfigApproval) error {

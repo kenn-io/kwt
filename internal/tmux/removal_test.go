@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -91,15 +92,15 @@ func TestRemovalSessionInspectionFailsClosedWhenListedSessionDisappears(t *testi
 	assert.Contains(t, err.Error(), "inspect tmux sessions")
 }
 
-func TestOrdinaryNamedSocketRemovalUsesSharedServerScan(t *testing.T) {
-	var inspected *TmuxCommand
+func TestSharedServerNamedSocketRemovalUsesSharedServerScan(t *testing.T) {
+	var inspected []*TmuxCommand
 	guard := &removalSessionGuard{
 		command: "tmux",
 		inspect: func(
 			_ context.Context,
 			command *TmuxCommand,
 		) (string, string, error) {
-			inspected = command
+			inspected = append(inspected, command)
 			return removalInventoryOutput(removalSessionRow{
 				SessionName: "another-session",
 			}), "", nil
@@ -115,16 +116,94 @@ func TestOrdinaryNamedSocketRemovalUsesSharedServerScan(t *testing.T) {
 
 	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
 		SessionName:     "expected",
-		SocketName:      "team-server",
+		SocketName:      KWTServerSocketName,
 		SocketDirectory: "/srv/tmux",
 		Absent:          true,
 	})
 
 	require.NoError(t, err)
 	require.NotNil(t, lease)
-	require.NotNil(t, inspected)
-	assert.Equal(t, "team-server", inspected.socketName)
-	assert.Equal(t, "/srv/tmux", inspected.socketTempDir)
+	require.Len(t, inspected, 2)
+	assert.Equal(t, KWTServerSocketName, inspected[0].socketName)
+	assert.Empty(t, inspected[0].socketTempDir)
+	assert.Empty(t, inspected[1].socketName)
+	assert.Equal(t, "/srv/tmux", inspected[1].socketTempDir)
+}
+
+func TestSharedServerRemovalProbesKWTThenDefaultServerEndpoints(t *testing.T) {
+	var sockets []string
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspect: func(
+			_ context.Context,
+			command *TmuxCommand,
+		) (string, string, error) {
+			sockets = append(sockets, command.socketName)
+			return "", "no server running on test socket", errors.New("tmux exited")
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName: "workspace", SocketName: KWTServerSocketName, Absent: true,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, lease)
+	assert.Equal(t, []string{KWTServerSocketName, ""}, sockets)
+}
+
+func TestSharedServerRemovalDoesNotInheritAmbientDefaultTempDir(t *testing.T) {
+	t.Setenv("TMUX_TMPDIR", "/ambient/tmux")
+	var defaultEnvironment []string
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspect: func(
+			_ context.Context,
+			command *TmuxCommand,
+		) (string, string, error) {
+			if command.socketName == "" {
+				defaultEnvironment = command.newCmd(
+					context.Background(),
+					[]string{"list-sessions"},
+				).Env
+			}
+			return "", "no server running on test socket", errors.New("tmux exited")
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName: "workspace", SocketName: KWTServerSocketName, Absent: true,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, lease)
+	assert.False(t, slices.Contains(defaultEnvironment, "TMUX_TMPDIR=/ambient/tmux"))
+}
+
+func TestSharedServerRemovalRejectsLiveDefaultServerSessionAfterKWTAbsence(t *testing.T) {
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspect: func(
+			_ context.Context,
+			command *TmuxCommand,
+		) (string, string, error) {
+			if command.socketName == KWTServerSocketName {
+				return "", "no server running on test socket", errors.New("tmux exited")
+			}
+			return removalInventoryOutput(removalSessionRow{
+				SessionName: "workspace",
+			}), "", nil
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName: "workspace", SocketName: KWTServerSocketName, Absent: true,
+	})
+
+	assert.Nil(t, lease)
+	var conditionErr *RemovalSessionConditionError
+	require.ErrorAs(t, err, &conditionErr)
+	assert.Contains(t, conditionErr.Reason, "started after confirmation")
 }
 
 func TestRemovalFailsClosedOnMalformedWorkspaceInventory(t *testing.T) {
@@ -289,9 +368,9 @@ func TestRemovalRejectsGenerationMarkedSessionAfterWorktreeMove(t *testing.T) {
 	assert.Contains(t, conditionErr.Reason, "worktree")
 }
 
-func TestProtectedRemovalRejectsOrdinaryGenerationMarkedSessionAfterWorktreeMove(t *testing.T) {
+func TestProtectedRemovalRejectsSharedServerGenerationMarkedSessionAfterWorktreeMove(t *testing.T) {
 	const generation = "0123456789abcdef0123456789abcdef"
-	ordinaryInspections := 0
+	sharedServerInspections := 0
 	protectedInspections := 0
 	guard := &removalSessionGuard{
 		command: "tmux",
@@ -299,8 +378,8 @@ func TestProtectedRemovalRejectsOrdinaryGenerationMarkedSessionAfterWorktreeMove
 			_ context.Context,
 			command *TmuxCommand,
 		) (string, string, error) {
-			ordinaryInspections++
-			assert.Empty(t, command.socketName)
+			sharedServerInspections++
+			assert.Equal(t, KWTServerSocketName, command.socketName)
 			return removalInventoryOutput(removalSessionRow{
 				SessionName:         "kwt-wt-repo-topic-oldhash",
 				WorkspaceIdentity:   strings.Repeat("a", 64),
@@ -329,8 +408,8 @@ func TestProtectedRemovalRejectsOrdinaryGenerationMarkedSessionAfterWorktreeMove
 	assert.Nil(t, lease)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "worktree remains live")
-	assert.Equal(t, 1, ordinaryInspections)
-	assert.Zero(t, protectedInspections, "ordinary ownership must fail before protected probing")
+	assert.Equal(t, 1, sharedServerInspections)
+	assert.Zero(t, protectedInspections, "sharedServer ownership must fail before protected probing")
 }
 
 func TestRemovalFailsClosedOnUnmarkedKWTSessionAfterWorktreeMove(t *testing.T) {
@@ -434,7 +513,7 @@ func TestProtectedRemovalFailsClosedOnUnexpectedCanonicalTopology(t *testing.T) 
 	var inspected []*TmuxCommand
 	guard := &removalSessionGuard{
 		command: "tmux",
-		inspect: absentOrdinaryRemovalInspection,
+		inspect: absentSharedServerRemovalInspection,
 		inspectProtected: func(
 			_ context.Context,
 			command *TmuxCommand,
@@ -455,7 +534,7 @@ func TestProtectedRemovalFailsClosedOnUnexpectedCanonicalTopology(t *testing.T) 
 
 	assert.Nil(t, lease)
 	require.Error(t, err)
-	require.Len(t, inspected, 1, "indeterminate canonical topology must not fall through to legacy")
+	require.Len(t, inspected, 1, "indeterminate current topology must not fall through to the prior directory")
 	assert.Equal(t, "kwt-pr-protected", inspected[0].socketName)
 	assert.Empty(t, inspected[0].socketTempDir)
 }
@@ -465,7 +544,7 @@ func TestProtectedRemovalCommandsStripRequestProtectedNames(t *testing.T) {
 	inspections := 0
 	guard := &removalSessionGuard{
 		command: "tmux",
-		inspect: absentOrdinaryRemovalInspection,
+		inspect: absentSharedServerRemovalInspection,
 		inspectProtected: func(
 			_ context.Context,
 			command *TmuxCommand,
@@ -493,14 +572,14 @@ func TestProtectedRemovalCommandsStripRequestProtectedNames(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, lease)
-	assert.Equal(t, 2, inspections, "canonical and legacy endpoints must both be sanitized")
+	assert.Equal(t, 2, inspections, "current and prior endpoints must both be sanitized")
 }
 
-func TestProtectedRemovalChecksCanonicalBeforeLegacyEndpoint(t *testing.T) {
+func TestProtectedRemovalChecksCurrentBeforePriorSocketDirectory(t *testing.T) {
 	var inspected []*TmuxCommand
 	guard := &removalSessionGuard{
 		command: "tmux",
-		inspect: absentOrdinaryRemovalInspection,
+		inspect: absentSharedServerRemovalInspection,
 		inspectProtected: func(
 			_ context.Context,
 			command *TmuxCommand,
@@ -529,7 +608,42 @@ func TestProtectedRemovalChecksCanonicalBeforeLegacyEndpoint(t *testing.T) {
 	assert.Equal(t, "/tmp/legacy-tmux", inspected[1].socketTempDir)
 }
 
-func absentOrdinaryRemovalInspection(
+func TestProtectedRemovalPreservesPriorSharedServerSocketDirectory(t *testing.T) {
+	var sharedServer []*TmuxCommand
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspect: func(
+			_ context.Context,
+			command *TmuxCommand,
+		) (string, string, error) {
+			sharedServer = append(sharedServer, command)
+			return "", "no server running on /tmp/tmux/default", errors.New("tmux exited")
+		},
+		inspectProtected: func(
+			context.Context,
+			*TmuxCommand,
+			string,
+		) (ProtectedSessionState, error) {
+			return ProtectedSessionAbsent, nil
+		},
+	}
+
+	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+		SessionName:             "expected",
+		SocketName:              "kwt-pr-protected",
+		SocketDirectory:         "/tmp/legacy-tmux",
+		Absent:                  true,
+		ProtectedSocketTopology: true,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, lease)
+	require.Len(t, sharedServer, 2)
+	assert.Empty(t, sharedServer[0].socketTempDir)
+	assert.Equal(t, "/tmp/legacy-tmux", sharedServer[1].socketTempDir)
+}
+
+func absentSharedServerRemovalInspection(
 	context.Context,
 	*TmuxCommand,
 ) (string, string, error) {

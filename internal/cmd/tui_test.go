@@ -37,6 +37,19 @@ import (
 	"go.kenn.io/kwt/service"
 )
 
+func resolveStoppedWorkspaceSessions(
+	_ context.Context,
+	requests []tmux.WorkspaceEndpointRequest,
+) ([]tmux.WorkspaceSession, error) {
+	sessions := make([]tmux.WorkspaceSession, len(requests))
+	for index, request := range requests {
+		sessions[index] = tmux.WorkspaceSession{
+			Endpoint: testCanonicalSessionEndpoint(request.SessionName),
+		}
+	}
+	return sessions, nil
+}
+
 func TestTUICmdIsolatesFromCwdConfig(t *testing.T) {
 	require.NotNil(t, tuiCmd.PersistentPreRunE,
 		"tui must define its own PersistentPreRunE to bypass root's cwd merge")
@@ -157,7 +170,7 @@ func TestBuildTUIRowSkipsSessionNameWhenRepositoryInfoMissing(t *testing.T) {
 	}
 	status := &models.WorktreeStatus{Path: entry.Path, Branch: entry.Branch}
 
-	row := buildTUIRow(entry, status, map[string]bool{"": true})
+	row := buildTUIRow(entry, status, tmux.WorkspaceSession{})
 
 	assert.Equal(t, entry, row.Entry)
 	assert.Equal(t, status, row.Status)
@@ -173,14 +186,18 @@ func TestBuildTUIRowMarksLiveSessionWhenRepositoryInfoPresent(t *testing.T) {
 	}
 	status := &models.WorktreeStatus{Path: entry.Path, Branch: entry.Branch}
 
-	row := buildTUIRow(entry, status, map[string]bool{
-		"kwt-workspace-github-com-example-kwt-feature-": false,
-	})
+	endpoint := testCanonicalSessionEndpoint(
+		tmux.WorkspaceSessionName(entry.RepositoryInfo, entry.Branch, entry.Path),
+	)
+	row := buildTUIRow(entry, status, tmux.WorkspaceSession{Endpoint: endpoint})
 
 	assert.NotEmpty(t, row.SessionName)
 	assert.False(t, row.SessionLive)
 
-	row = buildTUIRow(entry, status, map[string]bool{row.SessionName: true})
+	row = buildTUIRow(entry, status, tmux.WorkspaceSession{
+		Endpoint: endpoint,
+		Live:     true,
+	})
 	assert.True(t, row.SessionLive)
 }
 
@@ -273,7 +290,7 @@ func TestTUIBackendListAndMergeFleetAreConcurrencySafe(t *testing.T) {
 	) (map[string]*models.WorktreeStatus, error) {
 		return nil, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	// Read cfg.Projects the way the manifest builder does during publish.
 	backend.readFleetState = func(ctx context.Context, cfg *models.Config) (fleet.FleetState, error) {
 		for _, project := range cfg.Projects {
@@ -333,7 +350,7 @@ func TestTUIBackendListIncludesLaunchRepositoryWorktrees(t *testing.T) {
 			launchEntry.Path: {Path: launchEntry.Path, Branch: launchEntry.Branch, IsCurrent: true},
 		}, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 
 	rows, _, err := backend.List(context.Background())
 
@@ -371,7 +388,7 @@ func TestTUIBackendListFastSkipsStatusCollection(t *testing.T) {
 		t.Fatal("fast listing must not collect Git status")
 		return nil, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 
 	rows, _, err := backend.ListFast(context.Background())
 
@@ -412,7 +429,7 @@ func TestTUIBackendListCollectsStatusForImportedWorktree(t *testing.T) {
 			},
 		}, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 
 	rows, _, err := backend.List(context.Background())
 
@@ -428,7 +445,7 @@ func TestTUIBackendListFastRunsIndependentDiscoveryConcurrently(t *testing.T) {
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, "/launch")
 	stubTUIProjectRegistration(backend)
-	started := make(chan string, 4)
+	started := make(chan string, 3)
 	release := make(chan struct{})
 	block := func(name string) {
 		started <- name
@@ -446,17 +463,14 @@ func TestTUIBackendListFastRunsIndependentDiscoveryConcurrently(t *testing.T) {
 		block("launch")
 		return nil, nil
 	}
-	backend.listSessions = func() ([]string, error) {
-		block("sessions")
-		return nil, nil
-	}
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	done := make(chan error, 1)
 	go func() {
 		_, _, err := backend.ListFast(context.Background())
 		done <- err
 	}()
 
-	for range 4 {
+	for range 3 {
 		select {
 		case <-started:
 		case <-time.After(2 * time.Second):
@@ -515,7 +529,7 @@ func TestTUIBackendListIncludesRegisteredProjectWorktrees(t *testing.T) {
 			projectEntry.Path: {Path: projectEntry.Path, Branch: projectEntry.Branch},
 		}, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 
 	rows, _, err := backend.List(context.Background())
 
@@ -558,7 +572,7 @@ func TestTUIBackendListPropagatesIncompleteRegisteredProjectInventory(
 	) ([]*discovery.GlobalWorktreeEntry, error) {
 		return nil, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 
 	rows, _, err := backend.ListFast(context.Background())
 
@@ -695,7 +709,7 @@ func TestTUIBackendMergeFleetIncludesRemoteOnlyFleetRows(t *testing.T) {
 			localEntry.Path: {Path: localEntry.Path, Branch: localEntry.Branch},
 		}, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	backend.readFleetState = func(context.Context, *models.Config) (fleet.FleetState, error) {
 		return fleet.FleetState{Rows: []fleet.FleetRow{
 			{
@@ -771,7 +785,7 @@ func TestTUIBackendMergeFleetDoesNotOfferSyncWithoutRegisteredProject(t *testing
 	) (map[string]*models.WorktreeStatus, error) {
 		return nil, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	backend.readFleetState = func(context.Context, *models.Config) (fleet.FleetState, error) {
 		return fleet.FleetState{Rows: []fleet.FleetRow{{
 			ProjectIdentity: "github.com/example/kwt",
@@ -836,7 +850,7 @@ func TestTUIBackendMergeFleetLocalPresenceComesFromLocalDiscovery(t *testing.T) 
 			localEntry.Path: {Path: localEntry.Path, Branch: localEntry.Branch},
 		}, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	backend.readFleetState = func(context.Context, *models.Config) (fleet.FleetState, error) {
 		return fleet.FleetState{Rows: []fleet.FleetRow{
 			{
@@ -941,7 +955,7 @@ func TestTUIBackendMergeFleetRendersFleetStatusFromLocalObservations(t *testing.
 			localEntry.Path: {Path: localEntry.Path, Branch: localEntry.Branch},
 		}, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	backend.readFleetState = func(context.Context, *models.Config) (fleet.FleetState, error) {
 		return fleet.FleetState{Rows: []fleet.FleetRow{
 			{
@@ -1041,7 +1055,7 @@ func TestTUIBackendMergeFleetMatchesLocalDetachedWorktreeToFleetRow(t *testing.T
 			detachedEntry.Path: {Path: detachedEntry.Path},
 		}, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	backend.readFleetState = func(context.Context, *models.Config) (fleet.FleetState, error) {
 		return fleet.FleetState{Rows: []fleet.FleetRow{{
 			ProjectIdentity: "github.com/example/kwt",
@@ -1093,7 +1107,7 @@ func TestTUIBackendListIncludesRegisteredProjectWithoutOrigin(t *testing.T) {
 			entries[0].Path: {Path: entries[0].Path, Branch: entries[0].Branch},
 		}, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 
 	rows, _, err := backend.List(context.Background())
 
@@ -1152,7 +1166,7 @@ func TestTUIBackendListPrefersRegisteredIdentityForGlobalLocalOnlyDuplicate(t *t
 			entries[0].Path: {Path: entries[0].Path, Branch: entries[0].Branch},
 		}, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 
 	rows, _, err := backend.List(context.Background())
 
@@ -1200,7 +1214,7 @@ func TestTUIBackendListRegistersLaunchRepositoryBestEffort(t *testing.T) {
 			launchEntry.Path: {Path: launchEntry.Path, Branch: launchEntry.Branch},
 		}, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 
 	rows, _, err := backend.List(context.Background())
 
@@ -1244,7 +1258,7 @@ func TestTUIBackendRegistersLaunchRepositoryOnceAcrossStagedLoad(t *testing.T) {
 	) (map[string]*models.WorktreeStatus, error) {
 		return nil, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 
 	_, _, err := backend.ListFast(context.Background())
 	require.NoError(t, err)
@@ -1289,7 +1303,7 @@ func TestTUIBackendListAddsLaunchRepositoryToInMemoryProjects(t *testing.T) {
 			launchEntry.Path: {Path: launchEntry.Path, Branch: launchEntry.Branch},
 		}, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 
 	rows, _, err := backend.List(context.Background())
 
@@ -1341,7 +1355,7 @@ func TestTUIBackendLaunchRegistrationReusesExistingProjectByPath(t *testing.T) {
 			launchEntry.Path: {Path: launchEntry.Path, Branch: launchEntry.Branch},
 		}, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 
 	_, _, err := backend.List(context.Background())
 
@@ -1757,8 +1771,14 @@ func TestTUIBackendRemoveWorktreeDelegatesToDaemon(t *testing.T) {
 	generation := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
 	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
 		Path: worktreePath, Branch: "daemon-tui-remove", Generation: generation,
-	}}
+	}, SessionName: "workspace"}
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	backend.liveEndpoints = func(
+		context.Context,
+		tmux.WorkspaceEndpointRequest,
+	) ([]tmux.SessionEndpoint, error) {
+		return nil, nil
+	}
 	var request kwt.RemovalRequest
 	backend.removeWorktree = func(
 		_ context.Context,
@@ -1779,10 +1799,302 @@ func TestTUIBackendRemoveWorktreeDelegatesToDaemon(t *testing.T) {
 	assert.DirExists(t, worktreePath, "only the daemon service may perform the mutation")
 }
 
+func TestTUIBackendRemoveWorktreeDoesNotGateMutationOnCleanupInspection(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "cleanup-inspection-remove")
+	runTUITestGit(t, repoPath, "worktree", "add", "-b", "cleanup-inspection-remove", worktreePath)
+	generation := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
+	row := dashboard.Row{
+		Entry: &discovery.GlobalWorktreeEntry{
+			Path: worktreePath, Branch: "cleanup-inspection-remove", Generation: generation,
+		},
+		SessionName: "kwt-wt-widget-cleanup-01234567",
+	}
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	removed := false
+	backend.removeWorktree = func(
+		_ context.Context,
+		request kwt.RemovalRequest,
+	) (kwt.RemovalResult, error) {
+		removed = true
+		return kwt.RemovalResult{Path: request.Path, WorktreeRemoved: true}, nil
+	}
+	backend.liveEndpoints = func(
+		context.Context,
+		tmux.WorkspaceEndpointRequest,
+	) ([]tmux.SessionEndpoint, error) {
+		return nil, errors.New("tmux inventory unavailable")
+	}
+
+	err := backend.RemoveWorktree(context.Background(), row, false)
+
+	assert.True(t, removed)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "tmux inventory unavailable")
+	assert.True(t, git.WorktreeWasRemoved(err),
+		"the TUI must refresh after removal even when cleanup inspection fails")
+}
+
+func TestTUIBackendDashboardKeepsRowsWhenOneSessionIsUnsafe(t *testing.T) {
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	backend.resolveSessions = bestEffortDashboardSessionResolver(func(
+		context.Context,
+		[]tmux.WorkspaceEndpointRequest,
+	) ([]tmux.WorkspaceSessionResolution, error) {
+		return []tmux.WorkspaceSessionResolution{
+			{
+				Session: tmux.WorkspaceSession{Endpoint: testCanonicalSessionEndpoint("stale")},
+				Err:     errors.New("session belongs to a different worktree generation"),
+			},
+			{
+				Session: tmux.WorkspaceSession{
+					Endpoint: testCanonicalSessionEndpoint("live"),
+					Live:     true,
+				},
+			},
+		}, nil
+	}, nil)
+	entries := []*discovery.GlobalWorktreeEntry{
+		{Path: "/work/stale", TmuxEndpoint: tmux.SessionEndpoint{SessionName: "stale"}},
+		{Path: "/work/live", TmuxEndpoint: tmux.SessionEndpoint{SessionName: "live"}},
+	}
+
+	sessions, _, err := backend.resolveDashboardSessions(context.Background(), entries, nil)
+
+	require.NoError(t, err)
+	require.Len(t, sessions, 2)
+	assert.Equal(t, testCanonicalSessionEndpoint("stale"), sessions[0].Endpoint)
+	assert.False(t, sessions[0].Live)
+	assert.Equal(t, testCanonicalSessionEndpoint("live"), sessions[1].Endpoint)
+	assert.True(t, sessions[1].Live)
+}
+
+func TestTUIBackendRemoveWorktreeKillsEveryMatchingEndpointAfterRemoval(t *testing.T) {
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "duplicate-session-remove")
+	runTUITestGit(t, repoPath, "worktree", "add", "-b", "duplicate-session-remove", worktreePath)
+	generation := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
+	sessionName := "kwt-wt-widget-duplicate-01234567"
+	row := dashboard.Row{
+		Entry: &discovery.GlobalWorktreeEntry{
+			Path: worktreePath, Branch: "duplicate-session-remove", Generation: generation,
+		},
+		SessionName:  sessionName,
+		SessionLive:  true,
+		TmuxEndpoint: testCanonicalSessionEndpoint(sessionName),
+	}
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	removed := false
+	backend.liveEndpoints = func(
+		_ context.Context,
+		request tmux.WorkspaceEndpointRequest,
+	) ([]tmux.SessionEndpoint, error) {
+		assert.True(t, removed, "cleanup discovery must not gate removal")
+		assert.Equal(t, sessionName, request.SessionName)
+		assert.Equal(t, worktreePath, request.WorkspacePath)
+		assert.Equal(t, generation, request.WorkspaceGeneration)
+		return []tmux.SessionEndpoint{
+			testCanonicalSessionEndpoint(sessionName),
+			{SessionName: sessionName},
+		}, nil
+	}
+	backend.removeWorktree = func(
+		_ context.Context,
+		request kwt.RemovalRequest,
+	) (kwt.RemovalResult, error) {
+		removed = true
+		return kwt.RemovalResult{Path: request.Path, WorktreeRemoved: true}, nil
+	}
+	var killed []tmux.SessionEndpoint
+	backend.killEndpoint = func(endpoint tmux.SessionEndpoint) error {
+		assert.True(t, removed, "sessions must remain live until removal succeeds")
+		killed = append(killed, endpoint)
+		return nil
+	}
+
+	err := backend.RemoveWorktree(context.Background(), row, false)
+
+	require.NoError(t, err)
+	assert.Equal(t, []tmux.SessionEndpoint{
+		testCanonicalSessionEndpoint(sessionName),
+		{SessionName: sessionName},
+	}, killed)
+}
+
+func TestTUIBackendRemoveWorktreeSweepsSessionsCreatedDuringRemoval(t *testing.T) {
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "racing-session-remove")
+	runTUITestGit(t, repoPath, "worktree", "add", "-b", "racing-session-remove", worktreePath)
+	generation := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
+	sessionName := "kwt-wt-widget-racing-01234567"
+	lateSessionName := "kwt-wt-widget-previous-89abcdef"
+	row := dashboard.Row{
+		Entry: &discovery.GlobalWorktreeEntry{
+			Path: worktreePath, Branch: "racing-session-remove", Generation: generation,
+		},
+		SessionName:  sessionName,
+		SessionLive:  true,
+		TmuxEndpoint: testCanonicalSessionEndpoint(sessionName),
+	}
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	removed := false
+	inspections := 0
+	backend.liveEndpoints = func(
+		_ context.Context,
+		request tmux.WorkspaceEndpointRequest,
+	) ([]tmux.SessionEndpoint, error) {
+		inspections++
+		assert.Equal(t, sessionName, request.SessionName)
+		assert.Equal(t, worktreePath, request.WorkspacePath)
+		assert.Equal(t, generation, request.WorkspaceGeneration)
+		if !removed {
+			return []tmux.SessionEndpoint{testCanonicalSessionEndpoint(sessionName)}, nil
+		}
+		return []tmux.SessionEndpoint{
+			testCanonicalSessionEndpoint(sessionName),
+			{SessionName: lateSessionName},
+		}, nil
+	}
+	backend.removeWorktree = func(
+		_ context.Context,
+		request kwt.RemovalRequest,
+	) (kwt.RemovalResult, error) {
+		removed = true
+		return kwt.RemovalResult{Path: request.Path, WorktreeRemoved: true}, nil
+	}
+	var killed []tmux.SessionEndpoint
+	backend.killEndpoint = func(endpoint tmux.SessionEndpoint) error {
+		killed = append(killed, endpoint)
+		return nil
+	}
+
+	err := backend.RemoveWorktree(context.Background(), row, false)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, inspections)
+	assert.Equal(t, []tmux.SessionEndpoint{
+		testCanonicalSessionEndpoint(sessionName),
+		{SessionName: lateSessionName},
+	}, killed)
+}
+
+func TestTUIBackendRemoveWorktreeCleansProtectedEndpointWithoutSharedLiveness(t *testing.T) {
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "protected-session-remove")
+	runTUITestGit(t, repoPath, "worktree", "add", "-b", "protected-session-remove", worktreePath)
+	generation := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
+	protectedEndpoint := tmux.SessionEndpoint{
+		SessionName: "kwt-wt-widget-protected-01234567",
+		SocketName:  "kwt-pr-protected-01234567",
+	}
+	row := dashboard.Row{
+		Entry: &discovery.GlobalWorktreeEntry{
+			Path:         worktreePath,
+			Branch:       "protected-session-remove",
+			Generation:   generation,
+			Protected:    true,
+			TmuxEndpoint: protectedEndpoint,
+		},
+		SessionName:  protectedEndpoint.SessionName,
+		SessionLive:  false,
+		TmuxEndpoint: protectedEndpoint,
+	}
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	backend.liveEndpoints = func(
+		context.Context,
+		tmux.WorkspaceEndpointRequest,
+	) ([]tmux.SessionEndpoint, error) {
+		return nil, nil
+	}
+	removed := false
+	backend.removeWorktree = func(
+		_ context.Context,
+		request kwt.RemovalRequest,
+	) (kwt.RemovalResult, error) {
+		removed = true
+		return kwt.RemovalResult{Path: request.Path, WorktreeRemoved: true}, nil
+	}
+	backend.killEndpoint = func(endpoint tmux.SessionEndpoint) error {
+		t.Fatalf("protected endpoint routed through ordinary cleanup: %+v", endpoint)
+		return nil
+	}
+	var killed []tmux.SessionEndpoint
+	backend.killProtectedEndpoint = func(
+		_ context.Context,
+		endpoint tmux.SessionEndpoint,
+	) error {
+		assert.True(t, removed)
+		killed = append(killed, endpoint)
+		return nil
+	}
+
+	err := backend.RemoveWorktree(context.Background(), row, false)
+
+	require.NoError(t, err)
+	assert.Equal(t, []tmux.SessionEndpoint{protectedEndpoint}, killed)
+}
+
+func TestTUIBackendRemoveWorktreeSkipsUnresolvedProtectedEndpoint(t *testing.T) {
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "unresolved-protected-remove")
+	runTUITestGit(t, repoPath, "worktree", "add", "-b", "unresolved-protected-remove", worktreePath)
+	generation := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
+	row := dashboard.Row{
+		Entry: &discovery.GlobalWorktreeEntry{
+			Path:       worktreePath,
+			Branch:     "unresolved-protected-remove",
+			Generation: generation,
+			Protected:  true,
+			TmuxEndpoint: tmux.SessionEndpoint{
+				SessionName: "kwt-wt-widget-unverified-01234567",
+			},
+		},
+		SessionName: "kwt-wt-widget-unverified-01234567",
+		TmuxEndpoint: tmux.SessionEndpoint{
+			SessionName: "kwt-wt-widget-unverified-01234567",
+		},
+	}
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	backend.liveEndpoints = func(
+		context.Context,
+		tmux.WorkspaceEndpointRequest,
+	) ([]tmux.SessionEndpoint, error) {
+		return nil, nil
+	}
+	backend.removeWorktree = func(
+		_ context.Context,
+		request kwt.RemovalRequest,
+	) (kwt.RemovalResult, error) {
+		return kwt.RemovalResult{Path: request.Path, WorktreeRemoved: true}, nil
+	}
+	backend.killEndpoint = func(endpoint tmux.SessionEndpoint) error {
+		t.Fatalf("unresolved protected row routed through ordinary cleanup: %+v", endpoint)
+		return nil
+	}
+	backend.killProtectedEndpoint = func(
+		_ context.Context,
+		endpoint tmux.SessionEndpoint,
+	) error {
+		t.Fatalf("unresolved protected row routed through protected cleanup: %+v", endpoint)
+		return nil
+	}
+
+	err := backend.RemoveWorktree(context.Background(), row, false)
+
+	require.NoError(t, err)
+}
+
 func useInProcessTUIRemoval(t *testing.T, backend *tuiBackend) {
 	t.Helper()
 	home, err := config.CanonicalHome()
 	require.NoError(t, err)
+	backend.liveEndpoints = func(
+		context.Context,
+		tmux.WorkspaceEndpointRequest,
+	) ([]tmux.SessionEndpoint, error) {
+		return nil, nil
+	}
 	backend.removeWorktree = kwt.NewRemovalService(
 		kwt.RemovalServiceOptions{Home: home},
 	).Remove
@@ -3195,7 +3507,7 @@ func TestTUIBackendRemovesLaunchWorktreeOutsideGlobalBase(t *testing.T) {
 	}
 	backend := newTUIBackendWithLaunchDir(cfg, repoPath)
 	useInProcessTUIRemoval(t, backend)
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	backend.registerProject = func(context.Context, models.Project) error { return nil }
 	backend.registerWorkspace = func(
 		workspace models.Workspace,
@@ -3317,7 +3629,7 @@ func TestTUIBackendMergeFleetReturnsHubWarnings(t *testing.T) {
 	) (map[string]*models.WorktreeStatus, error) {
 		return nil, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	backend.readFleetState = func(context.Context, *models.Config) (fleet.FleetState, error) {
 		return fleet.FleetState{Warnings: []fleet.Warning{{
 			Code:    "host_id_collision",
@@ -3353,7 +3665,16 @@ func TestTUIBackendListIncludesWorkspaceRows(t *testing.T) {
 		return nil, nil
 	}
 	liveSession := tmux.DirWorkspaceSessionName("old-name", dir)
-	backend.listSessions = func() ([]string, error) { return []string{liveSession}, nil }
+	backend.resolveSessions = func(
+		_ context.Context,
+		requests []tmux.WorkspaceEndpointRequest,
+	) ([]tmux.WorkspaceSession, error) {
+		require.Len(t, requests, 1)
+		return []tmux.WorkspaceSession{{
+			Endpoint: testCanonicalSessionEndpoint(liveSession),
+			Live:     true,
+		}}, nil
+	}
 
 	rows, _, err := backend.List(context.Background())
 
@@ -3385,7 +3706,7 @@ func TestTUIBackendAutoRegistersNonGitLaunchDir(t *testing.T) {
 	) (map[string]*models.WorktreeStatus, error) {
 		return nil, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	var registered []models.Workspace
 	backend.registerWorkspace = func(workspace models.Workspace) (models.Workspace, error) {
 		registered = append(registered, workspace)
@@ -3417,7 +3738,7 @@ func TestTUIBackendSkipsAutoRegisterWhenAlreadyRegisteredWithCustomName(t *testi
 	) (map[string]*models.WorktreeStatus, error) {
 		return nil, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	called := false
 	backend.registerWorkspace = func(workspace models.Workspace) (models.Workspace, error) {
 		called = true
@@ -3448,7 +3769,7 @@ func TestTUIBackendAutoRegistersLaunchWorkspaceOnlyOnce(t *testing.T) {
 	) (map[string]*models.WorktreeStatus, error) {
 		return nil, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	registrations := 0
 	backend.registerWorkspace = func(workspace models.Workspace) (models.Workspace, error) {
 		registrations++
@@ -3497,7 +3818,7 @@ func TestTUIBackendNeverRegistersWorkspaceForGitLaunchDir(t *testing.T) {
 	) (map[string]*models.WorktreeStatus, error) {
 		return nil, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	backend.registerWorkspace = func(workspace models.Workspace) (models.Workspace, error) {
 		t.Fatalf("a git launch directory must never be registered as a workspace, got %v", workspace)
 		return workspace, nil
@@ -3526,7 +3847,7 @@ func TestTUIBackendNeverAutoRegistersHomeDir(t *testing.T) {
 	) (map[string]*models.WorktreeStatus, error) {
 		return nil, nil
 	}
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	backend.registerWorkspace = func(workspace models.Workspace) (models.Workspace, error) {
 		t.Fatalf("home directory must never be auto-registered, got %v", workspace)
 		return workspace, nil
@@ -3600,10 +3921,86 @@ func TestTUIBackendCarriesConfiguredCredentialName(t *testing.T) {
 func TestTUIBackendAttachWorkspaceGuardRejectsEmptyRow(t *testing.T) {
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
 
-	err := backend.attachWorkspace(context.Background(), dashboard.Row{}, "", false, false)
+	err := backend.attachWorkspace(context.Background(), dashboard.Row{}, "", false)
 
 	require.Error(t, err)
 	assert.Equal(t, "no worktree selected", err.Error())
+}
+
+func TestTUIKillSessionUsesEndpointRetainedByRow(t *testing.T) {
+	want := tmux.SessionEndpoint{
+		SessionName: "workspace",
+	}
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	var killed tmux.SessionEndpoint
+	backend.killEndpoint = func(endpoint tmux.SessionEndpoint) error {
+		killed = endpoint
+		return nil
+	}
+
+	err := backend.KillSession(dashboard.Row{
+		SessionName:  "workspace",
+		SessionLive:  true,
+		TmuxEndpoint: want,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, want, killed)
+}
+
+func TestDashboardInventoryEntryClassifiesProtectionFromWireMode(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		socketName string
+		attachMode models.TmuxAttachMode
+		protected  bool
+	}{
+		{
+			name:       "protected mode with ordinary-looking socket",
+			socketName: tmux.KWTServerSocketName,
+			attachMode: models.TmuxAttachProtected,
+			protected:  true,
+		},
+		{
+			name:       "direct mode with protected-looking socket",
+			socketName: "kwt-pr-not-authoritative",
+			attachMode: models.TmuxAttachDirect,
+			protected:  false,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			entry := dashboardInventoryEntry(kwt.Entry{
+				SessionName:    "workspace",
+				TmuxSocketName: test.socketName,
+				TmuxAttachMode: test.attachMode,
+			})
+
+			assert.Equal(t, test.protected, entry.Protected)
+			assert.Equal(t, test.socketName, entry.TmuxEndpoint.SocketName)
+		})
+	}
+}
+
+func TestDashboardInventoryRowRetainsAdoptedEndpoint(t *testing.T) {
+	entry := kwt.Entry{
+		Path:           "/work/widget",
+		SessionName:    "workspace",
+		TmuxAttachMode: models.TmuxAttachDirect,
+	}
+
+	row := buildTUIRow(
+		dashboardInventoryEntry(entry),
+		&models.WorktreeStatus{},
+		tmux.WorkspaceSession{
+			Endpoint: tmux.SessionEndpoint{
+				SessionName: "workspace",
+			},
+			Live: true,
+		},
+	)
+
+	assert.Empty(t, row.TmuxEndpoint.SocketName)
+	assert.True(t, row.SessionLive)
 }
 
 func TestTUIWorktreeAttachCannotRaceGuardedRemoval(t *testing.T) {
@@ -3654,12 +4051,12 @@ func TestTUIWorktreeAttachCannotRaceGuardedRemoval(t *testing.T) {
 	ensureCalled := make(chan struct{}, 1)
 	attachCalled := make(chan struct{}, 1)
 	backend.ensureWorktree = func(
-		context.Context, string, string, string, models.Layout,
-	) error {
+		_ context.Context, session string, _ string, _ string, _ models.Layout,
+	) (tmux.SessionEndpoint, error) {
 		ensureCalled <- struct{}{}
-		return nil
+		return testCanonicalSessionEndpoint(session), nil
 	}
-	backend.attachSession = func(string, bool) error {
+	backend.attachSession = func(context.Context, tmux.SessionEndpoint) error {
 		attachCalled <- struct{}{}
 		return nil
 	}
@@ -3672,7 +4069,6 @@ func TestTUIWorktreeAttachCannotRaceGuardedRemoval(t *testing.T) {
 				RepositoryInfo: &url.RepositoryInfo{FullPath: repoPath},
 			}},
 			tmux.BlankLayoutName,
-			false,
 			false,
 		)
 	}()
@@ -3712,12 +4108,12 @@ func TestTUIWorktreeAttachUsesBranchObservedInsideLifecycleGuard(t *testing.T) {
 	var attachedSession string
 	backend.ensureWorktree = func(
 		_ context.Context, session string, _, _ string, _ models.Layout,
-	) error {
+	) (tmux.SessionEndpoint, error) {
 		ensuredSession = session
-		return nil
+		return testCanonicalSessionEndpoint(session), nil
 	}
-	backend.attachSession = func(session string, _ bool) error {
-		attachedSession = session
+	backend.attachSession = func(_ context.Context, endpoint tmux.SessionEndpoint) error {
+		attachedSession = endpoint.SessionName
 		return nil
 	}
 	originalBeforeAcquire := beforeProjectGuardAcquire
@@ -3739,7 +4135,6 @@ func TestTUIWorktreeAttachUsesBranchObservedInsideLifecycleGuard(t *testing.T) {
 		}},
 		tmux.BlankLayoutName,
 		false,
-		false,
 	)
 
 	require.NoError(t, err)
@@ -3757,17 +4152,17 @@ func TestTUIBackendAttachAcknowledgesRemoteSourceBeforeWorkspaceLaunch(t *testin
 		return nil
 	}
 	launched := false
-	backend.ensureAndAttach = func(
-		context.Context,
-		string,
-		string,
-		models.Layout,
-		bool,
-	) error {
+	backend.ensureWorkspace = func(
+		_ context.Context,
+		session string,
+		_ string,
+		_ models.Layout,
+	) (tmux.SessionEndpoint, error) {
 		launched = true
 		assert.Equal(t, workspacePath, acknowledged)
-		return nil
+		return testCanonicalSessionEndpoint(session), nil
 	}
+	backend.attachSession = func(context.Context, tmux.SessionEndpoint) error { return nil }
 
 	err := backend.attachWorkspace(
 		context.Background(),
@@ -3776,7 +4171,6 @@ func TestTUIBackendAttachAcknowledgesRemoteSourceBeforeWorkspaceLaunch(t *testin
 			Path: workspacePath,
 		}},
 		tmux.BlankLayoutName,
-		false,
 		false,
 	)
 
@@ -3801,15 +4195,14 @@ func TestTUIBackendRefusesProtectedPullRequestWorkspace(t *testing.T) {
 	))
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
 	called := false
-	backend.ensureAndAttach = func(
+	backend.ensureWorkspace = func(
 		context.Context,
 		string,
 		string,
 		models.Layout,
-		bool,
-	) error {
+	) (tmux.SessionEndpoint, error) {
 		called = true
-		return nil
+		return tmux.SessionEndpoint{}, nil
 	}
 
 	err := backend.attachWorkspace(
@@ -3821,7 +4214,6 @@ func TestTUIBackendRefusesProtectedPullRequestWorkspace(t *testing.T) {
 			},
 		},
 		tmux.BlankLayoutName,
-		false,
 		false,
 	)
 
@@ -3843,25 +4235,23 @@ func TestTUIBackendAttachWorkspacePassesWorkspaceRowToRunner(t *testing.T) {
 
 	var gotSession, gotRoot string
 	var gotLayout models.Layout
-	var gotInsideTmux bool
-	backend.ensureAndAttach = func(
-		ctx context.Context,
+	backend.ensureWorkspace = func(
+		_ context.Context,
 		session, root string,
 		layout models.Layout,
-		insideTmux bool,
-	) error {
+	) (tmux.SessionEndpoint, error) {
 		gotSession, gotRoot = session, root
-		gotLayout, gotInsideTmux = layout, insideTmux
-		return nil
+		gotLayout = layout
+		return testCanonicalSessionEndpoint(session), nil
 	}
+	backend.attachSession = func(context.Context, tmux.SessionEndpoint) error { return nil }
 
-	err := backend.attachWorkspace(context.Background(), row, tmux.BlankLayoutName, false, false)
+	err := backend.attachWorkspace(context.Background(), row, tmux.BlankLayoutName, false)
 
 	require.NoError(t, err)
 	assert.Equal(t, tmux.DirWorkspaceSessionName("notes", row.Workspace.Path), gotSession)
 	assert.Equal(t, row.Workspace.Path, gotRoot)
 	assert.Equal(t, tmux.BlankLayout(), gotLayout)
-	assert.False(t, gotInsideTmux)
 	assert.Equal(t, before, defaultTmuxSessions(t),
 		"the stubbed command-layer test must not add default-server tmux sessions")
 }
@@ -4015,7 +4405,7 @@ func TestTUIBackendSerializesUnregisterWithFullLoad(t *testing.T) {
 	backend.discoverGlobalWorktrees = noEntries
 	backend.discoverProjectWorktrees = noEntries
 	backend.discoverLaunchWorktrees = noEntries
-	backend.listSessions = func() ([]string, error) { return nil, nil }
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	backend.unregisterWorkspace = func(string) error { return nil }
 
 	collecting := make(chan struct{})

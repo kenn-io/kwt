@@ -55,14 +55,22 @@ the same layout and session without attaching for another client:
 ```sh
 kwt open ~/notes
 kwt open ~/notes --start-session
+kwt open ~/notes --start-session --json
 ```
 
+New directory sessions are created on the dedicated `kwt` tmux server. A
+verified matching session already running on the default server is temporarily
+reused during rollout. The `--start-session --json` result is authoritative
+for the immediately following attachment: `tmux_socket_name` selects `kwt` or
+the adopted default endpoint, and `tmux_attach_mode` is `direct`. A stopped
+workspace reports its intended `kwt` endpoint in inventory.
+
 For inventory clients, `kwt workspace list --json` returns `name`, canonical
-absolute `path`, effective `session_name`, and `session_live` for each entry.
-It returns `[]` when nothing is registered. If a workspace is renamed while a
-matching session is still live, the effective session name remains the live
-name until that session exits; otherwise it is the canonical name kwt will use
-for the next launch.
+absolute `path`, effective `session_name`, `session_live`, `tmux_socket_name`,
+and `tmux_attach_mode` for each entry. It returns `[]` when nothing is
+registered. If a workspace is renamed while a matching session is still live,
+the effective session name remains the live name until that session exits;
+otherwise it is the canonical name kwt will use for the next launch.
 
 ## Scope
 

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/kwt/pkg/models"
 )
 
 type ErrorCode string
@@ -96,14 +98,17 @@ type PullRequest struct {
 }
 
 type Workspace struct {
-	ID             string `json:"id"`
-	Repository     string `json:"repository"`
-	Branch         string `json:"branch"`
-	Path           string `json:"path"`
-	Generation     string `json:"generation,omitempty"`
-	State          string `json:"state"`
-	SessionName    string `json:"session_name"`
-	TmuxSocketName string `json:"tmux_socket_name,omitempty"`
+	ID          string `json:"id"`
+	Repository  string `json:"repository"`
+	Branch      string `json:"branch"`
+	Path        string `json:"path"`
+	Generation  string `json:"generation,omitempty"`
+	State       string `json:"state"`
+	SessionName string `json:"session_name"`
+	// TmuxSocketName is empty when protection is known but repository identity
+	// is insufficient to publish an attachable endpoint.
+	TmuxSocketName string                `json:"tmux_socket_name,omitempty"`
+	TmuxAttachMode models.TmuxAttachMode `json:"tmux_attach_mode"`
 	partialCleanup *workspacePartialCleanup
 	// preserveOnImportError means Kit could not prove that cleanup was safe.
 	// Other post-creation failures retain rollback metadata and are cleaned up.

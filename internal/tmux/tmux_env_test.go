@@ -9,6 +9,26 @@ import (
 	"testing"
 )
 
+func newRemovalTmuxCommand(command string, condition RemovalSessionCondition) *TmuxCommand {
+	stripNames := removalStripNames(condition)
+	if condition.SocketName != "" {
+		if condition.SocketDirectory != "" {
+			return NewTmuxCommandForSocketInTempDirWithStripNames(
+				command,
+				condition.SocketName,
+				condition.SocketDirectory,
+				stripNames,
+			)
+		}
+		return NewTmuxCommandForSocketWithStripNames(
+			command, condition.SocketName, stripNames,
+		)
+	}
+	tmuxCommand := NewTmuxCommandWithStripNames(command, stripNames)
+	tmuxCommand.socketTempDir = condition.SocketDirectory
+	return tmuxCommand
+}
+
 // TestNewCmdSanitizesEnvironment pins the exec seam every TmuxCommand method
 // funnels through (newCmd): the *exec.Cmd it builds carries a sanitized copy
 // of the process environment, not the raw os.Environ(), so a tmux server
@@ -364,6 +384,39 @@ func TestProtectedAttachStripsParentTmuxIdentity(t *testing.T) {
 	}
 }
 
+func TestDirectNestedAttachStripsParentIdentityWithoutProtectedFlag(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux-501/default,123,0")
+	t.Setenv("TMUX_PANE", "%7")
+	t.Setenv("UNRELATED_VAR", "keep-me")
+
+	tc := NewTmuxCommandForSocketWithStripNames(
+		"tmux",
+		KWTServerSocketName,
+		nil,
+	)
+	cmd := tc.attachSessionNestedCmd(context.Background(), "workspace")
+
+	want := []string{
+		"tmux", "-L", KWTServerSocketName,
+		"attach-session", "-t", "workspace",
+	}
+	if !slices.Equal(cmd.Args, want) {
+		t.Fatalf("direct nested attach args = %v, want %v", cmd.Args, want)
+	}
+	foundUnrelated := false
+	for _, entry := range cmd.Env {
+		if hasEnvName(entry, "TMUX") || hasEnvName(entry, "TMUX_PANE") {
+			t.Fatalf("direct nested attach leaked parent identity: %v", cmd.Env)
+		}
+		if hasEnvName(entry, "UNRELATED_VAR") {
+			foundUnrelated = true
+		}
+	}
+	if !foundUnrelated {
+		t.Fatalf("direct nested attach dropped unrelated environment: %v", cmd.Env)
+	}
+}
+
 func TestNamedSocketCommandsIgnoreAmbientTmuxTempDirectory(t *testing.T) {
 	t.Setenv("TMUX_TMPDIR", "/tmp/caller-specific-tmux")
 
@@ -427,7 +480,7 @@ func TestExternalAttachReplacesCurrentProcess(t *testing.T) {
 		wantGone []string
 	}{
 		{
-			name: "ordinary",
+			name: "direct",
 			attach: func(tc *TmuxCommand) error {
 				return tc.AttachSession("workspace")
 			},

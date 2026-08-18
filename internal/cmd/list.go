@@ -116,6 +116,6 @@ func listedWorktree(entry kwt.Entry) models.Worktree {
 		Path: entry.Path, Branch: entry.Branch, CommitHash: entry.CommitHash,
 		IsMain: entry.IsMain, CreatedAt: entry.CreatedAt, Generation: entry.Generation,
 		Repository: entry.Repository.FullPath, SessionName: entry.SessionName,
-		TmuxSocketName: entry.TmuxSocketName,
+		TmuxSocketName: entry.TmuxSocketName, TmuxAttachMode: entry.TmuxAttachMode,
 	}
 }

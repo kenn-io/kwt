@@ -25,6 +25,7 @@ func runInventoryCommand(
 	args ...string,
 ) ([]byte, []byte, error) {
 	t.Helper()
+	installInventoryTmuxFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, binary, args...)
@@ -38,6 +39,27 @@ func runInventoryCommand(
 		return stdout.Bytes(), stderr.Bytes(), ctx.Err()
 	}
 	return stdout.Bytes(), stderr.Bytes(), err
+}
+
+func installInventoryTmuxFixture(t *testing.T) {
+	t.Helper()
+	if os.Getenv("KWT_TEST_TMUX_FIXTURE_DIR") != "" {
+		return
+	}
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	require.NoError(t, err)
+	directory := t.TempDir()
+	name := "tmux"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	path := filepath.Join(directory, name)
+	command := exec.Command("go", "build", "-o", path, "./internal/cmd/testdata/tmuxfixture")
+	command.Dir = root
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+	t.Setenv("KWT_TEST_TMUX_FIXTURE_DIR", directory)
+	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func buildDaemonFixture(t *testing.T) string {

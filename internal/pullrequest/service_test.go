@@ -18,6 +18,8 @@ import (
 	"go.kenn.io/kwt/internal/template"
 	"go.kenn.io/kwt/internal/tmux"
 	urlutil "go.kenn.io/kwt/internal/url"
+	"go.kenn.io/kwt/internal/utils"
+	"go.kenn.io/kwt/pkg/models"
 )
 
 func testProject() Project {
@@ -325,7 +327,9 @@ func TestListMarksExistingImport(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.True(t, got[0].Imported)
-	assert.Equal(t, &workspace, got[0].Workspace)
+	want := workspace
+	want.TmuxAttachMode = models.TmuxAttachProtected
+	assert.Equal(t, &want, got[0].Workspace)
 }
 
 func TestImportPersistsWorkspaceGenerationInProvenance(t *testing.T) {
@@ -485,7 +489,9 @@ func TestListRecognizesLegacyCasedProvenance(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.True(t, got[0].Imported)
-	assert.Equal(t, &workspace, got[0].Workspace)
+	want := workspace
+	want.TmuxAttachMode = models.TmuxAttachProtected
+	assert.Equal(t, &want, got[0].Workspace)
 }
 
 func TestListRecognizesTransferredRepositoryProvenance(t *testing.T) {
@@ -525,7 +531,9 @@ func TestListRecognizesTransferredRepositoryProvenance(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.True(t, got[0].Imported)
-	assert.Equal(t, &workspace, got[0].Workspace)
+	want := workspace
+	want.TmuxAttachMode = models.TmuxAttachProtected
+	assert.Equal(t, &want, got[0].Workspace)
 }
 
 func TestImportSameRepositoryUsesMatchingRemoteAndCanonicalName(t *testing.T) {
@@ -688,6 +696,7 @@ func TestImportPreservesLegacyProtectedWorkspaceEndpoint(t *testing.T) {
 	assert.Equal(t, recordedPath, listed[0].Workspace.Path)
 	assert.Equal(t, legacyName, listed[0].Workspace.SessionName)
 	assert.Equal(t, legacySocket, listed[0].Workspace.TmuxSocketName)
+	assert.Equal(t, models.TmuxAttachProtected, listed[0].Workspace.TmuxAttachMode)
 
 	result, err := service.Import(context.Background(), testProject(), pr.ID)
 	require.NoError(t, err)
@@ -695,10 +704,36 @@ func TestImportPreservesLegacyProtectedWorkspaceEndpoint(t *testing.T) {
 	assert.Equal(t, recordedPath, result.Workspace.Path)
 	assert.Equal(t, legacyName, result.Workspace.SessionName)
 	assert.Equal(t, legacySocket, result.Workspace.TmuxSocketName)
+	assert.Equal(t, models.TmuxAttachProtected, result.Workspace.TmuxAttachMode)
 	assert.Equal(t, recordedPath, store.records[pr.ID].Workspace.Path)
 	assert.Equal(t, legacyName, store.records[pr.ID].Workspace.SessionName)
 	assert.Equal(t, legacySocket, store.records[pr.ID].Workspace.TmuxSocketName)
+	assert.Equal(t, models.TmuxAttachProtected, store.records[pr.ID].Workspace.TmuxAttachMode)
 	assert.Zero(t, backend.createCalls)
+}
+
+func TestMatchingProvenanceWorkspaceProtectsUnrecognizedSessionName(t *testing.T) {
+	live := Workspace{
+		Path: "/worktrees/widget/pr-41", Branch: "pr-41",
+		Generation: "0123456789abcdef0123456789abcdef",
+	}
+	record := Provenance{
+		Repository: "github.com/acme/widget",
+		Project:    testProject(),
+		Workspace: Workspace{
+			Path: live.Path, Branch: live.Branch, Generation: live.Generation,
+			SessionName: "unrecognized-session",
+		},
+	}
+
+	got, ok := matchingProvenanceWorkspace(
+		map[string]Workspace{utils.CanonicalPath(live.Path): live},
+		record,
+	)
+
+	require.True(t, ok)
+	assert.Equal(t, models.TmuxAttachProtected, got.TmuxAttachMode)
+	assert.Empty(t, got.TmuxSocketName)
 }
 
 func TestImportDoesNotReturnExistingWorkspaceWhenBranchDiffers(t *testing.T) {
@@ -880,7 +915,9 @@ func TestImportMigratesTransferredRepositoryProvenance(t *testing.T) {
 	}, migrated.RepositoryAliases)
 	assert.Equal(t, testProject().Identity, migrated.Project.Identity)
 	assert.Equal(t, pr.Source.Repository.Identity, migrated.SourceRepo)
-	assert.Equal(t, workspace, migrated.Workspace)
+	wantWorkspace := workspace
+	wantWorkspace.TmuxAttachMode = models.TmuxAttachProtected
+	assert.Equal(t, wantWorkspace, migrated.Workspace)
 }
 
 func TestImportMigratesConsecutiveRepositoryTransfers(t *testing.T) {

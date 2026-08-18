@@ -423,6 +423,7 @@ func TestAnnotateProtectedSocketsPreservesVerifiedPersistedEndpoint(t *testing.T
 				Path: path, Branch: branch, Generation: generation,
 				Repository:  Repository{FullPath: "github.com/acme/widget"},
 				SessionName: derived,
+				SessionLive: true,
 			}}
 
 			err := (&currentSource{home: home}).annotateProtectedSockets(
@@ -432,8 +433,172 @@ func TestAnnotateProtectedSocketsPreservesVerifiedPersistedEndpoint(t *testing.T
 			require.NoError(t, err)
 			assert.Equal(t, test.wantName, entries[0].SessionName)
 			assert.Equal(t, test.wantSocket, entries[0].TmuxSocketName)
+			assert.Equal(t, models.TmuxAttachProtected, entries[0].TmuxAttachMode)
+			assert.False(t, entries[0].SessionLive,
+				"shared-server liveness must not be retained for a protected endpoint")
 		})
 	}
+}
+
+func TestAnnotateWorkspaceEndpointsUsesCanonicalStateWhenTmuxIsUnavailable(t *testing.T) {
+	options := tmux.WorkspaceSessionsOptions{Command: "kwt-test-missing-tmux-binary"}
+	source := &currentSource{
+		workspaceSessions: &options,
+	}
+	entries := []Entry{{
+		Path: "/work/widget", SessionName: "kwt-wt-widget-main-01234567",
+	}}
+
+	_, err := source.annotateWorkspaceEndpoints(
+		context.Background(), testExpansion(t), nil, entries, nil,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, tmux.KWTServerSocketName, entries[0].TmuxSocketName)
+	assert.Equal(t, models.TmuxAttachDirect, entries[0].TmuxAttachMode)
+}
+
+func TestAnnotateWorkspaceEndpointsPublishesCanonicalAndAdoptedState(t *testing.T) {
+	source := &currentSource{
+		resolveWorkspaceSessions: func(
+			_ context.Context,
+			_ tmux.WorkspaceSessionsOptions,
+			requests []tmux.WorkspaceEndpointRequest,
+		) ([]tmux.WorkspaceSessionResolution, error) {
+			require.Len(t, requests, 2)
+			return []tmux.WorkspaceSessionResolution{
+				{Session: tmux.WorkspaceSession{Endpoint: tmux.SessionEndpoint{
+					SessionName: requests[0].SessionName,
+					SocketName:  tmux.KWTServerSocketName,
+				}}},
+				{
+					Session: tmux.WorkspaceSession{Endpoint: tmux.SessionEndpoint{
+						SessionName: requests[1].SessionName,
+					},
+						Live: true,
+					},
+				},
+			}, nil
+		},
+	}
+	entries := []Entry{
+		{Path: "/work/one", SessionName: "one"},
+		{Path: "/work/two", SessionName: "two"},
+	}
+
+	_, err := source.annotateWorkspaceEndpoints(
+		context.Background(), testExpansion(t), nil, entries, nil,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, tmux.KWTServerSocketName, entries[0].TmuxSocketName)
+	assert.Equal(t, models.TmuxAttachDirect, entries[0].TmuxAttachMode)
+	assert.Empty(t, entries[1].TmuxSocketName)
+	assert.Equal(t, models.TmuxAttachDirect, entries[1].TmuxAttachMode)
+	assert.True(t, entries[1].SessionLive)
+}
+
+func TestAnnotateWorkspaceEndpointsDegradesOnlyUnsafeEntry(t *testing.T) {
+	source := &currentSource{
+		resolveWorkspaceSessions: func(
+			_ context.Context,
+			_ tmux.WorkspaceSessionsOptions,
+			requests []tmux.WorkspaceEndpointRequest,
+		) ([]tmux.WorkspaceSessionResolution, error) {
+			require.Len(t, requests, 2)
+			return []tmux.WorkspaceSessionResolution{
+				{
+					Session: tmux.WorkspaceSession{Endpoint: tmux.SessionEndpoint{
+						SessionName: requests[0].SessionName,
+						SocketName:  tmux.KWTServerSocketName,
+					}},
+					Err: &tmux.SessionSafetyError{Reason: "stale generation"},
+				},
+				{Session: tmux.WorkspaceSession{
+					Endpoint: tmux.SessionEndpoint{SessionName: requests[1].SessionName},
+					Live:     true,
+				}},
+			}, nil
+		},
+	}
+	entries := []Entry{
+		{Path: "/work/one", SessionName: "one"},
+		{Path: "/work/two", SessionName: "two"},
+	}
+
+	notes, err := source.annotateWorkspaceEndpoints(
+		context.Background(), testExpansion(t), nil, entries, nil,
+	)
+
+	require.NoError(t, err)
+	require.Len(t, notes, 1)
+	assert.Equal(t, "tmux_endpoint_degraded", notes[0].Code)
+	assert.Equal(t, "/work/one", notes[0].Path)
+	assert.Contains(t, notes[0].Message, "stale generation")
+	assert.Equal(t, tmux.KWTServerSocketName, entries[0].TmuxSocketName)
+	assert.Equal(t, models.TmuxAttachDirect, entries[0].TmuxAttachMode)
+	assert.Empty(t, entries[1].TmuxSocketName)
+	assert.Equal(t, models.TmuxAttachDirect, entries[1].TmuxAttachMode)
+}
+
+func TestAnnotateWorkspaceEndpointsPublishesResolverDiagnostic(t *testing.T) {
+	source := &currentSource{
+		resolveWorkspaceSessions: func(
+			_ context.Context,
+			options tmux.WorkspaceSessionsOptions,
+			requests []tmux.WorkspaceEndpointRequest,
+		) ([]tmux.WorkspaceSessionResolution, error) {
+			require.NotNil(t, options.ReportDiagnostic)
+			options.ReportDiagnostic(errors.New("default tmux server unavailable"))
+			return []tmux.WorkspaceSessionResolution{{
+				Session: tmux.WorkspaceSession{Endpoint: tmux.SessionEndpoint{
+					SessionName: requests[0].SessionName,
+					SocketName:  tmux.KWTServerSocketName,
+				}},
+			}}, nil
+		},
+	}
+	entries := []Entry{{Path: "/work/widget", SessionName: "workspace"}}
+
+	notes, err := source.annotateWorkspaceEndpoints(
+		context.Background(), testExpansion(t), nil, entries, nil,
+	)
+
+	require.NoError(t, err)
+	require.Len(t, notes, 1)
+	assert.Equal(t, "tmux_lookup_degraded", notes[0].Code)
+	assert.Empty(t, notes[0].Path)
+	assert.Contains(t, notes[0].Message, "default tmux server unavailable")
+}
+
+func TestAnnotateWorkspaceEndpointsTreatsRequestTempDirAsExplicitlyUnset(t *testing.T) {
+	expansion := testExpansion(t)
+	delete(expansion.Environment, normalizedEnvironmentName("TMUX_TMPDIR"))
+	var captured tmux.WorkspaceSessionsOptions
+	source := &currentSource{
+		resolveWorkspaceSessions: func(
+			_ context.Context,
+			options tmux.WorkspaceSessionsOptions,
+			requests []tmux.WorkspaceEndpointRequest,
+		) ([]tmux.WorkspaceSessionResolution, error) {
+			captured = options
+			return []tmux.WorkspaceSessionResolution{{
+				Session: tmux.WorkspaceSession{Endpoint: tmux.SessionEndpoint{
+					SessionName: requests[0].SessionName,
+					SocketName:  tmux.KWTServerSocketName,
+				}},
+			}}, nil
+		},
+	}
+	entries := []Entry{{Path: "/work/widget", SessionName: "workspace"}}
+
+	_, err := source.annotateWorkspaceEndpoints(
+		context.Background(), expansion, nil, entries, nil,
+	)
+
+	require.NoError(t, err)
+	assert.True(t, captured.DefaultServerTempDirSet)
+	assert.Empty(t, captured.DefaultServerTempDir)
 }
 
 func TestSourceSeparatesLaunchInventoryFromDashboardEntries(t *testing.T) {

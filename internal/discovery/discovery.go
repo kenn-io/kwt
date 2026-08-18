@@ -21,14 +21,20 @@ import (
 
 // GlobalWorktreeEntry represents a discovered worktree.
 type GlobalWorktreeEntry struct {
-	RepositoryURL  string              // Full repository URL
-	RepositoryInfo *url.RepositoryInfo // Parsed repository information
-	Branch         string
-	Path           string
-	CommitHash     string
-	IsMain         bool
-	CreatedAt      time.Time // Worktree directory modification time
-	Generation     string    // Durable worktree registration identity
+	RepositoryURL   string              // Full repository URL
+	RepositoryInfo  *url.RepositoryInfo // Parsed repository information
+	Branch          string
+	Path            string
+	CommitHash      string
+	IsMain          bool
+	CreatedAt       time.Time // Worktree directory modification time
+	Generation      string    // Durable worktree registration identity
+	TmuxEndpoint    tmux.SessionEndpoint
+	TmuxSessionLive bool // Liveness from the same observation as TmuxEndpoint.
+	TmuxResolved    bool // Inventory supplied endpoint and liveness; do not probe again.
+	// Protected is derived from the inventory attachment policy. Socket names
+	// are addresses and must not be used to infer workspace protection.
+	Protected bool
 }
 
 type worktreeCandidate struct {

@@ -102,8 +102,15 @@ func validateCurrentRemovalSessionTarget(
 	if err != nil {
 		return err
 	}
+	// compat(kag1): default-server adoption
+	expectedSocketDirectory := removalSocketDirectory(expansion)
+	if condition.SocketDirectory != expectedSocketDirectory {
+		return changedRemovalSessionTarget()
+	}
 	if protected == nil {
-		if condition.SessionName != expectedSession {
+		// compat(kag1): default-server adoption
+		if condition.SessionName != expectedSession ||
+			(condition.SocketName != "" && condition.SocketName != tmux.KWTServerSocketName) {
 			return changedRemovalSessionTarget()
 		}
 		return nil
@@ -111,15 +118,16 @@ func validateCurrentRemovalSessionTarget(
 	if protected.branch != branch {
 		return changedRemovalSessionTarget()
 	}
-	legacySocketDirectory := expansion.Environment[normalizedEnvironmentName("TMUX_TMPDIR")]
-	validSocketDirectory := condition.SocketDirectory == "" ||
-		(legacySocketDirectory != "" && condition.SocketDirectory == legacySocketDirectory)
 	if condition.SessionName != protected.session ||
-		condition.SocketName != protected.socketName ||
-		!validSocketDirectory {
+		condition.SocketName != protected.socketName {
 		return changedRemovalSessionTarget()
 	}
 	return nil
+}
+
+// compat(kag1): default-server adoption
+func removalSocketDirectory(expansion ExpansionContext) string {
+	return expansion.Environment[normalizedEnvironmentName("TMUX_TMPDIR")]
 }
 
 func changedRemovalSessionTarget() error {

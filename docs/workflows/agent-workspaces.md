@@ -38,6 +38,24 @@ For long-running agent work, keep one branch per worktree, one tmux workspace pe
 branch, and let `kwt status` show which branches are dirty, ahead, behind, or
 quiet.
 
+Kwt keeps workspaces and standalone `kwt tmux` jobs on a dedicated
+tmux server named `kwt`. On POSIX systems, inspect it manually with:
+
+```sh
+env -u TMUX_TMPDIR tmux -L kwt list-sessions
+```
+
+Kwt temporarily adopts a verified matching session on the default
+server during rollout; if both endpoints contain a valid match, the dedicated
+server wins. `kwt tmux list` shows `[kwt]` or `[default]` for this reason.
+Mixed old and new Kwt binaries may still create parallel same-name sessions,
+so cooperating automation should be upgraded together.
+
+Opening a workspace from a client on another tmux server creates a nested
+client after removing the outer `TMUX` and `TMUX_PANE` selectors. Detach to
+return to the outer server. If both clients share the default prefix, send the
+prefix twice to address the inner client.
+
 ## Cross-project steering
 
 The dashboard is project-aware. Use `P` to set the active project perspective
