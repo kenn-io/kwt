@@ -84,6 +84,46 @@ func TestRunClientProcessPreservesInteractiveTerminalJobControl(t *testing.T) {
 	assert.Equal(t, "interactive input\n", string(output))
 }
 
+func TestRunClientProcessSuspendsPipelineSiblings(t *testing.T) {
+	resultPath := t.TempDir() + "/pipeline"
+	command := exec.Command(os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
+	command.Env = append(
+		os.Environ(),
+		interactiveClientProcessHelper+"=pipeline-parent",
+		interactiveClientProcessResult+"="+resultPath,
+	)
+	terminal, err := pty.Start(command)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = terminal.Close()
+		if command.Process != nil {
+			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+		}
+	})
+	parentGroupID := waitForProcessGroupFile(t, resultPath+".parent")
+	siblingGroupID := waitForProcessGroupFile(t, resultPath+".sibling-group")
+	require.Equal(t, parentGroupID, siblingGroupID)
+	childGroupID := waitForProcessGroupFile(t, resultPath+".ready")
+	require.NoError(t, syscall.Kill(-childGroupID, syscall.SIGTSTP))
+	var status syscall.WaitStatus
+	_, err = syscall.Wait4(command.Process.Pid, &status, syscall.WUNTRACED, nil)
+	require.NoError(t, err)
+	require.True(t, status.Stopped() || status.Continued())
+	require.NoError(t, os.WriteFile(resultPath+".sibling-probe", nil, 0o600))
+	require.Never(t, func() bool {
+		_, statErr := os.Stat(resultPath + ".sibling-observed")
+		return statErr == nil
+	}, 250*time.Millisecond, 10*time.Millisecond)
+	require.NoError(t, syscall.Kill(-parentGroupID, syscall.SIGCONT))
+	require.Eventually(t, func() bool {
+		_, statErr := os.Stat(resultPath + ".sibling-observed")
+		return statErr == nil
+	}, 5*time.Second, 10*time.Millisecond)
+	_, err = io.WriteString(terminal, "pipeline input\n")
+	require.NoError(t, err)
+	require.NoError(t, command.Wait())
+}
+
 func TestRunClientProcessCancellationTerminatesInteractiveDescendants(t *testing.T) {
 	resultPath := t.TempDir() + "/cancel"
 	command := exec.Command(os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
@@ -403,6 +443,43 @@ func TestSSHInteractiveClientProcessHelper(t *testing.T) {
 		_ = shell.Wait()
 		os.Exit(0)
 	}
+	if mode == "pipeline-sibling" {
+		resultPath := os.Getenv(interactiveClientProcessResult)
+		if err := os.WriteFile(
+			resultPath+".sibling-group",
+			[]byte(strconv.Itoa(syscall.Getpgrp())),
+			0o600,
+		); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		for {
+			if _, err := os.Stat(resultPath + ".sibling-probe"); err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if err := os.WriteFile(resultPath+".sibling-observed", nil, 0o600); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		select {}
+	}
+	var pipelineSibling *exec.Cmd
+	if mode == "pipeline-parent" {
+		pipelineSibling = exec.Command(os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
+		pipelineSibling.Env = append(
+			os.Environ(),
+			interactiveClientProcessHelper+"=pipeline-sibling",
+		)
+		pipelineSibling.Stdin = os.Stdin
+		pipelineSibling.Stdout = os.Stdout
+		pipelineSibling.Stderr = os.Stderr
+		if err := pipelineSibling.Start(); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
 	if err := os.Setenv(interactiveClientProcessHelper, "child"); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -429,6 +506,10 @@ func TestSSHInteractiveClientProcessHelper(t *testing.T) {
 	if exitCode != 0 {
 		_, _ = fmt.Fprintf(os.Stderr, "exit %d\n", exitCode)
 		os.Exit(exitCode)
+	}
+	if pipelineSibling != nil {
+		_ = pipelineSibling.Process.Kill()
+		_ = pipelineSibling.Wait()
 	}
 	os.Exit(0)
 }

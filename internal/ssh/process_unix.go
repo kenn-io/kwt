@@ -129,10 +129,10 @@ func waitInteractiveClient(
 			}
 			// SIGSTOP is not discarded for an orphaned process group, which
 			// matters for terminal emulators and PTY owners without a shell in
-			// the same session. The shell still observes kwt as stopped and can
-			// resume it with the ordinary foreground-job path.
-			if err := syscall.Kill(os.Getpid(), syscall.SIGSTOP); err != nil {
-				return fmt.Errorf("suspend SSH client owner: %w", err)
+			// the same session. Stop the complete shell job so pipeline siblings
+			// cannot keep running while kwt is suspended.
+			if err := syscall.Kill(-ownerGroup, syscall.SIGSTOP); err != nil {
+				return fmt.Errorf("suspend SSH client owner group: %w", err)
 			}
 			foregroundGroup, err := terminalForegroundProcessGroup(terminal)
 			if err != nil {
