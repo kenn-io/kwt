@@ -188,12 +188,14 @@ no prior snapshot. Clients performing a conditional launch continue supplying
 the reviewed route identity and projection policy. `kwt ssh exec` and
 `kwt ssh copy` use the combined form for one bounded command or transfer: the
 daemon owns route resolution, prompt handling, ProxyJump masters, and lease
-lifecycle, while the foreground kwt process owns the system SSH or SCP child
-and streams its output directly. The child receives only the daemon's
+lifecycle, while the foreground kwt process owns the system SSH or SFTP child
+and streams its output directly. Copy uses SFTP rather than a remote shell;
+the child receives only the daemon's
 generation-bound, fail-closed arguments. Consumers do not reconstruct those
 arguments or load SSH configuration again. Cancellation terminates the entire
-client process tree, and the foreground process releases the daemon lease under
-a separate cleanup deadline.
+client process tree, the foreground process heartbeats the lease while the
+client runs, and it releases the daemon lease under a separate cleanup
+deadline.
 
 `kwt projects` and `kwt list` auto-start or reuse the daemon and require a
 current inventory result. They fail instead of falling back to cached or direct

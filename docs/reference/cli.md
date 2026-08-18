@@ -242,24 +242,27 @@ kwt ssh copy build.example.com ./kwt /tmp/kwt.incoming
 ```
 
 `kwt ssh exec` and `kwt ssh copy` resolve and acquire a daemon-owned route,
-run one system OpenSSH client through that generation-bound master, and release
-the lease afterward. Kwt—not its caller—constructs the SSH or SCP invocation,
+run one system OpenSSH client through that generation-bound master, heartbeat
+the lease while it runs, and release the lease afterward. Kwt—not its
+caller—constructs the SSH or SFTP invocation,
 including ProxyJump transport, port grammar, private projection files, and
 fail-closed control-socket behavior. Remote stdout and stderr are streamed as
 they arrive; connection progress is streamed to stderr unless `--quiet` is
-set. An OpenSSH or SCP exit status is preserved, including SSH's status 255,
+set. An OpenSSH or SFTP exit status is preserved, including SSH's status 255,
 while failures before client execution keep kwt's stable typed error surface.
-Machine callers add `--json`: a kwt failure before SSH or SCP starts writes the
+Machine callers add `--json`: a kwt failure before SSH or SFTP starts writes the
 shared error envelope to stdout, while successful client execution continues
-to stream the remote command's unmodified output.
+to stream the remote command's unmodified output. Cleanup failures after the
+client starts are reported only on stderr and never append framing to stdout.
 
 Both commands default to `--host-key-policy strict` for unattended callers.
 Use `--host-key-policy review` from a terminal to permit the daemon's bounded
 host-key and authentication prompts. A nonterminal caller never answers a
 prompt implicitly and receives `ssh_interaction_required`. Copy accepts one
-local file and one remote path; it translates the reviewed SSH projection into
-SCP's option grammar internally, so consumers never handle control paths or
-the SSH/SCP `-p` versus `-P` distinction.
+local file and one remote path, quotes both as structured SFTP batch values,
+and never embeds the destination in a remote shell command. It translates the
+reviewed SSH projection into SFTP's option grammar internally, so consumers
+never handle control paths or the SSH/SFTP `-p` versus `-P` distinction.
 
 When `kwt add -b` creates a branch, it fetches `origin` and starts from its
 default branch. If that remote base is unavailable, it falls back to local

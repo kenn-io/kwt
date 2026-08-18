@@ -170,6 +170,7 @@ func (e *sshClientExitError) ExitCode() int { return e.code }
 
 func runSSHExec(cmd *cobra.Command, args []string) (returnErr error) {
 	ctx := commandContext(cmd)
+	clientStarted := false
 	target := kwt.SSHTarget{Hostname: args[0], User: sshExecUser, Port: sshExecPort}
 	snapshot, result, control, err := acquireShortSSHLease(
 		cmd, target, kwt.SSHHostKeyPolicy(sshExecHostKeyPolicy), sshExecQuiet,
@@ -178,9 +179,16 @@ func runSSHExec(cmd *cobra.Command, args []string) (returnErr error) {
 		return writeSSHClientFailure(cmd, "ssh exec", sshExecJSON, err)
 	}
 	defer func() {
-		returnErr = errors.Join(returnErr, releaseShortSSHLease(ctx, control, result.LeaseID))
 		if returnErr != nil && !isSSHClientExit(returnErr) {
-			returnErr = writeSSHClientFailure(cmd, "ssh exec", sshExecJSON, returnErr)
+			returnErr = writeSSHClientFailure(
+				cmd, "ssh exec", sshExecJSON && !clientStarted, returnErr,
+			)
+		}
+		if releaseErr := releaseShortSSHLease(ctx, control, result.LeaseID); releaseErr != nil {
+			returnErr = errors.Join(
+				returnErr,
+				writeSSHClientFailure(cmd, "ssh exec", false, releaseErr),
+			)
 		}
 	}()
 	workingDirectory, environment, err := captureSSHClientProcess()
@@ -190,15 +198,22 @@ func runSSHExec(cmd *cobra.Command, args []string) (returnErr error) {
 	arguments := append([]string(nil), result.Arguments...)
 	arguments = append(arguments, sshExecutionDestination(snapshot))
 	arguments = append(arguments, args[1:]...)
-	exitCode, err := runSSHClientProcess(
-		ctx, "ssh", arguments, workingDirectory, environment,
-		cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
+	clientStarted = true
+	exitCode, err := runShortSSHClient(
+		ctx, control, result.LeaseID,
+		func(processContext context.Context) (int, error) {
+			return runSSHClientProcess(
+				processContext, "ssh", arguments, workingDirectory, environment,
+				cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
+			)
+		},
 	)
 	return sshClientProcessResult(cmd, exitCode, err)
 }
 
 func runSSHCopy(cmd *cobra.Command, args []string) (returnErr error) {
 	ctx := commandContext(cmd)
+	clientStarted := false
 	target := kwt.SSHTarget{Hostname: args[0], User: sshCopyUser, Port: sshCopyPort}
 	snapshot, result, control, err := acquireShortSSHLease(
 		cmd, target, kwt.SSHHostKeyPolicy(sshCopyHostKeyPolicy), sshCopyQuiet,
@@ -207,20 +222,37 @@ func runSSHCopy(cmd *cobra.Command, args []string) (returnErr error) {
 		return writeSSHClientFailure(cmd, "ssh copy", sshCopyJSON, err)
 	}
 	defer func() {
-		returnErr = errors.Join(returnErr, releaseShortSSHLease(ctx, control, result.LeaseID))
 		if returnErr != nil && !isSSHClientExit(returnErr) {
-			returnErr = writeSSHClientFailure(cmd, "ssh copy", sshCopyJSON, returnErr)
+			returnErr = writeSSHClientFailure(
+				cmd, "ssh copy", sshCopyJSON && !clientStarted, returnErr,
+			)
+		}
+		if releaseErr := releaseShortSSHLease(ctx, control, result.LeaseID); releaseErr != nil {
+			returnErr = errors.Join(
+				returnErr,
+				writeSSHClientFailure(cmd, "ssh copy", false, releaseErr),
+			)
 		}
 	}()
 	workingDirectory, environment, err := captureSSHClientProcess()
 	if err != nil {
 		return err
 	}
-	arguments := scpLeaseArguments(result.Arguments)
-	arguments = append(arguments, args[1], scpDestination(snapshot, args[2]))
-	exitCode, err := runSSHClientProcess(
-		ctx, "scp", arguments, workingDirectory, environment,
-		cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
+	batch, err := sftpPutBatch(args[1], args[2])
+	if err != nil {
+		return service.NewError(service.InvalidRequest, err.Error(), false, nil, err)
+	}
+	arguments := sftpLeaseArguments(result.Arguments)
+	arguments = append(arguments, "-b", "-", sftpDestination(snapshot))
+	clientStarted = true
+	exitCode, err := runShortSSHClient(
+		ctx, control, result.LeaseID,
+		func(processContext context.Context) (int, error) {
+			return runSSHClientProcess(
+				processContext, "sftp", arguments, workingDirectory, environment,
+				strings.NewReader(batch), cmd.OutOrStdout(), cmd.ErrOrStderr(),
+			)
+		},
 	)
 	return sshClientProcessResult(cmd, exitCode, err)
 }
@@ -306,7 +338,7 @@ func sshExecutionDestination(snapshot kwt.SSHRouteSnapshot) string {
 	return destination
 }
 
-func scpDestination(snapshot kwt.SSHRouteSnapshot, path string) string {
+func sftpDestination(snapshot kwt.SSHRouteSnapshot) string {
 	target := snapshot.LogicalTarget
 	if len(snapshot.Targets) > 0 {
 		target = snapshot.Targets[len(snapshot.Targets)-1].EffectiveTarget
@@ -318,10 +350,10 @@ func scpDestination(snapshot kwt.SSHRouteSnapshot, path string) string {
 	if target.User != "" {
 		hostname = target.User + "@" + hostname
 	}
-	return hostname + ":" + path
+	return hostname
 }
 
-func scpLeaseArguments(arguments []string) []string {
+func sftpLeaseArguments(arguments []string) []string {
 	result := make([]string, 0, len(arguments))
 	for index := 0; index < len(arguments); index++ {
 		argument := arguments[index]
@@ -338,6 +370,76 @@ func scpLeaseArguments(arguments []string) []string {
 		result = append(result, argument)
 	}
 	return result
+}
+
+func sftpPutBatch(source, destination string) (string, error) {
+	source, err := sftpBatchPath(source)
+	if err != nil {
+		return "", fmt.Errorf("invalid source path: %w", err)
+	}
+	destination, err = sftpBatchPath(destination)
+	if err != nil {
+		return "", fmt.Errorf("invalid destination path: %w", err)
+	}
+	return "put " + source + " " + destination + "\n", nil
+}
+
+func sftpBatchPath(path string) (string, error) {
+	if path == "" {
+		return "", errors.New("path is empty")
+	}
+	if strings.ContainsAny(path, "\x00\r\n") {
+		return "", errors.New("path contains a line or null character")
+	}
+	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(path)
+	return `"` + escaped + `"`, nil
+}
+
+func runShortSSHClient(
+	ctx context.Context,
+	control sshLeaseControl,
+	leaseID string,
+	run func(context.Context) (int, error),
+) (int, error) {
+	processContext, cancel := context.WithCancel(ctx)
+	heartbeatDone := make(chan error, 1)
+	go func() {
+		heartbeatDone <- heartbeatShortSSHLease(processContext, control, leaseID, cancel)
+	}()
+	exitCode, processErr := run(processContext)
+	cancel()
+	heartbeatErr := <-heartbeatDone
+	if heartbeatErr != nil {
+		return -1, errors.Join(heartbeatErr, processErr)
+	}
+	return exitCode, processErr
+}
+
+func heartbeatShortSSHLease(
+	ctx context.Context,
+	control sshLeaseControl,
+	leaseID string,
+	cancelProcess context.CancelFunc,
+) error {
+	if control == nil || leaseID == "" {
+		return nil
+	}
+	ticker := time.NewTicker(sshLeaseHeartbeatEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if err := control.Touch(ctx, leaseID); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				cancelProcess()
+				return err
+			}
+		}
+	}
 }
 
 func releaseShortSSHLease(ctx context.Context, control sshLeaseControl, leaseID string) error {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -103,8 +104,8 @@ func TestRequireSSHResolveCapabilityFailsClosed(t *testing.T) {
 }
 
 type fakeSSHLeaseControl struct {
-	touches    int
-	releases   int
+	touches    atomic.Int32
+	releases   atomic.Int32
 	touchErr   error
 	releaseErr error
 }
@@ -114,13 +115,47 @@ type failingSSHOutput struct{ err error }
 func (w failingSSHOutput) Write([]byte) (int, error) { return 0, w.err }
 
 func (c *fakeSSHLeaseControl) Touch(context.Context, string) error {
-	c.touches++
+	c.touches.Add(1)
 	return c.touchErr
 }
 
 func (c *fakeSSHLeaseControl) Release(context.Context, string) error {
-	c.releases++
+	c.releases.Add(1)
 	return c.releaseErr
+}
+
+func stubShortSSHLease(t *testing.T, control sshLeaseControl) {
+	t.Helper()
+	oldResolve := resolveSSHThroughDaemon
+	oldAcquire := acquireSSHLeaseThroughDaemon
+	oldCapture := captureSSHClientProcess
+	t.Cleanup(func() {
+		resolveSSHThroughDaemon = oldResolve
+		acquireSSHLeaseThroughDaemon = oldAcquire
+		captureSSHClientProcess = oldCapture
+	})
+	captureSSHClientProcess = func() (string, []string, error) {
+		return "/work", []string{"PATH=/usr/bin"}, nil
+	}
+	resolveSSHThroughDaemon = func(
+		_ context.Context,
+		request kwt.SSHResolveRequest,
+	) (kwt.SSHRouteSnapshot, error) {
+		return kwt.SSHRouteSnapshot{
+			LogicalTarget: request.Target,
+			Targets:       []kwt.SSHResolvedTarget{{EffectiveTarget: request.Target}},
+			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+		}, nil
+	}
+	acquireSSHLeaseThroughDaemon = func(
+		context.Context,
+		kwt.SSHLeaseRequest,
+		kwtdaemon.OperationCallbacks,
+	) (kwtdaemon.SSHLeaseResult, sshLeaseControl, error) {
+		return kwtdaemon.SSHLeaseResult{
+			LeaseID: "lease-one", Arguments: []string{"-S", "/private/control"},
+		}, control, nil
+	}
 }
 
 func TestSSHLeaseCommandStreamsPromptsAndReleasesOnEOF(t *testing.T) {
@@ -166,8 +201,8 @@ func TestSSHLeaseCommandStreamsPromptsAndReleasesOnEOF(t *testing.T) {
 	command.SetIn(strings.NewReader(`{"prompt_id":"prompt-1","value":"secret"}` + "\n"))
 
 	require.NoError(t, runSSHLease(command, []string{"build.example.test"}))
-	assert.Equal(t, 1, control.releases)
-	assert.Equal(t, 0, control.touches)
+	assert.Equal(t, int32(1), control.releases.Load())
+	assert.Equal(t, int32(0), control.touches.Load())
 	assert.Empty(t, stderr.String())
 	decoder := json.NewDecoder(stdout)
 	var promptEvent, completeEvent service.OperationEvent
@@ -219,7 +254,7 @@ func TestSSHLeaseResolvesRouteWhenIdentityIsOmitted(t *testing.T) {
 	command.SetIn(strings.NewReader(""))
 
 	require.NoError(t, runSSHLease(command, []string{"build.example.test"}))
-	assert.Equal(t, 1, control.releases)
+	assert.Equal(t, int32(1), control.releases.Load())
 }
 
 func TestSSHExecResolvesAcquiresAndRunsThroughLease(t *testing.T) {
@@ -291,10 +326,81 @@ func TestSSHExecResolvesAcquiresAndRunsThroughLease(t *testing.T) {
 		"-S", "/private/control", "runner@10.0.0.8", "printf 'ready\\n'",
 	}, gotArguments)
 	assert.Equal(t, "remote output\n", stdout.String())
-	assert.Equal(t, 1, control.releases)
+	assert.Equal(t, int32(1), control.releases.Load())
 }
 
-func TestSSHCopyTranslatesLeaseArgumentsForSCP(t *testing.T) {
+func TestSSHExecHeartbeatsLeaseWhileClientRuns(t *testing.T) {
+	oldRun := runSSHClientProcess
+	oldHeartbeat := sshLeaseHeartbeatEvery
+	t.Cleanup(func() {
+		runSSHClientProcess = oldRun
+		sshLeaseHeartbeatEvery = oldHeartbeat
+	})
+	sshLeaseHeartbeatEvery = time.Millisecond
+	control := &fakeSSHLeaseControl{}
+	stubShortSSHLease(t, control)
+	runSSHClientProcess = func(
+		ctx context.Context,
+		_ string,
+		_ []string,
+		_ string,
+		_ []string,
+		_ io.Reader,
+		_ io.Writer,
+		_ io.Writer,
+	) (int, error) {
+		for control.touches.Load() == 0 {
+			select {
+			case <-ctx.Done():
+				return -1, ctx.Err()
+			case <-time.After(time.Millisecond):
+			}
+		}
+		return 0, nil
+	}
+	command, _, _ := sshResolveTestCommand()
+
+	require.NoError(t, runSSHExec(command, []string{"build.example.test", "true"}))
+	assert.GreaterOrEqual(t, control.touches.Load(), int32(1))
+	assert.Equal(t, int32(1), control.releases.Load())
+}
+
+func TestSSHExecStopsClientWhenLeaseHeartbeatFails(t *testing.T) {
+	oldRun := runSSHClientProcess
+	oldHeartbeat := sshLeaseHeartbeatEvery
+	t.Cleanup(func() {
+		runSSHClientProcess = oldRun
+		sshLeaseHeartbeatEvery = oldHeartbeat
+	})
+	sshLeaseHeartbeatEvery = time.Millisecond
+	control := &fakeSSHLeaseControl{touchErr: service.NewError(
+		service.SSHConnectionChanged, "SSH connection changed", false, nil, nil,
+	)}
+	stubShortSSHLease(t, control)
+	runSSHClientProcess = func(
+		ctx context.Context,
+		_ string,
+		_ []string,
+		_ string,
+		_ []string,
+		_ io.Reader,
+		_ io.Writer,
+		_ io.Writer,
+	) (int, error) {
+		<-ctx.Done()
+		return -1, ctx.Err()
+	}
+	command, _, stderr := sshResolveTestCommand()
+
+	err := runSSHExec(command, []string{"build.example.test", "true"})
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.SSHConnectionChanged))
+	assert.Contains(t, stderr.String(), "ssh_connection_changed")
+	assert.Equal(t, int32(1), control.touches.Load())
+	assert.Equal(t, int32(1), control.releases.Load())
+}
+
+func TestSSHCopyUsesStructuredSFTPBatch(t *testing.T) {
 	oldResolve := resolveSSHThroughDaemon
 	oldAcquire := acquireSSHLeaseThroughDaemon
 	oldRun := runSSHClientProcess
@@ -340,24 +446,64 @@ func TestSSHCopyTranslatesLeaseArgumentsForSCP(t *testing.T) {
 		arguments []string,
 		_ string,
 		_ []string,
-		_ io.Reader,
+		stdin io.Reader,
 		_ io.Writer,
 		_ io.Writer,
 	) (int, error) {
-		assert.Equal(t, "scp", executable)
+		assert.Equal(t, "sftp", executable)
 		got = append([]string(nil), arguments...)
+		batch, err := io.ReadAll(stdin)
+		require.NoError(t, err)
+		assert.Equal(t,
+			"put \"/tmp/kwt \\\"build\\\"\" \"C:/Users/runner/kwt.exe; touch /tmp/pwn\"\n",
+			string(batch),
+		)
 		return 0, nil
 	}
 	command, _, _ := sshResolveTestCommand()
 
 	require.NoError(t, runSSHCopy(command, []string{
-		"build.example.test", "/tmp/kwt", "C:/Users/runner/kwt.exe",
+		"build.example.test", `/tmp/kwt "build"`, "C:/Users/runner/kwt.exe; touch /tmp/pwn",
 	}))
 	assert.Equal(t, []string{
 		"-F", "/dev/null", "-o", `ControlPath=C:\\kwt control`, "-P", "2222",
-		"/tmp/kwt", "runner@[2001:db8::8]:C:/Users/runner/kwt.exe",
+		"-b", "-", "runner@[2001:db8::8]",
 	}, got)
-	assert.Equal(t, 1, control.releases)
+	assert.Equal(t, int32(1), control.releases.Load())
+}
+
+func TestSSHExecJSONKeepsRemoteOutputUnmodifiedWhenReleaseFails(t *testing.T) {
+	oldRun := runSSHClientProcess
+	oldJSON := sshExecJSON
+	t.Cleanup(func() {
+		runSSHClientProcess = oldRun
+		sshExecJSON = oldJSON
+	})
+	sshExecJSON = true
+	control := &fakeSSHLeaseControl{releaseErr: service.NewError(
+		service.SSHCleanupFailed, "SSH cleanup failed", true, nil, nil,
+	)}
+	stubShortSSHLease(t, control)
+	runSSHClientProcess = func(
+		_ context.Context,
+		_ string,
+		_ []string,
+		_ string,
+		_ []string,
+		_ io.Reader,
+		stdout io.Writer,
+		_ io.Writer,
+	) (int, error) {
+		_, _ = io.WriteString(stdout, "remote output\n")
+		return 0, nil
+	}
+	command, stdout, stderr := sshResolveTestCommand()
+
+	err := runSSHExec(command, []string{"build.example.test", "true"})
+	require.Error(t, err)
+	assert.Equal(t, "remote output\n", stdout.String())
+	assert.NotContains(t, stdout.String(), `"error"`)
+	assert.Contains(t, stderr.String(), "ssh_cleanup_failed")
 }
 
 func TestSSHExecJSONPreservesTypedPreExecutionFailure(t *testing.T) {
@@ -550,8 +696,8 @@ func TestSSHLeaseReleasesAcquiredLeaseWhenTerminalOutputFails(t *testing.T) {
 
 	err := runSSHLease(command, []string{"build.example.test"})
 	require.Error(t, err)
-	assert.Equal(t, 1, control.releases)
-	assert.Equal(t, 0, control.touches)
+	assert.Equal(t, int32(1), control.releases.Load())
+	assert.Equal(t, int32(0), control.touches.Load())
 }
 
 func TestSSHLeaseJSONWritesHeartbeatFailure(t *testing.T) {
@@ -589,8 +735,8 @@ func TestSSHLeaseJSONWritesHeartbeatFailure(t *testing.T) {
 	var envelope jsonErrorEnvelope
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
 	assert.Equal(t, service.SSHConnectionChanged, envelope.Error.Code)
-	assert.Equal(t, 1, control.touches)
-	assert.Equal(t, 1, control.releases)
+	assert.Equal(t, int32(1), control.touches.Load())
+	assert.Equal(t, int32(1), control.releases.Load())
 }
 
 func TestSSHLeaseJSONWritesReleaseFailure(t *testing.T) {
@@ -620,8 +766,8 @@ func TestSSHLeaseJSONWritesReleaseFailure(t *testing.T) {
 	var envelope jsonErrorEnvelope
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
 	assert.Equal(t, service.SSHCleanupFailed, envelope.Error.Code)
-	assert.Equal(t, 0, control.touches)
-	assert.Equal(t, 1, control.releases)
+	assert.Equal(t, int32(0), control.touches.Load())
+	assert.Equal(t, int32(1), control.releases.Load())
 }
 
 func sshResolveTestCommand() (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
