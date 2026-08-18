@@ -37,13 +37,25 @@ func runClientCommand(ctx context.Context, command *exec.Cmd) (bool, error) {
 		return false, err
 	}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	ownerGroup := syscall.Getpgrp()
+	childForeground := false
+	restoreGroup := 0
 	if terminalBacked {
 		terminalForegroundMu.Lock()
 		defer terminalForegroundMu.Unlock()
 		signal.Ignore(syscall.SIGTTOU)
 		defer signal.Reset(syscall.SIGTTOU)
-		command.SysProcAttr.Foreground = true
-		command.SysProcAttr.Ctty = int(terminal.Fd())
+		foregroundGroup, err := terminalForegroundProcessGroup(terminal)
+		if err != nil {
+			return false, fmt.Errorf("inspect terminal before SSH client start: %w", err)
+		}
+		restoreGroup = foregroundGroup
+		defer func() { _ = setTerminalForeground(terminal, restoreGroup) }()
+		if foregroundGroup == ownerGroup {
+			command.SysProcAttr.Foreground = true
+			command.SysProcAttr.Ctty = int(terminal.Fd())
+			childForeground = true
+		}
 	}
 	if err := command.Start(); err != nil {
 		return false, err
@@ -68,7 +80,13 @@ func runClientCommand(ctx context.Context, command *exec.Cmd) (bool, error) {
 	if !terminalBacked {
 		return true, command.Wait()
 	}
-	return true, waitInteractiveClient(command, terminal)
+	return true, waitInteractiveClient(
+		command,
+		terminal,
+		ownerGroup,
+		childForeground,
+		&restoreGroup,
+	)
 }
 
 func clientTerminal(command *exec.Cmd) (*os.File, bool) {
@@ -82,15 +100,14 @@ func clientTerminal(command *exec.Cmd) (*os.File, bool) {
 	return nil, false
 }
 
-func waitInteractiveClient(command *exec.Cmd, terminal *os.File) error {
-	parentGroup := syscall.Getpgrp()
+func waitInteractiveClient(
+	command *exec.Cmd,
+	terminal *os.File,
+	ownerGroup int,
+	childForeground bool,
+	restoreGroup *int,
+) error {
 	childGroup := command.Process.Pid
-	childForeground := true
-	defer func() {
-		if childForeground {
-			_ = setTerminalForeground(terminal, parentGroup)
-		}
-	}()
 	for {
 		var status syscall.WaitStatus
 		_, err := syscall.Wait4(
@@ -105,7 +122,7 @@ func waitInteractiveClient(command *exec.Cmd, terminal *os.File) error {
 		switch {
 		case status.Stopped():
 			if childForeground {
-				if err := setTerminalForeground(terminal, parentGroup); err != nil {
+				if err := setTerminalForeground(terminal, ownerGroup); err != nil {
 					return fmt.Errorf("restore terminal before suspension: %w", err)
 				}
 				childForeground = false
@@ -121,7 +138,8 @@ func waitInteractiveClient(command *exec.Cmd, terminal *os.File) error {
 			if err != nil {
 				return fmt.Errorf("inspect terminal after SSH client resume: %w", err)
 			}
-			if foregroundGroup == parentGroup {
+			*restoreGroup = foregroundGroup
+			if foregroundGroup == ownerGroup {
 				if err := setTerminalForeground(terminal, childGroup); err != nil {
 					return fmt.Errorf("restore SSH client foreground process group: %w", err)
 				}
