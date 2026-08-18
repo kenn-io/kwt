@@ -59,17 +59,9 @@ func TestRunClientProcessPreservesInteractiveTerminalJobControl(t *testing.T) {
 			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
 		}
 	})
-	require.Eventually(t, func() bool {
-		_, err := os.Stat(resultPath + ".ready")
-		return err == nil
-	}, 5*time.Second, 10*time.Millisecond)
-	parentGroup, err := os.ReadFile(resultPath + ".parent")
-	require.NoError(t, err)
-	childGroup, err := os.ReadFile(resultPath + ".ready")
-	require.NoError(t, err)
-	require.NotEqual(t, string(parentGroup), string(childGroup))
-	childGroupID, err := strconv.Atoi(string(childGroup))
-	require.NoError(t, err)
+	parentGroupID := waitForProcessGroupFile(t, resultPath+".parent")
+	childGroupID := waitForProcessGroupFile(t, resultPath+".ready")
+	require.NotEqual(t, parentGroupID, childGroupID)
 	require.NoError(t, syscall.Kill(-childGroupID, syscall.SIGTSTP))
 	var status syscall.WaitStatus
 	_, err = syscall.Wait4(command.Process.Pid, &status, syscall.WUNTRACED, nil)
@@ -177,14 +169,7 @@ func testRunClientProcessTerminalOutputWithNonterminalInput(
 			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
 		}
 	})
-	require.Eventually(t, func() bool {
-		_, statErr := os.Stat(resultPath + ".shell")
-		return statErr == nil
-	}, 5*time.Second, 10*time.Millisecond)
-	shellGroup, err := os.ReadFile(resultPath + ".shell")
-	require.NoError(t, err)
-	shellGroupID, err := strconv.Atoi(string(shellGroup))
-	require.NoError(t, err)
+	shellGroupID := waitForProcessGroupFile(t, resultPath+".shell")
 	t.Cleanup(func() { _ = syscall.Kill(-shellGroupID, syscall.SIGKILL) })
 	if backgroundStart {
 		require.NoError(t, os.WriteFile(resultPath+".background", nil, 0o600))
@@ -193,14 +178,7 @@ func testRunClientProcessTerminalOutputWithNonterminalInput(
 			return readyErr == nil
 		}, 5*time.Second, 10*time.Millisecond)
 	}
-	require.Eventually(t, func() bool {
-		_, statErr := os.Stat(resultPath + ".ready")
-		return statErr == nil
-	}, 5*time.Second, 10*time.Millisecond)
-	childGroup, err := os.ReadFile(resultPath + ".ready")
-	require.NoError(t, err)
-	childGroupID, err := strconv.Atoi(string(childGroup))
-	require.NoError(t, err)
+	childGroupID := waitForProcessGroupFile(t, resultPath+".ready")
 	foregroundGroup, err := terminalForegroundProcessGroup(terminal)
 	require.NoError(t, err)
 	if backgroundStart {
@@ -232,6 +210,20 @@ func testRunClientProcessTerminalOutputWithNonterminalInput(
 		require.NoError(t, err)
 		assert.Equal(t, shellGroupID, foregroundGroup)
 	}
+}
+
+func waitForProcessGroupFile(t *testing.T, path string) int {
+	t.Helper()
+	var processGroup int
+	require.Eventually(t, func() bool {
+		encoded, err := os.ReadFile(path)
+		if err != nil {
+			return false
+		}
+		processGroup, err = strconv.Atoi(string(encoded))
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
+	return processGroup
 }
 
 func TestSSHInteractiveClientProcessHelper(t *testing.T) {
