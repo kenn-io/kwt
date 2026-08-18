@@ -1498,6 +1498,40 @@ func TestManagerAppliesLeaseHostKeyPolicyBeforeConnecting(t *testing.T) {
 	}
 }
 
+func TestManagerSeparatesReviewAndStrictHostKeyPolicies(t *testing.T) {
+	persistent := &fakePersistentManager{}
+	manager := NewManager(ManagerOptions{
+		Persistent: persistent,
+		Runner: func(LeaseRequest, ResolvedTarget) (openssh.RunSSH, error) {
+			return func(context.Context, []string) (int, error) { return 0, nil }, nil
+		},
+	})
+	snapshot := directSnapshot("route-host-key-policy")
+	snapshot.Targets[0].StrictHostKeyChecking = "accept-new"
+	resolve := func(context.Context) (RouteSnapshot, error) { return snapshot, nil }
+
+	review, err := manager.Acquire(
+		context.Background(),
+		LeaseRequest{Snapshot: snapshot, HostKeyPolicy: HostKeyPolicyReview},
+		resolve,
+	)
+	require.NoError(t, err)
+	strict, err := manager.Acquire(
+		context.Background(),
+		LeaseRequest{Snapshot: snapshot, HostKeyPolicy: HostKeyPolicyStrict},
+		resolve,
+	)
+	require.NoError(t, err)
+
+	connects, _, _, _ := persistent.counts()
+	assert.Equal(t, 2, connects)
+	identities := persistent.identities()
+	require.Len(t, identities, 2)
+	assert.NotEqual(t, identities[0], identities[1])
+	require.NoError(t, review.Release(context.Background()))
+	require.NoError(t, strict.Release(context.Background()))
+}
+
 func TestManagerRejectsMasterlessRouteChangeAfterProjectionPreparation(t *testing.T) {
 	persistent := &fakePersistentManager{connectErr: openssh.ErrPersistentUnsupported}
 	privateDirectory := filepath.Join(t.TempDir(), "private")

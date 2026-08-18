@@ -143,6 +143,7 @@ func (m *Manager) Acquire(
 		}
 		identity := managerIdentityForTarget(
 			request.Snapshot, target, index, previousIdentity, request.Environment,
+			request.HostKeyPolicy,
 		)
 		lease, acquireErr := m.acquireTarget(
 			ctx, request, target, identity, previousIdentity, index,
@@ -529,8 +530,12 @@ func managerIdentityForTarget(
 	index int,
 	previousIdentity string,
 	environment []string,
+	hostKeyPolicy HostKeyPolicy,
 ) string {
 	identity := managerIdentity(snapshot)
+	if hostKeyPolicy == HostKeyPolicyStrict {
+		identity += ":host-key-policy:strict"
+	}
 	if len(snapshot.Targets) > 1 {
 		identity += ":hop:" + fmt.Sprint(index)
 	}
