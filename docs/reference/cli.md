@@ -179,13 +179,18 @@ settings—still changes route identity but is never replayed for execution.
 kwt ssh lease build.example.com \
   --route-identity <identity-from-ssh-resolve> \
   --projection-policy kwt.openssh.projection.v1 \
+  --host-key-policy review \
   --json
 ```
 
 `kwt ssh lease` is the long-lived native-client bridge to the same-machine
 daemon. It re-resolves the logical target, refuses a changed route, prepares
 every ProxyJump hop in order, and streams operation events as NDJSON. Prompt
-events may occur repeatedly; the client answers each with one
+capable clients use `--host-key-policy review`, which requires an explicit
+OpenSSH review prompt unless the route already requires a known key.
+Unattended clients use `--host-key-policy strict`, which accepts only keys
+already trusted by OpenSSH and never modifies an empty known-hosts file.
+Events may occur repeatedly; the client answers each with one
 `{"prompt_id":"...","value":"..."}` line on stdin. The completion event
 contains generation-bound OpenSSH arguments. Each prompt carries the daemon's
 deadline, so blocked input ends when the prompt expires and the command reports

@@ -1353,7 +1353,9 @@ func TestManagerExecutesFreshResolvedSnapshotInsteadOfCallerFields(t *testing.T)
 	require.NoError(t, err)
 	require.NotNil(t, lease)
 	assert.Equal(t, current, runnerRequest.Snapshot)
-	assert.Equal(t, current.Targets[0], runnerTarget)
+	expectedTarget := current.Targets[0]
+	expectedTarget.StrictHostKeyChecking = "ask"
+	assert.Equal(t, expectedTarget, runnerTarget)
 }
 
 func TestManagerReportsCleanupFailureAfterRouteChange(t *testing.T) {
@@ -1458,6 +1460,42 @@ func TestManagerReturnsMasterlessLeaseWhenPersistenceIsUnsupported(t *testing.T)
 	require.NoError(t, lease.Release(context.Background()))
 	_, _, _, disconnects := persistent.counts()
 	assert.Equal(t, 0, disconnects)
+}
+
+func TestManagerAppliesLeaseHostKeyPolicyBeforeConnecting(t *testing.T) {
+	tests := []struct {
+		name   string
+		policy HostKeyPolicy
+		want   string
+	}{
+		{name: "prompt capable reviews accept-new", policy: HostKeyPolicyReview, want: "ask"},
+		{name: "unattended requires known key", policy: HostKeyPolicyStrict, want: "yes"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			persistent := &fakePersistentManager{}
+			var runnerTarget ResolvedTarget
+			manager := NewManager(ManagerOptions{
+				Persistent: persistent,
+				Runner: func(_ LeaseRequest, target ResolvedTarget) (openssh.RunSSH, error) {
+					runnerTarget = target
+					return func(context.Context, []string) (int, error) { return 0, nil }, nil
+				},
+			})
+			snapshot := directSnapshot("route-host-key-policy")
+			snapshot.Targets[0].StrictHostKeyChecking = "accept-new"
+
+			lease, err := manager.Acquire(
+				context.Background(),
+				LeaseRequest{Snapshot: snapshot, HostKeyPolicy: test.policy},
+				func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
+			)
+
+			require.NoError(t, err)
+			assert.Equal(t, test.want, runnerTarget.StrictHostKeyChecking)
+			require.NoError(t, lease.Release(context.Background()))
+		})
+	}
 }
 
 func TestManagerRejectsMasterlessRouteChangeAfterProjectionPreparation(t *testing.T) {

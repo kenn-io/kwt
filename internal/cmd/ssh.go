@@ -27,6 +27,7 @@ var (
 	sshLeasePort             int
 	sshLeaseRouteIdentity    string
 	sshLeaseProjectionPolicy string
+	sshLeaseHostKeyPolicy    string
 
 	resolveSSHThroughDaemon      = resolveSSHViaDaemon
 	acquireSSHLeaseThroughDaemon = acquireSSHLeaseViaDaemon
@@ -97,6 +98,10 @@ func init() {
 	sshLeaseCmd.Flags().StringVar(
 		&sshLeaseProjectionPolicy, "projection-policy", kwt.SSHProjectionPolicyV1,
 		"Require this SSH execution projection policy",
+	)
+	sshLeaseCmd.Flags().StringVar(
+		&sshLeaseHostKeyPolicy, "host-key-policy", string(kwt.SSHHostKeyPolicyReview),
+		"Host-key handling: review or strict",
 	)
 	sshLeaseCmd.Flags().BoolVar(
 		&sshLeaseJSON, "json", false, "Stream machine-readable lifecycle events",
@@ -216,13 +221,16 @@ func runSSHLease(cmd *cobra.Command, args []string) (returnErr error) {
 	}
 	result, control, err := acquireSSHLeaseThroughDaemon(
 		ctx,
-		kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{
-			LogicalTarget: kwt.SSHTarget{
-				Hostname: args[0], User: sshLeaseUser, Port: sshLeasePort,
+		kwt.SSHLeaseRequest{
+			HostKeyPolicy: kwt.SSHHostKeyPolicy(sshLeaseHostKeyPolicy),
+			Snapshot: kwt.SSHRouteSnapshot{
+				LogicalTarget: kwt.SSHTarget{
+					Hostname: args[0], User: sshLeaseUser, Port: sshLeasePort,
+				},
+				RouteIdentity:    sshLeaseRouteIdentity,
+				ProjectionPolicy: sshLeaseProjectionPolicy,
 			},
-			RouteIdentity:    sshLeaseRouteIdentity,
-			ProjectionPolicy: sshLeaseProjectionPolicy,
-		}},
+		},
 		callbacks,
 	)
 	if err != nil {

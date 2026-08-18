@@ -13,12 +13,18 @@ type (
 	SSHResolvedTarget      = internalssh.ResolvedTarget
 	SSHRouteSnapshot       = internalssh.RouteSnapshot
 	SSHLeaseRequest        = internalssh.LeaseRequest
+	SSHHostKeyPolicy       = internalssh.HostKeyPolicy
 	SSHPromptHandler       = internalssh.PromptHandler
 	SSHLease               = internalssh.Lease
 	SSHLeaseMode           = internalssh.LeaseMode
 	SSHEvent               = internalssh.Event
 	SSHServiceOptions      = internalssh.PublicServiceOptions
 	SSHService             = internalssh.PublicService
+)
+
+const (
+	SSHHostKeyPolicyReview = internalssh.HostKeyPolicyReview
+	SSHHostKeyPolicyStrict = internalssh.HostKeyPolicyStrict
 )
 
 const (

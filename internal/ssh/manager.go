@@ -120,10 +120,13 @@ func (m *Manager) Acquire(
 	if len(request.Snapshot.Targets) == 0 {
 		return nil, routeUnreviewable(errors.New("SSH lifecycle requires a resolved target"))
 	}
+	if err := validateHostKeyPolicy(request.HostKeyPolicy); err != nil {
+		return nil, err
+	}
 	leases := make([]Lease, 0, len(request.Snapshot.Targets))
 	previousIdentity := ""
 	for index, originalTarget := range request.Snapshot.Targets {
-		target := originalTarget
+		target := targetWithHostKeyPolicy(originalTarget, request.HostKeyPolicy)
 		if index > 0 {
 			previous := leases[index-1]
 			if previous.Mode() != LeaseModeMultiplexed {
@@ -155,6 +158,32 @@ func (m *Manager) Acquire(
 		return leases[0], nil
 	}
 	return &routeLease{leases: leases}, nil
+}
+
+func validateHostKeyPolicy(policy HostKeyPolicy) error {
+	switch policy {
+	case "", HostKeyPolicyReview, HostKeyPolicyStrict:
+		return nil
+	default:
+		return service.NewError(
+			service.InvalidRequest,
+			"unsupported SSH host-key policy",
+			false,
+			nil,
+			nil,
+		)
+	}
+}
+
+func targetWithHostKeyPolicy(target ResolvedTarget, policy HostKeyPolicy) ResolvedTarget {
+	if policy == HostKeyPolicyStrict {
+		target.StrictHostKeyChecking = "yes"
+		return target
+	}
+	if target.StrictHostKeyChecking != "yes" {
+		target.StrictHostKeyChecking = "ask"
+	}
+	return target
 }
 
 func (m *Manager) acquireTarget(

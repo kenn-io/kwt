@@ -63,12 +63,23 @@ type RouteSnapshot struct {
 
 type LeaseRequest struct {
 	Snapshot          RouteSnapshot `json:"snapshot"`
+	HostKeyPolicy     HostKeyPolicy `json:"host_key_policy"`
 	WorkingDirectory  string        `json:"working_directory"`
 	Environment       []string      `json:"environment"`
 	Prompt            PromptHandler `json:"-"`
 	promptTargetIndex int
 	promptTargetCount int
 }
+
+type HostKeyPolicy string
+
+const (
+	// HostKeyPolicyReview requires OpenSSH to prompt before trusting an
+	// unknown key. It is the safe default for prompt-capable clients.
+	HostKeyPolicyReview HostKeyPolicy = "review"
+	// HostKeyPolicyStrict permits only keys already trusted by OpenSSH.
+	HostKeyPolicyStrict HostKeyPolicy = "strict"
+)
 
 type PromptHandler func(context.Context, service.OperationPrompt) (string, error)
 
