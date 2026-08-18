@@ -78,6 +78,7 @@ func requireSSHResolveCapability(observation kwtdaemon.Observation) error {
 
 type sshLeaseControl interface {
 	Touch(context.Context, string) error
+	Hold(context.Context, string) (io.ReadCloser, error)
 	Release(context.Context, string) error
 }
 
@@ -85,6 +86,10 @@ type daemonSSHLeaseControl struct{ client *kwtdaemon.Client }
 
 func (c daemonSSHLeaseControl) Touch(ctx context.Context, leaseID string) error {
 	return c.client.TouchSSHLease(ctx, leaseID)
+}
+
+func (c daemonSSHLeaseControl) Hold(ctx context.Context, leaseID string) (io.ReadCloser, error) {
+	return c.client.HoldSSHLease(ctx, leaseID)
 }
 
 func (c daemonSSHLeaseControl) Release(ctx context.Context, leaseID string) error {

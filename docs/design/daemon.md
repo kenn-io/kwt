@@ -194,9 +194,10 @@ resolves the local source to an absolute literal path, and escapes SFTP batch
 metacharacters; the child receives only the daemon's
 generation-bound, fail-closed arguments. Consumers do not reconstruct those
 arguments or load SSH configuration again. Cancellation terminates the entire
-client process tree, the foreground process heartbeats the lease while the
-client runs, and it releases the daemon lease under a separate cleanup
-deadline.
+client process tree. An authenticated HTTP stream binds the lease to the
+foreground owner without depending on that process to run heartbeat code while
+job-control suspended; disconnecting the stream restores ordinary bounded
+expiry. The client releases the daemon lease under a separate cleanup deadline.
 
 `kwt projects` and `kwt list` auto-start or reuse the daemon and require a
 current inventory result. They fail instead of falling back to cached or direct

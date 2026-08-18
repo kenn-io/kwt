@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -19,10 +20,15 @@ import (
 	"github.com/creack/pty"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 const interactiveClientProcessHelper = "KWT_SSH_INTERACTIVE_CLIENT_PROCESS_HELPER"
 const interactiveClientProcessResult = "KWT_SSH_INTERACTIVE_CLIENT_PROCESS_RESULT"
+
+func terminalForegroundProcessGroup(terminal *os.File) (int, error) {
+	return unix.IoctlGetInt(int(terminal.Fd()), unix.TIOCGPGRP)
+}
 
 func TestRunClientProcessPreservesInteractiveTerminalJobControl(t *testing.T) {
 	resultPath := t.TempDir() + "/result"
@@ -110,6 +116,43 @@ func TestRunClientProcessCancellationTerminatesInteractiveDescendants(t *testing
 	}, time.Second, 10*time.Millisecond, "interactive descendant survived cancellation")
 }
 
+func TestRunClientProcessForegroundsTerminalOutputWithNonterminalInput(t *testing.T) {
+	resultPath := t.TempDir() + "/nonterminal"
+	command := exec.Command(os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
+	command.Env = append(
+		os.Environ(),
+		interactiveClientProcessHelper+"=nonterminal-parent",
+		interactiveClientProcessResult+"="+resultPath,
+	)
+	terminal, err := pty.Start(command)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = terminal.Close()
+		if command.Process != nil {
+			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+		}
+	})
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(resultPath + ".ready")
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
+	childGroup, err := os.ReadFile(resultPath + ".ready")
+	require.NoError(t, err)
+	childGroupID, err := strconv.Atoi(string(childGroup))
+	require.NoError(t, err)
+	foregroundGroup, err := terminalForegroundProcessGroup(terminal)
+	require.NoError(t, err)
+	assert.Equal(t, childGroupID, foregroundGroup)
+	require.NoError(t, syscall.Kill(-childGroupID, syscall.SIGTSTP))
+	var status syscall.WaitStatus
+	_, err = syscall.Wait4(command.Process.Pid, &status, syscall.WUNTRACED, nil)
+	require.NoError(t, err)
+	require.True(t, status.Stopped() || status.Continued())
+	require.NoError(t, syscall.Kill(-command.Process.Pid, syscall.SIGCONT))
+	require.NoError(t, os.WriteFile(resultPath+".continue", nil, 0o600))
+	require.NoError(t, command.Wait())
+}
+
 func TestSSHInteractiveClientProcessHelper(t *testing.T) {
 	mode := os.Getenv(interactiveClientProcessHelper)
 	if mode == "" {
@@ -161,6 +204,41 @@ func TestSSHInteractiveClientProcessHelper(t *testing.T) {
 		)
 		if !errors.Is(err, context.Canceled) {
 			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	if mode == "nonterminal-child" {
+		group := []byte(strconv.Itoa(syscall.Getpgrp()))
+		resultPath := os.Getenv(interactiveClientProcessResult)
+		if err := os.WriteFile(resultPath+".ready", group, 0o600); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		for {
+			if _, err := os.Stat(resultPath + ".continue"); err == nil {
+				os.Exit(0)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if mode == "nonterminal-parent" {
+		if err := os.Setenv(interactiveClientProcessHelper, "nonterminal-child"); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		exitCode, _, err := RunClientProcess(
+			context.Background(),
+			os.Args[0],
+			[]string{"-test.run=^TestSSHInteractiveClientProcessHelper$"},
+			"",
+			os.Environ(),
+			strings.NewReader("batch input"),
+			os.Stdout,
+			os.Stderr,
+		)
+		if err != nil || exitCode != 0 {
+			_, _ = fmt.Fprintf(os.Stderr, "exit %d: %v\n", exitCode, err)
 			os.Exit(1)
 		}
 		os.Exit(0)

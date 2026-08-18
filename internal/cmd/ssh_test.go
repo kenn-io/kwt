@@ -105,8 +105,10 @@ func TestRequireSSHResolveCapabilityFailsClosed(t *testing.T) {
 
 type fakeSSHLeaseControl struct {
 	touches    atomic.Int32
+	holds      atomic.Int32
 	releases   atomic.Int32
 	touchErr   error
+	holdErr    error
 	releaseErr error
 }
 
@@ -117,6 +119,19 @@ func (w failingSSHOutput) Write([]byte) (int, error) { return 0, w.err }
 func (c *fakeSSHLeaseControl) Touch(context.Context, string) error {
 	c.touches.Add(1)
 	return c.touchErr
+}
+
+func (c *fakeSSHLeaseControl) Hold(ctx context.Context, _ string) (io.ReadCloser, error) {
+	if c.holdErr != nil {
+		return nil, c.holdErr
+	}
+	c.holds.Add(1)
+	reader, writer := io.Pipe()
+	go func() {
+		<-ctx.Done()
+		_ = writer.CloseWithError(ctx.Err())
+	}()
+	return reader, nil
 }
 
 func (c *fakeSSHLeaseControl) Release(context.Context, string) error {
@@ -329,14 +344,11 @@ func TestSSHExecResolvesAcquiresAndRunsThroughLease(t *testing.T) {
 	assert.Equal(t, int32(1), control.releases.Load())
 }
 
-func TestSSHExecHeartbeatsLeaseWhileClientRuns(t *testing.T) {
+func TestSSHExecHoldsLeaseWhileClientRuns(t *testing.T) {
 	oldRun := runSSHClientProcess
-	oldHeartbeat := sshLeaseHeartbeatEvery
 	t.Cleanup(func() {
 		runSSHClientProcess = oldRun
-		sshLeaseHeartbeatEvery = oldHeartbeat
 	})
-	sshLeaseHeartbeatEvery = time.Millisecond
 	control := &fakeSSHLeaseControl{}
 	stubShortSSHLease(t, control)
 	runSSHClientProcess = func(
@@ -349,7 +361,7 @@ func TestSSHExecHeartbeatsLeaseWhileClientRuns(t *testing.T) {
 		_ io.Writer,
 		_ io.Writer,
 	) (int, bool, error) {
-		for control.touches.Load() == 0 {
+		for control.holds.Load() == 0 {
 			select {
 			case <-ctx.Done():
 				return -1, true, ctx.Err()
@@ -361,24 +373,23 @@ func TestSSHExecHeartbeatsLeaseWhileClientRuns(t *testing.T) {
 	command, _, _ := sshResolveTestCommand()
 
 	require.NoError(t, runSSHExec(command, []string{"build.example.test", "true"}))
-	assert.GreaterOrEqual(t, control.touches.Load(), int32(1))
+	assert.Equal(t, int32(1), control.holds.Load())
+	assert.Equal(t, int32(0), control.touches.Load())
 	assert.Equal(t, int32(1), control.releases.Load())
 }
 
-func TestSSHExecStopsClientWhenLeaseHeartbeatFails(t *testing.T) {
+func TestSSHExecDoesNotStartClientWhenLeaseHoldFails(t *testing.T) {
 	oldRun := runSSHClientProcess
-	oldHeartbeat := sshLeaseHeartbeatEvery
 	t.Cleanup(func() {
 		runSSHClientProcess = oldRun
-		sshLeaseHeartbeatEvery = oldHeartbeat
 	})
-	sshLeaseHeartbeatEvery = time.Millisecond
-	control := &fakeSSHLeaseControl{touchErr: service.NewError(
+	control := &fakeSSHLeaseControl{holdErr: service.NewError(
 		service.SSHConnectionChanged, "SSH connection changed", false, nil, nil,
 	)}
 	stubShortSSHLease(t, control)
+	started := false
 	runSSHClientProcess = func(
-		ctx context.Context,
+		_ context.Context,
 		_ string,
 		_ []string,
 		_ string,
@@ -387,8 +398,8 @@ func TestSSHExecStopsClientWhenLeaseHeartbeatFails(t *testing.T) {
 		_ io.Writer,
 		_ io.Writer,
 	) (int, bool, error) {
-		<-ctx.Done()
-		return -1, true, ctx.Err()
+		started = true
+		return 0, true, nil
 	}
 	command, _, stderr := sshResolveTestCommand()
 
@@ -396,7 +407,8 @@ func TestSSHExecStopsClientWhenLeaseHeartbeatFails(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.SSHConnectionChanged))
 	assert.Contains(t, stderr.String(), "ssh_connection_changed")
-	assert.Equal(t, int32(1), control.touches.Load())
+	assert.False(t, started)
+	assert.Equal(t, int32(0), control.touches.Load())
 	assert.Equal(t, int32(1), control.releases.Load())
 }
 

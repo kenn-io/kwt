@@ -345,11 +345,12 @@ func drainingSSHLeaseControl(method, path string) bool {
 	if method == http.MethodDelete {
 		return !strings.Contains(remainder, "/")
 	}
-	if method != http.MethodPost {
+	leaseID, suffix, ok := strings.Cut(remainder, "/")
+	if !ok || leaseID == "" {
 		return false
 	}
-	leaseID, suffix, ok := strings.Cut(remainder, "/")
-	return ok && leaseID != "" && suffix == "touch"
+	return (method == http.MethodPost && suffix == "touch") ||
+		(method == http.MethodGet && suffix == "hold")
 }
 
 func writeProblem(w http.ResponseWriter, problem Problem) {

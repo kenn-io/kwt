@@ -305,6 +305,48 @@ func (c *Client) TouchSSHLease(ctx context.Context, leaseID string) error {
 	)
 }
 
+func (c *Client) HoldSSHLease(ctx context.Context, leaseID string) (io.ReadCloser, error) {
+	if leaseID == "" {
+		return nil, service.NewError(service.InvalidRequest, "SSH lease ID is empty", false, nil, nil)
+	}
+	path := sshLeaseRoute + "/" + leaseID + "/hold"
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		c.endpoint.BaseURL()+path,
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Authorization", "Bearer "+c.token)
+	response, err := c.streamHTTP.Do(request)
+	if err != nil {
+		return nil, service.NewError(
+			service.DaemonTransportFailed,
+			"kwt daemon request failed",
+			true,
+			nil,
+			err,
+		)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		defer func() { _ = response.Body.Close() }()
+		encoded, readErr := readResponse(response.Body, controlResponseLimit, path)
+		if readErr != nil {
+			return nil, service.NewError(
+				service.DaemonTransportFailed,
+				"read kwt daemon response",
+				true,
+				nil,
+				readErr,
+			)
+		}
+		return nil, decodeProblem(response.StatusCode, bytes.NewReader(encoded))
+	}
+	return response.Body, nil
+}
+
 func (c *Client) ReleaseSSHLease(ctx context.Context, leaseID string) error {
 	if leaseID == "" {
 		return service.NewError(service.InvalidRequest, "SSH lease ID is empty", false, nil, nil)

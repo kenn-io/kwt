@@ -242,8 +242,10 @@ kwt ssh copy build.example.com ./kwt /tmp/kwt.incoming
 ```
 
 `kwt ssh exec` and `kwt ssh copy` resolve and acquire a daemon-owned route,
-run one system OpenSSH client through that generation-bound master, heartbeat
-the lease while it runs, and release the lease afterward. Kwt—not its
+run one system OpenSSH client through that generation-bound master, hold the
+lease through an authenticated owner stream while it runs, and release the
+lease afterward. The owner stream remains live when job control suspends the
+foreground CLI, but closes automatically if that process exits. Kwt—not its
 caller—constructs the SSH or SFTP invocation,
 including ProxyJump transport, port grammar, private projection files, and
 fail-closed control-socket behavior. Remote stdout and stderr are streamed as

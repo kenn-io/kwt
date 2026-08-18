@@ -59,6 +59,7 @@ type sshLeaseEntry struct {
 	cleanupDone chan struct{}
 	expires     time.Time
 	timer       *time.Timer
+	holds       int
 }
 
 func newSSHLeaseRegistry(gate *Gate, now func() time.Time, ttl time.Duration) *sshLeaseRegistry {
@@ -159,7 +160,7 @@ func (r *sshLeaseRegistry) scheduleExpiry(id string, entry *sshLeaseEntry) {
 
 func (r *sshLeaseRegistry) expire(id string, entry *sshLeaseEntry, expires time.Time) {
 	entry.mu.Lock()
-	if entry.released || entry.cleaning || !entry.expires.Equal(expires) {
+	if entry.released || entry.cleaning || entry.holds > 0 || !entry.expires.Equal(expires) {
 		entry.mu.Unlock()
 		return
 	}
@@ -193,14 +194,52 @@ func (r *sshLeaseRegistry) touch(id string) error {
 	if err := entry.lease.Touch(); err != nil {
 		return err
 	}
-	if entry.timer != nil {
-		entry.timer.Stop()
+	if entry.holds == 0 {
+		if entry.timer != nil {
+			entry.timer.Stop()
+		}
+		r.scheduleExpiry(id, entry)
 	}
-	r.scheduleExpiry(id, entry)
 	if r.gate != nil {
 		r.gate.Touch(r.now())
 	}
 	return nil
+}
+
+func (r *sshLeaseRegistry) hold(id string) (func(), error) {
+	entry, err := r.entry(id)
+	if err != nil {
+		return nil, err
+	}
+	entry.mu.Lock()
+	if entry.released || entry.cleaning {
+		entry.mu.Unlock()
+		return nil, service.NewError(service.NotFound, "SSH lease was not found", false, nil, nil)
+	}
+	if err := entry.lease.Touch(); err != nil {
+		entry.mu.Unlock()
+		return nil, err
+	}
+	entry.holds++
+	if entry.timer != nil {
+		entry.timer.Stop()
+		entry.timer = nil
+	}
+	entry.mu.Unlock()
+	if r.gate != nil {
+		r.gate.Touch(r.now())
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			entry.mu.Lock()
+			entry.holds--
+			if entry.holds == 0 && !entry.released && !entry.cleaning {
+				r.scheduleExpiry(id, entry)
+			}
+			entry.mu.Unlock()
+		})
+	}, nil
 }
 
 func (r *sshLeaseRegistry) release(ctx context.Context, id string) error {
@@ -407,6 +446,19 @@ func serveSSHLease(
 		err = registry.release(r.Context(), parts[0])
 	case len(parts) == 2 && parts[0] != "" && parts[1] == "touch" && r.Method == http.MethodPost:
 		err = registry.touch(parts[0])
+	case len(parts) == 2 && parts[0] != "" && parts[1] == "hold" && r.Method == http.MethodGet:
+		var releaseHold func()
+		releaseHold, err = registry.hold(parts[0])
+		if err == nil {
+			defer releaseHold()
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.WriteHeader(http.StatusOK)
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			<-r.Context().Done()
+			return
+		}
 	default:
 		writeProblem(w, newProblem(http.StatusMethodNotAllowed, service.Descriptor{
 			Code: service.InvalidRequest, Message: "unsupported SSH lease request",

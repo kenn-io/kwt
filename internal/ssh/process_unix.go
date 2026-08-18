@@ -32,13 +32,12 @@ func runResolverCommand(command *exec.Cmd) error {
 }
 
 func runClientCommand(ctx context.Context, command *exec.Cmd) (bool, error) {
-	terminal, interactive := command.Stdin.(*os.File)
-	interactive = interactive && term.IsTerminal(int(terminal.Fd()))
+	terminal, terminalBacked := clientTerminal(command)
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if interactive {
+	if terminalBacked {
 		terminalForegroundMu.Lock()
 		defer terminalForegroundMu.Unlock()
 		signal.Ignore(syscall.SIGTTOU)
@@ -49,7 +48,7 @@ func runClientCommand(ctx context.Context, command *exec.Cmd) (bool, error) {
 	if err := command.Start(); err != nil {
 		return false, err
 	}
-	if interactive {
+	if terminalBacked {
 		defer command.Process.Release() //nolint:errcheck // wait4 below owns reaping.
 	}
 	cancelDone := make(chan struct{})
@@ -66,10 +65,21 @@ func runClientCommand(ctx context.Context, command *exec.Cmd) (bool, error) {
 		case <-cancelDone:
 		}
 	}()
-	if !interactive {
+	if !terminalBacked {
 		return true, command.Wait()
 	}
 	return true, waitInteractiveClient(command, terminal)
+}
+
+func clientTerminal(command *exec.Cmd) (*os.File, bool) {
+	streams := []any{command.Stdin, command.Stdout, command.Stderr}
+	for _, stream := range streams {
+		file, ok := stream.(*os.File)
+		if ok && term.IsTerminal(int(file.Fd())) {
+			return file, true
+		}
+	}
+	return nil, false
 }
 
 func waitInteractiveClient(command *exec.Cmd, terminal *os.File) error {

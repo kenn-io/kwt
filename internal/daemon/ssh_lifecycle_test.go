@@ -288,6 +288,11 @@ func TestClientFollowsSSHLeaseOperationAndReleasesLease(t *testing.T) {
 	assert.Equal(t, []string{"-S", "/private/control"}, result.Arguments)
 	assert.Contains(t, events, service.OperationEventProgress)
 	assert.Contains(t, events, service.OperationEventComplete)
+	holdContext, cancelHold := context.WithCancel(context.Background())
+	hold, err := client.HoldSSHLease(holdContext, result.LeaseID)
+	require.NoError(t, err)
+	cancelHold()
+	require.NoError(t, hold.Close())
 	require.NoError(t, client.TouchSSHLease(context.Background(), result.LeaseID))
 	require.NoError(t, client.ReleaseSSHLease(context.Background(), result.LeaseID))
 
@@ -296,6 +301,27 @@ func TestClientFollowsSSHLeaseOperationAndReleasesLease(t *testing.T) {
 	assert.True(t, filepath.IsAbs(lifecycle.requests[0].WorkingDirectory))
 	assert.NotNil(t, lifecycle.requests[0].Environment)
 	lifecycle.mu.Unlock()
+}
+
+func TestSSHLeaseHoldSuppressesExpiryUntilOwnerDisconnects(t *testing.T) {
+	lease := &fakeDaemonSSHLease{}
+	registry := newSSHLeaseRegistry(nil, time.Now, 20*time.Millisecond)
+	leaseID, err := registry.add(lease)
+	require.NoError(t, err)
+	releaseHold, err := registry.hold(leaseID)
+	require.NoError(t, err)
+
+	time.Sleep(60 * time.Millisecond)
+	require.NoError(t, registry.touch(leaseID))
+	releaseHold()
+	require.Eventually(t, func() bool {
+		_, entryErr := registry.entry(leaseID)
+		return service.IsCode(entryErr, service.NotFound)
+	}, time.Second, 10*time.Millisecond)
+
+	lease.mu.Lock()
+	assert.Equal(t, 1, lease.releases)
+	lease.mu.Unlock()
 }
 
 func TestClientPrefersTerminalSSHFailureAfterLostStartResponse(t *testing.T) {

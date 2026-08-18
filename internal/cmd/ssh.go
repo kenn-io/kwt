@@ -441,44 +441,43 @@ func runShortSSHClient(
 	run func(context.Context) (int, bool, error),
 ) (int, bool, error) {
 	processContext, cancel := context.WithCancel(ctx)
-	heartbeatDone := make(chan error, 1)
+	defer cancel()
+	if control == nil || leaseID == "" {
+		return run(processContext)
+	}
+	holdContext, releaseHold := context.WithCancel(processContext)
+	hold, err := control.Hold(holdContext, leaseID)
+	if err != nil {
+		releaseHold()
+		return -1, false, err
+	}
+	holdDone := make(chan error, 1)
 	go func() {
-		heartbeatDone <- heartbeatShortSSHLease(processContext, control, leaseID, cancel)
+		_, readErr := io.Copy(io.Discard, hold)
+		if holdContext.Err() != nil {
+			holdDone <- nil
+			return
+		}
+		cancel()
+		if readErr == nil {
+			readErr = io.ErrUnexpectedEOF
+		}
+		holdDone <- service.NewError(
+			service.SSHConnectionChanged,
+			"SSH connection changed",
+			false,
+			nil,
+			readErr,
+		)
 	}()
 	exitCode, started, processErr := run(processContext)
-	cancel()
-	heartbeatErr := <-heartbeatDone
-	if heartbeatErr != nil {
-		return -1, started, errors.Join(heartbeatErr, processErr)
+	releaseHold()
+	_ = hold.Close()
+	holdErr := <-holdDone
+	if holdErr != nil {
+		return -1, started, errors.Join(holdErr, processErr)
 	}
 	return exitCode, started, processErr
-}
-
-func heartbeatShortSSHLease(
-	ctx context.Context,
-	control sshLeaseControl,
-	leaseID string,
-	cancelProcess context.CancelFunc,
-) error {
-	if control == nil || leaseID == "" {
-		return nil
-	}
-	ticker := time.NewTicker(sshLeaseHeartbeatEvery)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			if err := control.Touch(ctx, leaseID); err != nil {
-				if ctx.Err() != nil {
-					return nil
-				}
-				cancelProcess()
-				return err
-			}
-		}
-	}
 }
 
 func releaseShortSSHLease(ctx context.Context, control sshLeaseControl, leaseID string) error {

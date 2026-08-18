@@ -102,9 +102,10 @@ unknown outcome rather than causing an automatic retry of a mutation.
 
 An SSH lease ID is likewise only a same-daemon routing handle. The daemon keeps
 the generation-bound lease and private projection state; clients receive only
-the arguments needed to reach that verified master. Lease touch and release
-require the owner-only bearer, and leases expire after thirty seconds without a
-heartbeat so a crashed CLI cannot pin authentication state indefinitely. During
+the arguments needed to reach that verified master. Lease touch, hold, and
+release require the owner-only bearer. A disconnected hold returns the lease to
+the thirty-second expiry policy, so a suspended foreground CLI keeps authority
+without letting a crashed CLI pin authentication state indefinitely. During
 replacement, new leases are refused, existing leases may finish within the
 advertised grace period, and remaining lease handles are invalidated before the
 SSH owner is closed. Live masters are never transferred to the successor.
