@@ -16,7 +16,7 @@ type fakeProbeExitError int
 func (e fakeProbeExitError) Error() string { return "tmux exited" }
 func (e fakeProbeExitError) ExitCode() int { return int(e) }
 
-func TestProbeProtectedSessionTreatsMissingTmuxAsAbsent(t *testing.T) {
+func TestProbeProtectedSessionTreatsMissingTmuxAsIndeterminate(t *testing.T) {
 	t.Setenv("PATH", filepath.Join(t.TempDir(), "missing"))
 
 	state, err := ProbeProtectedSession(
@@ -27,8 +27,8 @@ func TestProbeProtectedSessionTreatsMissingTmuxAsAbsent(t *testing.T) {
 		"",
 	)
 
-	require.NoError(t, err)
-	assert.Equal(t, ProtectedSessionAbsent, state)
+	assert.ErrorIs(t, err, exec.ErrNotFound)
+	assert.Equal(t, ProtectedSessionIndeterminate, state)
 }
 
 func TestClassifyProtectedSessionProbe(t *testing.T) {

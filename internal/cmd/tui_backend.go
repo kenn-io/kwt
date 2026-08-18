@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
@@ -1688,6 +1689,9 @@ func (b *tuiBackend) killProtectedTUIEndpoint(
 		os.Getenv("TMUX_TMPDIR"),
 	)
 	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return nil
+		}
 		return err
 	}
 	switch state {

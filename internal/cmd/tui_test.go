@@ -2035,6 +2035,21 @@ func TestTUIBackendRemoveWorktreeCleansProtectedEndpointWithoutSharedLiveness(t 
 	assert.Equal(t, []tmux.SessionEndpoint{protectedEndpoint}, killed)
 }
 
+func TestTUIBackendProtectedCleanupIgnoresMissingTmuxAfterRemoval(t *testing.T) {
+	t.Setenv("PATH", filepath.Join(t.TempDir(), "missing"))
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+
+	err := backend.killProtectedTUIEndpoint(
+		context.Background(),
+		tmux.SessionEndpoint{
+			SessionName: "kwt-wt-widget-protected-01234567",
+			SocketName:  "kwt-pr-protected-01234567",
+		},
+	)
+
+	require.NoError(t, err)
+}
+
 func TestTUIBackendRemoveWorktreeSkipsUnresolvedProtectedEndpoint(t *testing.T) {
 	repoPath := newTUITestRepo(t)
 	worktreePath := filepath.Join(t.TempDir(), "unresolved-protected-remove")
