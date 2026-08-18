@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
+	"syscall"
 	"testing"
 	"time"
 
@@ -20,7 +22,7 @@ import (
 const interactiveClientProcessHelper = "KWT_SSH_INTERACTIVE_CLIENT_PROCESS_HELPER"
 const interactiveClientProcessResult = "KWT_SSH_INTERACTIVE_CLIENT_PROCESS_RESULT"
 
-func TestRunClientProcessKeepsInteractiveTerminalReadable(t *testing.T) {
+func TestRunClientProcessPreservesInteractiveTerminalJobControl(t *testing.T) {
 	resultPath := t.TempDir() + "/result"
 	command := exec.Command(os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
 	command.Env = append(
@@ -33,9 +35,24 @@ func TestRunClientProcessKeepsInteractiveTerminalReadable(t *testing.T) {
 	t.Cleanup(func() {
 		_ = terminal.Close()
 		if command.Process != nil {
-			_ = command.Process.Kill()
+			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
 		}
 	})
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(resultPath + ".ready")
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
+	parentGroup, err := os.ReadFile(resultPath + ".parent")
+	require.NoError(t, err)
+	childGroup, err := os.ReadFile(resultPath + ".ready")
+	require.NoError(t, err)
+	require.Equal(t, string(parentGroup), string(childGroup))
+	require.NoError(t, syscall.Kill(-command.Process.Pid, syscall.SIGSTOP))
+	var status syscall.WaitStatus
+	_, err = syscall.Wait4(command.Process.Pid, &status, syscall.WUNTRACED, nil)
+	require.NoError(t, err)
+	require.True(t, status.Stopped() || status.Continued())
+	require.NoError(t, syscall.Kill(-command.Process.Pid, syscall.SIGCONT))
 	_, err = io.WriteString(terminal, "interactive input\n")
 	require.NoError(t, err)
 
@@ -58,6 +75,11 @@ func TestSSHInteractiveClientProcessHelper(t *testing.T) {
 		return
 	}
 	if mode == "child" {
+		group := []byte(strconv.Itoa(syscall.Getpgrp()))
+		if err := os.WriteFile(os.Getenv(interactiveClientProcessResult)+".ready", group, 0o600); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		value, err := bufio.NewReader(os.Stdin).ReadString('\n')
 		if err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err)
@@ -70,6 +92,11 @@ func TestSSHInteractiveClientProcessHelper(t *testing.T) {
 		os.Exit(0)
 	}
 	if err := os.Setenv(interactiveClientProcessHelper, "child"); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	group := []byte(strconv.Itoa(syscall.Getpgrp()))
+	if err := os.WriteFile(os.Getenv(interactiveClientProcessResult)+".parent", group, 0o600); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
