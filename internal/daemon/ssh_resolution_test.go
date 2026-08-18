@@ -207,7 +207,7 @@ func TestSSHResolveRouteReservesDaemonWorkAndHonorsCancellation(t *testing.T) {
 }
 
 func TestSSHResolveCapabilityAndSchemaAreAdvertised(t *testing.T) {
-	assert.Equal(t, "1.9.0", APISchemaVersion)
+	assert.Equal(t, "1.10.0", APISchemaVersion)
 	record, _, err := NewRuntimeRecord(
 		t.TempDir(),
 		Build{Version: "development"},
