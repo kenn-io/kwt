@@ -240,6 +240,21 @@ func (s *WorkspaceSessions) Kill(endpoint SessionEndpoint) error {
 	)
 }
 
+// KillMatching terminates only the session generation observed at the
+// supplied endpoint. A same-named replacement is left untouched.
+func (s *WorkspaceSessions) KillMatching(
+	ctx context.Context,
+	endpoint SessionEndpoint,
+	request WorkspaceEndpointRequest,
+) error {
+	command, err := s.servers.commandForEndpoint(endpoint)
+	if err != nil {
+		return err
+	}
+	request.SessionName = endpoint.SessionName
+	return killWorkspaceSessionIfMatching(ctx, command, request)
+}
+
 func attachWorkspaceEndpoint(
 	ctx context.Context,
 	endpoint SessionEndpoint,

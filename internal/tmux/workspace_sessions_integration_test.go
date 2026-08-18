@@ -113,6 +113,32 @@ func TestWorkspaceSessionsKillSucceedsWhenCapturedSessionAlreadyExited(t *testin
 	require.NoError(t, err)
 }
 
+func TestWorkspaceSessionsKillMatchingLeavesReplacementGeneration(t *testing.T) {
+	fixture := newRealWorkspaceSessionsFixture(t)
+	fixture.createMatching(t, fixture.servers.kwtServer())
+	request := fixture.request()
+	endpoints, err := fixture.sessions.LiveEndpoints(fixture.ctx, request)
+	require.NoError(t, err)
+	require.Len(t, endpoints, 1)
+	require.NoError(t, fixture.servers.kwtServer().KillSession(fixture.session))
+	replacementGeneration := "fedcba9876543210fedcba9876543210"
+	require.NoError(t, NewWorkspaceRunner(
+		fixture.servers.kwtServer(), nil,
+	).EnsureWithGeneration(
+		fixture.ctx,
+		fixture.session,
+		fixture.workspace,
+		replacementGeneration,
+		BlankLayout(),
+	))
+
+	err = fixture.sessions.KillMatching(fixture.ctx, endpoints[0], request)
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "different worktree generation")
+	assert.True(t, fixture.servers.kwtServer().HasSession(fixture.session))
+}
+
 func TestWorkspaceSessionsAdoptVerifiedDefaultServerSession(t *testing.T) {
 	fixture := newRealWorkspaceSessionsFixture(t)
 	fixture.createMatching(t, fixture.servers.defaultServer())

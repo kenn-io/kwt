@@ -54,7 +54,8 @@ type tuiBackend struct {
 	ensureWorktree            func(context.Context, string, string, string, models.Layout) (tmux.SessionEndpoint, error)
 	attachSession             func(context.Context, tmux.SessionEndpoint) error
 	killEndpoint              func(tmux.SessionEndpoint) error
-	killProtectedEndpoint     func(context.Context, tmux.SessionEndpoint) error
+	cleanupEndpoint           func(context.Context, tmux.SessionEndpoint, tmux.WorkspaceEndpointRequest) error
+	killProtectedEndpoint     func(context.Context, tmux.SessionEndpoint, tmux.WorkspaceEndpointRequest) error
 	registerProject           func(context.Context, models.Project) error
 	registerWorkspace         func(models.Workspace) (models.Workspace, error)
 	unregisterWorkspace       func(name string) error
@@ -121,6 +122,7 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 		now:                     time.Now,
 	}
 	backend.killEndpoint = sessions.Kill
+	backend.cleanupEndpoint = sessions.KillMatching
 	backend.killProtectedEndpoint = backend.killProtectedTUIEndpoint
 	backend.loadTargetConfig = func(repoRoot string, interactive bool) (*models.Config, error) {
 		return config.LoadForTargetFrom(backend.cfg, repoRoot, interactive)
@@ -309,6 +311,7 @@ func (b *tuiBackend) applyInventoryConfig(effective *models.Config) error {
 	b.ensureWorktree = b.workspaceSessions.EstablishWithGeneration
 	b.attachSession = b.workspaceSessions.Attach
 	b.killEndpoint = b.workspaceSessions.Kill
+	b.cleanupEndpoint = b.workspaceSessions.KillMatching
 	return nil
 }
 
@@ -1616,9 +1619,9 @@ func (b *tuiBackend) RemoveWorktree(ctx context.Context, row dashboard.Row, forc
 	for _, endpoint := range endpoints {
 		var err error
 		if endpoint.Protected {
-			err = b.killProtectedEndpoint(ctx, endpoint.Endpoint)
+			err = b.killProtectedEndpoint(ctx, endpoint.Endpoint, endpointRequest)
 		} else {
-			err = b.killEndpoint(endpoint.Endpoint)
+			err = b.cleanupEndpoint(ctx, endpoint.Endpoint, endpointRequest)
 		}
 		if err != nil {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf(
@@ -1680,6 +1683,7 @@ func (b *tuiBackend) removalEndpoints(
 func (b *tuiBackend) killProtectedTUIEndpoint(
 	ctx context.Context,
 	endpoint tmux.SessionEndpoint,
+	request tmux.WorkspaceEndpointRequest,
 ) error {
 	command, state, err := tmux.ResolveProtectedSessionCommand(
 		ctx,
@@ -1698,7 +1702,8 @@ func (b *tuiBackend) killProtectedTUIEndpoint(
 	case tmux.ProtectedSessionAbsent:
 		return nil
 	case tmux.ProtectedSessionLive:
-		return command.KillSessionIfPresentContext(ctx, endpoint.SessionName)
+		request.SessionName = endpoint.SessionName
+		return command.KillWorkspaceSessionIfMatchingContext(ctx, request)
 	default:
 		return fmt.Errorf("protected tmux session state is indeterminate")
 	}

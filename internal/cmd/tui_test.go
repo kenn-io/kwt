@@ -1907,9 +1907,19 @@ func TestTUIBackendRemoveWorktreeKillsEveryMatchingEndpointAfterRemoval(t *testi
 		return kwt.RemovalResult{Path: request.Path, WorktreeRemoved: true}, nil
 	}
 	var killed []tmux.SessionEndpoint
-	backend.killEndpoint = func(endpoint tmux.SessionEndpoint) error {
+	backend.cleanupEndpoint = func(
+		_ context.Context,
+		endpoint tmux.SessionEndpoint,
+		request tmux.WorkspaceEndpointRequest,
+	) error {
 		assert.True(t, removed, "sessions must remain live until removal succeeds")
+		assert.Equal(t, worktreePath, request.WorkspacePath)
+		assert.Equal(t, generation, request.WorkspaceGeneration)
 		killed = append(killed, endpoint)
+		return nil
+	}
+	backend.killEndpoint = func(endpoint tmux.SessionEndpoint) error {
+		t.Fatalf("post-removal cleanup used unconditional kill: %+v", endpoint)
 		return nil
 	}
 
@@ -1964,7 +1974,11 @@ func TestTUIBackendRemoveWorktreeSweepsSessionsCreatedDuringRemoval(t *testing.T
 		return kwt.RemovalResult{Path: request.Path, WorktreeRemoved: true}, nil
 	}
 	var killed []tmux.SessionEndpoint
-	backend.killEndpoint = func(endpoint tmux.SessionEndpoint) error {
+	backend.cleanupEndpoint = func(
+		_ context.Context,
+		endpoint tmux.SessionEndpoint,
+		_ tmux.WorkspaceEndpointRequest,
+	) error {
 		killed = append(killed, endpoint)
 		return nil
 	}
@@ -2015,7 +2029,11 @@ func TestTUIBackendRemoveWorktreeCleansProtectedEndpointWithoutSharedLiveness(t 
 		removed = true
 		return kwt.RemovalResult{Path: request.Path, WorktreeRemoved: true}, nil
 	}
-	backend.killEndpoint = func(endpoint tmux.SessionEndpoint) error {
+	backend.cleanupEndpoint = func(
+		_ context.Context,
+		endpoint tmux.SessionEndpoint,
+		_ tmux.WorkspaceEndpointRequest,
+	) error {
 		t.Fatalf("protected endpoint routed through ordinary cleanup: %+v", endpoint)
 		return nil
 	}
@@ -2023,8 +2041,11 @@ func TestTUIBackendRemoveWorktreeCleansProtectedEndpointWithoutSharedLiveness(t 
 	backend.killProtectedEndpoint = func(
 		_ context.Context,
 		endpoint tmux.SessionEndpoint,
+		request tmux.WorkspaceEndpointRequest,
 	) error {
 		assert.True(t, removed)
+		assert.Equal(t, worktreePath, request.WorkspacePath)
+		assert.Equal(t, generation, request.WorkspaceGeneration)
 		killed = append(killed, endpoint)
 		return nil
 	}
@@ -2044,6 +2065,11 @@ func TestTUIBackendProtectedCleanupIgnoresMissingTmuxAfterRemoval(t *testing.T) 
 		tmux.SessionEndpoint{
 			SessionName: "kwt-wt-widget-protected-01234567",
 			SocketName:  "kwt-pr-protected-01234567",
+		},
+		tmux.WorkspaceEndpointRequest{
+			SessionName:         "kwt-wt-widget-protected-01234567",
+			WorkspacePath:       "/work/widget",
+			WorkspaceGeneration: "0123456789abcdef0123456789abcdef",
 		},
 	)
 
@@ -2083,13 +2109,18 @@ func TestTUIBackendRemoveWorktreeSkipsUnresolvedProtectedEndpoint(t *testing.T) 
 	) (kwt.RemovalResult, error) {
 		return kwt.RemovalResult{Path: request.Path, WorktreeRemoved: true}, nil
 	}
-	backend.killEndpoint = func(endpoint tmux.SessionEndpoint) error {
+	backend.cleanupEndpoint = func(
+		_ context.Context,
+		endpoint tmux.SessionEndpoint,
+		_ tmux.WorkspaceEndpointRequest,
+	) error {
 		t.Fatalf("unresolved protected row routed through ordinary cleanup: %+v", endpoint)
 		return nil
 	}
 	backend.killProtectedEndpoint = func(
 		_ context.Context,
 		endpoint tmux.SessionEndpoint,
+		_ tmux.WorkspaceEndpointRequest,
 	) error {
 		t.Fatalf("unresolved protected row routed through protected cleanup: %+v", endpoint)
 		return nil
