@@ -183,6 +183,18 @@ bound is exceeded. The daemon also caps the encoded public route snapshot at
 oversized snapshot fails as `ssh_resolution_failed`. Resolution does not create
 a connection, control socket, trust decision, credential prompt, or lease.
 
+`kwt ssh lease` may resolve and acquire in one CLI process when the caller has
+no prior snapshot. Clients performing a conditional launch continue supplying
+the reviewed route identity and projection policy. `kwt ssh exec` and
+`kwt ssh copy` use the combined form for one bounded command or transfer: the
+daemon owns route resolution, prompt handling, ProxyJump masters, and lease
+lifecycle, while the foreground kwt process owns the system SSH or SCP child
+and streams its output directly. The child receives only the daemon's
+generation-bound, fail-closed arguments. Consumers do not reconstruct those
+arguments or load SSH configuration again. Cancellation terminates the entire
+client process tree, and the foreground process releases the daemon lease under
+a separate cleanup deadline.
+
 `kwt projects` and `kwt list` auto-start or reuse the daemon and require a
 current inventory result. They fail instead of falling back to cached or direct
 filesystem data. The TUI may paint immediately from the derived last-known-good

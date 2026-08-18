@@ -184,7 +184,11 @@ kwt ssh lease build.example.com \
 ```
 
 `kwt ssh lease` is the long-lived native-client bridge to the same-machine
-daemon. It re-resolves the logical target, refuses a changed route, prepares
+daemon. Native clients that already reviewed a snapshot pass
+`--route-identity` and `--projection-policy`; kwt refuses a changed route.
+When those flags are omitted, the same CLI invocation resolves the route and
+immediately acquires it, avoiding a second helper process while retaining the
+daemon's pre- and post-connection revalidation. The daemon prepares
 every ProxyJump hop in order, and streams operation events as NDJSON. Prompt
 capable clients use `--host-key-policy review`, which requires an explicit
 OpenSSH review prompt unless the route already requires a known key.
@@ -229,6 +233,30 @@ master remains warm. Agent-forwarding masters disconnect immediately. Daemon
 replacement reports its active lease count, waits through
 `daemon.replacement_grace`, then invalidates remaining leases and terminates
 their verified masters; a successor never adopts them as live connections.
+
+## Short-lived SSH commands and copies
+
+```sh
+kwt ssh exec build.example.com -- uname -a
+kwt ssh copy build.example.com ./kwt /tmp/kwt.incoming
+```
+
+`kwt ssh exec` and `kwt ssh copy` resolve and acquire a daemon-owned route,
+run one system OpenSSH client through that generation-bound master, and release
+the lease afterward. Kwt—not its caller—constructs the SSH or SCP invocation,
+including ProxyJump transport, port grammar, private projection files, and
+fail-closed control-socket behavior. Remote stdout and stderr are streamed as
+they arrive; connection progress is streamed to stderr unless `--quiet` is
+set. An OpenSSH or SCP exit status is preserved, including SSH's status 255,
+while failures before client execution keep kwt's stable typed error surface.
+
+Both commands default to `--host-key-policy strict` for unattended callers.
+Use `--host-key-policy review` from a terminal to permit the daemon's bounded
+host-key and authentication prompts. A nonterminal caller never answers a
+prompt implicitly and receives `ssh_interaction_required`. Copy accepts one
+local file and one remote path; it translates the reviewed SSH projection into
+SCP's option grammar internally, so consumers never handle control paths or
+the SSH/SCP `-p` versus `-P` distinction.
 
 When `kwt add -b` creates a branch, it fetches `origin` and starts from its
 default branch. If that remote base is unavailable, it falls back to local
