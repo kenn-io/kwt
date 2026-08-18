@@ -105,11 +105,11 @@ func TestKillWorkspaceSessionIfMatching(t *testing.T) {
 	}
 }
 
-func TestClassifySessionCleanupIdentityReadsOneObservedTuple(t *testing.T) {
+func TestClassifySessionCleanupIdentityReadsPortableTuple(t *testing.T) {
 	workspaceIdentity := strings.Repeat("a", 64)
 
 	identity, err := classifySessionCleanupIdentity(
-		"$7\t"+workspaceIdentity+"\t"+resolverTestGeneration+"\n",
+		"$7|"+workspaceIdentity+"|"+resolverTestGeneration+"\n",
 		"",
 		nil,
 	)
@@ -134,7 +134,7 @@ func TestClassifySessionCleanupIdentityTreatsExplicitAbsenceAsComplete(t *testin
 }
 
 func TestClassifySessionCleanupIdentityRejectsMalformedTuple(t *testing.T) {
-	_, err := classifySessionCleanupIdentity("$7\tonly-two-fields\n", "", nil)
+	_, err := classifySessionCleanupIdentity("$7|only-two-fields\n", "", nil)
 
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "malformed response")

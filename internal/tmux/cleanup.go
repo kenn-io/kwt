@@ -92,7 +92,7 @@ func (t *TmuxCommand) workspaceSessionCleanupIdentityContext(
 		"-p",
 		"-t",
 		session,
-		"#{session_id}\t#{@kwt-workspace-id}\t#{@kwt-workspace-generation}",
+		"#{session_id}|#{@kwt-workspace-id}|#{@kwt-workspace-generation}",
 	)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		err = errors.Join(ctxErr, err)
@@ -120,7 +120,7 @@ func classifySessionCleanupIdentity(
 			strings.TrimSpace(stderr),
 		)
 	}
-	fields := strings.Split(strings.TrimSuffix(output, "\n"), "\t")
+	fields := strings.Split(strings.TrimSuffix(output, "\n"), "|")
 	if len(fields) != 3 {
 		return sessionCleanupIdentity{}, fmt.Errorf(
 			"inspect tmux cleanup identity: malformed response",
