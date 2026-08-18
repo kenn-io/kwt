@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -423,8 +424,9 @@ func TestSSHCopyUsesStructuredSFTPBatch(t *testing.T) {
 		runSSHClientProcess = oldRun
 		captureSSHClientProcess = oldCapture
 	})
+	workingDirectory := filepath.Join(t.TempDir(), "work")
 	captureSSHClientProcess = func() (string, []string, error) {
-		return "/work", []string{"PATH=/usr/bin"}, nil
+		return workingDirectory, []string{"PATH=/usr/bin"}, nil
 	}
 	resolveSSHThroughDaemon = func(
 		_ context.Context,
@@ -466,16 +468,16 @@ func TestSSHCopyUsesStructuredSFTPBatch(t *testing.T) {
 		got = append([]string(nil), arguments...)
 		batch, err := io.ReadAll(stdin)
 		require.NoError(t, err)
-		assert.Equal(t,
-			"put \"/work/-kwt \\*\\[build\\]\\?\" \"C:/Users/runner/kwt.exe; touch /tmp/pwn\"\n",
-			string(batch),
-		)
+		expectedSource := strings.NewReplacer(
+			`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`, `]`, `\]`,
+		).Replace(filepath.Join(workingDirectory, `-kwt *[build]?`))
+		assert.Equal(t, "put \""+expectedSource+"\" \"C:/staging/kwt.exe; touch /tmp/pwn\"\n", string(batch))
 		return 0, true, nil
 	}
 	command, _, _ := sshResolveTestCommand()
 
 	require.NoError(t, runSSHCopy(command, []string{
-		"build.example.test", `-kwt *[build]?`, "C:/Users/runner/kwt.exe; touch /tmp/pwn",
+		"build.example.test", `-kwt *[build]?`, "C:/staging/kwt.exe; touch /tmp/pwn",
 	}))
 	assert.Equal(t, []string{
 		"-F", "/dev/null", "-o", `ControlPath="C:\\kwt control"`, "-P", "2222",

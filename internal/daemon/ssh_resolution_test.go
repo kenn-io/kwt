@@ -207,7 +207,7 @@ func TestSSHResolveRouteReservesDaemonWorkAndHonorsCancellation(t *testing.T) {
 }
 
 func TestSSHResolveCapabilityAndSchemaAreAdvertised(t *testing.T) {
-	assert.Equal(t, "1.10.0", APISchemaVersion)
+	assert.Equal(t, "1.11.0", APISchemaVersion)
 	record, _, err := NewRuntimeRecord(
 		t.TempDir(),
 		Build{Version: "development"},
@@ -216,6 +216,7 @@ func TestSSHResolveCapabilityAndSchemaAreAdvertised(t *testing.T) {
 	require.NoError(t, err)
 	capabilities := strings.Split(record.Metadata[metadataCapabilities], ",")
 	assert.Contains(t, capabilities, CapabilitySSHResolve)
+	assert.Contains(t, capabilities, CapabilitySSHLeaseHold)
 	assert.Contains(t, capabilities, CapabilitySSHLifecycle)
 }
 

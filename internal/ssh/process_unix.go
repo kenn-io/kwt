@@ -85,8 +85,11 @@ func clientTerminal(command *exec.Cmd) (*os.File, bool) {
 func waitInteractiveClient(command *exec.Cmd, terminal *os.File) error {
 	parentGroup := syscall.Getpgrp()
 	childGroup := command.Process.Pid
+	childForeground := true
 	defer func() {
-		_ = setTerminalForeground(terminal, parentGroup)
+		if childForeground {
+			_ = setTerminalForeground(terminal, parentGroup)
+		}
 	}()
 	for {
 		var status syscall.WaitStatus
@@ -101,8 +104,11 @@ func waitInteractiveClient(command *exec.Cmd, terminal *os.File) error {
 		}
 		switch {
 		case status.Stopped():
-			if err := setTerminalForeground(terminal, parentGroup); err != nil {
-				return fmt.Errorf("restore terminal before suspension: %w", err)
+			if childForeground {
+				if err := setTerminalForeground(terminal, parentGroup); err != nil {
+					return fmt.Errorf("restore terminal before suspension: %w", err)
+				}
+				childForeground = false
 			}
 			// SIGSTOP is not discarded for an orphaned process group, which
 			// matters for terminal emulators and PTY owners without a shell in
@@ -111,8 +117,15 @@ func waitInteractiveClient(command *exec.Cmd, terminal *os.File) error {
 			if err := syscall.Kill(os.Getpid(), syscall.SIGSTOP); err != nil {
 				return fmt.Errorf("suspend SSH client owner: %w", err)
 			}
-			if err := setTerminalForeground(terminal, childGroup); err != nil {
-				return fmt.Errorf("restore SSH client foreground process group: %w", err)
+			foregroundGroup, err := terminalForegroundProcessGroup(terminal)
+			if err != nil {
+				return fmt.Errorf("inspect terminal after SSH client resume: %w", err)
+			}
+			if foregroundGroup == parentGroup {
+				if err := setTerminalForeground(terminal, childGroup); err != nil {
+					return fmt.Errorf("restore SSH client foreground process group: %w", err)
+				}
+				childForeground = true
 			}
 			if err := syscall.Kill(-childGroup, syscall.SIGCONT); err != nil && !errors.Is(err, syscall.ESRCH) {
 				return fmt.Errorf("continue SSH client process group: %w", err)
@@ -132,6 +145,10 @@ func setTerminalForeground(terminal *os.File, processGroup int) error {
 	return unix.IoctlSetPointerInt(
 		int(terminal.Fd()), unix.TIOCSPGRP, processGroup,
 	)
+}
+
+func terminalForegroundProcessGroup(terminal *os.File) (int, error) {
+	return unix.IoctlGetInt(int(terminal.Fd()), unix.TIOCGPGRP)
 }
 
 func killProcessGroup(command *exec.Cmd) error {

@@ -96,6 +96,7 @@ func NewRuntimeRecord(
 			CapabilityStatus,
 			CapabilityOperationStream,
 			CapabilityProjectRemoval,
+			CapabilitySSHLeaseHold,
 			CapabilitySSHLifecycle,
 			CapabilitySSHResolve,
 			CapabilityInventory,

@@ -31,6 +31,7 @@ func TestAcquireSSHLeaseDoesNotRetryDrainAfterExposingOperation(t *testing.T) {
 					State:  kwtdaemon.RuntimeReady,
 					Client: &kwtdaemon.Client{},
 					Status: kwtdaemon.Status{Capabilities: []string{
+						kwtdaemon.CapabilitySSHLeaseHold,
 						kwtdaemon.CapabilitySSHLifecycle,
 					}},
 				}}, nil
@@ -90,6 +91,17 @@ func TestAcquireSSHLeaseDoesNotRetryDrainAfterExposingOperation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRequireSSHLifecycleCapabilitiesRejectsDaemonWithoutLeaseHold(t *testing.T) {
+	err := requireSSHLifecycleCapabilities(kwtdaemon.Observation{
+		Client: &kwtdaemon.Client{},
+		Status: kwtdaemon.Status{Capabilities: []string{
+			kwtdaemon.CapabilitySSHLifecycle,
+		}},
+	})
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.DaemonIncompatible))
 }
 
 func TestInventoryDrainDeadlineRequiresDaemonDrainingCode(t *testing.T) {

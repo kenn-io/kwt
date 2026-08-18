@@ -243,6 +243,7 @@ func runHost(
 				CapabilityStatus,
 				CapabilityOperationStream,
 				CapabilityProjectRemoval,
+				CapabilitySSHLeaseHold,
 				CapabilitySSHLifecycle,
 				CapabilitySSHResolve,
 				CapabilityInventory,

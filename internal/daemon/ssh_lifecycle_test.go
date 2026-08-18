@@ -617,6 +617,7 @@ func TestServeDrainsActiveSSHLeaseThenClosesLifecycleOwner(t *testing.T) {
 	}()
 	observation := waitForRuntime(t, home)
 	assert.Contains(t, observation.Status.Capabilities, CapabilitySSHLifecycle)
+	assert.Contains(t, observation.Status.Capabilities, CapabilitySSHLeaseHold)
 	result, err := observation.Client.AcquireSSH(
 		context.Background(),
 		kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{

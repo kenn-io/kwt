@@ -45,13 +45,16 @@ immediately, then continues reporting observed drain state while it waits.
 Active work and leases may finish until `daemon.replacement_grace`; the default
 is five minutes.
 
-The API schema is `1.10.0`. It exposes authenticated status, graceful shutdown,
+The API schema is `1.11.0`. It exposes authenticated status, graceful shutdown,
 worktree inventory, guarded project unregistration, and repository-config
 approval under `/api/v1`, proof-capable liveness at `/api/ping`, and
 credential-free OpenAPI at `/openapi.json`. Inventory clients require the
 `worktree.inventory.v1` capability; guarded unregistration requires
 `project.removal.v1`, SSH route resolution requires `ssh.resolve.v1`, and
-daemon-owned connection leases require `ssh.lifecycle.v1`.
+daemon-owned connection leases require `ssh.lifecycle.v1`. Clients that bind
+short commands to a connection-owned hold additionally require
+`ssh.lease.hold.v1`; stale development daemons fail capability negotiation
+before acquiring a lease rather than falling back to periodic touches.
 Daemons advertise `operation.stream.v1` when they can
 carry ordered domain-operation events and bound prompt responses. Advertising
 that transport capability does not start a domain operation or move any
