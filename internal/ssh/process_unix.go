@@ -193,5 +193,8 @@ func (e clientWaitError) ExitCode() int {
 	if e.status.Exited() {
 		return e.status.ExitStatus()
 	}
+	if e.status.Signaled() {
+		return 128 + int(e.status.Signal())
+	}
 	return -1
 }

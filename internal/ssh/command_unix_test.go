@@ -27,6 +27,22 @@ const interactiveClientProcessHelper = "KWT_SSH_INTERACTIVE_CLIENT_PROCESS_HELPE
 const interactiveClientProcessResult = "KWT_SSH_INTERACTIVE_CLIENT_PROCESS_RESULT"
 const interactiveClientProcessBackgroundStart = "KWT_SSH_INTERACTIVE_CLIENT_PROCESS_BACKGROUND_START"
 
+func TestClientWaitErrorPreservesSignalExitStatus(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		signal syscall.Signal
+		want   int
+	}{
+		{name: "interrupt", signal: syscall.SIGINT, want: 130},
+		{name: "terminate", signal: syscall.SIGTERM, want: 143},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := clientWaitError{status: syscall.WaitStatus(test.signal)}
+			assert.Equal(t, test.want, err.ExitCode())
+		})
+	}
+}
+
 func TestRunClientProcessPreservesInteractiveTerminalJobControl(t *testing.T) {
 	resultPath := t.TempDir() + "/result"
 	command := exec.Command(os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
