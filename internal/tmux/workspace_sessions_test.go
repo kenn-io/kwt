@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"testing"
 
@@ -102,7 +103,7 @@ func (r *recordingWorkspaceAttachCommand) AttachSessionNestedCommand(
 	session string,
 ) *exec.Cmd {
 	r.preparedSession = session
-	return exec.Command("tmux", "attach-session", "-t", session)
+	return exec.Command(os.Args[0], "attach-session", "-t", session)
 }
 
 func TestWorkspaceSessionsEstablishesOnResolvedCanonicalEndpoint(t *testing.T) {
@@ -287,6 +288,8 @@ func TestWorkspaceSessionsRoutesAttachmentByClientMembership(t *testing.T) {
 }
 
 func TestWorkspaceSessionsPreparesCrossServerAttachForResidentUI(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
 	for _, test := range []struct {
 		name            string
 		serverPID       string
@@ -303,7 +306,7 @@ func TestWorkspaceSessionsPreparesCrossServerAttachForResidentUI(t *testing.T) {
 			name:            "different server returns nested attach process",
 			serverPID:       "43",
 			wantPrepared:    "workspace",
-			wantProcessArgs: []string{"tmux", "attach-session", "-t", "workspace"},
+			wantProcessArgs: []string{os.Args[0], "attach-session", "-t", "workspace"},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
