@@ -116,7 +116,8 @@ func classifyProtectedSessionProbe(
 func isExplicitlyAbsentTmuxDiagnostic(stderr string) bool {
 	diagnostic := strings.TrimSpace(stderr)
 	if strings.HasPrefix(diagnostic, "no server running on ") ||
-		strings.HasPrefix(diagnostic, "can't find session: ") {
+		strings.HasPrefix(diagnostic, "can't find session: ") ||
+		strings.HasPrefix(diagnostic, "can't find session ") {
 		return true
 	}
 	return strings.HasPrefix(diagnostic, "error connecting to ") &&

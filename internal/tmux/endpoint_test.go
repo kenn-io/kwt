@@ -44,11 +44,11 @@ func TestCanonicalEndpointUsesKWTServer(t *testing.T) {
 
 func TestKillCommandHintUsesEndpointAddress(t *testing.T) {
 	assert.Equal(t,
-		"env -u TMUX_TMPDIR tmux -L kwt kill-session -t workspace",
+		"env -u TMUX_TMPDIR tmux -L kwt kill-session -t =workspace",
 		KillCommandHint(SessionEndpoint{SessionName: "workspace", SocketName: KWTServerSocketName}),
 	)
 	assert.Equal(t,
-		"env -u TMUX -u TMUX_PANE tmux kill-session -t workspace",
+		"env -u TMUX -u TMUX_PANE tmux kill-session -t =workspace",
 		KillCommandHint(SessionEndpoint{SessionName: "workspace"}),
 	)
 }

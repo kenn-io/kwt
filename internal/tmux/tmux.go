@@ -284,7 +284,9 @@ func (t *TmuxCommand) KillSessionContext(
 	ctx context.Context,
 	sessionName string,
 ) error {
-	return t.RunCommandContext(ctx, "kill-session", "-t", sessionName)
+	return t.RunCommandContext(
+		ctx, "kill-session", "-t", exactSessionTarget(sessionName),
+	)
 }
 
 // KillSessionIfPresentContext terminates a cleanup target while treating a
@@ -297,7 +299,7 @@ func (t *TmuxCommand) KillSessionIfPresentContext(
 		ctx,
 		"kill-session",
 		"-t",
-		sessionName,
+		exactSessionTarget(sessionName),
 	)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return errors.Join(ctxErr, err)
@@ -315,6 +317,10 @@ func (t *TmuxCommand) KillSessionIfPresentContext(
 		err,
 		strings.TrimSpace(stderr),
 	)
+}
+
+func exactSessionTarget(sessionName string) string {
+	return "=" + sessionName
 }
 
 func (t *TmuxCommand) AttachSession(sessionName string) error {

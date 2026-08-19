@@ -35,12 +35,12 @@ func KillCommandHint(endpoint SessionEndpoint) string {
 		return fmt.Sprintf(
 			"env -u TMUX_TMPDIR tmux -L %s kill-session -t %s",
 			endpoint.SocketName,
-			endpoint.SessionName,
+			exactSessionTarget(endpoint.SessionName),
 		)
 	}
 	return fmt.Sprintf(
 		"env -u TMUX -u TMUX_PANE tmux kill-session -t %s",
-		endpoint.SessionName,
+		exactSessionTarget(endpoint.SessionName),
 	)
 }
 

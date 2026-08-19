@@ -3,12 +3,48 @@ package tmux
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestKillSessionIfPresentDoesNotPrefixMatchReplacement(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("tmux is unavailable on Windows")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is not installed")
+	}
+
+	ctx := context.Background()
+	tempDir, err := os.MkdirTemp("/tmp", "kwt-kill-")
+	require.NoError(t, err)
+	command := NewTmuxCommandForSocketInTempDirWithStripNames(
+		"tmux", KWTServerSocketName, tempDir, nil,
+	)
+	t.Cleanup(func() {
+		_ = command.RunCommandContext(ctx, "kill-server")
+		require.NoError(t, os.RemoveAll(tempDir))
+	})
+
+	require.NoError(t, command.RunCommandContext(
+		ctx, "new-session", "-d", "-s", "workspace", "sleep", "60",
+	))
+	require.NoError(t, command.RunCommandContext(
+		ctx, "new-session", "-d", "-s", "workspace-build", "sleep", "60",
+	))
+	require.NoError(t, command.KillSessionContext(ctx, "workspace"))
+
+	err = command.KillSessionContext(ctx, "workspace")
+	require.Error(t, err)
+	require.True(t, command.HasSession("workspace-build"))
+
+	require.NoError(t, command.KillSessionIfPresentContext(ctx, "workspace"))
+	require.True(t, command.HasSession("workspace-build"))
+}
 
 func TestKillSessionIfPresentTreatsOnlyExplicitAbsenceAsSuccess(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -29,6 +65,7 @@ exit "$KWT_TEST_TMUX_EXIT"
 		{name: "no server", stderr: "no server running on test socket", exit: "1"},
 		{name: "missing socket", stderr: "error connecting to /tmp/tmux/socket (No such file or directory)", exit: "1"},
 		{name: "missing session", stderr: "can't find session: workspace", exit: "1"},
+		{name: "tmux 2.1 missing session", stderr: "can't find session workspace", exit: "1"},
 		{name: "permission failure", stderr: "error connecting to /tmp/tmux/socket (Permission denied)", exit: "1", wantError: true},
 		{name: "unexpected failure", stderr: "server rejected request", exit: "2", wantError: true},
 	}
