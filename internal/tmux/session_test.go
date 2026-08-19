@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kwt/internal/template"
 	"go.kenn.io/kwt/internal/url"
 )
 
@@ -123,6 +124,28 @@ func TestMatchesWorkspaceSessionName(t *testing.T) {
 	))
 	assert.False(t, MatchesWorkspaceSessionName(
 		"kwt-wt-kwt-feature-foo-9cc4e551", info, branch, "/another/path",
+	))
+}
+
+func TestMatchesWorkspaceSessionNameAcceptsPreNormalizationDollarSigns(t *testing.T) {
+	info := &url.RepositoryInfo{
+		Host: "github.com", Owner: "acme", Repository: "kwt$tools",
+	}
+	branch := "feature/$HOME"
+	path := "/worktrees/kwt-tools"
+	suffix := "-" + template.ShortHash(path)
+
+	assert.True(t, MatchesWorkspaceSessionName(
+		"kwt-wt-kwt$tools-feature-$HOME"+suffix,
+		info,
+		branch,
+		path,
+	))
+	assert.True(t, MatchesWorkspaceSessionName(
+		"kwt-workspace-github-com-acme-kwt$tools-feature-$HOME"+suffix,
+		info,
+		branch,
+		path,
 	))
 }
 

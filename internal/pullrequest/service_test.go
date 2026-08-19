@@ -712,6 +712,23 @@ func TestImportPreservesLegacyProtectedWorkspaceEndpoint(t *testing.T) {
 	assert.Zero(t, backend.createCalls)
 }
 
+func TestProtectedWorkspaceEndpointAcceptsPreNormalizationDollarSigns(t *testing.T) {
+	identity := testProject().Identity
+	info, ok := urlutil.CanonicalRepositoryInfo(identity)
+	require.True(t, ok)
+	workspace := Workspace{
+		Branch: "pr-41-feature$widgets",
+		Path:   "/worktrees/widget/pr-41-feature-widgets",
+	}
+	workspace.SessionName = "kwt-wt-" + info.Repository + "-" + workspace.Branch + "-" +
+		template.ShortHash(workspace.Path)
+
+	got := protectedWorkspaceEndpoint(workspace, []string{identity})
+
+	assert.NotEmpty(t, got.TmuxSocketName)
+	assert.Equal(t, models.TmuxAttachProtected, got.TmuxAttachMode)
+}
+
 func TestMatchingProvenanceWorkspaceProtectsUnrecognizedSessionName(t *testing.T) {
 	live := Workspace{
 		Path: "/worktrees/widget/pr-41", Branch: "pr-41",

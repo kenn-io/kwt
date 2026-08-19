@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kwt/internal/template"
 )
 
 const resolverTestGeneration = "0123456789abcdef0123456789abcdef"
@@ -113,6 +114,46 @@ func TestResolverPrefersMatchingCanonicalWhenBothEndpointsAreLive(t *testing.T) 
 	assert.Equal(t, KWTServerSocketName, got.Endpoint.SocketName)
 	assert.True(t, got.Live)
 	assert.Empty(t, defaultServer.calls, "canonical state must win before defaultServer inspection")
+}
+
+func TestResolverAdoptsPreNormalizationDollarSignSessionName(t *testing.T) {
+	request := resolverTestRequest()
+	suffix := "-" + template.ShortHash(request.WorkspacePath)
+	request.SessionName = "kwt-wt-widget-tools-main-home" + suffix
+	legacyName := "kwt-wt-widget$tools-main$home" + suffix
+
+	for _, test := range []struct {
+		name       string
+		canonical  []string
+		adopted    []string
+		wantSocket string
+	}{
+		{
+			name:       "canonical server",
+			canonical:  []string{legacyName},
+			wantSocket: KWTServerSocketName,
+		},
+		{
+			name:    "default server",
+			adopted: []string{legacyName},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			canonical, defaultServer := newResolverTestCommands(
+				request.WorkspacePath, request.SessionName,
+			)
+			canonical.sessions = test.canonical
+			defaultServer.sessions = test.adopted
+			resolver := newEndpointResolver(canonical, defaultServer, nil)
+
+			got, err := resolver.resolve(context.Background(), request)
+
+			require.NoError(t, err)
+			assert.True(t, got.Live)
+			assert.Equal(t, legacyName, got.Endpoint.SessionName)
+			assert.Equal(t, test.wantSocket, got.Endpoint.SocketName)
+		})
+	}
 }
 
 func TestResolverReturnsEveryMatchingLiveEndpoint(t *testing.T) {

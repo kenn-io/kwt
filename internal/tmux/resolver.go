@@ -344,6 +344,14 @@ func workspaceSessionCandidate(
 	if IsKWTDirectoryWorkspaceSessionName(request.SessionName) {
 		return MatchDirWorkspaceSession(names, request.WorkspacePath)
 	}
+	// compat(kag1): pre-dollar tmux session names. The path hash survives
+	// sanitization changes; marker inspection still proves the candidate's
+	// identity and generation before it can be used.
+	for _, name := range names {
+		if MatchesLegacyWorkspaceSessionPath(name, request.WorkspacePath) {
+			return name, true
+		}
+	}
 	return "", false
 }
 

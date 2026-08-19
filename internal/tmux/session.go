@@ -61,9 +61,7 @@ func DefaultSessionConfig() *SessionConfig {
 // (unlike info+branch: two detached-HEAD worktrees of the same repo both report
 // branch "HEAD" and would otherwise collide on the same session name).
 func WorkspaceSessionName(info *url.RepositoryInfo, branch, worktreePath string) string {
-	hash := template.ShortHash(worktreePath)
-	raw := fmt.Sprintf("kwt-wt-%s-%s-%s", info.Repository, branch, hash)
-	return sanitizeTmuxName(raw)
+	return sanitizeTmuxName(workspaceSessionNameRaw(info, branch, worktreePath))
 }
 
 // MatchesWorkspaceSessionName verifies the deterministic session identities
@@ -73,18 +71,39 @@ func MatchesWorkspaceSessionName(
 	info *url.RepositoryInfo,
 	branch, worktreePath string,
 ) bool {
-	return name == WorkspaceSessionName(info, branch, worktreePath) ||
-		name == previousWorkspaceSessionName(info, branch, worktreePath)
+	currentRaw := workspaceSessionNameRaw(info, branch, worktreePath)
+	previousRaw := previousWorkspaceSessionNameRaw(info, branch, worktreePath)
+	return name == sanitizeTmuxName(currentRaw) ||
+		name == sanitizeTmuxName(previousRaw) ||
+		// compat(kag1): pre-dollar tmux session names
+		name == sanitizeTmuxNameBeforeDollarNormalization(currentRaw) ||
+		name == sanitizeTmuxNameBeforeDollarNormalization(previousRaw)
+}
+
+func workspaceSessionNameRaw(
+	info *url.RepositoryInfo,
+	branch, worktreePath string,
+) string {
+	hash := template.ShortHash(worktreePath)
+	return fmt.Sprintf("kwt-wt-%s-%s-%s", info.Repository, branch, hash)
 }
 
 func previousWorkspaceSessionName(
 	info *url.RepositoryInfo,
 	branch, worktreePath string,
 ) string {
+	return sanitizeTmuxName(previousWorkspaceSessionNameRaw(
+		info, branch, worktreePath,
+	))
+}
+
+func previousWorkspaceSessionNameRaw(
+	info *url.RepositoryInfo,
+	branch, worktreePath string,
+) string {
 	hash := template.ShortHash(worktreePath)
-	raw := fmt.Sprintf("kwt-workspace-%s-%s-%s-%s-%s",
+	return fmt.Sprintf("kwt-workspace-%s-%s-%s-%s-%s",
 		info.Host, info.Owner, info.Repository, branch, hash)
-	return sanitizeTmuxName(raw)
 }
 
 // MatchesLegacyWorkspaceSessionPath recognizes pre-marker KWT sessions by
@@ -118,6 +137,13 @@ func IsKWTWorktreeSessionName(name string) bool {
 func sanitizeTmuxName(s string) string {
 	return strings.NewReplacer(
 		".", "-", ":", "-", "$", "-", "/", "-", " ", "-", "\t", "-",
+	).Replace(s)
+}
+
+// compat(kag1): pre-dollar tmux session names
+func sanitizeTmuxNameBeforeDollarNormalization(s string) string {
+	return strings.NewReplacer(
+		".", "-", ":", "-", "/", "-", " ", "-", "\t", "-",
 	).Replace(s)
 }
 
