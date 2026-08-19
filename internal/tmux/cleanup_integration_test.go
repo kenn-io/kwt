@@ -30,7 +30,7 @@ func TestTmuxCommandAtomicallyTerminatesMatchingWorkspace(t *testing.T) {
 		require.NoError(t, os.RemoveAll(tempDir))
 	})
 
-	session := `kwt-wt-topic;'$HOME"-01234567`
+	session := `kwt-wt-topic;'"-01234567`
 	require.NoError(t, command.NewSessionWithCommandContext(
 		ctx, session, tempDir, "sleep 60",
 	))

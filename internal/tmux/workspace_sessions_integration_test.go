@@ -141,7 +141,7 @@ func TestWorkspaceSessionsKillMatchingLeavesReplacementGeneration(t *testing.T) 
 
 func TestWorkspaceSessionsKillMatchingTerminatesExactMatchingSession(t *testing.T) {
 	fixture := newRealWorkspaceSessionsFixture(t)
-	fixture.session = `kwt-wt-topic;'$HOME"-01234567`
+	fixture.session = `kwt-wt-topic;'"-01234567`
 	fixture.createMatching(t, fixture.servers.kwtServer())
 	request := fixture.request()
 	endpoints, err := fixture.sessions.LiveEndpoints(fixture.ctx, request)

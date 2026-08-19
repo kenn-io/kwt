@@ -102,7 +102,12 @@ func newSessionManagerWithCommands(
 }
 
 func (sm *SessionManager) CreateSession(ctx context.Context, opts SessionOptions) (*Session, error) {
-	sessionName := fmt.Sprintf("kwt-%s-%s-%s", opts.Context, opts.Identifier, time.Now().Format("20060102150405"))
+	sessionName := sanitizeTmuxName(fmt.Sprintf(
+		"kwt-%s-%s-%s",
+		opts.Context,
+		opts.Identifier,
+		time.Now().Format("20060102150405"),
+	))
 	if isKWTSessionName(sessionName) {
 		return nil, fmt.Errorf(
 			"tmux context %q is reserved for workspace sessions",

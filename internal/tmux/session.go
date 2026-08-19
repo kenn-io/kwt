@@ -111,11 +111,13 @@ func IsKWTWorktreeSessionName(name string) bool {
 	return isKWTSessionName(name)
 }
 
-// sanitizeTmuxName replaces characters tmux disallows in a session name
-// ('.' and ':') plus path separators and whitespace with '-'.
+// sanitizeTmuxName replaces characters that are disallowed or not preserved
+// consistently in tmux session names, plus path separators and whitespace,
+// with '-'. tmux 3.4 rewrites '$' during new-session, which makes later
+// commands unable to target the requested spelling.
 func sanitizeTmuxName(s string) string {
 	return strings.NewReplacer(
-		".", "-", ":", "-", "/", "-", " ", "-", "\t", "-",
+		".", "-", ":", "-", "$", "-", "/", "-", " ", "-", "\t", "-",
 	).Replace(s)
 }
 

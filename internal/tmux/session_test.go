@@ -80,6 +80,16 @@ func TestWorkspaceSessionName(t *testing.T) {
 	assert.NotEqual(t, detached1, detached2)
 }
 
+func TestGeneratedWorkspaceSessionNamesNormalizeDollarSigns(t *testing.T) {
+	info := &url.RepositoryInfo{Repository: "kwt$tools"}
+
+	worktree := WorkspaceSessionName(info, "feature/$HOME", "/worktrees/kwt$tools")
+	directory := DirWorkspaceSessionName("notes$archive", "/workspaces/notes$archive")
+
+	assert.NotContains(t, worktree, "$")
+	assert.NotContains(t, directory, "$")
+}
+
 func TestWorkspaceSessionNameDoesNotOverlapDirectoryWorkspaceNamespace(t *testing.T) {
 	info := &url.RepositoryInfo{Repository: "workspace"}
 	path := "/worktrees/notes"

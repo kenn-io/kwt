@@ -118,6 +118,21 @@ func TestSessionManagerCreatesOnlyOnKWTServer(t *testing.T) {
 	assert.Equal(t, KWTServerSocketName, session.SocketName)
 }
 
+func TestSessionManagerNormalizesDollarSignsInGeneratedSessionName(t *testing.T) {
+	kwtServer := &recordingSessionManagerCommand{}
+	manager := newSessionManagerWithCommands(
+		DefaultSessionConfig(), kwtServer, &recordingSessionManagerCommand{},
+	)
+
+	session, err := manager.CreateSession(context.Background(), SessionOptions{
+		Context: "run$local", Identifier: "build$target", WorkingDir: "/work",
+	})
+
+	require.NoError(t, err)
+	assert.NotContains(t, session.SessionName, "$")
+	assert.Contains(t, session.SessionName, "kwt-run-local-build-target-")
+}
+
 func TestSessionManagerRejectsWorkspaceNamespaceContexts(t *testing.T) {
 	for _, sessionContext := range []string{
 		"wt",
