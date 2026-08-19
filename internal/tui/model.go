@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"slices"
 	"sort"
 	"strings"
@@ -75,6 +76,12 @@ type actionDoneMsg struct {
 	refresh     bool
 	anchorPath  string
 	pendingPath string
+}
+
+type openInTmuxReadyMsg struct {
+	process *exec.Cmd
+	message string
+	err     error
 }
 
 type Model struct {
@@ -190,6 +197,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyFleetRows(msg)
 	case actionDoneMsg:
 		return m.applyActionDone(msg)
+	case openInTmuxReadyMsg:
+		return m.applyOpenInTmuxReady(msg)
 	case branchListMsg:
 		return m.applyBranchList(msg)
 	case tea.KeyPressMsg:
@@ -524,6 +533,18 @@ func (m Model) applyActionDone(msg actionDoneMsg) (Model, tea.Cmd) {
 		return m.startFetch()
 	}
 	return m, nil
+}
+
+func (m Model) applyOpenInTmuxReady(msg openInTmuxReadyMsg) (Model, tea.Cmd) {
+	if msg.err != nil {
+		return m.applyActionDone(actionDoneMsg{err: msg.err})
+	}
+	if msg.process == nil {
+		return m.applyActionDone(actionDoneMsg{message: msg.message, refresh: true})
+	}
+	return m, tea.ExecProcess(msg.process, func(err error) tea.Msg {
+		return actionDoneMsg{message: msg.message, err: err, refresh: err == nil}
+	})
 }
 
 func (m Model) applyBranchList(msg branchListMsg) (Model, tea.Cmd) {
@@ -1417,10 +1438,12 @@ func (m Model) killSessionCmd(row Row) tea.Cmd {
 func (m Model) openInTmuxCmd(row Row) tea.Cmd {
 	layoutName := m.selectedLayout
 	return func() tea.Msg {
-		if err := m.backend.OpenInTmux(context.Background(), row, layoutName); err != nil {
-			return actionDoneMsg{err: err}
+		process, err := m.backend.OpenInTmux(context.Background(), row, layoutName)
+		return openInTmuxReadyMsg{
+			process: process,
+			message: fmt.Sprintf("attached %s", rowLabel(row)),
+			err:     err,
 		}
-		return actionDoneMsg{message: fmt.Sprintf("attached %s", rowLabel(row)), refresh: true}
 	}
 }
 

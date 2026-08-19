@@ -25,6 +25,11 @@ type workspaceAttachCommand interface {
 	ServerPIDContext(context.Context) (string, error)
 }
 
+type workspaceResidentAttachCommand interface {
+	workspaceAttachCommand
+	AttachSessionNestedCommand(context.Context, string) *exec.Cmd
+}
+
 // WorkspaceSessions resolves, establishes, and presents KWT workspace
 // sessions. Default-server adoption remains private to this coordinator.
 type WorkspaceSessions struct {
@@ -228,6 +233,39 @@ func (s *WorkspaceSessions) Attach(
 	)
 }
 
+// PrepareResidentAttach switches a client that is already on the resolved
+// server. For a different server it returns the nested attach process without
+// starting it, so the resident terminal owner can suspend itself first.
+func (s *WorkspaceSessions) PrepareResidentAttach(
+	ctx context.Context,
+	endpoint SessionEndpoint,
+) (*exec.Cmd, error) {
+	rawCommand, err := s.attachForEndpoint(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	command, ok := rawCommand.(workspaceResidentAttachCommand)
+	if !ok {
+		return nil, errors.New("tmux attach command cannot prepare a resident attach")
+	}
+	tmuxValue := s.tmuxEnvironment()
+	if tmuxValue == "" {
+		return nil, errors.New("resident tmux attach requires a current tmux client")
+	}
+	clientOnServer, err := clientOnResolvedServer(ctx, command, tmuxValue)
+	if err != nil {
+		return nil, err
+	}
+	if clientOnServer {
+		return nil, command.SwitchClient(endpoint.SessionName)
+	}
+	process := command.AttachSessionNestedCommand(ctx, endpoint.SessionName)
+	if process.Err != nil {
+		return nil, process.Err
+	}
+	return process, nil
+}
+
 // Kill terminates the exact direct-attachment endpoint supplied by inventory.
 func (s *WorkspaceSessions) Kill(endpoint SessionEndpoint) error {
 	command, err := s.servers.commandForEndpoint(endpoint)
@@ -264,23 +302,35 @@ func attachWorkspaceEndpoint(
 	if tmuxValue == "" {
 		return command.AttachSession(endpoint.SessionName)
 	}
-	clientPID, err := parseTMUXServerPID(tmuxValue)
+	clientOnServer, err := clientOnResolvedServer(ctx, command, tmuxValue)
 	if err != nil {
 		return err
 	}
+	if clientOnServer {
+		return command.SwitchClient(endpoint.SessionName)
+	}
+	return command.AttachSessionNested(ctx, endpoint.SessionName)
+}
+
+func clientOnResolvedServer(
+	ctx context.Context,
+	command workspaceAttachCommand,
+	tmuxValue string,
+) (bool, error) {
+	clientPID, err := parseTMUXServerPID(tmuxValue)
+	if err != nil {
+		return false, err
+	}
 	targetRaw, err := command.ServerPIDContext(ctx)
 	if err != nil {
-		return fmt.Errorf("read resolved tmux server PID: %w", err)
+		return false, fmt.Errorf("read resolved tmux server PID: %w", err)
 	}
 	targetPID, err := parseCanonicalPID(strings.TrimSpace(targetRaw))
 	if err != nil {
-		return fmt.Errorf(
+		return false, fmt.Errorf(
 			"resolved tmux server did not return a numeric PID; tmux 2.1 or newer is required: %w",
 			err,
 		)
 	}
-	if clientPID == targetPID {
-		return command.SwitchClient(endpoint.SessionName)
-	}
-	return command.AttachSessionNested(ctx, endpoint.SessionName)
+	return clientPID == targetPID, nil
 }

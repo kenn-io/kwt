@@ -53,6 +53,7 @@ type tuiBackend struct {
 	ensureWorkspace           func(context.Context, string, string, models.Layout) (tmux.SessionEndpoint, error)
 	ensureWorktree            func(context.Context, string, string, string, models.Layout) (tmux.SessionEndpoint, error)
 	attachSession             func(context.Context, tmux.SessionEndpoint) error
+	prepareResidentAttach     func(context.Context, tmux.SessionEndpoint) (*exec.Cmd, error)
 	killEndpoint              func(tmux.SessionEndpoint) error
 	cleanupEndpoint           func(context.Context, tmux.SessionEndpoint, tmux.WorkspaceEndpointRequest) error
 	killProtectedEndpoint     func(context.Context, tmux.SessionEndpoint, tmux.WorkspaceEndpointRequest) error
@@ -112,6 +113,7 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 		ensureWorkspace:         sessions.Establish,
 		ensureWorktree:          sessions.EstablishWithGeneration,
 		attachSession:           sessions.Attach,
+		prepareResidentAttach:   sessions.PrepareResidentAttach,
 		registerProject:         registerProjectWithLifecycle,
 		registerWorkspace:       config.RegisterWorkspace,
 		unregisterWorkspace:     config.UnregisterWorkspace,
@@ -310,6 +312,7 @@ func (b *tuiBackend) applyInventoryConfig(effective *models.Config) error {
 	b.ensureWorkspace = b.workspaceSessions.Establish
 	b.ensureWorktree = b.workspaceSessions.EstablishWithGeneration
 	b.attachSession = b.workspaceSessions.Attach
+	b.prepareResidentAttach = b.workspaceSessions.PrepareResidentAttach
 	b.killEndpoint = b.workspaceSessions.Kill
 	b.cleanupEndpoint = b.workspaceSessions.KillMatching
 	return nil
@@ -1837,8 +1840,16 @@ func (b *tuiBackend) KillSession(row dashboard.Row) error {
 	return b.killEndpoint(row.TmuxEndpoint)
 }
 
-func (b *tuiBackend) OpenInTmux(ctx context.Context, row dashboard.Row, layoutName string) error {
-	return b.attachWorkspace(ctx, row, layoutName, false)
+func (b *tuiBackend) OpenInTmux(
+	ctx context.Context,
+	row dashboard.Row,
+	layoutName string,
+) (*exec.Cmd, error) {
+	endpoint, err := b.establishWorkspaceEndpoint(ctx, row, layoutName, false)
+	if err != nil {
+		return nil, err
+	}
+	return b.prepareResidentAttach(ctx, endpoint)
 }
 
 func (b *tuiBackend) AttachOutsideTmux(row dashboard.Row, layoutName string) error {
@@ -1866,33 +1877,46 @@ func (b *tuiBackend) attachWorkspace(
 	layoutName string,
 	interactive bool,
 ) error {
+	endpoint, err := b.establishWorkspaceEndpoint(ctx, row, layoutName, interactive)
+	if err != nil {
+		return err
+	}
+	return b.attachSession(ctx, endpoint)
+}
+
+func (b *tuiBackend) establishWorkspaceEndpoint(
+	ctx context.Context,
+	row dashboard.Row,
+	layoutName string,
+	interactive bool,
+) (tmux.SessionEndpoint, error) {
 	if row.Entry == nil && row.Workspace == nil {
-		return fmt.Errorf("no worktree selected")
+		return tmux.SessionEndpoint{}, fmt.Errorf("no worktree selected")
 	}
 	generation := ""
 	if row.Entry != nil {
 		generation = row.Entry.Generation
 	}
 	if err := rejectProtectedWorkspaceOpen(ctx, rowPaneRoot(row), generation); err != nil {
-		return err
+		return tmux.SessionEndpoint{}, err
 	}
 	if err := b.acknowledgeRemoteSource(rowPaneRoot(row)); err != nil {
-		return err
+		return tmux.SessionEndpoint{}, err
 	}
 	layout, err := b.resolveLayout(row, layoutName, interactive)
 	if err != nil {
-		return err
+		return tmux.SessionEndpoint{}, err
 	}
 	if row.Entry == nil {
 		sessionName, err := b.sessionName(row)
 		if err != nil {
-			return err
+			return tmux.SessionEndpoint{}, err
 		}
 		endpoint, err := b.ensureWorkspace(ctx, sessionName, rowPaneRoot(row), layout)
 		if err != nil {
-			return err
+			return tmux.SessionEndpoint{}, err
 		}
-		return b.attachSession(ctx, endpoint)
+		return endpoint, nil
 	}
 	var endpoint tmux.SessionEndpoint
 	_, err = runWorktreeSessionEstablishment(
@@ -1909,9 +1933,9 @@ func (b *tuiBackend) attachWorkspace(
 		},
 	)
 	if err != nil {
-		return err
+		return tmux.SessionEndpoint{}, err
 	}
-	return b.attachSession(ctx, endpoint)
+	return endpoint, nil
 }
 
 func rowPaneRoot(row dashboard.Row) string {

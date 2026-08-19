@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,6 +30,7 @@ type fakeBackend struct {
 	removeErr       error
 	killErr         error
 	openErr         error
+	openProcess     *exec.Cmd
 	branches        []models.Branch
 	branchErr       error
 	fastListCalls   int
@@ -126,9 +128,13 @@ func (b *fakeBackend) KillSession(row Row) error {
 	return b.killErr
 }
 
-func (b *fakeBackend) OpenInTmux(ctx context.Context, row Row, layoutName string) error {
+func (b *fakeBackend) OpenInTmux(
+	ctx context.Context,
+	row Row,
+	layoutName string,
+) (*exec.Cmd, error) {
 	b.openCalls = append(b.openCalls, rowPath(row)+":"+layoutName)
-	return b.openErr
+	return b.openProcess, b.openErr
 }
 
 func (b *fakeBackend) UnregisterWorkspace(row Row) error {
@@ -1467,9 +1473,29 @@ func TestModelInsideTmuxAttachRunsResidentAction(t *testing.T) {
 	model, cmd := updateModel(t, model, press("enter"))
 	require.NotNil(t, cmd)
 	msg := cmd()
-	assert.IsType(t, actionDoneMsg{}, msg)
+	ready, ok := msg.(openInTmuxReadyMsg)
+	require.True(t, ok)
+	assert.Nil(t, ready.process)
 	assert.Equal(t, []string{"/w/kwt/feature:quad"}, backend.openCalls)
 	assert.Equal(t, HandoffNone, model.Handoff().Kind)
+}
+
+func TestModelCrossServerAttachUsesBubbleTeaManagedProcess(t *testing.T) {
+	row := testRow("kwt", "feature", "/w/kwt/feature")
+	process := exec.Command("tmux", "attach-session", "-t", "workspace")
+	backend := &fakeBackend{insideTmux: true, openProcess: process}
+	model := NewModel(backend, "/worktrees")
+	model, _ = updateModel(t, model, rowsMsg{rows: []Row{row}})
+
+	model, openCmd := updateModel(t, model, press("enter"))
+	require.NotNil(t, openCmd)
+	ready, ok := openCmd().(openInTmuxReadyMsg)
+	require.True(t, ok)
+	assert.Same(t, process, ready.process)
+
+	_, managedCmd := updateModel(t, model, ready)
+	require.NotNil(t, managedCmd)
+	assert.Equal(t, "tea.execMsg", fmt.Sprintf("%T", managedCmd()))
 }
 
 func TestModelActionErrorDisplaysAndClearsOnNextKey(t *testing.T) {

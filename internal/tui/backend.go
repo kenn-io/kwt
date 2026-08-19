@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"os/exec"
 
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/tmux"
@@ -83,7 +84,7 @@ type Backend interface {
 	RemoveWorktree(ctx context.Context, row Row, force bool) error
 	UnregisterWorkspace(row Row) error
 	KillSession(row Row) error
-	OpenInTmux(ctx context.Context, row Row, layoutName string) error
+	OpenInTmux(ctx context.Context, row Row, layoutName string) (*exec.Cmd, error)
 	LayoutNames() []string
 	InsideTmux() bool
 }

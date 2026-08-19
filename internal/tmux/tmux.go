@@ -344,6 +344,15 @@ func (t *TmuxCommand) AttachSessionNested(
 	return t.runAttachProcess(ctx, t.attachSessionNestedCmd(ctx, sessionName))
 }
 
+// AttachSessionNestedCommand builds a cross-server attach process for a
+// terminal owner such as Bubble Tea to run through its managed process API.
+func (t *TmuxCommand) AttachSessionNestedCommand(
+	ctx context.Context,
+	sessionName string,
+) *exec.Cmd {
+	return t.attachSessionNestedCmd(ctx, sessionName)
+}
+
 func (t *TmuxCommand) runAttachProcess(
 	ctx context.Context,
 	cmd *exec.Cmd,

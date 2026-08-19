@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"context"
+	"os/exec"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -65,9 +66,10 @@ func (r *recordingWorkspaceEnsurer) EnsureWithGeneration(
 }
 
 type recordingWorkspaceAttachCommand struct {
-	verb      string
-	session   string
-	serverPID string
+	verb            string
+	session         string
+	preparedSession string
+	serverPID       string
 }
 
 func (r *recordingWorkspaceAttachCommand) ServerPIDContext(context.Context) (string, error) {
@@ -93,6 +95,14 @@ func (r *recordingWorkspaceAttachCommand) AttachSessionNested(
 	r.verb = "nested-attach"
 	r.session = session
 	return nil
+}
+
+func (r *recordingWorkspaceAttachCommand) AttachSessionNestedCommand(
+	_ context.Context,
+	session string,
+) *exec.Cmd {
+	r.preparedSession = session
+	return exec.Command("tmux", "attach-session", "-t", session)
 }
 
 func TestWorkspaceSessionsEstablishesOnResolvedCanonicalEndpoint(t *testing.T) {
@@ -272,6 +282,52 @@ func TestWorkspaceSessionsRoutesAttachmentByClientMembership(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, test.wantVerb, command.verb)
 			assert.Equal(t, "workspace", command.session)
+		})
+	}
+}
+
+func TestWorkspaceSessionsPreparesCrossServerAttachForResidentUI(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		serverPID       string
+		wantVerb        string
+		wantPrepared    string
+		wantProcessArgs []string
+	}{
+		{
+			name:      "same server switches resident client",
+			serverPID: "42",
+			wantVerb:  "switch-client",
+		},
+		{
+			name:            "different server returns nested attach process",
+			serverPID:       "43",
+			wantPrepared:    "workspace",
+			wantProcessArgs: []string{"tmux", "attach-session", "-t", "workspace"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			command := &recordingWorkspaceAttachCommand{serverPID: test.serverPID}
+			runner := &WorkspaceSessions{
+				attachForEndpoint: func(SessionEndpoint) (workspaceAttachCommand, error) {
+					return command, nil
+				},
+				tmuxEnvironment: func() string { return "/tmp/default,42,0" },
+			}
+
+			process, err := runner.PrepareResidentAttach(
+				context.Background(), canonicalEndpoint("workspace"),
+			)
+
+			require.NoError(t, err)
+			assert.Equal(t, test.wantVerb, command.verb)
+			assert.Equal(t, test.wantPrepared, command.preparedSession)
+			if test.wantProcessArgs == nil {
+				assert.Nil(t, process)
+			} else {
+				require.NotNil(t, process)
+				assert.Equal(t, test.wantProcessArgs, process.Args)
+			}
 		})
 	}
 }

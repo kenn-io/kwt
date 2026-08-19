@@ -4358,6 +4358,41 @@ func TestTUIBackendAttachWorkspacePassesWorkspaceRowToRunner(t *testing.T) {
 		"the stubbed command-layer test must not add default-server tmux sessions")
 }
 
+func TestTUIBackendOpenInTmuxPreparesResidentAttach(t *testing.T) {
+	row := dashboard.Row{
+		Workspace: &dashboard.WorkspaceInfo{Name: "notes", Path: t.TempDir()},
+	}
+	endpoint := testCanonicalSessionEndpoint("workspace")
+	wantProcess := exec.Command("tmux", "attach-session", "-t", endpoint.SessionName)
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	backend.ensureWorkspace = func(
+		context.Context,
+		string,
+		string,
+		models.Layout,
+	) (tmux.SessionEndpoint, error) {
+		return endpoint, nil
+	}
+	backend.attachSession = func(context.Context, tmux.SessionEndpoint) error {
+		t.Fatal("resident attach must not replace the Bubble Tea process")
+		return nil
+	}
+	backend.prepareResidentAttach = func(
+		_ context.Context,
+		got tmux.SessionEndpoint,
+	) (*exec.Cmd, error) {
+		assert.Equal(t, endpoint, got)
+		return wantProcess, nil
+	}
+
+	process, err := backend.OpenInTmux(
+		context.Background(), row, tmux.BlankLayoutName,
+	)
+
+	require.NoError(t, err)
+	assert.Same(t, wantProcess, process)
+}
+
 func defaultTmuxSessions(t *testing.T) []string {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
