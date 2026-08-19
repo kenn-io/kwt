@@ -10,6 +10,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"go.kenn.io/kwt/internal/template"
 	"go.kenn.io/kwt/internal/tmux"
 	repositoryurl "go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
@@ -126,7 +127,10 @@ func (s *Service) Import(ctx context.Context, project Project, selector string) 
 		return result, NewError(CodeInaccessibleHead, "pull-request head repository or branch is unavailable", false, nil)
 	}
 	pr.Source.IsFork = !EqualRepositoryIdentity(pr.Source.Repository.Identity, pr.Repository.Identity)
-	branch := importBranchName(pr)
+	branch, err := s.importBranch(ctx, project, pr)
+	if err != nil {
+		return result, err
+	}
 	if coordinator, ok := s.backend.(WorkspaceCreationCoordinator); ok {
 		release, acquireErr := coordinator.AcquireWorkspaceCreation(ctx, branch)
 		if acquireErr != nil {
@@ -161,6 +165,19 @@ func (s *Service) Import(ctx context.Context, project Project, selector string) 
 		byPath := make(map[string]Workspace, len(workspaces))
 		for _, workspace := range workspaces {
 			byPath[utils.CanonicalPath(workspace.Path)] = workspace
+		}
+		if currentBranch := s.importBranchFromState(
+			records,
+			byPath,
+			project,
+			pr,
+		); currentBranch != branch {
+			return NewError(
+				CodeConflict,
+				"pull-request import state changed; retry the import",
+				true,
+				nil,
+			)
 		}
 		recordKey, record, ok := s.findProvenance(records, pr)
 		if ok {
@@ -261,6 +278,67 @@ func (s *Service) Import(ctx context.Context, project Project, selector string) 
 		return ImportResult{}, AsError(err, CodeWorkspaceCreation, "pull-request import failed")
 	}
 	return result, err
+}
+
+func (s *Service) importBranch(
+	ctx context.Context,
+	project Project,
+	pr PullRequest,
+) (string, error) {
+	workspaces, err := s.backend.ListWorkspaces(ctx)
+	if err != nil {
+		return "", NewError(
+			CodeWorkspaceCreation,
+			"failed to inspect project workspaces",
+			false,
+			err,
+		)
+	}
+	byPath := make(map[string]Workspace, len(workspaces))
+	for _, workspace := range workspaces {
+		byPath[utils.CanonicalPath(workspace.Path)] = workspace
+	}
+	records := make(map[string]Provenance)
+	if err := s.store.View(ctx, func(current map[string]Provenance) error {
+		for key, record := range current {
+			records[key] = record
+		}
+		return nil
+	}); err != nil {
+		return "", NewError(
+			CodeWorkspaceCreation,
+			"failed to read pull-request provenance",
+			false,
+			err,
+		)
+	}
+	return s.importBranchFromState(records, byPath, project, pr), nil
+}
+
+func (s *Service) importBranchFromState(
+	records map[string]Provenance,
+	byPath map[string]Workspace,
+	project Project,
+	pr PullRequest,
+) string {
+	_, record, ok := s.findProvenance(records, pr)
+	if !ok || !s.sameProjectClone(record, project) {
+		return importBranchName(pr)
+	}
+	if workspace, live := matchingProvenanceWorkspace(byPath, record); live {
+		return workspace.Branch
+	}
+	return reassociationBranchName(pr, record.Workspace)
+}
+
+func reassociationBranchName(pr PullRequest, workspace Workspace) string {
+	association := strings.Join([]string{
+		workspace.ID,
+		workspace.Branch,
+		utils.CanonicalPath(workspace.Path),
+		workspace.Generation,
+	}, "\x00")
+	return importBranchName(pr) + "-" + template.ShortHash(association)
 }
 
 func (s *Service) findProvenance(

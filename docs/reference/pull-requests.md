@@ -326,15 +326,18 @@ An imported list result adds the canonical workspace record:
 
 ## Import contract
 
-kwt chooses the deterministic local branch name and delegates remote
-selection, fetch, no-checkout worktree creation, materialization, and push
-routing to Kit. When the source branch is reachable, plain `git push` updates
+kwt chooses a deterministic local branch name for the initial import and
+delegates remote selection, fetch, no-checkout worktree creation,
+materialization, and push routing to Kit. If the recorded worktree was removed
+but its branch was preserved, another import creates a disambiguated branch
+and updates the PR's provenance to the new worktree. The preserved branch is
+left untouched. When the source branch is reachable, plain `git push` updates
 exactly the PR's original head branch. If Kit cannot establish that exact fork
 tracking, or KWT cannot validate it, import fails and rolls back the worktree
 instead of leaving a checkout whose plain push could fall back to the base
-repository. Unlike an ordinary `kwt add`, PR import does not apply
-`copy_files` or `setup_commands`; run any desired project setup explicitly
-after reviewing the imported files.
+repository. Unlike an ordinary `kwt add`, PR import does not apply `copy_files`
+or `setup_commands`; run any desired project setup explicitly after reviewing
+the imported files.
 When Kit creates a fork remote, it preserves the project's working push
 authentication transport, including SSH host aliases and explicit ports. KWT
 then verifies the effective push destination and rejects broader push behavior

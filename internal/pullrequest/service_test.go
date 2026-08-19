@@ -639,6 +639,68 @@ func TestImportIsIdempotent(t *testing.T) {
 	assert.Equal(t, 1, backend.createCalls)
 }
 
+func TestImportReassociatesAfterWorktreeRemovalPreservesBranch(t *testing.T) {
+	pr := testPR(43, false)
+	repositoryPath, backend := newBackendRepo(t)
+	service := newTestService(
+		&fakeProvider{prs: []PullRequest{pr}},
+		backend,
+		newMemoryStore(),
+	)
+	var preservedBranch string
+	originalCreate := createMergeRequestWorktree
+	createMergeRequestWorktree = func(
+		ctx context.Context,
+		opts managedworktree.MergeRequestWorktreeOptions,
+	) (managedworktree.CreateWorktreeResult, error) {
+		if opts.Branch == preservedBranch {
+			return managedworktree.CreateWorktreeResult{},
+				managedworktree.ErrBranchAlreadyExists
+		}
+		created, err := managedworktree.CreateWorktreeOnDisk(
+			ctx,
+			managedworktree.CreateWorktreeOptions{
+				ProjectRoot: opts.ProjectRoot,
+				Path:        opts.Path,
+				Branch:      opts.Branch,
+				BaseRef:     "HEAD",
+				Runner:      opts.Runner,
+			},
+		)
+		if err != nil {
+			return created, err
+		}
+		runGit(t, created.Path, "config", "branch."+opts.Branch+".remote", "origin")
+		runGit(t, created.Path, "config", "branch."+opts.Branch+".merge", "refs/heads/"+pr.Source.Name)
+		runGit(t, created.Path, "config", "branch."+opts.Branch+".pushRemote", "origin")
+		runGit(t, created.Path, "config", "push.default", "upstream")
+		return created, nil
+	}
+	t.Cleanup(func() { createMergeRequestWorktree = originalCreate })
+
+	first, err := service.Import(t.Context(), testProject(), "43")
+	require.NoError(t, err)
+	preservedBranch = first.Workspace.Branch
+	runGit(t, repositoryPath, "worktree", "remove", "--force", first.Workspace.Path)
+	assert.NoDirExists(t, first.Workspace.Path)
+	runGit(t, repositoryPath, "show-ref", "--verify", "refs/heads/"+preservedBranch)
+
+	second, err := service.Import(t.Context(), testProject(), "43")
+
+	require.NoError(t, err)
+	assert.Equal(t, ImportCreated, second.Status)
+	assert.NotEqual(t, preservedBranch, second.Workspace.Branch)
+	assert.DirExists(t, second.Workspace.Path)
+	listed, err := service.List(t.Context(), testProject(), "open")
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	require.NotNil(t, listed[0].Workspace)
+	assert.True(t, listed[0].Imported)
+	assert.Equal(t, second.Workspace.Path, listed[0].Workspace.Path)
+	assert.Equal(t, second.Workspace.Branch, listed[0].Workspace.Branch)
+	assert.Equal(t, second.Workspace.Generation, listed[0].Workspace.Generation)
+}
+
 func TestImportPreservesLegacyProtectedWorkspaceEndpoint(t *testing.T) {
 	pr := testPR(41, false)
 	branch := importBranchName(pr)
