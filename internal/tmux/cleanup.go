@@ -17,9 +17,27 @@ const (
 
 const workspaceCleanupMismatchOutput = "kwt-cleanup-marker-mismatch"
 
+type workspaceCleanupIdentity struct {
+	SessionID           string
+	WorkspaceIdentity   string
+	WorkspaceGeneration string
+	Absent              bool
+}
+
 type workspaceCleanupCommand interface {
 	killWorkspaceSessionWithOptionContext(
 		context.Context,
+		string,
+		string,
+	) (workspaceCleanupResult, error)
+	workspaceSessionCleanupIdentityContext(
+		context.Context,
+		string,
+	) (workspaceCleanupIdentity, error)
+	killWorkspaceSessionWithObservedIdentityContext(
+		context.Context,
+		string,
+		string,
 		string,
 		string,
 	) (workspaceCleanupResult, error)
@@ -30,36 +48,88 @@ func killWorkspaceSessionIfMatching(
 	command workspaceCleanupCommand,
 	request WorkspaceEndpointRequest,
 ) error {
-	cleanupIdentity := request.WorkspaceGeneration
+	expectedIdentity := request.WorkspaceGeneration
+	markerOption := workspaceGenerationOption
 	mismatchReason := "belongs to a different worktree generation"
-	if cleanupIdentity != "" {
-		if !validLowerHex(cleanupIdentity, 32) {
-			return &SessionSafetyError{Reason: fmt.Sprintf(
-				"tmux session %q has malformed worktree generation markers",
+	malformedReason := "has malformed worktree generation markers"
+	identityLength := 32
+	if expectedIdentity != "" {
+		if !validLowerHex(expectedIdentity, identityLength) {
+			return workspaceCleanupSafetyError(
 				request.SessionName,
-			)}
+				malformedReason,
+			)
 		}
 	} else {
-		cleanupIdentity = workspacePathIdentity(request.WorkspacePath)
+		expectedIdentity = workspacePathIdentity(request.WorkspacePath)
+		markerOption = workspaceIdentityOption
 		mismatchReason = "belongs to a different workspace identity"
+		malformedReason = "has malformed workspace identity markers"
+		identityLength = 64
 	}
 
 	result, err := command.killWorkspaceSessionWithOptionContext(
 		ctx,
 		request.SessionName,
-		workspaceCleanupOption(cleanupIdentity),
+		workspaceCleanupOption(expectedIdentity),
+	)
+	if err != nil {
+		return err
+	}
+	if result != workspaceCleanupMismatch {
+		return nil
+	}
+
+	// compat(kag1): sessions created before atomic cleanup markers
+	identity, err := command.workspaceSessionCleanupIdentityContext(
+		ctx,
+		request.SessionName,
+	)
+	if err != nil {
+		return err
+	}
+	if identity.Absent {
+		return nil
+	}
+	if !validRemovalSessionID(identity.SessionID) {
+		return workspaceCleanupSafetyError(
+			request.SessionName,
+			"has malformed cleanup identity",
+		)
+	}
+	observedIdentity := identity.WorkspaceGeneration
+	if markerOption == workspaceIdentityOption {
+		observedIdentity = identity.WorkspaceIdentity
+	}
+	if !validLowerHex(observedIdentity, identityLength) {
+		return workspaceCleanupSafetyError(request.SessionName, malformedReason)
+	}
+	if observedIdentity != expectedIdentity {
+		return workspaceCleanupSafetyError(request.SessionName, mismatchReason)
+	}
+
+	result, err = command.killWorkspaceSessionWithObservedIdentityContext(
+		ctx,
+		request.SessionName,
+		identity.SessionID,
+		markerOption,
+		expectedIdentity,
 	)
 	if err != nil {
 		return err
 	}
 	if result == workspaceCleanupMismatch {
-		return &SessionSafetyError{Reason: fmt.Sprintf(
-			"tmux session %q %s",
-			request.SessionName,
-			mismatchReason,
-		)}
+		return workspaceCleanupSafetyError(request.SessionName, mismatchReason)
 	}
 	return nil
+}
+
+func workspaceCleanupSafetyError(session, reason string) error {
+	return &SessionSafetyError{Reason: fmt.Sprintf(
+		"tmux session %q %s",
+		session,
+		reason,
+	)}
 }
 
 // KillWorkspaceSessionIfMatchingContext terminates a cleanup target only when
@@ -91,6 +161,92 @@ func (t *TmuxCommand) killWorkspaceSessionWithOptionContext(
 		killCommand,
 		"display-message -p "+workspaceCleanupMismatchOutput,
 	)
+	return classifyWorkspaceCleanupResult(ctx, output, stderr, err)
+}
+
+// compat(kag1): sessions created before atomic cleanup markers
+func (t *TmuxCommand) workspaceSessionCleanupIdentityContext(
+	ctx context.Context,
+	session string,
+) (workspaceCleanupIdentity, error) {
+	output, stderr, err := t.runCommandOutputContextWithStderr(
+		ctx,
+		"display-message",
+		"-p",
+		"-t",
+		session,
+		"#{session_id}|#{@kwt-workspace-id}|#{@kwt-workspace-generation}",
+	)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		err = errors.Join(ctxErr, err)
+	}
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return workspaceCleanupIdentity{}, err
+		}
+		var exited exitCoder
+		if errors.As(err, &exited) && exited.ExitCode() == 1 &&
+			isExplicitlyAbsentTmuxDiagnostic(stderr) {
+			return workspaceCleanupIdentity{Absent: true}, nil
+		}
+		return workspaceCleanupIdentity{}, fmt.Errorf(
+			"inspect tmux cleanup identity: %w, stderr: %s",
+			err,
+			strings.TrimSpace(stderr),
+		)
+	}
+	fields := strings.Split(strings.TrimSuffix(output, "\n"), "|")
+	if len(fields) != 3 {
+		return workspaceCleanupIdentity{}, fmt.Errorf(
+			"inspect tmux cleanup identity: malformed response",
+		)
+	}
+	return workspaceCleanupIdentity{
+		SessionID:           strings.TrimSuffix(fields[0], "\r"),
+		WorkspaceIdentity:   strings.TrimSuffix(fields[1], "\r"),
+		WorkspaceGeneration: strings.TrimSuffix(fields[2], "\r"),
+	}, nil
+}
+
+// compat(kag1): sessions created before atomic cleanup markers
+func (t *TmuxCommand) killWorkspaceSessionWithObservedIdentityContext(
+	ctx context.Context,
+	session string,
+	sessionID string,
+	markerOption string,
+	expectedIdentity string,
+) (workspaceCleanupResult, error) {
+	showMarkerArgs := append(
+		[]string{t.command},
+		t.socketArgs([]string{
+			"show-options", "-v", "-t", sessionID, markerOption,
+		})...,
+	)
+	quotedShowMarkerArgs := make([]string, len(showMarkerArgs))
+	for index, argument := range showMarkerArgs {
+		quotedShowMarkerArgs[index] = quotePOSIXShellArgument(argument)
+	}
+	condition := "test \"$(" + strings.Join(quotedShowMarkerArgs, " ") +
+		" 2>/dev/null)\" = " + quotePOSIXShellArgument(expectedIdentity)
+	killCommand := "kill-session -t " + quoteTmuxCommandArgument(sessionID)
+	output, stderr, err := t.runCommandOutputContextWithStderr(
+		ctx,
+		"if-shell",
+		"-t",
+		session,
+		condition,
+		killCommand,
+		"display-message -p "+workspaceCleanupMismatchOutput,
+	)
+	return classifyWorkspaceCleanupResult(ctx, output, stderr, err)
+}
+
+func classifyWorkspaceCleanupResult(
+	ctx context.Context,
+	output string,
+	stderr string,
+	err error,
+) (workspaceCleanupResult, error) {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		err = errors.Join(ctxErr, err)
 	}
@@ -128,4 +284,8 @@ func quoteTmuxCommandArgument(value string) string {
 		`$`, `\$`,
 	).Replace(value)
 	return `"` + value + `"`
+}
+
+func quotePOSIXShellArgument(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
