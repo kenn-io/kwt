@@ -88,15 +88,6 @@ func workspaceSessionNameRaw(
 	return fmt.Sprintf("kwt-wt-%s-%s-%s", info.Repository, branch, hash)
 }
 
-func previousWorkspaceSessionName(
-	info *url.RepositoryInfo,
-	branch, worktreePath string,
-) string {
-	return sanitizeTmuxName(previousWorkspaceSessionNameRaw(
-		info, branch, worktreePath,
-	))
-}
-
 func previousWorkspaceSessionNameRaw(
 	info *url.RepositoryInfo,
 	branch, worktreePath string,
