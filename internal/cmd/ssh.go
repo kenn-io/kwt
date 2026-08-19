@@ -34,6 +34,7 @@ var (
 	sshLeaseHostKeyPolicy    string
 	sshExecUser              string
 	sshExecPort              int
+	sshExecRouteIdentity     string
 	sshExecHostKeyPolicy     string
 	sshExecQuiet             bool
 	sshExecJSON              bool
@@ -164,6 +165,9 @@ func init() {
 	sshExecCmd.Flags().StringVar(&sshExecUser, "user", "", "Override the SSH user")
 	sshExecCmd.Flags().IntVar(&sshExecPort, "port", 0, "Override the SSH port")
 	sshExecCmd.Flags().StringVar(
+		&sshExecRouteIdentity, "route-identity", "", "Require this resolved SSH route identity",
+	)
+	sshExecCmd.Flags().StringVar(
 		&sshExecHostKeyPolicy, "host-key-policy", string(kwt.SSHHostKeyPolicyStrict),
 		"Host-key handling: review or strict",
 	)
@@ -201,7 +205,8 @@ func runSSHExec(cmd *cobra.Command, args []string) (returnErr error) {
 	clientStarted := false
 	target := kwt.SSHTarget{Hostname: args[0], User: sshExecUser, Port: sshExecPort}
 	snapshot, result, control, err := acquireShortSSHLease(
-		cmd, target, kwt.SSHHostKeyPolicy(sshExecHostKeyPolicy), sshExecQuiet,
+		cmd, target, kwt.SSHHostKeyPolicy(sshExecHostKeyPolicy),
+		sshExecRouteIdentity, sshExecQuiet,
 	)
 	if err != nil {
 		return writeSSHClientFailure(cmd, "ssh exec", sshExecJSON, err)
@@ -244,7 +249,7 @@ func runSSHCopy(cmd *cobra.Command, args []string) (returnErr error) {
 	clientStarted := false
 	target := kwt.SSHTarget{Hostname: args[0], User: sshCopyUser, Port: sshCopyPort}
 	snapshot, result, control, err := acquireShortSSHLease(
-		cmd, target, kwt.SSHHostKeyPolicy(sshCopyHostKeyPolicy), sshCopyQuiet,
+		cmd, target, kwt.SSHHostKeyPolicy(sshCopyHostKeyPolicy), "", sshCopyQuiet,
 	)
 	if err != nil {
 		return writeSSHClientFailure(cmd, "ssh copy", sshCopyJSON, err)
@@ -293,12 +298,22 @@ func acquireShortSSHLease(
 	cmd *cobra.Command,
 	target kwt.SSHTarget,
 	policy kwt.SSHHostKeyPolicy,
+	expectedRouteIdentity string,
 	quiet bool,
 ) (kwt.SSHRouteSnapshot, kwtdaemon.SSHLeaseResult, sshLeaseControl, error) {
 	ctx := commandContext(cmd)
 	snapshot, err := resolveSSHThroughDaemon(ctx, kwt.SSHResolveRequest{Target: target})
 	if err != nil {
 		return kwt.SSHRouteSnapshot{}, kwtdaemon.SSHLeaseResult{}, nil, err
+	}
+	if expectedRouteIdentity != "" && snapshot.RouteIdentity != expectedRouteIdentity {
+		return kwt.SSHRouteSnapshot{}, kwtdaemon.SSHLeaseResult{}, nil, service.NewError(
+			service.SSHConfigurationChanged,
+			"SSH configuration changed",
+			true,
+			nil,
+			nil,
+		)
 	}
 	callbacks := kwtdaemon.OperationCallbacks{Event: func(event service.OperationEvent) error {
 		if quiet {

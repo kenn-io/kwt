@@ -252,6 +252,9 @@ fail-closed control-socket behavior. Remote stdout and stderr are streamed as
 they arrive; connection progress is streamed to stderr unless `--quiet` is
 set. An OpenSSH or SFTP exit status is preserved, including SSH's status 255,
 while failures before client execution keep kwt's stable typed error surface.
+Destructive callers can pass `kwt ssh exec --route-identity <reviewed>` to
+require the same route they previously reviewed; route drift fails as
+`ssh_configuration_changed` before the remote command starts.
 Machine callers add `--json`: a kwt failure before SSH or SFTP starts writes the
 shared error envelope to stdout, while successful client execution continues
 to stream the remote command's unmodified output. Cleanup failures after the

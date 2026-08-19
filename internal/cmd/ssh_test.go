@@ -379,6 +379,42 @@ func TestSSHExecHoldsLeaseWhileClientRuns(t *testing.T) {
 	assert.Equal(t, int32(1), control.releases.Load())
 }
 
+func TestSSHExecRejectsChangedReviewedRouteBeforeAcquisition(t *testing.T) {
+	oldResolve := resolveSSHThroughDaemon
+	oldAcquire := acquireSSHLeaseThroughDaemon
+	t.Cleanup(func() {
+		resolveSSHThroughDaemon = oldResolve
+		acquireSSHLeaseThroughDaemon = oldAcquire
+		require.NoError(t, sshExecCmd.Flags().Set("route-identity", ""))
+	})
+	require.NoError(t, sshExecCmd.Flags().Set("route-identity", "reviewed-route"))
+	resolveSSHThroughDaemon = func(
+		_ context.Context,
+		request kwt.SSHResolveRequest,
+	) (kwt.SSHRouteSnapshot, error) {
+		return kwt.SSHRouteSnapshot{
+			LogicalTarget: request.Target,
+			RouteIdentity: "changed-route",
+		}, nil
+	}
+	acquired := false
+	acquireSSHLeaseThroughDaemon = func(
+		context.Context,
+		kwt.SSHLeaseRequest,
+		kwtdaemon.OperationCallbacks,
+	) (kwtdaemon.SSHLeaseResult, sshLeaseControl, error) {
+		acquired = true
+		return kwtdaemon.SSHLeaseResult{}, nil, nil
+	}
+	command, _, _ := sshResolveTestCommand()
+
+	err := runSSHExec(command, []string{"build.example.test", "true"})
+
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.SSHConfigurationChanged))
+	assert.False(t, acquired)
+}
+
 func TestSSHExecDoesNotStartClientWhenLeaseHoldFails(t *testing.T) {
 	oldRun := runSSHClientProcess
 	t.Cleanup(func() {
