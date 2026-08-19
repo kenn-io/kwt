@@ -7,19 +7,22 @@ import (
 	"strings"
 )
 
-type sessionCleanupIdentity struct {
-	SessionID           string
-	WorkspaceIdentity   string
-	WorkspaceGeneration string
-	Absent              bool
-}
+type workspaceCleanupResult uint8
+
+const (
+	workspaceCleanupTerminated workspaceCleanupResult = iota
+	workspaceCleanupAbsent
+	workspaceCleanupMismatch
+)
+
+const workspaceCleanupMismatchOutput = "kwt-cleanup-marker-mismatch"
 
 type workspaceCleanupCommand interface {
-	workspaceSessionCleanupIdentityContext(
+	killWorkspaceSessionWithOptionContext(
 		context.Context,
 		string,
-	) (sessionCleanupIdentity, error)
-	KillSessionIfPresentContext(context.Context, string) error
+		string,
+	) (workspaceCleanupResult, error)
 }
 
 func killWorkspaceSessionIfMatching(
@@ -27,54 +30,40 @@ func killWorkspaceSessionIfMatching(
 	command workspaceCleanupCommand,
 	request WorkspaceEndpointRequest,
 ) error {
-	identity, err := command.workspaceSessionCleanupIdentityContext(
-		ctx,
-		request.SessionName,
-	)
-	if err != nil {
-		return err
-	}
-	if identity.Absent {
-		return nil
-	}
-	if !validRemovalSessionID(identity.SessionID) {
-		return &SessionSafetyError{Reason: fmt.Sprintf(
-			"tmux session %q has malformed cleanup identity",
-			request.SessionName,
-		)}
-	}
-	if request.WorkspaceGeneration != "" {
-		if !validLowerHex(identity.WorkspaceGeneration, 32) {
+	cleanupIdentity := request.WorkspaceGeneration
+	mismatchReason := "belongs to a different worktree generation"
+	if cleanupIdentity != "" {
+		if !validLowerHex(cleanupIdentity, 32) {
 			return &SessionSafetyError{Reason: fmt.Sprintf(
 				"tmux session %q has malformed worktree generation markers",
 				request.SessionName,
 			)}
 		}
-		if identity.WorkspaceGeneration != request.WorkspaceGeneration {
-			return &SessionSafetyError{Reason: fmt.Sprintf(
-				"tmux session %q belongs to a different worktree generation",
-				request.SessionName,
-			)}
-		}
 	} else {
-		if !validLowerHex(identity.WorkspaceIdentity, 64) {
-			return &SessionSafetyError{Reason: fmt.Sprintf(
-				"tmux session %q has malformed workspace identity markers",
-				request.SessionName,
-			)}
-		}
-		if identity.WorkspaceIdentity != workspacePathIdentity(request.WorkspacePath) {
-			return &SessionSafetyError{Reason: fmt.Sprintf(
-				"tmux session %q belongs to a different workspace identity",
-				request.SessionName,
-			)}
-		}
+		cleanupIdentity = workspacePathIdentity(request.WorkspacePath)
+		mismatchReason = "belongs to a different workspace identity"
 	}
-	return command.KillSessionIfPresentContext(ctx, identity.SessionID)
+
+	result, err := command.killWorkspaceSessionWithOptionContext(
+		ctx,
+		request.SessionName,
+		workspaceCleanupOption(cleanupIdentity),
+	)
+	if err != nil {
+		return err
+	}
+	if result == workspaceCleanupMismatch {
+		return &SessionSafetyError{Reason: fmt.Sprintf(
+			"tmux session %q %s",
+			request.SessionName,
+			mismatchReason,
+		)}
+	}
+	return nil
 }
 
 // KillWorkspaceSessionIfMatchingContext terminates a cleanup target only when
-// its KWT identity markers still match the removed workspace.
+// its KWT identity marker still matches the removed workspace.
 func (t *TmuxCommand) KillWorkspaceSessionIfMatchingContext(
 	ctx context.Context,
 	request WorkspaceEndpointRequest,
@@ -82,53 +71,61 @@ func (t *TmuxCommand) KillWorkspaceSessionIfMatchingContext(
 	return killWorkspaceSessionIfMatching(ctx, t, request)
 }
 
-func (t *TmuxCommand) workspaceSessionCleanupIdentityContext(
+func (t *TmuxCommand) killWorkspaceSessionWithOptionContext(
 	ctx context.Context,
 	session string,
-) (sessionCleanupIdentity, error) {
+	cleanupOption string,
+) (workspaceCleanupResult, error) {
+	// if-shell -F evaluates the marker and queues the selected branch inside
+	// one server request. A server restart cannot redirect the kill to a new
+	// server that reused the original session ID.
+	condition := "#{?" + cleanupOption + ",1,0}"
+	killCommand := "kill-session -t " + quoteTmuxCommandArgument("="+session)
 	output, stderr, err := t.runCommandOutputContextWithStderr(
 		ctx,
-		"display-message",
-		"-p",
+		"if-shell",
+		"-F",
 		"-t",
 		session,
-		"#{session_id}|#{@kwt-workspace-id}|#{@kwt-workspace-generation}",
+		condition,
+		killCommand,
+		"display-message -p "+workspaceCleanupMismatchOutput,
 	)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		err = errors.Join(ctxErr, err)
 	}
-	return classifySessionCleanupIdentity(output, stderr, err)
-}
-
-func classifySessionCleanupIdentity(
-	output string,
-	stderr string,
-	err error,
-) (sessionCleanupIdentity, error) {
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return sessionCleanupIdentity{}, err
+			return workspaceCleanupMismatch, err
 		}
 		var exited exitCoder
 		if errors.As(err, &exited) && exited.ExitCode() == 1 &&
 			isExplicitlyAbsentTmuxDiagnostic(stderr) {
-			return sessionCleanupIdentity{Absent: true}, nil
+			return workspaceCleanupAbsent, nil
 		}
-		return sessionCleanupIdentity{}, fmt.Errorf(
-			"inspect tmux cleanup identity: %w, stderr: %s",
+		return workspaceCleanupMismatch, fmt.Errorf(
+			"inspect and terminate tmux cleanup target: %w, stderr: %s",
 			err,
 			strings.TrimSpace(stderr),
 		)
 	}
-	fields := strings.Split(strings.TrimSuffix(output, "\n"), "|")
-	if len(fields) != 3 {
-		return sessionCleanupIdentity{}, fmt.Errorf(
-			"inspect tmux cleanup identity: malformed response",
+	switch strings.TrimSpace(output) {
+	case "":
+		return workspaceCleanupTerminated, nil
+	case workspaceCleanupMismatchOutput:
+		return workspaceCleanupMismatch, nil
+	default:
+		return workspaceCleanupMismatch, fmt.Errorf(
+			"inspect and terminate tmux cleanup target: malformed response",
 		)
 	}
-	return sessionCleanupIdentity{
-		SessionID:           strings.TrimSuffix(fields[0], "\r"),
-		WorkspaceIdentity:   strings.TrimSuffix(fields[1], "\r"),
-		WorkspaceGeneration: strings.TrimSuffix(fields[2], "\r"),
-	}, nil
+}
+
+func quoteTmuxCommandArgument(value string) string {
+	value = strings.NewReplacer(
+		`\`, `\\`,
+		`"`, `\"`,
+		`$`, `\$`,
+	).Replace(value)
+	return `"` + value + `"`
 }

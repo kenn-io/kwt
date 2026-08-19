@@ -119,7 +119,12 @@ func TestSessionManagerCreatesOnlyOnKWTServer(t *testing.T) {
 }
 
 func TestSessionManagerRejectsWorkspaceNamespaceContexts(t *testing.T) {
-	for _, sessionContext := range []string{"wt", "workspace"} {
+	for _, sessionContext := range []string{
+		"wt",
+		"wt-build",
+		"workspace",
+		"workspace-review",
+	} {
 		t.Run(sessionContext, func(t *testing.T) {
 			kwtServer := &recordingSessionManagerCommand{}
 			manager := newSessionManagerWithCommands(

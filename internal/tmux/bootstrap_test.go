@@ -368,6 +368,7 @@ func TestBuildWorkspaceSessionBootstrapCommandRecordsPathIdentity(t *testing.T) 
 		workspacePathIdentity("/worktrees/topic"),
 		workspaceGenerationOption,
 		generation,
+		"@kwt-cleanup-" + generation,
 	} {
 		if !slices.Contains(got, want) {
 			t.Errorf("buildWorkspaceSessionBootstrapCommand() = %v, missing %q", got, want)

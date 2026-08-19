@@ -315,6 +315,15 @@ func BuildSessionBootstrapCommand(session string, stripNames []string) []string 
 const workspacePathOption = "@kwt-workspace-path"
 const workspaceIdentityOption = "@kwt-workspace-id"
 const workspaceGenerationOption = "@kwt-workspace-generation"
+const workspaceCleanupOptionPrefix = "@kwt-cleanup-"
+
+// workspaceCleanupOption encodes the verified identity in an option name.
+// tmux 2.1 can test that option atomically with if-shell -F, but cannot compare
+// two format values. This keeps marker validation and termination in one
+// server command without raising KWT's tmux version floor.
+func workspaceCleanupOption(identity string) string {
+	return workspaceCleanupOptionPrefix + identity
+}
 
 func workspacePathIdentity(worktreeDir string) string {
 	digest := sha256.Sum256([]byte(utils.PathKey(worktreeDir)))
@@ -329,20 +338,27 @@ func buildWorkspaceSessionBootstrapCommand(
 	session, worktreeDir, generation string,
 	stripNames []string,
 ) []string {
+	workspaceIdentity := workspacePathIdentity(worktreeDir)
 	cmd := BuildSessionBootstrapCommand(session, stripNames)
 	cmd = append(
 		cmd,
 		";", "set-option", "-t", session, workspacePathOption, worktreeDir,
 		";", "set-option", "-t", session, workspaceIdentityOption,
-		workspacePathIdentity(worktreeDir),
+		workspaceIdentity,
 	)
+	cleanupIdentity := workspaceIdentity
 	if generation != "" {
 		cmd = append(
 			cmd,
 			";", "set-option", "-t", session, workspaceGenerationOption, generation,
 		)
+		cleanupIdentity = generation
 	}
-	return cmd
+	return append(
+		cmd,
+		";", "set-option", "-t", session,
+		workspaceCleanupOption(cleanupIdentity), "1",
+	)
 }
 
 // buildProtectedSessionBootstrapCommand records the workspace identity in the

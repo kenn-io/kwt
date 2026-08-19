@@ -2,7 +2,6 @@ package tmux
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,24 +9,22 @@ import (
 )
 
 type fakeWorkspaceCleanupCommand struct {
-	identity   sessionCleanupIdentity
-	observeErr error
-	killed     []string
+	result  workspaceCleanupResult
+	err     error
+	calls   int
+	session string
+	option  string
 }
 
-func (f *fakeWorkspaceCleanupCommand) workspaceSessionCleanupIdentityContext(
-	context.Context,
-	string,
-) (sessionCleanupIdentity, error) {
-	return f.identity, f.observeErr
-}
-
-func (f *fakeWorkspaceCleanupCommand) KillSessionIfPresentContext(
+func (f *fakeWorkspaceCleanupCommand) killWorkspaceSessionWithOptionContext(
 	_ context.Context,
-	target string,
-) error {
-	f.killed = append(f.killed, target)
-	return nil
+	session string,
+	option string,
+) (workspaceCleanupResult, error) {
+	f.calls++
+	f.session = session
+	f.option = option
+	return f.result, f.err
 }
 
 func TestKillWorkspaceSessionIfMatching(t *testing.T) {
@@ -38,56 +35,59 @@ func TestKillWorkspaceSessionIfMatching(t *testing.T) {
 	}
 	tests := []struct {
 		name       string
-		identity   sessionCleanupIdentity
-		observeErr error
+		result     workspaceCleanupResult
+		invokeErr  error
 		request    WorkspaceEndpointRequest
-		wantKilled []string
+		wantOption string
+		wantCalls  int
 		wantError  string
 	}{
 		{
-			name: "observed generation",
-			identity: sessionCleanupIdentity{
-				SessionID: "$7", WorkspaceGeneration: resolverTestGeneration,
-			},
-			request: worktreeRequest, wantKilled: []string{"$7"},
+			name: "matching generation", result: workspaceCleanupTerminated,
+			request:    worktreeRequest,
+			wantOption: workspaceCleanupOption(resolverTestGeneration),
+			wantCalls:  1,
 		},
 		{
-			name: "replacement generation",
-			identity: sessionCleanupIdentity{
-				SessionID: "$8", WorkspaceGeneration: "fedcba9876543210fedcba9876543210",
-			},
-			request: worktreeRequest, wantError: "different worktree generation",
+			name: "replacement generation", result: workspaceCleanupMismatch,
+			request:    worktreeRequest,
+			wantOption: workspaceCleanupOption(resolverTestGeneration),
+			wantCalls:  1, wantError: "different worktree generation",
 		},
 		{
-			name: "malformed generation",
-			identity: sessionCleanupIdentity{
-				SessionID: "$8", WorkspaceGeneration: "not-a-generation",
+			name: "malformed requested generation",
+			request: WorkspaceEndpointRequest{
+				SessionName:         "kwt-wt-widget-main-01234567",
+				WorkspaceGeneration: "not-a-generation",
 			},
-			request: worktreeRequest, wantError: "malformed worktree generation",
+			wantError: "malformed worktree generation",
 		},
 		{
-			name: "different directory workspace",
-			identity: sessionCleanupIdentity{
-				SessionID: "$9", WorkspaceIdentity: workspacePathIdentity("/work/replacement"),
-			},
+			name: "different directory workspace", result: workspaceCleanupMismatch,
 			request: WorkspaceEndpointRequest{
 				SessionName: "kwt-workspace-widget", WorkspacePath: "/work/widget",
 			},
-			wantError: "different workspace identity",
+			wantOption: workspaceCleanupOption(workspacePathIdentity("/work/widget")),
+			wantCalls:  1, wantError: "different workspace identity",
 		},
 		{
-			name: "already absent", identity: sessionCleanupIdentity{Absent: true},
-			request: worktreeRequest,
+			name: "already absent", result: workspaceCleanupAbsent,
+			request:    worktreeRequest,
+			wantOption: workspaceCleanupOption(resolverTestGeneration),
+			wantCalls:  1,
 		},
 		{
-			name: "observation failure", observeErr: context.Canceled,
-			request: worktreeRequest, wantError: context.Canceled.Error(),
+			name: "invocation failure", invokeErr: context.Canceled,
+			request:    worktreeRequest,
+			wantOption: workspaceCleanupOption(resolverTestGeneration),
+			wantCalls:  1, wantError: context.Canceled.Error(),
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			command := &fakeWorkspaceCleanupCommand{
-				identity: test.identity, observeErr: test.observeErr,
+				result: test.result,
+				err:    test.invokeErr,
 			}
 
 			err := killWorkspaceSessionIfMatching(
@@ -100,42 +100,19 @@ func TestKillWorkspaceSessionIfMatching(t *testing.T) {
 				require.Error(t, err)
 				assert.ErrorContains(t, err, test.wantError)
 			}
-			assert.Equal(t, test.wantKilled, command.killed)
+			assert.Equal(t, test.wantCalls, command.calls)
+			assert.Equal(t, test.wantOption, command.option)
+			if test.wantCalls != 0 {
+				assert.Equal(t, test.request.SessionName, command.session)
+			}
 		})
 	}
 }
 
-func TestClassifySessionCleanupIdentityReadsPortableTuple(t *testing.T) {
-	workspaceIdentity := strings.Repeat("a", 64)
-
-	identity, err := classifySessionCleanupIdentity(
-		"$7|"+workspaceIdentity+"|"+resolverTestGeneration+"\n",
-		"",
-		nil,
+func TestQuoteTmuxCommandArgument(t *testing.T) {
+	assert.Equal(
+		t,
+		`"=kwt-wt-topic;'\$HOME\""`,
+		quoteTmuxCommandArgument(`=kwt-wt-topic;'$HOME"`),
 	)
-
-	require.NoError(t, err)
-	assert.Equal(t, sessionCleanupIdentity{
-		SessionID:           "$7",
-		WorkspaceIdentity:   workspaceIdentity,
-		WorkspaceGeneration: resolverTestGeneration,
-	}, identity)
-}
-
-func TestClassifySessionCleanupIdentityTreatsExplicitAbsenceAsComplete(t *testing.T) {
-	identity, err := classifySessionCleanupIdentity(
-		"",
-		"can't find session: workspace\n",
-		fakeProbeExitError(1),
-	)
-
-	require.NoError(t, err)
-	assert.True(t, identity.Absent)
-}
-
-func TestClassifySessionCleanupIdentityRejectsMalformedTuple(t *testing.T) {
-	_, err := classifySessionCleanupIdentity("$7|only-two-fields\n", "", nil)
-
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "malformed response")
 }

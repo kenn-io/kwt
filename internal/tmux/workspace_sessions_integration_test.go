@@ -139,6 +139,21 @@ func TestWorkspaceSessionsKillMatchingLeavesReplacementGeneration(t *testing.T) 
 	assert.True(t, fixture.servers.kwtServer().HasSession(fixture.session))
 }
 
+func TestWorkspaceSessionsKillMatchingTerminatesExactMatchingSession(t *testing.T) {
+	fixture := newRealWorkspaceSessionsFixture(t)
+	fixture.session = `kwt-wt-topic;'$HOME"-01234567`
+	fixture.createMatching(t, fixture.servers.kwtServer())
+	request := fixture.request()
+	endpoints, err := fixture.sessions.LiveEndpoints(fixture.ctx, request)
+	require.NoError(t, err)
+	require.Len(t, endpoints, 1)
+
+	err = fixture.sessions.KillMatching(fixture.ctx, endpoints[0], request)
+
+	require.NoError(t, err)
+	assert.False(t, fixture.servers.kwtServer().HasSession(fixture.session))
+}
+
 func TestWorkspaceSessionsAdoptVerifiedDefaultServerSession(t *testing.T) {
 	fixture := newRealWorkspaceSessionsFixture(t)
 	fixture.createMatching(t, fixture.servers.defaultServer())
