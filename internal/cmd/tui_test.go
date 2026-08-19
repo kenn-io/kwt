@@ -2076,6 +2076,62 @@ func TestTUIBackendProtectedCleanupIgnoresMissingTmuxAfterRemoval(t *testing.T) 
 	require.NoError(t, err)
 }
 
+func TestTUIBackendProtectedCleanupTerminatesCanonicalAndLegacySessions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("tmux is unavailable on Windows")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is not installed")
+	}
+
+	ctx := context.Background()
+	tempDir, err := os.MkdirTemp("/tmp", "kwt-tui-cleanup-")
+	require.NoError(t, err)
+	t.Setenv("TMUX_TMPDIR", tempDir)
+	socketName := fmt.Sprintf("kwt-pr-cleanup-%d", time.Now().UnixNano())
+	sessionName := "kwt-wt-widget-protected-01234567"
+	generation := "0123456789abcdef0123456789abcdef"
+	canonical := tmux.NewTmuxCommandForSocketWithStripNames(
+		"tmux", socketName, nil,
+	)
+	legacy := tmux.NewTmuxCommandForSocketInTempDirWithStripNames(
+		"tmux", socketName, tempDir, nil,
+	)
+	t.Cleanup(func() {
+		_ = canonical.RunCommandContext(ctx, "kill-server")
+		_ = legacy.RunCommandContext(ctx, "kill-server")
+		require.NoError(t, os.RemoveAll(tempDir))
+	})
+	for _, command := range []*tmux.TmuxCommand{canonical, legacy} {
+		require.NoError(t, command.RunCommandContext(
+			ctx, "new-session", "-d", "-s", sessionName, "sleep", "60",
+		))
+		require.NoError(t, command.SetOptionContext(
+			ctx, sessionName, "@kwt-workspace-generation", generation,
+		))
+		require.NoError(t, command.SetOptionContext(
+			ctx, sessionName, "@kwt-cleanup-"+generation, "1",
+		))
+	}
+
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	err = backend.killProtectedTUIEndpoint(
+		ctx,
+		tmux.SessionEndpoint{
+			SessionName: sessionName,
+			SocketName:  socketName,
+		},
+		tmux.WorkspaceEndpointRequest{
+			SessionName:         sessionName,
+			WorkspaceGeneration: generation,
+		},
+	)
+
+	require.NoError(t, err)
+	assert.False(t, canonical.HasSession(sessionName))
+	assert.False(t, legacy.HasSession(sessionName))
+}
+
 func TestTUIBackendRemoveWorktreeSkipsUnresolvedProtectedEndpoint(t *testing.T) {
 	repoPath := newTUITestRepo(t)
 	worktreePath := filepath.Join(t.TempDir(), "unresolved-protected-remove")

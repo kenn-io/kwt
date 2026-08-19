@@ -1685,28 +1685,18 @@ func (b *tuiBackend) killProtectedTUIEndpoint(
 	endpoint tmux.SessionEndpoint,
 	request tmux.WorkspaceEndpointRequest,
 ) error {
-	command, state, err := tmux.ResolveProtectedSessionCommand(
+	request.SessionName = endpoint.SessionName
+	err := tmux.KillProtectedWorkspaceSessionsIfMatchingContext(
 		ctx,
 		endpoint.SocketName,
-		endpoint.SessionName,
 		b.protectedNames,
 		os.Getenv("TMUX_TMPDIR"),
+		request,
 	)
-	if err != nil {
-		if errors.Is(err, exec.ErrNotFound) {
-			return nil
-		}
-		return err
-	}
-	switch state {
-	case tmux.ProtectedSessionAbsent:
+	if errors.Is(err, exec.ErrNotFound) {
 		return nil
-	case tmux.ProtectedSessionLive:
-		request.SessionName = endpoint.SessionName
-		return command.KillWorkspaceSessionIfMatchingContext(ctx, request)
-	default:
-		return fmt.Errorf("protected tmux session state is indeterminate")
 	}
+	return err
 }
 
 func (b *tuiBackend) repositoryRootForRow(row dashboard.Row) (string, error) {

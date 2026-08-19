@@ -141,6 +141,69 @@ func (t *TmuxCommand) KillWorkspaceSessionIfMatchingContext(
 	return killWorkspaceSessionIfMatching(ctx, t, request)
 }
 
+// KillProtectedWorkspaceSessionsIfMatchingContext terminates every verified
+// protected session at the canonical socket and the explicit socket directory
+// used by earlier KWT versions. Each endpoint is checked independently so a
+// live canonical session cannot hide a matching prior-location session.
+func KillProtectedWorkspaceSessionsIfMatchingContext(
+	ctx context.Context,
+	socketName string,
+	protectedNames []string,
+	legacyTempDir string,
+	request WorkspaceEndpointRequest,
+) error {
+	type protectedCleanupTarget struct {
+		location string
+		command  *TmuxCommand
+	}
+	targets := []protectedCleanupTarget{{
+		location: "canonical",
+		command:  newProtectedSessionProbeCommand(socketName, protectedNames),
+	}}
+	if legacyTempDir != "" {
+		// compat(kag1): protected sessions created with inherited TMUX_TMPDIR
+		targets = append(targets, protectedCleanupTarget{
+			location: "legacy",
+			command: NewTmuxCommandForSocketInTempDirWithStripNames(
+				"", socketName, legacyTempDir, protectedNames,
+			),
+		})
+	}
+
+	var cleanupErr error
+	for _, target := range targets {
+		state, err := probeProtectedSessionCommand(
+			ctx,
+			target.command,
+			request.SessionName,
+		)
+		if err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf(
+				"inspect %s protected tmux endpoint: %w",
+				target.location,
+				err,
+			))
+			continue
+		}
+		switch state {
+		case ProtectedSessionAbsent:
+			continue
+		case ProtectedSessionLive:
+			err = target.command.KillWorkspaceSessionIfMatchingContext(ctx, request)
+		default:
+			err = fmt.Errorf("protected tmux session state is indeterminate")
+		}
+		if err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf(
+				"clean up %s protected tmux endpoint: %w",
+				target.location,
+				err,
+			))
+		}
+	}
+	return cleanupErr
+}
+
 func (t *TmuxCommand) killWorkspaceSessionWithOptionContext(
 	ctx context.Context,
 	session string,
