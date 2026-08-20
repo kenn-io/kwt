@@ -49,7 +49,7 @@ The API schema is `1.11.0`. It exposes authenticated status, graceful shutdown,
 worktree inventory, guarded project unregistration, and repository-config
 approval under `/api/v1`, proof-capable liveness at `/api/ping`, and
 credential-free OpenAPI at `/openapi.json`. Inventory clients require the
-`worktree.inventory.v3` capability; guarded unregistration requires
+`worktree.inventory.v2` capability; guarded unregistration requires
 `project.removal.v1`, SSH route resolution requires `ssh.resolve.v1`, and
 daemon-owned connection leases require `ssh.lifecycle.v1`. Clients that bind
 short commands to a connection-owned hold additionally require
@@ -205,7 +205,7 @@ expiry. The client releases the daemon lease under a separate cleanup deadline.
 `kwt projects` and `kwt list` auto-start or reuse the daemon and require a
 current inventory result. They fail instead of falling back to cached or direct
 filesystem data. The TUI may paint immediately from the derived last-known-good
-cache at `<kwt-home>/cache/inventory-v3.json`, then requests one current
+cache at `<kwt-home>/cache/inventory-v2.json`, then requests one current
 snapshot. Failure to initialize or publish the disposable cache is diagnostic;
 current inventory remains available without it. Only dashboard snapshots with
 protected tmux sockets resolved may replace the shared cache. The cache is never

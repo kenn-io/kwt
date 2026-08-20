@@ -179,7 +179,7 @@ func setMismatchedRuntimeIdentity(t *testing.T, record *kitdaemon.RuntimeRecord)
 	)
 }
 
-func TestNewRuntimeRecordAdvertisesFirstDomainContracts(t *testing.T) {
+func TestNewRuntimeRecordAdvertisesCurrentDomainContracts(t *testing.T) {
 	record, _, err := NewRuntimeRecord(
 		t.TempDir(),
 		Build{Version: "development"},
@@ -188,8 +188,8 @@ func TestNewRuntimeRecordAdvertisesFirstDomainContracts(t *testing.T) {
 	require.NoError(t, err)
 
 	capabilities := strings.Split(record.Metadata[metadataCapabilities], ",")
-	assert.Contains(t, capabilities, "worktree.inventory.v3")
-	assert.NotContains(t, capabilities, "worktree.inventory.v2")
+	assert.Contains(t, capabilities, "worktree.inventory.v2")
+	assert.NotContains(t, capabilities, "worktree.inventory.v1")
 	assert.Contains(t, capabilities, "project.removal.v1")
 	assert.Contains(t, capabilities, "worktree.removal.v1")
 	assert.Contains(t, capabilities, "worktree.removal.v2")

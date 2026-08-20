@@ -37,23 +37,23 @@ func TestFileCacheRoundTripsSnapshot(t *testing.T) {
 	assert.Equal(t, want.Snapshot, got.Snapshot)
 }
 
-func TestFileCacheUsesThirdInventoryFormat(t *testing.T) {
+func TestFileCacheUsesSecondInventoryFormat(t *testing.T) {
 	home := t.TempDir()
 	cache, diagnostic, err := NewFileCache(home)
 	require.NoError(t, err)
 	assert.Nil(t, diagnostic)
 	require.NoError(t, cache.Store(Result{ObservedAt: time.Unix(7, 0).UTC()}))
 
-	_, err = os.Stat(filepath.Join(home, "cache", "inventory-v3.json"))
+	_, err = os.Stat(filepath.Join(home, "cache", "inventory-v2.json"))
 	require.NoError(t, err)
 }
 
-func TestFileCacheIgnoresSecondInventoryFormat(t *testing.T) {
+func TestFileCacheIgnoresFirstInventoryFormat(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, "cache")
 	require.NoError(t, os.Mkdir(dir, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "inventory-v2.json"), []byte(`{
-		"version": 2,
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "inventory-v1.json"), []byte(`{
+		"version": 1,
 		"observed_at": "1970-01-01T00:00:07Z",
 		"snapshot": {"entries": [{"path": "/repo", "branch": "main"}]}
 	}`), 0o600))
@@ -69,7 +69,7 @@ func TestFileCacheWrongVersionIsDisposable(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, "cache")
 	require.NoError(t, os.Mkdir(dir, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "inventory-v3.json"), []byte(`{"version":99}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "inventory-v2.json"), []byte(`{"version":99}`), 0o600))
 
 	cache, diagnostic, err := NewFileCache(home)
 	require.NoError(t, err)

@@ -248,11 +248,25 @@ func TestGuardedRemovalRejectsVersionOneDaemonBeforeMutation(t *testing.T) {
 	assert.False(t, mutated, "an older daemon must be rejected before removal is dispatched")
 }
 
-func TestInventoryRejectsVersionTwoDaemonBeforeRequest(t *testing.T) {
+func TestInventoryAcceptsVersionTwoDaemon(t *testing.T) {
 	observation := kwtdaemon.Observation{
 		State: kwtdaemon.RuntimeReady,
 		Status: kwtdaemon.Status{Capabilities: []string{
 			"worktree.inventory.v2",
+		}},
+		Client: &kwtdaemon.Client{},
+	}
+
+	err := requireInventoryCapability(observation)
+
+	require.NoError(t, err)
+}
+
+func TestInventoryRejectsVersionOneDaemonBeforeRequest(t *testing.T) {
+	observation := kwtdaemon.Observation{
+		State: kwtdaemon.RuntimeReady,
+		Status: kwtdaemon.Status{Capabilities: []string{
+			"worktree.inventory.v1",
 		}},
 		Client: &kwtdaemon.Client{},
 	}
