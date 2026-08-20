@@ -61,9 +61,10 @@ options.
 Whenever CI's supported OpenSSH version changes, review new and changed
 `ssh -G` directives against `internal/ssh/testdata/projection_v1.json` and the
 pinned Ghosthub parity matrix. A directive absent from the positive set remains
-identity-only. Adding, removing, or changing projection handling requires a
-new policy version and matching Ghosthub parity evidence; never change v1
-silently. Do not pin tests to an incidental vendor version string.
+identity-only. Before a projection policy ships, correct that policy and its
+parity evidence in place. After release, adding, removing, or changing
+projection handling requires a new policy version and matching Ghosthub parity
+evidence. Do not pin tests to an incidental vendor version string.
 
 ## Docs
 

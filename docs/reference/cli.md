@@ -162,7 +162,8 @@ positive directive set is:
 - authentication: `AddKeysToAgent`, `CertificateFile`, `EnableSSHKeysign`,
   `ForwardAgent`, `GSSAPIAuthentication`, `GSSAPIDelegateCredentials`,
   `HostbasedAcceptedAlgorithms`, `HostbasedAuthentication`, `IdentitiesOnly`,
-  `IdentityAgent`, `IdentityFile`, `KbdInteractiveAuthentication`,
+  `IdentityAgent`, explicitly configured `IdentityFile` values,
+  `KbdInteractiveAuthentication`,
   `PasswordAuthentication`, `PKCS11Provider`, `PreferredAuthentications`,
   `PubkeyAcceptedAlgorithms`, `PubkeyAuthentication`, `SecurityKeyProvider`,
   and `UseKeychain`;
