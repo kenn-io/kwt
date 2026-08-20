@@ -102,7 +102,10 @@ func isSessionProjectionOption(name string) bool {
 	return false
 }
 
-func projectConfig(config openssh.EffectiveConfig) (projection, error) {
+func projectConfig(
+	config openssh.EffectiveConfig,
+	configuredIdentities []string,
+) (projection, error) {
 	result := projection{
 		PolicyVersion: projectionPolicyV1,
 		Arguments: []string{
@@ -127,6 +130,9 @@ func projectConfig(config openssh.EffectiveConfig) (projection, error) {
 	for _, option := range config.Options {
 		name := strings.ToLower(option.Name)
 		values[name] = append(values[name], option.Value)
+	}
+	if configuredIdentities != nil {
+		values["identityfile"] = configuredIdentities
 	}
 	for _, option := range projectionOptionsV1 {
 		for _, value := range values[option.name] {

@@ -22,6 +22,7 @@ const resolveCommandEnvironment = "KWT_SSH_RESOLVE_COMMAND"
 func (r *Resolver) resolveConfig(
 	ctx context.Context,
 	target openssh.Target,
+	baseArgs []string,
 ) (openssh.EffectiveConfig, error) {
 	executable, err := resolveExecutable(r.executable, r.environment, r.workingDirectory)
 	if err != nil {
@@ -43,6 +44,7 @@ func (r *Resolver) resolveConfig(
 
 	resolver := openssh.Resolver{
 		Executable: executable,
+		BaseArgs:   baseArgs,
 		Run: func(ctx context.Context, argv []string) ([]byte, []byte, int, error) {
 			nonce, err := r.nonce()
 			if err != nil {

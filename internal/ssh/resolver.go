@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"strings"
 
 	"go.kenn.io/kit/openssh"
 	"go.kenn.io/kwt/internal/credentials"
@@ -83,7 +84,34 @@ func (r *Resolver) Resolve(ctx context.Context, request ResolveRequest) (routeOb
 	if err := openssh.ValidateTarget(endpoint); err != nil {
 		return routeObservation{}, invalidTarget(err)
 	}
-	route, err := openssh.ResolveRoute(ctx, endpoint, r.resolveConfig)
+	identityFiles := make(map[openssh.Target][]string)
+	route, err := openssh.ResolveRoute(
+		ctx,
+		endpoint,
+		func(ctx context.Context, target openssh.Target) (openssh.EffectiveConfig, error) {
+			config, err := r.resolveConfig(ctx, target, nil)
+			if err != nil {
+				return openssh.EffectiveConfig{}, err
+			}
+			sentinel, err := r.identitySentinel()
+			if err != nil {
+				return openssh.EffectiveConfig{}, err
+			}
+			identityConfig, err := r.resolveConfig(
+				ctx,
+				target,
+				[]string{"-o", "IdentityFile=" + sentinel},
+			)
+			if err != nil {
+				return openssh.EffectiveConfig{}, err
+			}
+			identityFiles[target], err = configuredIdentityFiles(identityConfig, sentinel)
+			if err != nil {
+				return openssh.EffectiveConfig{}, err
+			}
+			return config, nil
+		},
+	)
 	if err != nil {
 		var routeErr *openssh.RouteError
 		if errors.As(err, &routeErr) {
@@ -91,7 +119,39 @@ func (r *Resolver) Resolve(ctx context.Context, request ResolveRequest) (routeOb
 		}
 		return routeObservation{}, resolutionFailed(err)
 	}
-	return routeObservation{route: route}, nil
+	return routeObservation{route: route, identityFiles: identityFiles}, nil
+}
+
+func (r *Resolver) identitySentinel() (string, error) {
+	nonce, err := r.nonce()
+	if err != nil {
+		return "", err
+	}
+	if nonce == "" || strings.ContainsAny(nonce, "\x00\r\n") {
+		return "", errors.New("invalid SSH identity probe nonce")
+	}
+	return "kwt-identity-probe-" + nonce, nil
+}
+
+func configuredIdentityFiles(config openssh.EffectiveConfig, sentinel string) ([]string, error) {
+	result := make([]string, 0)
+	foundSentinel := false
+	foundIdentity := false
+	for _, option := range config.Options {
+		if !strings.EqualFold(option.Name, "identityfile") {
+			continue
+		}
+		foundIdentity = true
+		if !foundSentinel && option.Value == sentinel {
+			foundSentinel = true
+			continue
+		}
+		result = append(result, option.Value)
+	}
+	if foundIdentity && !foundSentinel {
+		return nil, errors.New("SSH configuration omitted identity probe sentinel")
+	}
+	return result, nil
 }
 
 func randomNonce() (string, error) {

@@ -53,9 +53,10 @@ func (r *fixedObservationResolver) Resolve(
 }
 
 func TestServiceBuildsSnapshotFromCompletePrivateObservation(t *testing.T) {
+	relayTarget := openssh.Target{User: "relay", Hostname: "relay.example.test", Port: 22}
 	resolver := &fixedObservationResolver{observation: routeObservation{route: openssh.Route{
 		{
-			Target: openssh.Target{User: "relay", Hostname: "relay.example.test", Port: 22},
+			Target: relayTarget,
 			Config: openssh.EffectiveConfig{
 				User: "jump", Hostname: "relay.internal", Port: 2222,
 				StrictHostKeyChecking: "yes",
@@ -76,6 +77,9 @@ func TestServiceBuildsSnapshotFromCompletePrivateObservation(t *testing.T) {
 			},
 		},
 	}}}
+	resolver.observation.identityFiles = map[openssh.Target][]string{
+		relayTarget: {"/keys/relay"},
+	}
 	observedAt := time.Date(2026, 8, 11, 18, 30, 0, 0, time.FixedZone("CDT", -5*60*60))
 	service := NewService(ServiceOptions{
 		Resolver: resolver,

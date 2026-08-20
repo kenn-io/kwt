@@ -115,5 +115,6 @@ const (
 // OpenSSH stream remains reachable only through this internal route and is
 // never embedded in RouteSnapshot.
 type routeObservation struct {
-	route openssh.Route
+	route         openssh.Route
+	identityFiles map[openssh.Target][]string
 }

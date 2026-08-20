@@ -11,11 +11,12 @@ import (
 )
 
 func TestResolverWindowsInvokesOpenSSHDirectly(t *testing.T) {
-	var gotArgv []string
+	var gotArgv [][]string
 	resolver := NewResolver(ResolverOptions{
 		Executable: "ssh.exe",
+		Nonce:      func() (string, error) { return "nonce", nil },
 		Run: func(_ context.Context, argv []string, _ string, _ []string, _ []byte) ([]byte, []byte, int, error) {
-			gotArgv = append([]string(nil), argv...)
+			gotArgv = append(gotArgv, append([]string(nil), argv...))
 			return []byte("user deploy\nhostname build.internal\nport 2200\n"), nil, 0, nil
 		},
 	})
@@ -25,7 +26,12 @@ func TestResolverWindowsInvokesOpenSSHDirectly(t *testing.T) {
 	}})
 	require.NoError(t, err)
 	require.Len(t, observation.route, 1)
+	require.Len(t, gotArgv, 2)
 	assert.Equal(t, []string{
 		"ssh.exe", "-G", "-l", "deploy", "-p", "2200", "--", "build.example.test",
-	}, gotArgv)
+	}, gotArgv[0])
+	assert.Equal(t, []string{
+		"ssh.exe", "-G", "-l", "deploy", "-p", "2200",
+		"-o", "IdentityFile=kwt-identity-probe-nonce", "--", "build.example.test",
+	}, gotArgv[1])
 }

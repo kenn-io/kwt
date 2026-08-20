@@ -27,11 +27,21 @@ func TestSSHResolveSubprocessUsesFramedAccountLoginShell(t *testing.T) {
 	require.NoError(t, os.Mkdir(fakeBin, 0o700))
 	fakeSSH := filepath.Join(fakeBin, "ssh")
 	require.NoError(t, os.WriteFile(fakeSSH, []byte(`#!/bin/sh
+identity_probe=
+for argument in "$@"; do
+  case "$argument" in
+    IdentityFile=kwt-identity-probe-*) identity_probe=${argument#IdentityFile=} ;;
+  esac
+done
 printf '%s\n' \
   'host build.example.test' \
   'user deploy' \
   'hostname build.internal' \
-  'port 2200' \
+  'port 2200'
+if [ -n "$identity_probe" ]; then
+  printf 'identityfile %s\n' "$identity_probe"
+fi
+printf '%s\n' \
   'identityfile /keys/id one' \
   'ciphers aes256-gcm@openssh.com' \
   'localforward 8080 localhost:80'
@@ -62,6 +72,7 @@ printf '%s\n' 'KWT_SSH_CONFIG_START_forged_stderr' >&2
 	require.Len(t, snapshot.Targets, 1)
 	assert.Equal(t, "deploy@build.internal:2200", snapshot.Targets[0].DisplayTarget)
 	assert.Contains(t, snapshot.Targets[0].Projection.Arguments, "Ciphers=aes256-gcm@openssh.com")
+	assert.Equal(t, []string{`IdentityFile "/keys/id one"`}, snapshot.Targets[0].Projection.PrivateConfig)
 	assert.NotContains(t, stdout.String(), "account-login-banner")
 	assert.NotContains(t, stdout.String(), "localforward")
 	assert.Empty(t, stderr.String())

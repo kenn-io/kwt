@@ -74,7 +74,10 @@ func (s *Service) Resolve(
 	}
 	targets := make([]ResolvedTarget, 0, len(observation.route))
 	for _, observed := range observation.route {
-		projected, projectErr := projectConfig(observed.Config)
+		projected, projectErr := projectConfig(
+			observed.Config,
+			observation.identityFiles[observed.Target],
+		)
 		if projectErr != nil {
 			return RouteSnapshot{}, routeUnreviewable(projectErr)
 		}

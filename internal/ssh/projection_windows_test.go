@@ -12,7 +12,7 @@ import (
 )
 
 func TestProjectionUsesWindowsNullDevice(t *testing.T) {
-	projected, err := projectConfig(openssh.EffectiveConfig{})
+	projected, err := projectConfig(openssh.EffectiveConfig{}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"-F", os.DevNull}, projected.Arguments[:2])
 }

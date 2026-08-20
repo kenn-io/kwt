@@ -15,11 +15,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/openssh"
 	"go.kenn.io/kwt/service"
 )
 
 func TestResolverPOSIXUsesLoginShellFrameAndExplicitTarget(t *testing.T) {
 	var gotArgv, gotEnvironment []string
+	var commands []string
 	resolver := NewResolver(ResolverOptions{
 		Executable: "/usr/bin/ssh",
 		LoginShell: func() (string, error) { return "/bin/zsh", nil },
@@ -32,6 +34,7 @@ func TestResolverPOSIXUsesLoginShellFrameAndExplicitTarget(t *testing.T) {
 		Run: func(_ context.Context, argv []string, _ string, environment []string, _ []byte) ([]byte, []byte, int, error) {
 			gotArgv = append([]string(nil), argv...)
 			gotEnvironment = append([]string(nil), environment...)
+			commands = append(commands, resolveCommandFromEnvironment(t, environment))
 			return []byte("banner\nKWT_SSH_CONFIG_START_nonce\n" +
 					"user deploy\nhostname build.internal\nport 2200\n" +
 					"KWT_SSH_CONFIG_END_nonce\ntrailer\n"),
@@ -47,12 +50,71 @@ func TestResolverPOSIXUsesLoginShellFrameAndExplicitTarget(t *testing.T) {
 	assert.Equal(t, "build.internal", observation.route[0].Config.Hostname)
 	assert.Equal(t, []string{"/bin/zsh", "-l", "-c"}, gotArgv[:3])
 	assert.Equal(t, `exec /bin/sh -c "$KWT_SSH_RESOLVE_COMMAND"`, gotArgv[3])
-	assert.Contains(t, resolveCommandFromEnvironment(t, gotEnvironment),
+	require.Len(t, commands, 2)
+	assert.Contains(t, commands[0],
 		"'/usr/bin/ssh' '-G' '-l' 'deploy' '-p' '2200' '--' 'build.example.test'")
+	assert.Contains(t, commands[1],
+		"'-o' 'IdentityFile=kwt-identity-probe-nonce'")
 	assert.Contains(t, gotEnvironment, "HOME=/Users/operator")
 	assert.Contains(t, gotEnvironment, "PATH=/usr/bin:/bin")
 	assert.NotContains(t, gotEnvironment, "KWT_GITHUB_TOKEN=github-secret")
 	assert.NotContains(t, gotEnvironment, "GHOSTHUB_AUTH=fleet-secret")
+}
+
+func TestResolverPOSIXSeparatesConfiguredIdentitiesFromImplicitDefaults(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		resolved   string
+		configured string
+		want       []string
+	}{
+		{
+			name: "implicit defaults",
+			resolved: "hostname build.internal\n" +
+				"identityfile ~/.ssh/id_rsa\n" +
+				"identityfile ~/.ssh/id_ecdsa\n" +
+				"identityfile ~/.ssh/id_ed25519\n",
+			configured: "hostname build.internal\n" +
+				"identityfile kwt-identity-probe-nonce\n",
+			want: []string{},
+		},
+		{
+			name: "configured identity",
+			resolved: "hostname build.internal\n" +
+				"identityfile /keys/custom identity\n",
+			configured: "hostname build.internal\n" +
+				"identityfile kwt-identity-probe-nonce\n" +
+				"identityfile /keys/custom identity\n",
+			want: []string{"/keys/custom identity"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resolver := NewResolver(ResolverOptions{
+				LoginShell: func() (string, error) { return "/bin/sh", nil },
+				Nonce:      func() (string, error) { return "nonce", nil },
+				Run: func(_ context.Context, _ []string, _ string, environment []string, _ []byte) ([]byte, []byte, int, error) {
+					config := test.resolved
+					if strings.Contains(
+						resolveCommandFromEnvironment(t, environment),
+						"IdentityFile=kwt-identity-probe-nonce",
+					) {
+						config = test.configured
+					}
+					return framedResolverOutput("nonce", config), nil, 0, nil
+				},
+			})
+
+			observation, err := resolver.Resolve(context.Background(), ResolveRequest{
+				Target: Target{Hostname: "build.example.test"},
+			})
+			require.NoError(t, err)
+			assert.Equal(
+				t,
+				test.want,
+				observation.identityFiles[openssh.Target{Hostname: "build.example.test"}],
+			)
+		})
+	}
 }
 
 func TestResolverPOSIXBindsBareExecutableBeforeLoginShellStartup(t *testing.T) {
@@ -157,7 +219,10 @@ func TestResolverPOSIXDelegatesResolveScriptThroughPOSIXShellForTcsh(t *testing.
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/bin/tcsh", "-l"}, gotArgv)
-	assert.Equal(t, []string{`exec /bin/sh -c "$KWT_SSH_RESOLVE_COMMAND:q"` + "\n"}, gotStandardInput)
+	assert.Equal(t, []string{
+		`exec /bin/sh -c "$KWT_SSH_RESOLVE_COMMAND:q"` + "\n",
+		`exec /bin/sh -c "$KWT_SSH_RESOLVE_COMMAND:q"` + "\n",
+	}, gotStandardInput)
 }
 
 func TestResolverPOSIXRunsThroughAvailableNonPOSIXShells(t *testing.T) {
@@ -221,7 +286,7 @@ func TestResolverPOSIXResolvesProxyJumpInConnectionOrder(t *testing.T) {
 	assert.Equal(t, "relay.example.test", observation.route[0].Target.Hostname)
 	assert.Equal(t, "core.example.test", observation.route[1].Target.Hostname)
 	assert.Equal(t, "build.example.test", observation.route[2].Target.Hostname)
-	assert.Len(t, commands, 3)
+	assert.Len(t, commands, 6)
 }
 
 func TestResolverPOSIXFailsClosedForUnreviewableRoutes(t *testing.T) {
