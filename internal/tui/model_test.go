@@ -1322,7 +1322,7 @@ func TestModelDeleteLiveWorktreeConfirmsAndCallsRemove(t *testing.T) {
 	model, _ = updateModel(t, model, rowsMsg{rows: []Row{row}})
 
 	model, _ = updateModel(t, model, press("d"))
-	assert.Contains(t, viewContent(model), "delete kwt:feature and kill its live workspace? [y/N]")
+	assert.Contains(t, viewContent(model), "delete kwt:feature and stop any matching workspace sessions? [y/N]")
 
 	_, cmd := updateModel(t, model, press("y"))
 	require.NotNil(t, cmd)
@@ -1330,6 +1330,17 @@ func TestModelDeleteLiveWorktreeConfirmsAndCallsRemove(t *testing.T) {
 	assert.IsType(t, actionDoneMsg{}, msg)
 	assert.Equal(t, []string{"/w/kwt/feature"}, backend.removeCalls)
 	assert.Equal(t, []bool{false}, backend.removeForces)
+}
+
+func TestModelDeleteOfflineWorktreeDisclosesMatchingSessionCleanup(t *testing.T) {
+	row := testRow("kwt", "feature", "/w/kwt/feature")
+	row.SessionLive = false
+	model := NewModel(&fakeBackend{}, "/worktrees")
+	model, _ = updateModel(t, model, rowsMsg{rows: []Row{row}})
+
+	model, _ = updateModel(t, model, press("d"))
+
+	assert.Contains(t, viewContent(model), "delete kwt:feature and stop any matching workspace sessions? [y/N]")
 }
 
 func TestModelRefreshesAfterPartialRemovalWarning(t *testing.T) {
@@ -1390,7 +1401,7 @@ func TestModelDeleteDirtyWorktreeConfirmsDiscardAndForcesRemove(t *testing.T) {
 
 	model, _ = updateModel(t, model, press("d"))
 	content := stripANSI(viewContent(model))
-	assert.Contains(t, content, "discard changes and delete kwt:feature? [y/N]")
+	assert.Contains(t, content, "discard changes, delete kwt:feature, and stop any matching workspace sessions? [y/N]")
 	assert.NotContains(t, content, "kwt remove --force")
 
 	_, cmd := updateModel(t, model, press("y"))
@@ -1401,7 +1412,7 @@ func TestModelDeleteDirtyWorktreeConfirmsDiscardAndForcesRemove(t *testing.T) {
 	assert.Equal(t, []bool{true}, backend.removeForces)
 }
 
-func TestModelDeleteDirtyLiveWorktreeConfirmsDiscardAndKill(t *testing.T) {
+func TestModelDeleteDirtyLiveWorktreeDisclosesMatchingSessionCleanup(t *testing.T) {
 	row := testRow("kwt", "feature", "/w/kwt/feature")
 	row.SessionLive = true
 	row.SessionName = "kwt-workspace-kwt-feature"
@@ -1412,7 +1423,7 @@ func TestModelDeleteDirtyLiveWorktreeConfirmsDiscardAndKill(t *testing.T) {
 
 	model, _ = updateModel(t, model, press("d"))
 
-	assert.Contains(t, stripANSI(viewContent(model)), "discard changes, delete kwt:feature, and kill its live workspace? [y/N]")
+	assert.Contains(t, stripANSI(viewContent(model)), "discard changes, delete kwt:feature, and stop any matching workspace sessions? [y/N]")
 }
 
 func TestModelKillWorkspaceConfirm(t *testing.T) {

@@ -1268,13 +1268,9 @@ func (m Model) startDelete() (Model, tea.Cmd) {
 		return m, nil
 	}
 	dirty := rowHasUncommittedChanges(row)
-	text := fmt.Sprintf("delete %s? [y/N]", rowLabel(row))
-	if dirty && row.SessionLive {
-		text = fmt.Sprintf("discard changes, delete %s, and kill its live workspace? [y/N]", rowLabel(row))
-	} else if dirty {
-		text = fmt.Sprintf("discard changes and delete %s? [y/N]", rowLabel(row))
-	} else if row.SessionLive {
-		text = fmt.Sprintf("delete %s and kill its live workspace? [y/N]", rowLabel(row))
+	text := fmt.Sprintf("delete %s and stop any matching workspace sessions? [y/N]", rowLabel(row))
+	if dirty {
+		text = fmt.Sprintf("discard changes, delete %s, and stop any matching workspace sessions? [y/N]", rowLabel(row))
 	}
 	m.confirm = confirmState{kind: confirmDelete, row: row, text: text, force: dirty}
 	return m, nil
