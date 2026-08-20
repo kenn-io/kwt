@@ -94,11 +94,11 @@ func TestProjectionV1IdentityIncludesFullConfigAndPolicy(t *testing.T) {
 		},
 	}}
 
-	identity := routeIdentity(projectionPolicyV1, route)
+	identity := routeIdentity(projectionPolicyV1, route, nil)
 	changedConfig := append(openssh.Route(nil), route...)
 	changedConfig[0].Config.Options = []openssh.Option{{
 		Name: "localforward", Value: "8081 localhost:80",
 	}}
-	assert.NotEqual(t, identity, routeIdentity(projectionPolicyV1, changedConfig))
-	assert.NotEqual(t, identity, routeIdentity("kwt.openssh.projection.v2", route))
+	assert.NotEqual(t, identity, routeIdentity(projectionPolicyV1, changedConfig, nil))
+	assert.NotEqual(t, identity, routeIdentity("kwt.openssh.projection.v2", route, nil))
 }

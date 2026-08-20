@@ -97,9 +97,13 @@ func (s *Service) Resolve(
 		})
 	}
 	return RouteSnapshot{
-		LogicalTarget:    request.Target,
-		Targets:          targets,
-		RouteIdentity:    routeIdentity(projectionPolicyV1, observation.route),
+		LogicalTarget: request.Target,
+		Targets:       targets,
+		RouteIdentity: routeIdentity(
+			projectionPolicyV1,
+			observation.route,
+			observation.identityFiles,
+		),
 		ProjectionPolicy: projectionPolicyV1,
 		ObservedAt:       s.now().UTC(),
 	}, nil

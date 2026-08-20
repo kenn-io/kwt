@@ -1,7 +1,11 @@
 package ssh
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
+	"hash"
 	"os"
 	"strconv"
 	"strings"
@@ -161,6 +165,33 @@ func privateConfigLine(name, value string) (string, error) {
 	return name + ` "` + replacer.Replace(value) + `"`, nil
 }
 
-func routeIdentity(policy string, route openssh.Route) string {
-	return openssh.RouteIdentity(policy, route)
+func routeIdentity(
+	policy string,
+	route openssh.Route,
+	identityFiles map[openssh.Target][]string,
+) string {
+	hash := sha256.New()
+	writeIdentityPart(hash, openssh.RouteIdentity(policy, route))
+	for _, hop := range route {
+		values, present := identityFiles[hop.Target]
+		if !present {
+			_, _ = hash.Write([]byte{0})
+			continue
+		}
+		_, _ = hash.Write([]byte{1})
+		var count [8]byte
+		binary.BigEndian.PutUint64(count[:], uint64(len(values)))
+		_, _ = hash.Write(count[:])
+		for _, value := range values {
+			writeIdentityPart(hash, value)
+		}
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func writeIdentityPart(hash hash.Hash, value string) {
+	var size [8]byte
+	binary.BigEndian.PutUint64(size[:], uint64(len(value)))
+	_, _ = hash.Write(size[:])
+	_, _ = hash.Write([]byte(value))
 }

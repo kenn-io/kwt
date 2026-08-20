@@ -146,6 +146,33 @@ func TestServiceFullObservationChangesRouteIdentity(t *testing.T) {
 	assert.NotEqual(t, first.RouteIdentity, second.RouteIdentity)
 }
 
+func TestServiceOrderedConfiguredIdentitiesChangeRouteIdentity(t *testing.T) {
+	target := openssh.Target{Hostname: "build.example.test"}
+	route := openssh.Route{{
+		Target: target,
+		Config: openssh.EffectiveConfig{Hostname: "build.internal"},
+	}}
+	resolve := func(identityFiles []string) RouteSnapshot {
+		service := NewService(ServiceOptions{
+			Resolver: &fixedObservationResolver{observation: routeObservation{
+				route: route,
+				identityFiles: map[openssh.Target][]string{
+					target: identityFiles,
+				},
+			}},
+		})
+		snapshot, err := service.Resolve(context.Background(), ResolveRequest{
+			Target: Target{Hostname: "build.example.test"},
+		})
+		require.NoError(t, err)
+		return snapshot
+	}
+
+	first := resolve([]string{"/keys/first", "/keys/second"})
+	second := resolve([]string{"/keys/second", "/keys/first"})
+	assert.NotEqual(t, first.RouteIdentity, second.RouteIdentity)
+}
+
 func TestServicePreservesResolverCancellation(t *testing.T) {
 	resolver := &fixedObservationResolver{err: resolutionFailed(context.Canceled)}
 	service := NewService(ServiceOptions{Resolver: resolver})
