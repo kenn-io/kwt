@@ -1985,11 +1985,11 @@ func (b *tuiBackend) resolveLayout(row dashboard.Row, layoutName string, interac
 }
 
 func (b *tuiBackend) sessionName(row dashboard.Row) (string, error) {
-	if row.SessionName != "" {
-		return row.SessionName, nil
-	}
 	if row.Workspace != nil {
 		return tmux.DirWorkspaceSessionName(row.Workspace.Name, row.Workspace.Path), nil
+	}
+	if row.SessionName != "" {
+		return row.SessionName, nil
 	}
 	if row.Entry == nil || row.Entry.RepositoryInfo == nil {
 		return "", fmt.Errorf("could not resolve repository info for %s", rowPathForHandoff(row))

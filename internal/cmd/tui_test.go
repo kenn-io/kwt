@@ -3977,8 +3977,8 @@ func TestTUIBackendSessionNameAndHandoffPathForWorkspaceRow(t *testing.T) {
 	name, err = backend.sessionName(row)
 
 	require.NoError(t, err)
-	assert.Equal(t, "live-session-name", name,
-		"a non-empty SessionName must win over the workspace branch")
+	assert.Equal(t, tmux.DirWorkspaceSessionName("notes", "/Users/me/notes"), name,
+		"directory workspace establishment must always request the canonical name")
 }
 
 func TestRowPaneRoot(t *testing.T) {
@@ -4329,8 +4329,12 @@ func TestTUIBackendRefusesProtectedPullRequestWorkspace(t *testing.T) {
 // detached session on the user's default tmux server merely because a unit
 // test needs to prove a workspace-only row clears the selection guard.
 func TestTUIBackendAttachWorkspacePassesWorkspaceRowToRunner(t *testing.T) {
+	workspacePath := t.TempDir()
 	row := dashboard.Row{
-		Workspace: &dashboard.WorkspaceInfo{Name: "notes", Path: t.TempDir()},
+		Workspace: &dashboard.WorkspaceInfo{Name: "notes", Path: workspacePath},
+		SessionName: tmux.DirWorkspaceSessionName(
+			"old-name", workspacePath,
+		),
 	}
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
 	before := defaultTmuxSessions(t)

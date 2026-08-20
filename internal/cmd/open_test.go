@@ -263,7 +263,7 @@ func TestOpenSelectedDirectoryWorkspaceEnsuresOrAttaches(t *testing.T) {
 	}
 }
 
-func TestOpenSelectedDirectoryWorkspaceUsesRenamedLiveSession(t *testing.T) {
+func TestOpenSelectedDirectoryWorkspaceRequestsCanonicalSession(t *testing.T) {
 	resetWorkspaceCommandDeps(t)
 	workspace := models.Workspace{Name: "renamed", Path: t.TempDir()}
 	liveName := tmux.DirWorkspaceSessionName("old-name", workspace.Path)
@@ -290,7 +290,11 @@ func TestOpenSelectedDirectoryWorkspaceUsesRenamedLiveSession(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	assert.Equal(t, liveName, runner.sessionName)
+	assert.Equal(
+		t,
+		tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
+		runner.sessionName,
+	)
 }
 
 func TestOpenAttachesToEndpointReturnedByEstablishment(t *testing.T) {

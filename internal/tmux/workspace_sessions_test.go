@@ -161,7 +161,7 @@ func TestWorkspaceSessionsEstablishesOnResolvedAdoptedEndpoint(t *testing.T) {
 	assert.True(t, ensurer.repaired)
 }
 
-func TestWorkspaceSessionsEstablishesResolvedSessionName(t *testing.T) {
+func TestWorkspaceSessionsRepairsResolvedSessionName(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		adopted    bool
@@ -202,46 +202,71 @@ func TestWorkspaceSessionsEstablishesResolvedSessionName(t *testing.T) {
 			assert.Equal(t, "existing-session", got.SessionName)
 			assert.Equal(t, "existing-session", ensurer.ensureSession)
 			assert.Equal(t, test.generation, ensurer.ensureGeneration)
-			assert.Equal(t, test.adopted, ensurer.repaired)
-			assert.Equal(t, !test.adopted, ensurer.ensured)
+			assert.True(t, ensurer.repaired)
+			assert.False(t, ensurer.ensured)
 		})
 	}
 }
 
-func TestWorkspaceSessionsNeverCreatesReplacementOnExitedAdoptedEndpoint(t *testing.T) {
-	adopted := &recordingWorkspaceEnsurer{repairErr: errWorkspaceSessionAbsent}
-	canonical := &recordingWorkspaceEnsurer{}
-	resolveCalls := 0
-	runner := &WorkspaceSessions{
-		resolveSession: func(context.Context, WorkspaceEndpointRequest) (resolvedWorkspaceSession, error) {
-			resolveCalls++
-			if resolveCalls == 1 {
-				return newResolvedWorkspaceSession("workspace", true, true), nil
-			}
-			return newResolvedWorkspaceSession("workspace", false, false), nil
+func TestWorkspaceSessionsNeverCreatesReplacementOnExitedResolvedEndpoint(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		resolvedName string
+		adopted      bool
+		generation   string
+	}{
+		{
+			name: "adopted endpoint", resolvedName: "workspace", adopted: true,
+			generation: resolverTestGeneration,
 		},
-		workspaceForEndpoint: func(endpoint SessionEndpoint) (workspaceSessionEnsurer, error) {
-			if endpoint.SocketName == "" {
-				return adopted, nil
+		{name: "canonical alias", resolvedName: "legacy$session"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			disappeared := &recordingWorkspaceEnsurer{repairErr: errWorkspaceSessionAbsent}
+			canonical := &recordingWorkspaceEnsurer{}
+			resolveCalls := 0
+			runner := &WorkspaceSessions{
+				resolveSession: func(
+					_ context.Context,
+					request WorkspaceEndpointRequest,
+				) (resolvedWorkspaceSession, error) {
+					assert.Equal(t, "workspace", request.SessionName)
+					resolveCalls++
+					if resolveCalls == 1 {
+						return newResolvedWorkspaceSession(
+							test.resolvedName, true, test.adopted,
+						), nil
+					}
+					return newResolvedWorkspaceSession("workspace", false, false), nil
+				},
+				workspaceForEndpoint: func(
+					endpoint SessionEndpoint,
+				) (workspaceSessionEnsurer, error) {
+					if endpoint != canonicalEndpoint("workspace") {
+						return disappeared, nil
+					}
+					return canonical, nil
+				},
 			}
-			return canonical, nil
-		},
+
+			got, err := runner.establish(
+				context.Background(),
+				"workspace",
+				"/work/widget",
+				test.generation,
+				BlankLayout(),
+			)
+
+			require.NoError(t, err)
+			assert.Equal(t, 2, resolveCalls)
+			assert.True(t, disappeared.repaired)
+			assert.False(t, disappeared.ensured)
+			assert.True(t, canonical.ensured)
+			assert.Equal(t, "workspace", canonical.ensureSession)
+			assert.Equal(t, test.generation, canonical.ensureGeneration)
+			assert.Equal(t, canonicalEndpoint("workspace"), got)
+		})
 	}
-
-	got, err := runner.EstablishWithGeneration(
-		context.Background(),
-		"workspace",
-		"/work/widget",
-		resolverTestGeneration,
-		BlankLayout(),
-	)
-
-	require.NoError(t, err)
-	assert.True(t, adopted.repaired)
-	assert.False(t, adopted.ensured)
-	assert.True(t, canonical.ensured)
-	assert.Equal(t, "workspace", canonical.ensureSession)
-	assert.Equal(t, KWTServerSocketName, got.SocketName)
 }
 
 func TestWorkspaceSessionsRoutesAttachmentByClientMembership(t *testing.T) {

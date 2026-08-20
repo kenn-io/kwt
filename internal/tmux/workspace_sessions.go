@@ -186,8 +186,12 @@ func (s *WorkspaceSessions) establish(
 		if err != nil {
 			return SessionEndpoint{}, err
 		}
+		repairOnly := resolved.Live && effectiveSession != request.SessionName
 		if resolved.adopted {
 			// compat(kag1): default-server adoption
+			repairOnly = true
+		}
+		if repairOnly {
 			if generation == "" {
 				err = workspace.RepairExisting(
 					ctx, effectiveSession, workspacePath, layout,

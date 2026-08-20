@@ -680,7 +680,7 @@ func openSelectedDirectoryWorkspaceWithResult(
 	runner := newOpenWorkspaceRunner(credentials.ProtectedNames(ctx.Config))
 	endpoint, err := runner.Establish(
 		commandCtx,
-		records[0].SessionName,
+		tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
 		workspace.Path,
 		layout,
 	)

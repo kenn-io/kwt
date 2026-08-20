@@ -154,8 +154,8 @@ func (r *WorkspaceRunner) EnsureWithGeneration(
 	return r.ensure(ctx, session, worktreeDir, generation, layout)
 }
 
-// RepairExisting repairs a verified adopted directory session without ever
-// creating a replacement on the default server.
+// RepairExisting repairs a verified directory session without creating a
+// replacement if the observed session exits concurrently.
 func (r *WorkspaceRunner) RepairExisting(
 	ctx context.Context,
 	session, worktreeDir string,
@@ -164,8 +164,8 @@ func (r *WorkspaceRunner) RepairExisting(
 	return r.repairExisting(ctx, session, worktreeDir, "")
 }
 
-// RepairExistingWithGeneration repairs a verified adopted worktree session
-// without ever creating a replacement on the default server.
+// RepairExistingWithGeneration repairs a verified worktree session without
+// creating a replacement if the observed session exits concurrently.
 func (r *WorkspaceRunner) RepairExistingWithGeneration(
 	ctx context.Context,
 	session, worktreeDir, generation string,
