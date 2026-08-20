@@ -319,8 +319,8 @@ func TestAttachPathsUseFullStripSanitizer(t *testing.T) {
 		"switch-client":  tc.switchClientCmd("x").Env,
 	}
 	for name, args := range cmds {
-		wantArgs := []string{"tmux", name, "-t", "x"}
-		if len(args) != len(wantArgs) || args[1] != name || args[2] != "-t" || args[3] != "x" {
+		wantArgs := []string{"tmux", name, "-t", "=x"}
+		if !slices.Equal(args, wantArgs) {
 			t.Errorf("%s cmd args = %v, want %v", name, args, wantArgs)
 		}
 		for _, entry := range envs[name] {
@@ -345,7 +345,7 @@ func TestProtectedAttachDisablesTmuxEnvironmentUpdate(t *testing.T) {
 
 	want := []string{
 		"tmux", "-L", "kwt-pr-0123456789abcdef",
-		"attach-session", "-E", "-t", "workspace",
+		"attach-session", "-E", "-t", "=workspace",
 	}
 	if !slices.Equal(cmd.Args, want) {
 		t.Fatalf("protected attach args = %v, want %v", cmd.Args, want)
@@ -398,7 +398,7 @@ func TestDirectNestedAttachStripsParentIdentityWithoutProtectedFlag(t *testing.T
 
 	want := []string{
 		"tmux", "-L", KWTServerSocketName,
-		"attach-session", "-t", "workspace",
+		"attach-session", "-t", "=workspace",
 	}
 	if !slices.Equal(cmd.Args, want) {
 		t.Fatalf("direct nested attach args = %v, want %v", cmd.Args, want)
@@ -486,7 +486,7 @@ func TestExternalAttachReplacesCurrentProcess(t *testing.T) {
 			},
 			wantArgs: []string{
 				executable, "-L", "kwt-test-socket",
-				"attach-session", "-t", "workspace",
+				"attach-session", "-t", "=workspace",
 			},
 			wantGone: []string{"EDITOR", "KWT_GITHUB_TOKEN"},
 		},
@@ -500,7 +500,7 @@ func TestExternalAttachReplacesCurrentProcess(t *testing.T) {
 			},
 			wantArgs: []string{
 				executable, "-L", "kwt-test-socket",
-				"attach-session", "-E", "-t", "workspace",
+				"attach-session", "-E", "-t", "=workspace",
 			},
 			wantGone: []string{
 				"EDITOR", "TMUX", "TMUX_PANE", "KWT_GITHUB_TOKEN",

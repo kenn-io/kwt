@@ -378,7 +378,7 @@ func (t *TmuxCommand) attachSessionWithoutEnvironmentCmd(
 ) *exec.Cmd {
 	cmd := t.newAttachCmd(
 		ctx,
-		[]string{"attach-session", "-E", "-t", sessionName},
+		[]string{"attach-session", "-E", "-t", exactSessionTarget(sessionName)},
 	)
 	// This command targets the protected workspace's isolated socket. A
 	// parent TMUX value tells tmux it is already inside a client on another
@@ -393,7 +393,10 @@ func (t *TmuxCommand) attachSessionNestedCmd(
 	ctx context.Context,
 	sessionName string,
 ) *exec.Cmd {
-	cmd := t.newAttachCmd(ctx, []string{"attach-session", "-t", sessionName})
+	cmd := t.newAttachCmd(
+		ctx,
+		[]string{"attach-session", "-t", exactSessionTarget(sessionName)},
+	)
 	cmd.Env = filteredEnviron(cmd.Env, func(name string) bool {
 		return name == "TMUX" || name == "TMUX_PANE"
 	})
@@ -404,7 +407,10 @@ func (t *TmuxCommand) attachSessionNestedCmd(
 // attach-class exec seam; split out so tests can pin that the attach path
 // uses the full-strip sanitizer without needing a tty to run it.
 func (t *TmuxCommand) attachSessionCmd(sessionName string) *exec.Cmd {
-	return t.newAttachCmd(context.Background(), []string{"attach-session", "-t", sessionName})
+	return t.newAttachCmd(
+		context.Background(),
+		[]string{"attach-session", "-t", exactSessionTarget(sessionName)},
+	)
 }
 
 func (t *TmuxCommand) HasSession(sessionName string) bool {
@@ -420,7 +426,7 @@ func (t *TmuxCommand) HasSessionContext(
 		ctx,
 		"has-session",
 		"-t",
-		sessionName,
+		exactSessionTarget(sessionName),
 	)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return false, ctxErr
@@ -458,7 +464,9 @@ func (t *TmuxCommand) switchClientCmd(target string) *exec.Cmd {
 	cmd := exec.CommandContext(
 		context.Background(),
 		t.command,
-		t.socketArgs([]string{"switch-client", "-t", target})...,
+		t.socketArgs([]string{
+			"switch-client", "-t", exactSessionTarget(target),
+		})...,
 	)
 	cmd.Env = t.socketEnvironmentPreservingClient(
 		AttachSanitizedEnviron(os.Environ()),

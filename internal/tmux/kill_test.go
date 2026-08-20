@@ -40,6 +40,7 @@ func TestKillSessionIfPresentDoesNotPrefixMatchReplacement(t *testing.T) {
 
 	err = command.KillSessionContext(ctx, "workspace")
 	require.Error(t, err)
+	require.False(t, command.HasSession("workspace"))
 	require.True(t, command.HasSession("workspace-build"))
 
 	require.NoError(t, command.KillSessionIfPresentContext(ctx, "workspace"))

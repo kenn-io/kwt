@@ -125,14 +125,13 @@ func (s *currentSource) Load(ctx context.Context, request Request) (result Resul
 		return Result{}, inventorySourceFailure("inspect KWT tmux endpoints", err)
 	}
 	result.Notes = append(result.Notes, notes...)
-	if request.IncludeProtectedSockets {
-		if err := s.annotateProtectedSockets(
-			ctx,
-			result.Snapshot.Entries,
-			result.Snapshot.LaunchEntries,
-		); err != nil {
-			return Result{}, inventorySourceFailure("failed to read pull-request provenance", err)
-		}
+	if err := s.annotateProtectedSockets(
+		ctx,
+		request.IncludeProtectedSockets,
+		result.Snapshot.Entries,
+		result.Snapshot.LaunchEntries,
+	); err != nil {
+		return Result{}, inventorySourceFailure("failed to read pull-request provenance", err)
 	}
 	return result, nil
 }
@@ -590,6 +589,7 @@ func publicNotes(notes []config.ConfigNote) []Note {
 
 func (s *currentSource) annotateProtectedSockets(
 	ctx context.Context,
+	includeSocketName bool,
 	entryGroups ...[]Entry,
 ) error {
 	records := make(map[string]pullrequest.Provenance)
@@ -606,12 +606,16 @@ func (s *currentSource) annotateProtectedSockets(
 		return fmt.Errorf("failed to read pull-request provenance: %w", err)
 	}
 	for _, entries := range entryGroups {
-		annotateProtectedEntries(records, entries)
+		annotateProtectedEntries(records, entries, includeSocketName)
 	}
 	return nil
 }
 
-func annotateProtectedEntries(records map[string]pullrequest.Provenance, entries []Entry) {
+func annotateProtectedEntries(
+	records map[string]pullrequest.Provenance,
+	entries []Entry,
+	includeSocketName bool,
+) {
 	for index := range entries {
 		for _, record := range records {
 			workspace := record.Workspace
@@ -652,10 +656,12 @@ func annotateProtectedEntries(records map[string]pullrequest.Provenance, entries
 			}
 			if verifiedSession {
 				entries[index].SessionName = workspace.SessionName
-				entries[index].TmuxSocketName = tmux.ProtectedWorkspaceSocketName(
-					workspace.SessionName,
-					workspace.Path,
-				)
+				if includeSocketName {
+					entries[index].TmuxSocketName = tmux.ProtectedWorkspaceSocketName(
+						workspace.SessionName,
+						workspace.Path,
+					)
+				}
 			}
 			break
 		}

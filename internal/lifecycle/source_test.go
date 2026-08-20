@@ -353,7 +353,7 @@ func TestSourceRepositoryInventoryIgnoresInheritedGitRouting(t *testing.T) {
 	assert.Equal(t, canonicalTarget, result.Snapshot.Entries[0].Path)
 }
 
-func TestSourceReadsProvenanceOnlyWhenRequested(t *testing.T) {
+func TestSourceRequiresValidProvenanceForProtectedClassification(t *testing.T) {
 	home := t.TempDir()
 	baseDirectory := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
@@ -365,7 +365,7 @@ func TestSourceReadsProvenanceOnlyWhenRequested(t *testing.T) {
 	_, err := source.Load(context.Background(), Request{
 		View: ViewDashboard, Expansion: testExpansion(t), UntrustedConfig: IgnoreUntrustedConfig,
 	})
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "failed to read pull-request provenance")
 
 	_, err = source.Load(context.Background(), Request{
 		View: ViewDashboard, Expansion: testExpansion(t), UntrustedConfig: IgnoreUntrustedConfig,
@@ -427,7 +427,7 @@ func TestAnnotateProtectedSocketsPreservesVerifiedPersistedEndpoint(t *testing.T
 			}}
 
 			err := (&currentSource{home: home}).annotateProtectedSockets(
-				context.Background(), entries,
+				context.Background(), true, entries,
 			)
 
 			require.NoError(t, err)
@@ -440,7 +440,7 @@ func TestAnnotateProtectedSocketsPreservesVerifiedPersistedEndpoint(t *testing.T
 	}
 }
 
-func TestSourceDashboardLaunchEntryRetainsProtectedEndpoint(t *testing.T) {
+func TestSourceDashboardLaunchEntryRetainsProtectedPolicy(t *testing.T) {
 	home := t.TempDir()
 	baseDirectory := t.TempDir()
 	repository := filepath.Join(baseDirectory, "widget")
@@ -484,28 +484,46 @@ func TestSourceDashboardLaunchEntryRetainsProtectedEndpoint(t *testing.T) {
 		},
 	}
 
-	result, err := source.Load(context.Background(), Request{
-		View: ViewDashboard, LaunchDirectory: repository,
-		IncludeProtectedSockets: true,
-		Expansion:               testExpansion(t),
-		UntrustedConfig:         IgnoreUntrustedConfig,
-	})
-
-	require.NoError(t, err)
-	require.NotEmpty(t, result.Snapshot.Entries)
-	require.NotEmpty(t, result.Snapshot.LaunchEntries)
 	wantSocket := tmux.ProtectedWorkspaceSocketName(sessionName, repository)
-	for _, group := range [][]Entry{result.Snapshot.Entries, result.Snapshot.LaunchEntries} {
-		var matched *Entry
-		for index := range group {
-			if group[index].Path == repository {
-				matched = &group[index]
-				break
+	for _, test := range []struct {
+		name                    string
+		includeProtectedSockets bool
+		wantSocket              string
+	}{
+		{name: "mode only"},
+		{
+			name:                    "mode and socket",
+			includeProtectedSockets: true,
+			wantSocket:              wantSocket,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := source.Load(context.Background(), Request{
+				View: ViewDashboard, LaunchDirectory: repository,
+				IncludeProtectedSockets: test.includeProtectedSockets,
+				Expansion:               testExpansion(t),
+				UntrustedConfig:         IgnoreUntrustedConfig,
+			})
+
+			require.NoError(t, err)
+			require.NotEmpty(t, result.Snapshot.Entries)
+			require.NotEmpty(t, result.Snapshot.LaunchEntries)
+			for _, group := range [][]Entry{
+				result.Snapshot.Entries,
+				result.Snapshot.LaunchEntries,
+			} {
+				var matched *Entry
+				for index := range group {
+					if group[index].Path == repository {
+						matched = &group[index]
+						break
+					}
+				}
+				require.NotNil(t, matched)
+				assert.Equal(t, models.TmuxAttachProtected, matched.TmuxAttachMode)
+				assert.Equal(t, test.wantSocket, matched.TmuxSocketName)
 			}
-		}
-		require.NotNil(t, matched)
-		assert.Equal(t, models.TmuxAttachProtected, matched.TmuxAttachMode)
-		assert.Equal(t, wantSocket, matched.TmuxSocketName)
+		})
 	}
 }
 
