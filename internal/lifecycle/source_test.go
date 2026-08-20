@@ -537,12 +537,12 @@ func TestAnnotateWorkspaceEndpointsPublishesCanonicalAndAdoptedState(t *testing.
 			require.Len(t, requests, 2)
 			return []tmux.WorkspaceSessionResolution{
 				{Session: tmux.WorkspaceSession{Endpoint: tmux.SessionEndpoint{
-					SessionName: requests[0].SessionName,
+					SessionName: "canonical-renamed",
 					SocketName:  tmux.KWTServerSocketName,
 				}}},
 				{
 					Session: tmux.WorkspaceSession{Endpoint: tmux.SessionEndpoint{
-						SessionName: requests[1].SessionName,
+						SessionName: "adopted-renamed",
 					},
 						Live: true,
 					},
@@ -560,8 +560,10 @@ func TestAnnotateWorkspaceEndpointsPublishesCanonicalAndAdoptedState(t *testing.
 	)
 
 	require.NoError(t, err)
+	assert.Equal(t, "canonical-renamed", entries[0].SessionName)
 	assert.Equal(t, tmux.KWTServerSocketName, entries[0].TmuxSocketName)
 	assert.Equal(t, models.TmuxAttachDirect, entries[0].TmuxAttachMode)
+	assert.Equal(t, "adopted-renamed", entries[1].SessionName)
 	assert.Empty(t, entries[1].TmuxSocketName)
 	assert.Equal(t, models.TmuxAttachDirect, entries[1].TmuxAttachMode)
 	assert.True(t, entries[1].SessionLive)

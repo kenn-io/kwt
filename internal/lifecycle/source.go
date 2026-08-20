@@ -206,6 +206,7 @@ func (s *currentSource) annotateWorkspaceEndpoints(
 	apply := func(group []Entry, offset int) {
 		for index := range group {
 			resolution := resolutions[offset+index]
+			group[index].SessionName = resolution.Session.Endpoint.SessionName
 			group[index].SessionLive = resolution.Session.Live
 			group[index].TmuxSocketName = resolution.Session.Endpoint.SocketName
 			group[index].TmuxAttachMode = models.TmuxAttachDirect
