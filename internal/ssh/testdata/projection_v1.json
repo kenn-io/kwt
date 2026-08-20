@@ -8,6 +8,7 @@
       "host_key_alias": "build-key.example.test",
       "options": [
         { "name": "sendenv", "value": "LANG" },
+        { "name": "identityfile", "value": "~/.ssh/id_rsa" },
         { "name": "identityfile", "value": "/credentials/id one" },
         { "name": "localforward", "value": "8080 localhost:80" },
         { "name": "certificatefile", "value": "/credentials/client cert.pub" },
@@ -24,6 +25,10 @@
         { "name": "remotecommand", "value": "dangerous command" }
       ]
     },
+    "configured_identities": [
+      "/credentials/id one",
+      "~/.ssh/id_two"
+    ],
     "arguments": [
       "-F", "/dev/null",
       "-o", "CanonicalizeHostname=no",

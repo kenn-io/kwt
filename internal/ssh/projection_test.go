@@ -20,9 +20,10 @@ type projectionFixture struct {
 		HostKeyAlias string           `json:"host_key_alias"`
 		Options      []openssh.Option `json:"options"`
 	} `json:"config"`
-	Arguments     []string `json:"arguments"`
-	PrivateConfig []string `json:"private_config"`
-	Excluded      []string `json:"excluded"`
+	ConfiguredIdentities []string `json:"configured_identities"`
+	Arguments            []string `json:"arguments"`
+	PrivateConfig        []string `json:"private_config"`
+	Excluded             []string `json:"excluded"`
 }
 
 func TestProjectionV1MatchesGhosthubSelectiveReplay(t *testing.T) {
@@ -39,7 +40,7 @@ func TestProjectionV1MatchesGhosthubSelectiveReplay(t *testing.T) {
 				Port:         fixture.Config.Port,
 				HostKeyAlias: fixture.Config.HostKeyAlias,
 				Options:      fixture.Config.Options,
-			}, nil)
+			}, fixture.ConfiguredIdentities)
 			require.NoError(t, err)
 			assert.Equal(t, projectionPolicyV1, projected.PolicyVersion)
 			assert.Equal(t, fixture.Arguments, projected.Arguments)
