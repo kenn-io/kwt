@@ -34,9 +34,8 @@ import (
 )
 
 type tuiBackend struct {
-	// mu serializes List and MergeFleet: List mutates cfg (launch project and
-	// workspace registration) while MergeFleet's manifest publish reads it,
-	// and the TUI runs the two as concurrent commands.
+	// mu serializes inventory refresh with every operation that reads or
+	// mutates backend configuration and its derived tmux coordinators.
 	mu                        sync.Mutex
 	cfg                       *models.Config
 	workspaceSessions         *tmux.WorkspaceSessions
@@ -246,7 +245,7 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 	}
 	renderWorkspaces := result.Snapshot.Workspaces
 	if includeStatuses && result.Freshness == kwt.Fresh {
-		if err := b.applyInventoryConfig(result.Snapshot.Config); err != nil {
+		if err := b.applyInventoryConfigLocked(result.Snapshot.Config); err != nil {
 			return nil, nil, err
 		}
 		launchEntries := make([]*discovery.GlobalWorktreeEntry, 0, len(result.Snapshot.LaunchEntries))
@@ -285,6 +284,12 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 }
 
 func (b *tuiBackend) applyInventoryConfig(effective *models.Config) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.applyInventoryConfigLocked(effective)
+}
+
+func (b *tuiBackend) applyInventoryConfigLocked(effective *models.Config) error {
 	if effective == nil {
 		return service.NewError(
 			service.TransportFailure,
@@ -1172,6 +1177,8 @@ func (b *tuiBackend) CreateWorktree(
 	branch string,
 	source string,
 ) (string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if row.Entry == nil {
 		return "", fmt.Errorf("no worktree selected")
 	}
@@ -1252,6 +1259,8 @@ func (b *tuiBackend) ListBranches(
 }
 
 func (b *tuiBackend) PreviewWorktree(row dashboard.Row, branch string) (dashboard.Row, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if row.Entry == nil {
 		return dashboard.Row{}, fmt.Errorf("no worktree selected")
 	}
@@ -1291,6 +1300,8 @@ func (b *tuiBackend) worktreeManager(row dashboard.Row) (*worktree.Manager, erro
 }
 
 func (b *tuiBackend) MaterializeWorktree(ctx context.Context, row dashboard.Row) (string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if row.Fleet == nil {
 		return "", fmt.Errorf("no fleet worktree selected")
 	}
@@ -1581,6 +1592,8 @@ func sameRepositoryIdentity(left string, right string) bool {
 }
 
 func (b *tuiBackend) RemoveWorktree(ctx context.Context, row dashboard.Row, force bool) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if row.Entry == nil {
 		return fmt.Errorf("no worktree selected")
 	}
@@ -1834,6 +1847,8 @@ func cleanComparablePath(path string) string {
 }
 
 func (b *tuiBackend) KillSession(row dashboard.Row) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if row.SessionName == "" {
 		return fmt.Errorf("no live workspace")
 	}
@@ -1845,6 +1860,8 @@ func (b *tuiBackend) OpenInTmux(
 	row dashboard.Row,
 	layoutName string,
 ) (*exec.Cmd, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	endpoint, err := b.establishWorkspaceEndpoint(ctx, row, layoutName, false)
 	if err != nil {
 		return nil, err
@@ -1853,12 +1870,16 @@ func (b *tuiBackend) OpenInTmux(
 }
 
 func (b *tuiBackend) AttachOutsideTmux(row dashboard.Row, layoutName string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return b.attachWorkspace(context.Background(), row, layoutName, config.StdinInteractive())
 }
 
 // LayoutNames returns the names the TUI layout cycler offers: the reserved
 // blank session first, then the configured presets.
 func (b *tuiBackend) LayoutNames() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	names := make([]string, 0, len(b.cfg.Layouts.Presets)+1)
 	names = append(names, tmux.BlankLayoutName)
 	for _, layout := range b.cfg.Layouts.Presets {

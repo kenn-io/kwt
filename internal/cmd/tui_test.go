@@ -50,6 +50,14 @@ func resolveStoppedWorkspaceSessions(
 	return sessions, nil
 }
 
+func requireTUIBackendStateLocked(t *testing.T, backend *tuiBackend) {
+	t.Helper()
+	if backend.mu.TryLock() {
+		backend.mu.Unlock()
+		t.Fatal("TUI backend operation read mutable state without holding its mutex")
+	}
+}
+
 func TestTUICmdIsolatesFromCwdConfig(t *testing.T) {
 	require.NotNil(t, tuiCmd.PersistentPreRunE,
 		"tui must define its own PersistentPreRunE to bypass root's cwd merge")
@@ -1784,6 +1792,7 @@ func TestTUIBackendRemoveWorktreeDelegatesToDaemon(t *testing.T) {
 		_ context.Context,
 		input kwt.RemovalRequest,
 	) (kwt.RemovalResult, error) {
+		requireTUIBackendStateLocked(t, backend)
 		request = input
 		return kwt.RemovalResult{
 			Path: input.Path, Branch: "daemon-tui-remove", WorktreeRemoved: true,
@@ -4036,6 +4045,7 @@ func TestTUIKillSessionUsesEndpointRetainedByRow(t *testing.T) {
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
 	var killed tmux.SessionEndpoint
 	backend.killEndpoint = func(endpoint tmux.SessionEndpoint) error {
+		requireTUIBackendStateLocked(t, backend)
 		killed = endpoint
 		return nil
 	}
@@ -4346,13 +4356,14 @@ func TestTUIBackendAttachWorkspacePassesWorkspaceRowToRunner(t *testing.T) {
 		session, root string,
 		layout models.Layout,
 	) (tmux.SessionEndpoint, error) {
+		requireTUIBackendStateLocked(t, backend)
 		gotSession, gotRoot = session, root
 		gotLayout = layout
 		return testCanonicalSessionEndpoint(session), nil
 	}
 	backend.attachSession = func(context.Context, tmux.SessionEndpoint) error { return nil }
 
-	err := backend.attachWorkspace(context.Background(), row, tmux.BlankLayoutName, false)
+	err := backend.AttachOutsideTmux(row, tmux.BlankLayoutName)
 
 	require.NoError(t, err)
 	assert.Equal(t, tmux.DirWorkspaceSessionName("notes", row.Workspace.Path), gotSession)
