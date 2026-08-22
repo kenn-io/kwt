@@ -468,6 +468,11 @@ followed by findings that remain after the rescan. JSON exposes the same
 repairs in `fixed` and counts them in `summary.fixed_findings`. Use `--quiet`
 when only the exit status matters; it cannot be combined with `--json`.
 
+Doctor reports its current phase on stderr while it loads inventory, inspects
+worktrees, applies fixes, and verifies repairs. A terminal uses one updating
+line; redirected stderr receives bounded milestones. `--json` still writes one
+report document to stdout. `--quiet` suppresses both the report and progress.
+
 If a registered project path is confirmed absent, doctor searches only its
 bounded local inventory for the same credential-free repository identity:
 
@@ -596,10 +601,8 @@ worktree's own observed origin becomes its PR base; one worktree's origin is
 never reused for a sibling. An expiration registry record may identify either
 that verified origin or the configured project. A missing or noncanonical
 origin preserves the worktree before provider lookup. Advanced heads, ambiguous matches,
-closed-but-unmerged PRs, dirty worktrees, and missing generations are preserved
-with explicit reasons. There is no merged-policy force mode, and removal
-preserves the local branch. Ignored untracked files count as local changes and
-also preserve the worktree. Removals execute from the resolved main repository,
+closed-but-unmerged PRs, and missing generations are preserved with explicit
+reasons. Removals execute from the resolved main repository,
 so pruning one globally discovered worktree does not strand later candidates.
 Multiple registry paths that resolve to the same worktree are ambiguous and
 report `doctor_required` instead of allowing path-order-dependent removal.
@@ -607,6 +610,25 @@ Git commands run against candidate worktrees without kwt's GitHub or fleet
 credentials in their environment, including during lock-scoped validation and
 removal. This prevents worktree-selected filters, hooks, or filesystem monitors
 from receiving those tokens.
+
+### Merged worktree confirmation
+
+Kwt proves that the associated pull request merged before it checks local
+files. An interactive run asks before removing a confirmed merged worktree
+that contains tracked, untracked, or ignored files. Approval removes the
+complete worktree directory and all files added before removal. The prompt
+defaults to no. A branch that advanced after the pull-request head remains a
+hard stop.
+
+`--dry-run` never prompts and reports `would_require_confirmation`. JSON and
+redirected-input runs never prompt or remove a dirty candidate; they report
+`confirmation_required` and exit `1`. A declined interactive prompt reports
+`confirmation_declined`, continues to later candidates, and does not make an
+otherwise successful run fail. There is no fleet-wide `--force` mode for
+merged pruning; approval applies only to the candidate named by the prompt.
+
+Prune JSON uses `schema_version: 2` for these outcomes. Human output groups
+repeated reasons and remediations so large candidate sets remain readable.
 
 An individual path under the global worktree directory that is no longer a
 usable Git worktree reports `doctor_required`; it does not prevent other
@@ -622,7 +644,9 @@ provider failures, or incomplete cleanup, and `2` when inspection or command
 usage cannot complete. Bare `kwt prune` is an exit-`2` usage error: run
 `kwt doctor --fix` for the stale-metadata behavior that the bare command used to
 perform. JSON result reports use stdout without duplicating human result
-summaries on stderr. Dry-runs revalidate Git's current inventory under the same
+summaries on stderr. Progress always uses stderr: terminals show one updating
+line, while redirected output receives bounded phase and count milestones.
+Dry-runs revalidate Git's current inventory under the same
 repository lock as removal and report `locked_worktree` or `main_worktree`
 instead of claiming those paths would be removed.
 
