@@ -34,6 +34,7 @@ type Row struct {
 	SessionLive  bool
 	TmuxEndpoint tmux.SessionEndpoint
 	Creating     bool
+	Removing     bool
 }
 
 type InventoryScope int

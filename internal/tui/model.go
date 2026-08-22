@@ -1903,6 +1903,9 @@ func (m Model) globalFreshnessDiagnostic() string {
 
 func (m Model) renderSelectionDetails() string {
 	row := m.selectedRow()
+	if row.Removing {
+		return fmt.Sprintf("removing %s\n%s", rowLabel(row), abbreviateHome(rowPath(row)))
+	}
 	if row.Creating {
 		return fmt.Sprintf("creating %s\n%s", rowLabel(row), abbreviateHome(rowPath(row)))
 	}

@@ -309,6 +309,19 @@ func TestFormatRowChangesPrefersLocalDirtyCounts(t *testing.T) {
 	assert.Equal(t, "~1", formatRowChanges(row))
 }
 
+func TestRemovingRowUsesOperationStatus(t *testing.T) {
+	row := testRow("widget", "topic", "/work/topic")
+	row.Removing = true
+	row.Status = &models.WorktreeStatus{Status: models.WorktreeStatusModified}
+
+	assert.Equal(t, "removing…", formatRowChanges(row))
+	model := NewModel(&fakeBackend{}, "/work/topic")
+	model.rows = []Row{row}
+	text := stripANSI(viewContent(model))
+	assert.Contains(t, text, "removing…")
+	assert.NotContains(t, text, "modified")
+}
+
 func TestFormatPushPullStatus(t *testing.T) {
 	got, ok := formatPushPullStatus(nil)
 	assert.True(t, ok)

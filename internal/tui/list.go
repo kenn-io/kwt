@@ -359,6 +359,9 @@ func formatPushPullStatus(status *models.WorktreeStatus) (string, bool) {
 }
 
 func formatRowChanges(row Row) string {
+	if row.Removing {
+		return "removing…"
+	}
 	if row.Creating {
 		return "creating…"
 	}

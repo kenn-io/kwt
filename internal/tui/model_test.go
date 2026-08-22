@@ -217,6 +217,18 @@ func TestModelShellOnCachedDeletedPathStaysOpen(t *testing.T) {
 	assert.Contains(t, next.message, "no longer exists")
 }
 
+func TestRemovingRowDetailShowsOperationAndPath(t *testing.T) {
+	row := testRow("widget", "topic", "/work/topic")
+	row.Removing = true
+	model := NewModel(&fakeBackend{}, "/work/topic")
+	model.rows = []Row{row}
+
+	text := stripANSI(model.renderSelectionDetails())
+
+	assert.Contains(t, text, "removing widget:topic")
+	assert.Contains(t, text, "/work/topic")
+}
+
 func TestCachedLiveAttachUsesExistingOnlyBackend(t *testing.T) {
 	row := testRow("widget", "topic", "/work/topic")
 	row.SessionLive = true
