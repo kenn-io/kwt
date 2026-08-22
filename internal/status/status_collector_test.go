@@ -149,6 +149,25 @@ func TestLastActivityUsesNewWorktreeRootForCleanOldHead(t *testing.T) {
 	assert.Equal(t, rootTime, result.Statuses[0].LastActivity)
 }
 
+func TestLastActivityBoundsHeadLookup(t *testing.T) {
+	root := t.TempDir()
+	rootInfo, err := os.Stat(root)
+	require.NoError(t, err)
+	collector := NewStatusCollectorWithOptions(StatusCollectorOptions{Workers: 1})
+	collector.activityTimeout = 20 * time.Millisecond
+	collector.runHead = func(ctx context.Context, _ string) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+
+	started := time.Now()
+	got, err := collector.lastActivity(context.Background(), root, nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, rootInfo.ModTime().UTC(), got)
+	assert.Less(t, time.Since(started), time.Second)
+}
+
 func TestLastActivityUsesParentDirectoryForDeletedNestedFile(t *testing.T) {
 	repo := newStatusTestRepositoryAt(t, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
 	nested := filepath.Join(repo, "nested")

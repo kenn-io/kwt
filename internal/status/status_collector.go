@@ -28,10 +28,12 @@ type StatusCollectorOptions struct {
 
 // StatusCollector collects status information for worktrees.
 type StatusCollector struct {
-	fetchRemote    bool
-	staleThreshold time.Duration
-	basedir        string
-	workers        int
+	fetchRemote     bool
+	staleThreshold  time.Duration
+	basedir         string
+	workers         int
+	activityTimeout time.Duration
+	runHead         func(context.Context, string) (string, error)
 }
 
 type Diagnostic struct {
@@ -65,10 +67,14 @@ func NewStatusCollectorWithOptions(opts StatusCollectorOptions) *StatusCollector
 	}
 
 	return &StatusCollector{
-		fetchRemote:    opts.FetchRemote,
-		staleThreshold: opts.StaleThreshold,
-		basedir:        opts.BaseDir,
-		workers:        opts.Workers,
+		fetchRemote:     opts.FetchRemote,
+		staleThreshold:  opts.StaleThreshold,
+		basedir:         opts.BaseDir,
+		workers:         opts.Workers,
+		activityTimeout: 5 * time.Second,
+		runHead: func(ctx context.Context, path string) (string, error) {
+			return git.New(path).RunWithContext(ctx, "show", "-s", "--format=%ct", "HEAD")
+		},
 	}
 }
 
@@ -352,7 +358,9 @@ func (c *StatusCollector) lastActivity(ctx context.Context, path string, changed
 	}
 	latest := root.ModTime().UTC()
 
-	head, err := git.New(path).RunWithContext(ctx, "show", "-s", "--format=%ct", "HEAD")
+	gitCtx, cancel := context.WithTimeout(ctx, c.activityTimeout)
+	head, err := c.runHead(gitCtx, path)
+	cancel()
 	if err == nil {
 		seconds, parseErr := strconv.ParseInt(strings.TrimSpace(head), 10, 64)
 		if parseErr == nil {

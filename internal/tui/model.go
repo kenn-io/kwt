@@ -354,8 +354,9 @@ func (m Model) applyInventory(msg inventoryMsg) (Model, tea.Cmd) {
 		freshness := scopeFreshness{Diagnostic: msg.err}
 		switch msg.request.Scope {
 		case InventoryCurrentRepository:
-			freshness.ObservedAt = m.projectFresh[msg.request.ProjectIdentity].ObservedAt
-			m.projectFresh[msg.request.ProjectIdentity] = freshness
+			project := projectFreshnessKey(msg.request.ProjectIdentity)
+			freshness.ObservedAt = m.projectFresh[project].ObservedAt
+			m.projectFresh[project] = freshness
 			m.message = projectRefreshErrorMessage(msg.err)
 		case InventoryCachedDashboard, InventoryCurrentDashboard:
 			freshness.ObservedAt = m.globalFresh.ObservedAt
@@ -375,7 +376,11 @@ func (m Model) applyInventory(msg inventoryMsg) (Model, tea.Cmd) {
 			m.projectPerspective = launchPerspective(m.rows, m.anchorPath)
 		}
 		if m.projectPerspective != "" {
-			return m.startInventory(m.repositoryRequest(m.projectPerspective))
+			request := m.perspectiveRequest(m.projectPerspective)
+			if request.Scope == InventoryCurrentDashboard {
+				m.backgroundGlobalStarted = true
+			}
+			return m.startInventory(request)
 		}
 		m.backgroundGlobalStarted = true
 		return m.startInventory(InventoryRequest{
@@ -389,7 +394,7 @@ func (m Model) applyInventory(msg inventoryMsg) (Model, tea.Cmd) {
 		m.rows = m.applyRemovalState(m.rows)
 		m.cursor = anchorCursorByPath(oldRows, oldCursor, m.filteredRows())
 		m.warnings = msg.result.Warnings
-		m.projectFresh[msg.request.ProjectIdentity] = scopeFreshness{
+		m.projectFresh[projectFreshnessKey(msg.request.ProjectIdentity)] = scopeFreshness{
 			ObservedAt: msg.result.ObservedAt, Current: msg.result.Current,
 		}
 		m.inventoryCurrent = msg.result.Current
@@ -477,7 +482,9 @@ func (m Model) markProjectsFresh(rows []Row, observedAt time.Time, current bool)
 		if project == "" {
 			continue
 		}
-		m.projectFresh[project] = scopeFreshness{ObservedAt: observedAt, Current: current}
+		m.projectFresh[projectFreshnessKey(project)] = scopeFreshness{
+			ObservedAt: observedAt, Current: current,
+		}
 	}
 	return m
 }
@@ -485,7 +492,7 @@ func (m Model) markProjectsFresh(rows []Row, observedAt time.Time, current bool)
 func (m Model) mergeStructuralDashboard(rows []Row, warnings []string) Model {
 	previousByPath := make(map[string]Row)
 	for _, row := range m.rows {
-		if m.projectFresh[rowProjectKey(row)].Current && row.Status != nil {
+		if m.projectFresh[projectFreshnessKey(rowProjectKey(row))].Current && row.Status != nil {
 			previousByPath[pathIdentity(rowPath(row))] = row
 		}
 	}
@@ -494,9 +501,10 @@ func (m Model) mergeStructuralDashboard(rows []Row, warnings []string) Model {
 			if sameCheckout(previous, rows[index]) && sameGeneration(previous, rows[index]) {
 				rows[index].Status = previous.Status
 			} else {
-				freshness := m.projectFresh[rowProjectKey(previous)]
+				project := projectFreshnessKey(rowProjectKey(previous))
+				freshness := m.projectFresh[project]
 				freshness.Current = false
-				m.projectFresh[rowProjectKey(previous)] = freshness
+				m.projectFresh[project] = freshness
 			}
 		}
 	}
@@ -538,6 +546,14 @@ func (m Model) repositoryRequest(project string) InventoryRequest {
 		Scope: InventoryCurrentRepository, WorkingDirectory: workingDirectory,
 		ProjectIdentity: project, CollectStatuses: true,
 	}
+}
+
+func (m Model) perspectiveRequest(project string) InventoryRequest {
+	request := m.repositoryRequest(project)
+	if request.WorkingDirectory == "" {
+		return InventoryRequest{Scope: InventoryCurrentDashboard}
+	}
+	return request
 }
 
 func (m Model) startInventory(request InventoryRequest) (Model, tea.Cmd) {
@@ -645,7 +661,11 @@ func mergeRepositoryRows(previous, current []Row, project string) []Row {
 }
 
 func equalProjectKey(left, right string) bool {
-	return url.FoldRepositoryIdentity(left) == url.FoldRepositoryIdentity(right) && left != "" && right != ""
+	return projectFreshnessKey(left) == projectFreshnessKey(right) && left != "" && right != ""
+}
+
+func projectFreshnessKey(project string) string {
+	return url.FoldRepositoryIdentity(project)
 }
 
 func checkoutMergeKey(row Row) string {
@@ -922,10 +942,16 @@ func (m Model) startPendingRefresh() (Model, tea.Cmd) {
 func (m Model) startFetch() (Model, tea.Cmd) {
 	m.inventoryCurrent = false
 	if m.projectPerspective != "" {
-		freshness := m.projectFresh[m.projectPerspective]
-		freshness.Current = false
-		m.projectFresh[m.projectPerspective] = freshness
-		return m.startInventory(m.repositoryRequest(m.projectPerspective))
+		request := m.perspectiveRequest(m.projectPerspective)
+		if request.Scope == InventoryCurrentRepository {
+			project := projectFreshnessKey(m.projectPerspective)
+			freshness := m.projectFresh[project]
+			freshness.Current = false
+			m.projectFresh[project] = freshness
+		} else {
+			m.globalFresh.Current = false
+		}
+		return m.startInventory(request)
 	}
 	m.globalFresh.Current = false
 	for project, freshness := range m.projectFresh {
@@ -1140,7 +1166,7 @@ func (m Model) selectedScopeCurrent() bool {
 		return m.inventoryCurrent
 	}
 	project := rowProjectKey(row)
-	if freshness, ok := m.projectFresh[project]; ok {
+	if freshness, ok := m.projectFresh[projectFreshnessKey(project)]; ok {
 		return freshness.Current
 	}
 	return false
@@ -1914,9 +1940,10 @@ func (m Model) startNextRemovalRefresh() (Model, tea.Cmd) {
 	}
 	request := m.removalRefreshQueue[0]
 	m.removalRefreshQueue = m.removalRefreshQueue[1:]
-	freshness := m.projectFresh[request.ProjectIdentity]
+	project := projectFreshnessKey(request.ProjectIdentity)
+	freshness := m.projectFresh[project]
 	freshness.Current = false
-	m.projectFresh[request.ProjectIdentity] = freshness
+	m.projectFresh[project] = freshness
 	return m.startInventory(request)
 }
 

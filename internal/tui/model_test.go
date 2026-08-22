@@ -113,10 +113,25 @@ func TestModelLoadsCacheThenActiveProjectThenBackgroundGlobal(t *testing.T) {
 	assert.False(t, backend.inventoryCalls[2].CollectStatuses)
 }
 
+func TestModelLoadsCacheThenGlobalForDirectoryPerspective(t *testing.T) {
+	row := Row{Workspace: &WorkspaceInfo{Name: "notes", Path: "/work/notes"}}
+	backend := &fakeBackend{rows: []Row{row}}
+	model := NewModel(backend, rowPath(row)).WithInitialAnchor(rowPath(row))
+
+	cached := model.Init()()
+	_, globalCmd := updateModel(t, model, cached)
+
+	require.NotNil(t, globalCmd)
+	_ = globalCmd()
+	require.Len(t, backend.inventoryCalls, 2)
+	assert.Equal(t, InventoryCurrentDashboard, backend.inventoryCalls[1].Scope)
+	assert.False(t, backend.inventoryCalls[1].CollectStatuses)
+}
+
 func TestBackgroundGlobalPreservesFreshProjectStatus(t *testing.T) {
 	project := "github.com/acme/widget"
 	row := testRow("widget", "topic", "/w/widget/topic")
-	row.Entry.RepositoryInfo.FullPath = project
+	row.Entry.RepositoryInfo.FullPath = "GitHub.com/Acme/Widget"
 	row.Status = &models.WorktreeStatus{Path: rowPath(row), Status: models.WorktreeStatusModified}
 	model := NewModel(&fakeBackend{}, "/w/widget/topic")
 	model.rows = []Row{row}
@@ -214,6 +229,65 @@ func TestProjectSwitchRefreshesOnlySelectedProject(t *testing.T) {
 	require.NotNil(t, cmd)
 	assert.Equal(t, InventoryCurrentRepository, model.fetchingRequest.Scope)
 	assert.Equal(t, "github.com/acme/other", model.fetchingRequest.ProjectIdentity)
+}
+
+func TestProjectPerspectiveWithoutLocalRepositoryRefreshesDashboard(t *testing.T) {
+	tests := []struct {
+		name string
+		row  Row
+	}{
+		{
+			name: "directory workspace",
+			row:  Row{Workspace: &WorkspaceInfo{Name: "notes", Path: "/w/notes"}},
+		},
+		{
+			name: "remote-only fleet project",
+			row: Row{Fleet: &FleetInfo{
+				ProjectIdentity: "github.com/acme/widget",
+				ProjectName:     "widget",
+				Kind:            "branch",
+				Ref:             "topic",
+			}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := NewModel(&fakeBackend{}, "/w")
+			model.rows = []Row{tt.row}
+			model.projectPerspective = rowProjectKey(tt.row)
+			model.fetching = false
+
+			model, cmd := updateModel(t, model, press("r"))
+
+			require.NotNil(t, cmd)
+			assert.Equal(t, InventoryCurrentDashboard, model.fetchingRequest.Scope)
+			assert.Empty(t, model.fetchingRequest.WorkingDirectory)
+			assert.False(t, model.fetchingRequest.CollectStatuses)
+		})
+	}
+}
+
+func TestRepositoryRefreshNormalizesProjectFreshnessIdentity(t *testing.T) {
+	row := testRow("widget", "topic", "/w/widget/topic")
+	row.Entry.RepositoryInfo.FullPath = "github.com/acme/widget"
+	model := NewModel(&fakeBackend{}, rowPath(row))
+	model.rows = []Row{row}
+	model.projectPerspective = rowProjectKey(row)
+	model.backgroundGlobalStarted = true
+
+	model, _ = updateModel(t, model, inventoryMsg{
+		request: InventoryRequest{
+			Scope:           InventoryCurrentRepository,
+			ProjectIdentity: "GitHub.com/Acme/Widget",
+		},
+		result: InventoryResult{
+			Rows: []Row{row}, ObservedAt: time.Now(), Current: true,
+		},
+	})
+	model, _ = updateModel(t, model, press("d"))
+
+	assert.Equal(t, confirmDelete, model.confirm.kind)
 }
 
 func TestAllProjectsStartsCurrentGlobalStatusRefresh(t *testing.T) {
@@ -514,7 +588,9 @@ func currentModelWithRows(t *testing.T, backend *fakeBackend, rows ...Row) Model
 	model.rows = append([]Row(nil), rows...)
 	model.inventoryCurrent = true
 	for _, row := range rows {
-		model.projectFresh[rowProjectKey(row)] = scopeFreshness{ObservedAt: time.Now(), Current: true}
+		model.projectFresh[projectFreshnessKey(rowProjectKey(row))] = scopeFreshness{
+			ObservedAt: time.Now(), Current: true,
+		}
 	}
 	return model
 }
