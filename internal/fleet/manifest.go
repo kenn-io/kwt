@@ -394,8 +394,8 @@ func collectChangeStatus(ctx context.Context, cfg *models.Config, worktree model
 		FetchRemote: false,
 		BaseDir:     cfg.Worktree.BaseDir,
 	})
-	statuses, err := collector.CollectAll(ctx, []*models.Worktree{&worktree})
-	if err != nil || len(statuses) == 0 || statuses[0] == nil {
+	collection, err := collector.CollectAll(ctx, []*models.Worktree{&worktree})
+	if err != nil || len(collection.Statuses) == 0 || collection.Statuses[0] == nil {
 		if isContextError(err) {
 			return ChangeStatus{}, time.Time{}, err
 		}
@@ -404,7 +404,7 @@ func collectChangeStatus(ctx context.Context, cfg *models.Config, worktree model
 		}
 		return ChangeStatus{}, time.Time{}, nil
 	}
-	gitStatus := statuses[0].GitStatus
+	gitStatus := collection.Statuses[0].GitStatus
 	return ChangeStatus{
 		Modified:  gitStatus.Modified,
 		Added:     gitStatus.Added,
@@ -412,7 +412,7 @@ func collectChangeStatus(ctx context.Context, cfg *models.Config, worktree model
 		Untracked: gitStatus.Untracked,
 		Staged:    gitStatus.Staged,
 		Conflicts: gitStatus.Conflicts,
-	}, statuses[0].LastActivity, nil
+	}, collection.Statuses[0].LastActivity, nil
 }
 
 // configuredProjectIdentity resolves a publishable identity: a configured

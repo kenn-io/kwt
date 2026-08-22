@@ -1016,18 +1016,19 @@ func collectTUIStatuses(
 		worktrees = append(worktrees, &models.Worktree{
 			Path:       entry.Path,
 			Branch:     entry.Branch,
+			Repository: entry.RepositoryInfo.FullPath,
 			CommitHash: entry.CommitHash,
 			IsMain:     entry.IsMain,
 		})
 	}
 
 	collector := status.NewStatusCollectorWithOptions(tuiStatusCollectorOptions(baseDir))
-	statuses, err := collector.CollectAll(ctx, worktrees)
+	collection, err := collector.CollectAll(ctx, worktrees)
 	if err != nil {
 		return nil, err
 	}
-	statusByPath := make(map[string]*models.WorktreeStatus, len(statuses))
-	for _, st := range statuses {
+	statusByPath := make(map[string]*models.WorktreeStatus, len(collection.Statuses))
+	for _, st := range collection.Statuses {
 		statusByPath[st.Path] = st
 	}
 	return statusByPath, nil

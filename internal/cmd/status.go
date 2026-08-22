@@ -233,7 +233,8 @@ func collectWorktreeStatuses(ctx context.Context, cfg *models.Config, printer *u
 		StaleThreshold: time.Duration(statusStaleDays) * 24 * time.Hour,
 		BaseDir:        cfg.Worktree.BaseDir,
 	})
-	return collector.CollectAll(ctx, worktrees)
+	collection, err := collector.CollectAll(ctx, worktrees)
+	return collection.Statuses, err
 }
 
 func enrichStatusWorktreeIdentity(

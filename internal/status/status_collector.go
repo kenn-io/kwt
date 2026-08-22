@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ type StatusCollectorOptions struct {
 	FetchRemote    bool
 	StaleThreshold time.Duration
 	BaseDir        string
+	Workers        int
 }
 
 // StatusCollector collects status information for worktrees.
@@ -29,6 +31,17 @@ type StatusCollector struct {
 	fetchRemote    bool
 	staleThreshold time.Duration
 	basedir        string
+	workers        int
+}
+
+type Diagnostic struct {
+	Path string
+	Err  error
+}
+
+type Collection struct {
+	Statuses    []*models.WorktreeStatus
+	Diagnostics []Diagnostic
 }
 
 type porcelainStatus struct {
@@ -44,66 +57,101 @@ func NewStatusCollectorWithOptions(opts StatusCollectorOptions) *StatusCollector
 	if opts.StaleThreshold == 0 {
 		opts.StaleThreshold = 14 * 24 * time.Hour
 	}
+	if opts.Workers <= 0 {
+		opts.Workers = min(runtime.GOMAXPROCS(0), 8)
+	}
+	if opts.Workers < 1 {
+		opts.Workers = 1
+	}
 
 	return &StatusCollector{
 		fetchRemote:    opts.FetchRemote,
 		staleThreshold: opts.StaleThreshold,
 		basedir:        opts.BaseDir,
+		workers:        opts.Workers,
 	}
 }
 
-// CollectAll collects status for all provided worktrees in parallel.
-func (c *StatusCollector) CollectAll(ctx context.Context, worktrees []*models.Worktree) ([]*models.WorktreeStatus, error) {
-	statuses := make([]*models.WorktreeStatus, len(worktrees))
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var firstErr error
-
+// CollectAll collects status for all provided worktrees with bounded concurrency.
+func (c *StatusCollector) CollectAll(ctx context.Context, worktrees []*models.Worktree) (Collection, error) {
+	result, err := collectWorktrees(ctx, c.workers, worktrees, c.collectOne)
+	if err != nil {
+		return Collection{}, err
+	}
 	currentPath, _ := os.Getwd()
+	for index, worktreeStatus := range result.Statuses {
+		if worktreeStatus != nil && utils.IsSameOrChildPath(currentPath, worktrees[index].Path) {
+			worktreeStatus.IsCurrent = true
+		}
+	}
+	return result, nil
+}
 
-	for i, wt := range worktrees {
-		wg.Add(1)
-		go func(idx int, worktree *models.Worktree) {
-			defer wg.Done()
+type statusJob struct {
+	index    int
+	worktree *models.Worktree
+}
 
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			status, err := c.collectOne(ctx, worktree)
-			if err != nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = err
+func collectWorktrees(
+	ctx context.Context,
+	workers int,
+	worktrees []*models.Worktree,
+	collect func(context.Context, *models.Worktree) (*models.WorktreeStatus, error),
+) (Collection, error) {
+	if err := ctx.Err(); err != nil {
+		return Collection{}, err
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	workers = min(workers, max(len(worktrees), 1))
+	result := Collection{Statuses: make([]*models.WorktreeStatus, len(worktrees))}
+	diagnostics := make([]error, len(worktrees))
+	jobs := make(chan statusJob)
+	var wait sync.WaitGroup
+	for range workers {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			for job := range jobs {
+				if ctx.Err() != nil {
+					continue
 				}
-				mu.Unlock()
-				return
+				worktreeStatus, err := collect(ctx, job.worktree)
+				if err != nil {
+					diagnostics[job.index] = err
+					worktreeStatus = &models.WorktreeStatus{
+						Path:       job.worktree.Path,
+						Branch:     job.worktree.Branch,
+						Repository: job.worktree.Repository,
+						Status:     models.WorktreeStatusUnknown,
+					}
+				}
+				result.Statuses[job.index] = worktreeStatus
 			}
-
-			if utils.IsSameOrChildPath(currentPath, worktree.Path) {
-				status.IsCurrent = true
-			}
-
-			statuses[idx] = status
-		}(i, wt)
+		}()
 	}
 
-	wg.Wait()
-
-	if firstErr != nil {
-		return nil, firstErr
+submit:
+	for index, worktree := range worktrees {
+		select {
+		case jobs <- statusJob{index: index, worktree: worktree}:
+		case <-ctx.Done():
+			break submit
+		}
 	}
-
-	var validStatuses []*models.WorktreeStatus
-	for _, s := range statuses {
-		if s != nil {
-			validStatuses = append(validStatuses, s)
+	close(jobs)
+	wait.Wait()
+	if err := ctx.Err(); err != nil {
+		return Collection{}, err
+	}
+	for index, err := range diagnostics {
+		if err != nil {
+			result.Diagnostics = append(result.Diagnostics, Diagnostic{Path: worktrees[index].Path, Err: err})
 		}
 	}
 
-	return validStatuses, nil
+	return result, nil
 }
 
 func (c *StatusCollector) collectOne(ctx context.Context, worktree *models.Worktree) (*models.WorktreeStatus, error) {
@@ -119,18 +167,18 @@ func (c *StatusCollector) collectOne(ctx context.Context, worktree *models.Workt
 		Status:     models.WorktreeStatusClean,
 	}
 
-	gitStatus, err := c.collectGitStatus(ctx, g)
+	porcelain, err := c.collectPorcelain(ctx, g)
 	if err != nil {
-		// Log error but continue with minimal status
-		// fmt.Fprintf(os.Stderr, "Warning: Failed to collect git status for %s: %v\n", worktree.Path, err)
-		status.GitStatus = models.GitStatus{}
-		status.Status = models.WorktreeStatusUnknown
-	} else {
-		status.GitStatus = *gitStatus
-		status.Status = c.determineWorktreeState(gitStatus)
+		return nil, err
 	}
+	if !c.fetchRemote {
+		porcelain.GitStatus.Ahead = 0
+		porcelain.GitStatus.Behind = 0
+	}
+	status.GitStatus = porcelain.GitStatus
+	status.Status = c.determineWorktreeState(&porcelain.GitStatus)
 
-	lastActivity, err := c.getLastActivity(ctx, worktree.Path)
+	lastActivity, err := c.lastActivity(ctx, worktree.Path, porcelain.Paths)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
@@ -163,18 +211,6 @@ func repositoryFullPathIdentity(info *url.RepositoryInfo) string {
 		return ""
 	}
 	return strings.ReplaceAll(filepath.ToSlash(info.FullPath), "\\", "/")
-}
-
-func (c *StatusCollector) collectGitStatus(ctx context.Context, g *git.Git) (*models.GitStatus, error) {
-	parsed, err := c.collectPorcelain(ctx, g)
-	if err != nil {
-		return nil, err
-	}
-	if !c.fetchRemote {
-		parsed.GitStatus.Ahead = 0
-		parsed.GitStatus.Behind = 0
-	}
-	return &parsed.GitStatus, nil
 }
 
 func (c *StatusCollector) collectPorcelain(ctx context.Context, g *git.Git) (porcelainStatus, error) {
@@ -297,118 +333,36 @@ func (c *StatusCollector) determineWorktreeState(status *models.GitStatus) model
 	return models.WorktreeStatusClean
 }
 
-func (c *StatusCollector) getLastActivity(ctx context.Context, path string) (time.Time, error) {
+func (c *StatusCollector) lastActivity(ctx context.Context, path string, changed []string) (time.Time, error) {
 	if err := ctx.Err(); err != nil {
 		return time.Time{}, err
 	}
-	// Use git ls-files to get tracked files efficiently
-	// This approach respects .gitignore patterns automatically and is much faster
-	// than walking the entire directory tree
-	g := git.New(path)
-
-	latestTime, err := c.getLastActivityFromTrackedFiles(ctx, g, path)
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return time.Time{}, ctxErr
-		}
-		// Fallback to directory walk if git command fails
-		return c.getLastActivityFallback(ctx, path)
-	}
-	if err := ctx.Err(); err != nil {
-		return time.Time{}, err
-	}
-
-	// Also check untracked files that are not ignored
-	untrackedTime, err := c.getLastActivityFromUntrackedFiles(ctx, g, path)
+	root, err := os.Stat(path)
 	if err != nil {
 		return time.Time{}, err
 	}
-	if untrackedTime.After(latestTime) {
-		latestTime = untrackedTime
-	}
+	latest := root.ModTime().UTC()
 
-	if latestTime.IsZero() {
-		// If no files found, use the directory's own modification time
-		info, err := os.Stat(path)
-		if err == nil {
-			latestTime = info.ModTime()
+	head, err := git.New(path).RunWithContext(ctx, "show", "-s", "--format=%ct", "HEAD")
+	if err == nil {
+		seconds, parseErr := strconv.ParseInt(strings.TrimSpace(head), 10, 64)
+		if parseErr == nil {
+			headTime := time.Unix(seconds, 0)
+			if headTime.After(latest) {
+				latest = headTime
+			}
 		}
 	}
-
-	return latestTime, nil
-}
-
-// getLastActivityFromTrackedFiles gets the latest modification time from tracked files
-func (c *StatusCollector) getLastActivityFromTrackedFiles(ctx context.Context, g *git.Git, path string) (time.Time, error) {
-	// Get list of tracked files
-	// Using -z for null-terminated output to handle filenames with spaces
-	gitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	output, err := g.RunWithContext(gitCtx, "ls-files", "-z")
-	if err != nil {
-		return time.Time{}, err
-	}
-
-	var latestTime time.Time
-	files := strings.SplitSeq(strings.TrimRight(output, "\x00"), "\x00")
-
-	for file := range files {
+	for _, relative := range changed {
 		if err := ctx.Err(); err != nil {
 			return time.Time{}, err
 		}
-		if file == "" {
-			continue
-		}
-
-		fullPath := filepath.Join(path, file)
-		info, err := os.Stat(fullPath)
-		if err != nil {
-			continue // Skip files we can't stat
-		}
-
-		if info.ModTime().After(latestTime) {
-			latestTime = info.ModTime()
+		info, statErr := os.Stat(filepath.Join(path, filepath.FromSlash(relative)))
+		if statErr == nil && info.ModTime().After(latest) {
+			latest = info.ModTime().UTC()
 		}
 	}
-
-	return latestTime, nil
-}
-
-// getLastActivityFromUntrackedFiles gets the latest modification time from untracked files
-func (c *StatusCollector) getLastActivityFromUntrackedFiles(ctx context.Context, g *git.Git, path string) (time.Time, error) {
-	var latestTime time.Time
-
-	gitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	untrackedOutput, err := g.RunWithContext(gitCtx, "ls-files", "-z", "--others", "--exclude-standard")
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return time.Time{}, ctxErr
-		}
-		return latestTime, nil
-	}
-
-	untrackedFiles := strings.SplitSeq(strings.TrimRight(untrackedOutput, "\x00"), "\x00")
-	for file := range untrackedFiles {
-		if err := ctx.Err(); err != nil {
-			return time.Time{}, err
-		}
-		if file == "" {
-			continue
-		}
-
-		fullPath := filepath.Join(path, file)
-		info, err := os.Stat(fullPath)
-		if err != nil || info.IsDir() {
-			continue
-		}
-
-		if info.ModTime().After(latestTime) {
-			latestTime = info.ModTime()
-		}
-	}
-
-	return latestTime, nil
+	return latest, ctx.Err()
 }
 
 // getLastActivityFallback is the fallback method when git commands fail

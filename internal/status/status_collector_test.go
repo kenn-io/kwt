@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -59,6 +60,76 @@ func TestParsePorcelainV2WithoutUpstreamDefaultsAheadBehindToZero(t *testing.T) 
 	assert.Zero(t, got.GitStatus.Behind)
 }
 
+func TestCollectAllBoundsWorkersAndDegradesOneRow(t *testing.T) {
+	var active atomic.Int32
+	var maximum atomic.Int32
+	collect := func(_ context.Context, wt *models.Worktree) (*models.WorktreeStatus, error) {
+		current := active.Add(1)
+		defer active.Add(-1)
+		for {
+			seen := maximum.Load()
+			if current <= seen || maximum.CompareAndSwap(seen, current) {
+				break
+			}
+		}
+		if strings.Contains(wt.Path, "broken") {
+			return nil, errors.New("status unavailable")
+		}
+		return &models.WorktreeStatus{Path: wt.Path, Status: models.WorktreeStatusClean}, nil
+	}
+
+	result, err := collectWorktrees(context.Background(), 2, []*models.Worktree{
+		{Path: "/one"}, {Path: "/broken"}, {Path: "/three"},
+	}, collect)
+
+	require.NoError(t, err)
+	assert.LessOrEqual(t, maximum.Load(), int32(2))
+	require.Len(t, result.Statuses, 3)
+	assert.Equal(t, models.WorktreeStatusUnknown, result.Statuses[1].Status)
+	require.Len(t, result.Diagnostics, 1)
+	assert.Equal(t, "/broken", result.Diagnostics[0].Path)
+}
+
+func TestLastActivityUsesRootHeadAndChangedFilesOnly(t *testing.T) {
+	repo := newStatusTestRepositoryAt(t, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	rootTime := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
+	changedTime := rootTime.Add(2 * time.Hour)
+	require.NoError(t, os.Chtimes(repo, rootTime, rootTime))
+	changed := filepath.Join(repo, "README.md")
+	require.NoError(t, os.WriteFile(changed, []byte("changed"), 0o644))
+	require.NoError(t, os.Chtimes(changed, changedTime, changedTime))
+
+	result, err := NewStatusCollectorWithOptions(StatusCollectorOptions{Workers: 1}).
+		CollectAll(context.Background(), []*models.Worktree{{Path: repo, Branch: "main"}})
+
+	require.NoError(t, err)
+	assert.Equal(t, changedTime, result.Statuses[0].LastActivity)
+}
+
+func TestLastActivityUsesNewWorktreeRootForCleanOldHead(t *testing.T) {
+	repo := newStatusTestRepositoryAt(t, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	rootTime := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, os.Chtimes(repo, rootTime, rootTime))
+
+	result, err := NewStatusCollectorWithOptions(StatusCollectorOptions{Workers: 1}).
+		CollectAll(context.Background(), []*models.Worktree{{Path: repo, Branch: "main"}})
+
+	require.NoError(t, err)
+	assert.Equal(t, rootTime, result.Statuses[0].LastActivity)
+}
+
+func TestCollectAllCanceledContextReturnsNoPartialCollection(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := NewStatusCollectorWithOptions(StatusCollectorOptions{Workers: 1}).
+		CollectAll(ctx, []*models.Worktree{{Path: t.TempDir()}})
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, result.Statuses)
+	assert.Empty(t, result.Diagnostics)
+}
+
 func TestCollectAllMarksCurrentPathByDirectoryBoundary(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main")
@@ -68,15 +139,15 @@ func TestCollectAllMarksCurrentPathByDirectoryBoundary(t *testing.T) {
 	changeDir(t, mainFixPath)
 
 	collector := NewStatusCollectorWithOptions(StatusCollectorOptions{})
-	statuses, err := collector.CollectAll(context.Background(), []*models.Worktree{
+	result, err := collector.CollectAll(context.Background(), []*models.Worktree{
 		{Path: mainPath, Branch: "main"},
 		{Path: mainFixPath, Branch: "main-fix"},
 	})
 
 	require.NoError(t, err)
-	require.Len(t, statuses, 2)
-	assert.False(t, statuses[0].IsCurrent)
-	assert.True(t, statuses[1].IsCurrent)
+	require.Len(t, result.Statuses, 2)
+	assert.False(t, result.Statuses[0].IsCurrent)
+	assert.True(t, result.Statuses[1].IsCurrent)
 }
 
 func TestCollectAllUsesRemoteFullPathForNestedRepository(t *testing.T) {
@@ -92,13 +163,13 @@ func TestCollectAllUsesRemoteFullPathForNestedRepository(t *testing.T) {
 	runStatusTestGit(t, worktreePath, "commit", "-m", "Initial commit")
 
 	collector := NewStatusCollectorWithOptions(StatusCollectorOptions{BaseDir: baseDir})
-	statuses, err := collector.CollectAll(context.Background(), []*models.Worktree{
+	result, err := collector.CollectAll(context.Background(), []*models.Worktree{
 		{Path: worktreePath, Branch: "feature/read-api"},
 	})
 
 	require.NoError(t, err)
-	require.Len(t, statuses, 1)
-	assert.Equal(t, "gitlab.com/org/team/service", statuses[0].Repository)
+	require.Len(t, result.Statuses, 1)
+	assert.Equal(t, "gitlab.com/org/team/service", result.Statuses[0].Repository)
 }
 
 func TestCollectAllPrefersWorktreeRepository(t *testing.T) {
@@ -107,7 +178,7 @@ func TestCollectAllPrefersWorktreeRepository(t *testing.T) {
 	runStatusTestGit(t, worktreePath, "remote", "add", "origin", "https://github.com/fork/repo.git")
 
 	collector := NewStatusCollectorWithOptions(StatusCollectorOptions{})
-	statuses, err := collector.CollectAll(context.Background(), []*models.Worktree{
+	result, err := collector.CollectAll(context.Background(), []*models.Worktree{
 		{
 			Path:       worktreePath,
 			Branch:     "main",
@@ -116,8 +187,8 @@ func TestCollectAllPrefersWorktreeRepository(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.Len(t, statuses, 1)
-	assert.Equal(t, "github.com/upstream/repo", statuses[0].Repository)
+	require.Len(t, result.Statuses, 1)
+	assert.Equal(t, "github.com/upstream/repo", result.Statuses[0].Repository)
 }
 
 // TestCollectAllRelativeDotlessRemoteFallsBackToPathIdentity pins the
@@ -139,13 +210,13 @@ func TestCollectAllRelativeDotlessRemoteFallsBackToPathIdentity(t *testing.T) {
 	runStatusTestGit(t, worktreePath, "commit", "-m", "Initial commit")
 
 	collector := NewStatusCollectorWithOptions(StatusCollectorOptions{BaseDir: baseDir})
-	statuses, err := collector.CollectAll(context.Background(), []*models.Worktree{
+	result, err := collector.CollectAll(context.Background(), []*models.Worktree{
 		{Path: worktreePath, Branch: "main"},
 	})
 
 	require.NoError(t, err)
-	require.Len(t, statuses, 1)
-	assert.Equal(t, "repo-main", statuses[0].Repository)
+	require.Len(t, result.Statuses, 1)
+	assert.Equal(t, "repo-main", result.Statuses[0].Repository)
 }
 
 func TestRepositoryFullPathIdentityNormalizesWindowsSeparators(t *testing.T) {
