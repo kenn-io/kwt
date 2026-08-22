@@ -2639,6 +2639,7 @@ func TestTUIBackendRemoveWorktreeRejectsReplacementGeneration(t *testing.T) {
 	repoPath := newTUITestRepo(t)
 	worktreePath := filepath.Join(t.TempDir(), "replacement-worktree")
 	runTUITestGit(t, repoPath, "worktree", "add", "-b", "codex/original", worktreePath)
+	originalHead := strings.TrimSpace(runTUITestGitOutput(t, worktreePath, "rev-parse", "HEAD"))
 	worktrees, err := git.New(repoPath).ListWorktrees()
 	require.NoError(t, err)
 	var originalGeneration string
@@ -2660,6 +2661,7 @@ func TestTUIBackendRemoveWorktreeRejectsReplacementGeneration(t *testing.T) {
 	require.NotEqual(t, originalGeneration, replacementGeneration)
 	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
 		Branch:     "codex/original",
+		CommitHash: originalHead,
 		Path:       worktreePath,
 		Generation: originalGeneration,
 	}}
@@ -2826,8 +2828,9 @@ func TestTUIBackendForceRemoveDeletesDirtyWorktree(t *testing.T) {
 			Repository: "service-api",
 			FullPath:   "github.com/example/service-api",
 		},
-		Branch: "codex/dirty",
-		Path:   worktreePath,
+		Branch:     "codex/dirty",
+		CommitHash: strings.TrimSpace(runTUITestGitOutput(t, worktreePath, "rev-parse", "HEAD")),
+		Path:       worktreePath,
 		Generation: tuiTestWorktreeGeneration(
 			t,
 			repoPath,
