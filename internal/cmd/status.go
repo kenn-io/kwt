@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -234,7 +235,17 @@ func collectWorktreeStatuses(ctx context.Context, cfg *models.Config, printer *u
 		BaseDir:        cfg.Worktree.BaseDir,
 	})
 	collection, err := collector.CollectAll(ctx, worktrees)
-	return collection.Statuses, err
+	if err != nil {
+		return nil, err
+	}
+	if len(collection.Diagnostics) > 0 {
+		diagnostics := make([]error, 0, len(collection.Diagnostics))
+		for _, diagnostic := range collection.Diagnostics {
+			diagnostics = append(diagnostics, fmt.Errorf("status unavailable for %s: %w", diagnostic.Path, diagnostic.Err))
+		}
+		return nil, errors.Join(diagnostics...)
+	}
+	return collection.Statuses, nil
 }
 
 func enrichStatusWorktreeIdentity(

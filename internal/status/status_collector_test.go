@@ -157,7 +157,9 @@ func TestLastActivityUsesParentDirectoryForDeletedNestedFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(tracked, []byte("tracked"), 0o644))
 	runStatusTestGit(t, repo, "add", "nested/tracked.txt")
 	runStatusTestGit(t, repo, "commit", "-m", "add nested file")
-	recent := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	root, err := os.Stat(repo)
+	require.NoError(t, err)
+	recent := root.ModTime().UTC().Add(time.Hour)
 	require.NoError(t, os.Remove(tracked))
 	require.NoError(t, os.Chtimes(nested, recent, recent))
 

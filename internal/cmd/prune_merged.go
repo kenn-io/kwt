@@ -9,6 +9,7 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -555,7 +556,7 @@ func defaultConfirmPruneMergedDirty(
 	if _, err := fmt.Fprintf(
 		cmd.ErrOrStderr(),
 		"Pull request merged. Remove %s and all local changes and files in it, including ignored files and files added before removal? [y/N] ",
-		candidate.Policy.Path,
+		strconv.QuoteToGraphic(candidate.Policy.Path),
 	); err != nil {
 		return false, err
 	}

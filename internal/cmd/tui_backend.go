@@ -613,10 +613,11 @@ func bestEffortDashboardSessionResolver(
 	}
 }
 
-// MergeFleet overlays hub state onto locally discovered rows. It publishes
-// this host's manifest and reads the hub synchronously, so callers must keep
-// it off the first-paint path and cancel ctx when the result is no longer
-// wanted.
+// MergeFleet overlays hub state onto locally discovered rows. It reads the hub
+// synchronously, so callers must keep it off the first-paint path and cancel
+// ctx when the result is no longer wanted. Publication remains on explicit
+// mutations and sync commands because building a complete host manifest would
+// reintroduce fleet-wide status collection here.
 func (b *tuiBackend) MergeFleet(ctx context.Context, rows []dashboard.Row) ([]dashboard.Row, []string) {
 	b.mu.Lock()
 	snapshot := tuiBackend{

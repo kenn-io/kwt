@@ -287,6 +287,19 @@ func TestPruneMergedDirtyPromptRechecksAndForcesOnlyAfterYes(t *testing.T) {
 	assert.True(t, forced)
 }
 
+func TestPruneMergedDirtyPromptEscapesTerminalControlsInPath(t *testing.T) {
+	candidate := commandMergedCandidate("/worktrees/topic\u009b2Jforged", commandMergedHead)
+	cmd, _, stderr := fleetTestCommand()
+	cmd.SetIn(strings.NewReader("n\n"))
+
+	confirmed, err := defaultConfirmPruneMergedDirty(cmd, candidate)
+
+	require.NoError(t, err)
+	assert.False(t, confirmed)
+	assert.NotContains(t, stderr.String(), "\u009b")
+	assert.Contains(t, stderr.String(), `\u009b2J`)
+}
+
 func TestPruneMergedDirtyDeclineContinuesSuccessfully(t *testing.T) {
 	resetPruneMergedCommand(t)
 	oldTerminal := stdinIsTerminal

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/ui"
@@ -62,6 +63,26 @@ func TestCollectWorktreeStatusesLocalUsesCanonicalLocalRepository(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, statuses, 1)
 	require.Equal(t, want.FullPath, statuses[0].Repository)
+}
+
+func TestCollectWorktreeStatusesReturnsPerWorktreeFailure(t *testing.T) {
+	repoDir := t.TempDir()
+	require.NoError(t, cmdStatusTestGit(repoDir, "init", "-b", "main"))
+	require.NoError(t, cmdStatusTestGit(repoDir, "config", "user.name", "Test User"))
+	require.NoError(t, cmdStatusTestGit(repoDir, "config", "user.email", "test@example.com"))
+	require.NoError(t, cmdStatusTestGit(repoDir, "commit", "--allow-empty", "-m", "initial"))
+	linked := filepath.Join(t.TempDir(), "missing-linked-worktree")
+	require.NoError(t, cmdStatusTestGit(repoDir, "worktree", "add", "-b", "topic", linked))
+	require.NoError(t, os.RemoveAll(linked))
+	changeDir(t, repoDir)
+	resetStatusTestFlags(t)
+	statusNoFetch = true
+
+	statuses, err := collectWorktreeStatuses(context.Background(), &models.Config{}, ui.New(&models.UIConfig{}))
+
+	assert.Nil(t, statuses)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), linked)
 }
 
 func TestImportedWorktreeReceivesAutomaticStatusAndFleetInspection(t *testing.T) {

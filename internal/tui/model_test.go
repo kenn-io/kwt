@@ -170,6 +170,20 @@ func TestStatusBearingGlobalRefreshAuthorizesProjectMutation(t *testing.T) {
 	assert.Equal(t, confirmDelete, model.confirm.kind)
 }
 
+func TestStatusBearingGlobalRefreshMakesExistingProjectFreshnessStale(t *testing.T) {
+	row := testRow("widget", "topic", "/w/widget/topic")
+	row.Entry.RepositoryInfo.FullPath = "github.com/acme/widget"
+	model := currentModelWithRows(t, &fakeBackend{}, row)
+	model.fetching = false
+
+	model, refreshCmd := updateModel(t, model, press("r"))
+	require.NotNil(t, refreshCmd)
+	model, _ = updateModel(t, model, press("d"))
+
+	assert.Equal(t, confirmNone, model.confirm.kind)
+	assert.Contains(t, model.message, "project inventory is refreshing")
+}
+
 func TestDirectoryWorkspaceMutationRequiresCurrentGlobalScope(t *testing.T) {
 	workspace := Row{Workspace: &WorkspaceInfo{Name: "notes", Path: "/work/notes"}}
 	model := NewModel(&fakeBackend{}, "/work")
@@ -433,6 +447,29 @@ func TestNewerRemovalRefreshRejectsOlderGlobalInventory(t *testing.T) {
 	model, _ = updateModel(t, model, projectCmd())
 	backend.rows = []Row{main, topic}
 	model, _ = updateModel(t, model, globalCmd())
+
+	_, restored := identityRowIndex(model.rows, rowPath(topic))
+	assert.False(t, restored)
+}
+
+func TestRemovalRejectsFleetRowsStartedBeforeDeletion(t *testing.T) {
+	project := "github.com/acme/widget"
+	main := testRow("widget", "main", "/work/widget")
+	main.Entry.RepositoryInfo.FullPath = project
+	topic := testRow("widget", "topic", "/work/widget/topic")
+	topic.Entry.RepositoryInfo.FullPath = project
+	model := currentModelWithRows(t, &fakeBackend{}, main, topic)
+	staleFleet := fleetRowsMsg{seq: model.loadSeq, rows: []Row{main, topic}}
+	job := removalJob{
+		row: topic, key: removalKey(topic), projectIdentity: project,
+		workingDirectory: rowPath(main),
+	}
+	model.removalActive = &job
+
+	model, _ = updateModel(t, model, removalDoneMsg{
+		job: job, removed: true, refresh: true,
+	})
+	model, _ = updateModel(t, model, staleFleet)
 
 	_, restored := identityRowIndex(model.rows, rowPath(topic))
 	assert.False(t, restored)

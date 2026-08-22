@@ -541,6 +541,9 @@ func (m Model) repositoryRequest(project string) InventoryRequest {
 }
 
 func (m Model) startInventory(request InventoryRequest) (Model, tea.Cmd) {
+	m.loadSeq++
+	m.fleetPending = false
+	m = m.cancelFleetMerge()
 	m.inventorySeq++
 	m.fetching = true
 	m.fetchingRequest = request
@@ -917,10 +920,7 @@ func (m Model) startPendingRefresh() (Model, tea.Cmd) {
 // for a previous generation is cancelled, and its result dropped if it
 // arrives anyway.
 func (m Model) startFetch() (Model, tea.Cmd) {
-	m.loadSeq++
 	m.inventoryCurrent = false
-	m.fleetPending = false
-	m = m.cancelFleetMerge()
 	if m.projectPerspective != "" {
 		freshness := m.projectFresh[m.projectPerspective]
 		freshness.Current = false
@@ -928,6 +928,10 @@ func (m Model) startFetch() (Model, tea.Cmd) {
 		return m.startInventory(m.repositoryRequest(m.projectPerspective))
 	}
 	m.globalFresh.Current = false
+	for project, freshness := range m.projectFresh {
+		freshness.Current = false
+		m.projectFresh[project] = freshness
+	}
 	return m.startInventory(InventoryRequest{Scope: InventoryCurrentDashboard, CollectStatuses: true})
 }
 
@@ -1863,6 +1867,9 @@ func (m Model) removeWorktreeCmd(job removalJob) tea.Cmd {
 func (m Model) applyRemovalDone(msg removalDoneMsg) (Model, tea.Cmd) {
 	m.removalActive = nil
 	if msg.removed {
+		m.loadSeq++
+		m.fleetPending = false
+		m = m.cancelFleetMerge()
 		oldRows := m.filteredRows()
 		oldCursor := m.cursor
 		m.rows = removeRowByPath(m.rows, rowPath(msg.job.row))
