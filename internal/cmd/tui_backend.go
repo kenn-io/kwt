@@ -2009,18 +2009,6 @@ func repositoryRootForRowWithConfig(
 	return "", fmt.Errorf("failed to find repository root: %w", directErr)
 }
 
-func (b *tuiBackend) validateRepositoryRootForRow(
-	repoRoot string,
-	row dashboard.Row,
-) error {
-	return validateRepositoryRootForRowWithConfig(
-		context.Background(),
-		repoRoot,
-		row,
-		b.cfg,
-	)
-}
-
 func validateRepositoryRootForRowWithConfig(
 	ctx context.Context,
 	repoRoot string,
