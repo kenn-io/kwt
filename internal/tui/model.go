@@ -63,6 +63,7 @@ type fastRowsMsg struct {
 type inventoryMsg struct {
 	request InventoryRequest
 	result  InventoryResult
+	seq     int
 	err     error
 }
 
@@ -139,6 +140,7 @@ type Model struct {
 	confirm                 confirmState
 	fetching                bool
 	fetchingRequest         InventoryRequest
+	inventorySeq            int
 	inventoryCurrent        bool
 	projectFresh            map[string]scopeFreshness
 	globalFresh             scopeFreshness
@@ -221,7 +223,7 @@ func anchorRowIndex(rows []Row, anchorPath string) (int, bool) {
 }
 
 func (m Model) Init() tea.Cmd {
-	return m.fetchInventoryCmd(InventoryRequest{Scope: InventoryCachedDashboard})
+	return m.fetchInventoryCmd(InventoryRequest{Scope: InventoryCachedDashboard}, m.inventorySeq)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -344,6 +346,9 @@ func (m Model) applyFastRows(msg fastRowsMsg) (Model, tea.Cmd) {
 }
 
 func (m Model) applyInventory(msg inventoryMsg) (Model, tea.Cmd) {
+	if msg.seq != m.inventorySeq {
+		return m, nil
+	}
 	m.fetching = false
 	if msg.err != nil {
 		freshness := scopeFreshness{Diagnostic: msg.err}
@@ -381,6 +386,7 @@ func (m Model) applyInventory(msg inventoryMsg) (Model, tea.Cmd) {
 		oldCursor := m.cursor
 		m.rows = mergeRepositoryRows(m.rows, msg.result.Rows, msg.request.ProjectIdentity)
 		m.rows = mergeCreatingRows(m.rows, m.rows, m.creating)
+		m.rows = m.applyRemovalState(m.rows)
 		m.cursor = anchorCursorByPath(oldRows, oldCursor, m.filteredRows())
 		m.warnings = msg.result.Warnings
 		m.projectFresh[msg.request.ProjectIdentity] = scopeFreshness{
@@ -401,6 +407,7 @@ func (m Model) applyInventory(msg inventoryMsg) (Model, tea.Cmd) {
 	case InventoryCurrentDashboard:
 		if msg.request.CollectStatuses {
 			m = m.replaceInventoryRows(msg.result.Rows, msg.result.Warnings, msg.result.Current)
+			m = m.markProjectsFresh(msg.result.Rows, msg.result.ObservedAt, msg.result.Current)
 		} else {
 			m = m.mergeStructuralDashboard(msg.result.Rows, msg.result.Warnings)
 		}
@@ -455,6 +462,23 @@ func (m Model) replaceInventoryRows(rows []Row, warnings []string, current bool)
 	m.cursor = clampCursor(m.cursor, len(filtered))
 	m = m.cancelFleetMerge()
 	m.fleetPending = false
+	return m
+}
+
+func (m Model) markProjectsFresh(rows []Row, observedAt time.Time, current bool) Model {
+	if m.projectFresh == nil {
+		m.projectFresh = make(map[string]scopeFreshness)
+	}
+	for _, row := range rows {
+		if row.Entry == nil {
+			continue
+		}
+		project := rowProjectKey(row)
+		if project == "" {
+			continue
+		}
+		m.projectFresh[project] = scopeFreshness{ObservedAt: observedAt, Current: current}
+	}
 	return m
 }
 
@@ -517,9 +541,10 @@ func (m Model) repositoryRequest(project string) InventoryRequest {
 }
 
 func (m Model) startInventory(request InventoryRequest) (Model, tea.Cmd) {
+	m.inventorySeq++
 	m.fetching = true
 	m.fetchingRequest = request
-	return m, m.fetchInventoryCmd(request)
+	return m, m.fetchInventoryCmd(request, m.inventorySeq)
 }
 
 func (m Model) startFleetMerge() (Model, tea.Cmd) {
@@ -721,6 +746,7 @@ func (m Model) applyRows(msg rowsMsg, refreshLayouts bool) (Model, tea.Cmd) {
 	sortRows(rows)
 	m.rows = rows
 	m.inventoryCurrent = true
+	m = m.markProjectsFresh(rows, m.now(), true)
 	if !hadRows && m.anchorPath != "" {
 		m.projectPerspective = launchPerspective(rows, m.anchorPath)
 	}
@@ -1113,7 +1139,7 @@ func (m Model) selectedScopeCurrent() bool {
 	if freshness, ok := m.projectFresh[project]; ok {
 		return freshness.Current
 	}
-	return m.inventoryCurrent
+	return false
 }
 
 func (m Model) handleInputKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
@@ -1691,11 +1717,11 @@ func (m Model) fetchRowsCmd() tea.Cmd {
 	}
 }
 
-func (m Model) fetchInventoryCmd(request InventoryRequest) tea.Cmd {
+func (m Model) fetchInventoryCmd(request InventoryRequest, seq int) tea.Cmd {
 	backend := m.backend
 	return func() tea.Msg {
 		result, err := backend.LoadInventory(context.Background(), request)
-		return inventoryMsg{request: request, result: result, err: err}
+		return inventoryMsg{request: request, result: result, seq: seq, err: err}
 	}
 }
 

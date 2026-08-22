@@ -40,6 +40,37 @@ func TestParsePorcelainV2CountsFilesAndBranchState(t *testing.T) {
 	assert.Equal(t, []string{"tracked.txt", "staged.txt", "untracked/one.txt", "untracked/two.txt"}, got.Paths)
 }
 
+func TestParsePorcelainV2CountsUnstagedRenameCopyAndTypeChangeAsModified(t *testing.T) {
+	tests := []struct {
+		name   string
+		record string
+	}{
+		{
+			name:   "rename",
+			record: "2 .R N... 100644 100644 100644 aaaaaaa aaaaaaa R100 renamed.txt\x00original.txt",
+		},
+		{
+			name:   "copy",
+			record: "2 .C N... 100644 100644 100644 aaaaaaa aaaaaaa C100 copied.txt\x00original.txt",
+		},
+		{
+			name:   "type change",
+			record: "1 .T N... 100644 100644 120000 aaaaaaa bbbbbbb link.txt",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parsePorcelainV2(tt.record + "\x00")
+			require.NoError(t, err)
+			assert.Equal(t, 1, got.GitStatus.Modified)
+			assert.Equal(t, models.WorktreeStatusModified,
+				NewStatusCollectorWithOptions(StatusCollectorOptions{}).
+					determineWorktreeState(&got.GitStatus))
+		})
+	}
+}
+
 func TestCollectPorcelainUsesUAllForPerFileUntrackedCount(t *testing.T) {
 	repo := newStatusTestRepositoryAt(t, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
 	require.NoError(t, os.MkdirAll(filepath.Join(repo, "new"), 0o755))

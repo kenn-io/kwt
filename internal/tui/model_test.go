@@ -136,6 +136,40 @@ func TestBackgroundGlobalPreservesFreshProjectStatus(t *testing.T) {
 	assert.Equal(t, models.WorktreeStatusModified, model.rows[0].Status.Status)
 }
 
+func TestStatusFreeGlobalRefreshDoesNotAuthorizeProjectMutation(t *testing.T) {
+	row := testRow("widget", "topic", "/w/widget/topic")
+	row.Entry.RepositoryInfo.FullPath = "github.com/acme/widget"
+	model := NewModel(&fakeBackend{}, "/w/widget/topic")
+	model.rows = []Row{row}
+
+	model, _ = updateModel(t, model, inventoryMsg{
+		request: InventoryRequest{Scope: InventoryCurrentDashboard},
+		result: InventoryResult{
+			Rows: []Row{row}, ObservedAt: time.Now(), Current: true,
+		},
+	})
+	model, _ = updateModel(t, model, press("d"))
+
+	assert.Equal(t, confirmNone, model.confirm.kind)
+	assert.Contains(t, model.message, "project inventory is refreshing")
+}
+
+func TestStatusBearingGlobalRefreshAuthorizesProjectMutation(t *testing.T) {
+	row := testRow("widget", "topic", "/w/widget/topic")
+	row.Entry.RepositoryInfo.FullPath = "github.com/acme/widget"
+	model := NewModel(&fakeBackend{}, "/w/widget/topic")
+
+	model, _ = updateModel(t, model, inventoryMsg{
+		request: InventoryRequest{Scope: InventoryCurrentDashboard, CollectStatuses: true},
+		result: InventoryResult{
+			Rows: []Row{row}, ObservedAt: time.Now(), Current: true,
+		},
+	})
+	model, _ = updateModel(t, model, press("d"))
+
+	assert.Equal(t, confirmDelete, model.confirm.kind)
+}
+
 func TestDirectoryWorkspaceMutationRequiresCurrentGlobalScope(t *testing.T) {
 	workspace := Row{Workspace: &WorkspaceInfo{Name: "notes", Path: "/work/notes"}}
 	model := NewModel(&fakeBackend{}, "/work")
@@ -372,6 +406,52 @@ func TestRemovalCompletionRefreshesOnlyAffectedProject(t *testing.T) {
 	last := backend.inventoryCalls[len(backend.inventoryCalls)-1]
 	assert.Equal(t, InventoryCurrentRepository, last.Scope)
 	assert.Equal(t, "github.com/acme/widget", last.ProjectIdentity)
+}
+
+func TestNewerRemovalRefreshRejectsOlderGlobalInventory(t *testing.T) {
+	project := "github.com/acme/widget"
+	main := testRow("widget", "main", "/work/widget")
+	main.Entry.RepositoryInfo.FullPath = project
+	topic := testRow("widget", "topic", "/work/widget/topic")
+	topic.Entry.RepositoryInfo.FullPath = project
+	backend := &fakeBackend{rows: []Row{main, topic}}
+	model := currentModelWithRows(t, backend, main, topic)
+	model.backgroundGlobalStarted = true
+
+	model, globalCmd := model.startInventory(InventoryRequest{Scope: InventoryCurrentDashboard})
+	job := removalJob{
+		row: topic, key: removalKey(topic), projectIdentity: project,
+		workingDirectory: rowPath(main),
+	}
+	model.removalActive = &job
+	model, projectCmd := updateModel(t, model, removalDoneMsg{
+		job: job, removed: true, refresh: true,
+	})
+	require.NotNil(t, projectCmd)
+
+	backend.rows = []Row{main}
+	model, _ = updateModel(t, model, projectCmd())
+	backend.rows = []Row{main, topic}
+	model, _ = updateModel(t, model, globalCmd())
+
+	_, restored := identityRowIndex(model.rows, rowPath(topic))
+	assert.False(t, restored)
+}
+
+func TestRepositoryRefreshPreservesActiveRemovalState(t *testing.T) {
+	project := "github.com/acme/widget"
+	row := testRow("widget", "topic", "/work/widget/topic")
+	row.Entry.RepositoryInfo.FullPath = project
+	model := currentModelWithRows(t, &fakeBackend{}, row)
+	job := removalJob{row: row, key: removalKey(row), projectIdentity: project}
+	model.removalActive = &job
+
+	model, _ = updateModel(t, model, inventoryMsg{
+		request: InventoryRequest{Scope: InventoryCurrentRepository, ProjectIdentity: project},
+		result:  InventoryResult{Rows: []Row{row}, ObservedAt: time.Now(), Current: true},
+	})
+
+	assert.True(t, model.rows[0].Removing)
 }
 
 func TestIndeterminateRemovalKeepsRowUntilScopedRefresh(t *testing.T) {
@@ -2201,6 +2281,7 @@ func TestModelKeepsQueuedActionRefreshWhenFastLoadFails(t *testing.T) {
 	// removed worktree on screen until the user refreshes by hand.
 	model, queuedRefreshCmd := updateModel(t, model, inventoryMsg{
 		request: InventoryRequest{Scope: InventoryCurrentDashboard, CollectStatuses: true},
+		seq:     model.inventorySeq,
 		err:     errors.New("discovery failed"),
 	})
 

@@ -309,7 +309,7 @@ func parsePorcelainV2(output string) (porcelainStatus, error) {
 				result.GitStatus.Staged++
 			}
 			switch xy[1] {
-			case 'M':
+			case 'M', 'R', 'C', 'T':
 				result.GitStatus.Modified++
 			case 'A':
 				result.GitStatus.Added++
