@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -244,7 +245,7 @@ func TestPruneExpiredJSONContainsStableReasons(t *testing.T) {
 	require.Len(t, report.Outcomes, 1)
 	assert.Equal(t, prunepolicy.DoctorRequired, report.Outcomes[0].Reason)
 	assert.NotContains(t, stdout.String(), "Expired worktree:")
-	assert.Empty(t, stderr.String())
+	assert.Contains(t, stderr.String(), "kwt: validate candidates")
 }
 
 func TestPruneExpiredForceStillRequiresGeneration(t *testing.T) {
@@ -384,7 +385,7 @@ func TestPruneExpiredDryRunReportsLockedWorktree(t *testing.T) {
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
 	require.Len(t, report.Outcomes, 1)
 	assert.Equal(t, prunepolicy.LockedWorktree, report.Outcomes[0].Reason)
-	assert.Empty(t, stderr.String())
+	assert.Contains(t, stderr.String(), "kwt: validate candidates")
 	assert.DirExists(t, worktreePath)
 }
 
@@ -408,7 +409,7 @@ func TestPruneExpiredDryRunRevalidatesMainWorktree(t *testing.T) {
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
 	require.Len(t, report.Outcomes, 1)
 	assert.Equal(t, prunepolicy.MainWorktree, report.Outcomes[0].Reason)
-	assert.Empty(t, stderr.String())
+	assert.Contains(t, stderr.String(), "kwt: validate candidates")
 	assert.DirExists(t, repoPath)
 }
 
@@ -549,6 +550,33 @@ func TestPruneExpiredNoopDoesNotPublish(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Zero(t, publications)
+}
+
+func TestPruneExpiredReportsBoundedPhases(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetPruneCommandFlags(t)
+	initCommandTestConfig(t, t.TempDir())
+	oldTerminal := maintenanceProgressIsTerminal
+	maintenanceProgressIsTerminal = func(io.Writer) bool { return false }
+	t.Cleanup(func() { maintenanceProgressIsTerminal = oldTerminal })
+	reg, err := registry.New()
+	require.NoError(t, err)
+	expiredAt := time.Now().Add(-time.Hour)
+	require.NoError(t, reg.Register(&registry.WorktreeEntry{
+		Path:      "/work/main",
+		IsMain:    true,
+		ExpiresAt: &expiredAt,
+	}))
+	pruneExpired = true
+	cmd, _, stderr := fleetTestCommand()
+
+	err = runPrune(cmd, nil)
+
+	assertExitCode(t, err, 1)
+	text := stderr.String()
+	assert.Contains(t, text, "kwt: load candidates")
+	assert.Contains(t, text, "kwt: validate candidates 1/1")
+	assert.Contains(t, text, "kwt: remove candidates 1/1")
 }
 
 func TestPruneExpiredCompletesBookkeepingAfterGitDeregistersWithResidualFiles(

@@ -120,6 +120,9 @@ func runPrune(cmd *cobra.Command, args []string) error {
 }
 
 func runPruneExpired(cmd *cobra.Command, _ []string) error {
+	progress := newMaintenanceProgress(cmd, true)
+	defer progress.Close()
+	progress.Phase("load candidates", 0)
 	reg, err := openPruneExpiredRegistry()
 	if err != nil {
 		return writeMaintenanceError(
@@ -138,108 +141,133 @@ func runPruneExpired(cmd *cobra.Command, _ []string) error {
 		DryRun:        pruneDryRun,
 		Outcomes:      make([]prunepolicy.Outcome, 0, len(expired)),
 	}
-	removedWorktrees := 0
-	for _, entry := range expired {
-		outcome := prunepolicy.Outcome{Path: entry.Path, Branch: entry.Branch}
+	type preparedExpiredCandidate struct {
+		entry      *registry.WorktreeEntry
+		git        *git.Git
+		conditions git.WorktreeRemovalConditions
+		outcome    prunepolicy.Outcome
+		eligible   bool
+	}
+	prepared := make([]preparedExpiredCandidate, 0, len(expired))
+	progress.Phase("validate candidates", len(expired))
+	for index, entry := range expired {
+		candidate := preparedExpiredCandidate{
+			entry:   entry,
+			outcome: prunepolicy.Outcome{Path: entry.Path, Branch: entry.Branch},
+		}
 		switch {
 		case entry.IsMain:
-			outcome.Reason = prunepolicy.MainWorktree
-			outcome.Message = "main worktrees are never eligible for policy removal"
-			outcome.Remediation = "Remove the expiration from the main-worktree registry entry."
+			candidate.outcome.Reason = prunepolicy.MainWorktree
+			candidate.outcome.Message = "main worktrees are never eligible for policy removal"
+			candidate.outcome.Remediation = "Remove the expiration from the main-worktree registry entry."
 		case pathIsMissing(entry.Path):
-			outcome.Reason = prunepolicy.DoctorRequired
-			outcome.Message = "expired registry path is already absent"
-			outcome.Remediation = "Run kwt doctor --fix for structural Git and registry cleanup."
+			candidate.outcome.Reason = prunepolicy.DoctorRequired
+			candidate.outcome.Message = "expired registry path is already absent"
+			candidate.outcome.Remediation = "Run kwt doctor --fix for structural Git and registry cleanup."
 		case git.ValidateWorktreeGeneration(entry.Generation) != nil:
-			outcome.Reason = prunepolicy.MissingGeneration
-			outcome.Message = "live expired worktree has no valid durable generation"
-			outcome.Remediation = "Run kwt list from its repository to initialize Git state, then run kwt doctor --fix to reconcile the registry before retrying."
+			candidate.outcome.Reason = prunepolicy.MissingGeneration
+			candidate.outcome.Message = "live expired worktree has no valid durable generation"
+			candidate.outcome.Remediation = "Run kwt list from its repository to initialize Git state, then run kwt doctor --fix to reconcile the registry before retrying."
 		default:
 			if _, statErr := os.Stat(entry.Path); statErr != nil {
-				outcome.Reason = prunepolicy.PathUnavailable
-				outcome.Message = fmt.Sprintf("could not inspect expired worktree path: %v", statErr)
-				outcome.Remediation = "Restore filesystem access and retry."
+				candidate.outcome.Reason = prunepolicy.PathUnavailable
+				candidate.outcome.Message = fmt.Sprintf("could not inspect expired worktree path: %v", statErr)
+				candidate.outcome.Remediation = "Restore filesystem access and retry."
 				break
 			}
-			g := git.New(entry.Path)
-			expectedGitDir, gitDirErr := expiredWorktreeGitDir(g, entry.Path)
+			candidate.git = git.New(entry.Path)
+			expectedGitDir, gitDirErr := expiredWorktreeGitDir(candidate.git, entry.Path)
 			if gitDirErr != nil {
-				outcome = pruneOutcomeForError(entry.Path, entry.Branch, gitDirErr)
+				candidate.outcome = pruneOutcomeForError(entry.Path, entry.Branch, gitDirErr)
 				break
 			}
-			conditions := git.WorktreeRemovalConditions{
+			candidate.conditions = git.WorktreeRemovalConditions{
 				ExpectedGitDir: expectedGitDir,
 				Generation:     entry.Generation,
 				RequireClean:   !pruneForce,
 			}
-			if err := validatePruneExpiredWorktree(g, entry.Path, conditions); err != nil {
-				outcome = pruneOutcomeForError(entry.Path, entry.Branch, err)
+			if err := validatePruneExpiredWorktree(candidate.git, entry.Path, candidate.conditions); err != nil {
+				candidate.outcome = pruneOutcomeForError(entry.Path, entry.Branch, err)
 				break
 			}
 			if pruneDryRun {
 				matched, matchErr := reg.EntryMatches(entry.Path, entry)
 				if matchErr != nil {
-					outcome.Reason = prunepolicy.PathUnavailable
-					outcome.Message = fmt.Sprintf("could not revalidate expiration policy: %v", matchErr)
-					outcome.Remediation = "Restore registry access and retry."
+					candidate.outcome.Reason = prunepolicy.PathUnavailable
+					candidate.outcome.Message = fmt.Sprintf("could not revalidate expiration policy: %v", matchErr)
+					candidate.outcome.Remediation = "Restore registry access and retry."
 					break
 				}
 				if !matched {
-					outcome = expirationPolicyChangedOutcome(entry)
+					candidate.outcome = expirationPolicyChangedOutcome(entry)
 					break
 				}
-				outcome.Reason = prunepolicy.WouldRemove
-				outcome.Message = "expired worktree satisfies removal preconditions"
+				candidate.outcome.Reason = prunepolicy.WouldRemove
+				candidate.outcome.Message = "expired worktree satisfies removal preconditions"
 				break
 			}
-			var residualWarning error
-			removed, removeErr := removePruneExpiredWorktree(
-				g, entry.Path, pruneForce, conditions,
-				func(remove func() error) (bool, error) {
-					return reg.RemoveIfMatchAfter(entry.Path, entry, func() error {
-						err := remove()
-						if git.WorktreeWasRemoved(err) {
-							residualWarning = err
-							return nil
+			candidate.eligible = true
+		}
+		prepared = append(prepared, candidate)
+		progress.Set(index + 1)
+	}
+	removedWorktrees := 0
+	progress.Phase("remove candidates", len(prepared))
+	for index, candidate := range prepared {
+		entry := candidate.entry
+		outcome := candidate.outcome
+		if candidate.eligible {
+			outcome = func() prunepolicy.Outcome {
+				var residualWarning error
+				removed, removeErr := removePruneExpiredWorktree(
+					candidate.git, entry.Path, pruneForce, candidate.conditions,
+					func(remove func() error) (bool, error) {
+						return reg.RemoveIfMatchAfter(entry.Path, entry, func() error {
+							err := remove()
+							if git.WorktreeWasRemoved(err) {
+								residualWarning = err
+								return nil
+							}
+							return err
+						})
+					},
+				)
+				if removeErr != nil {
+					if removed {
+						removedWorktrees++
+						outcome.Reason = prunepolicy.CleanupIncomplete
+						outcome.Message = "worktree was removed but matching registry cleanup did not complete"
+						outcome.Remediation = "Run kwt doctor --fix to reconcile the remaining registry state."
+						outcome.Evidence = map[string]string{
+							"worktree_removed": "true", "cleanup_error": removeErr.Error(),
 						}
-						return err
-					})
-				},
-			)
-			if removeErr != nil {
-				if removed {
-					removedWorktrees++
-					outcome.Reason = prunepolicy.CleanupIncomplete
-					outcome.Message = "worktree was removed but matching registry cleanup did not complete"
-					outcome.Remediation = "Run kwt doctor --fix to reconcile the remaining registry state."
-					outcome.Evidence = map[string]string{
-						"worktree_removed": "true", "cleanup_error": removeErr.Error(),
+						return outcome
 					}
-					break
+					return pruneOutcomeForError(entry.Path, entry.Branch, removeErr)
 				}
-				outcome = pruneOutcomeForError(entry.Path, entry.Branch, removeErr)
-				break
-			}
-			if !removed {
-				outcome = expirationPolicyChangedOutcome(entry)
-				break
-			}
-			removedWorktrees++
-			if residualWarning != nil {
-				outcome.Reason = prunepolicy.CleanupIncomplete
-				outcome.Message = residualWarning.Error()
-				outcome.Remediation = "Inspect the path and remove it only if it contains leftovers from the removed worktree."
-				outcome.Evidence = map[string]string{
-					"worktree_removed": "true", "cleanup_error": residualWarning.Error(),
+				if !removed {
+					return expirationPolicyChangedOutcome(entry)
 				}
-			} else {
-				outcome.Reason = prunepolicy.Removed
-				outcome.Message = "expired worktree removed"
-			}
+				removedWorktrees++
+				if residualWarning != nil {
+					outcome.Reason = prunepolicy.CleanupIncomplete
+					outcome.Message = residualWarning.Error()
+					outcome.Remediation = "Inspect the path and remove it only if it contains leftovers from the removed worktree."
+					outcome.Evidence = map[string]string{
+						"worktree_removed": "true", "cleanup_error": residualWarning.Error(),
+					}
+				} else {
+					outcome.Reason = prunepolicy.Removed
+					outcome.Message = "expired worktree removed"
+				}
+				return outcome
+			}()
 		}
 		report.Outcomes = append(report.Outcomes, outcome)
+		progress.Set(index + 1)
 	}
 	report.Finalize()
+	progress.Pause()
 	if err := renderPruneReport(cmd, report, pruneJSON); err != nil {
 		return writeMaintenanceError(
 			cmd, "prune", "output_failed", err.Error(), 2, false,

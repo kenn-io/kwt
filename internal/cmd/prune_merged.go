@@ -278,6 +278,7 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 	progress := newMaintenanceProgress(cmd, true)
 	defer progress.Close()
+	progress.Phase("discover candidates", 0)
 	cfg, err := loadPruneMergedConfig()
 	if err != nil {
 		return mergedPruneExecutionError(cmd, fmt.Sprintf("load global configuration: %v", err))
@@ -311,7 +312,15 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	lazyProvider := &lazyPruneMergedProvider{ctx: ctx, open: newPruneMergedProvider}
-	evaluated := prunepolicy.EvaluateMerged(ctx, lazyProvider, policyCandidates)
+	progress.Phase("verify pull requests", len(policyCandidates))
+	evaluated := make([]prunepolicy.Outcome, 0, len(policyCandidates))
+	for index, candidate := range policyCandidates {
+		evaluated = append(
+			evaluated,
+			prunepolicy.EvaluateMerged(ctx, lazyProvider, []prunepolicy.MergedCandidate{candidate})[0],
+		)
+		progress.Set(index + 1)
+	}
 	evaluationIndex := 0
 	outcomes := make([]prunepolicy.Outcome, len(candidates))
 	for index, candidate := range candidates {
@@ -324,6 +333,14 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 	}
 
 	removedWorktrees := 0
+	eligibleCandidates := 0
+	for _, outcome := range outcomes {
+		if outcome.Reason == prunepolicy.EligibleMerged {
+			eligibleCandidates++
+		}
+	}
+	progress.Phase("remove candidates", eligibleCandidates)
+	processedEligible := 0
 	for index := range candidates {
 		candidate := candidates[index]
 		outcome := outcomes[index]
@@ -331,6 +348,8 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 			outcomes[index] = withMergedRemediation(outcome)
 			continue
 		}
+		processedEligible++
+		progress.Set(processedEligible)
 		dirty, inspectErr := inspectPruneMergedDirty(candidate)
 		if inspectErr != nil {
 			providerEvidence := outcome.Evidence
@@ -458,6 +477,7 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 		Outcomes:      outcomes,
 	}
 	report.Finalize()
+	progress.Pause()
 	if err := renderPruneReport(cmd, report, pruneJSON); err != nil {
 		return writeMaintenanceError(cmd, "prune", "output_failed", err.Error(), 2, false)
 	}

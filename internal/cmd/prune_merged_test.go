@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -398,6 +399,25 @@ func TestRenderPruneReportGroupsRepeatedOutcomes(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(text, "Run interactively."))
 }
 
+func TestPruneMergedJSONKeepsProgressOffStdout(t *testing.T) {
+	resetPruneMergedCommand(t)
+	pruneJSON = true
+	oldTerminal := maintenanceProgressIsTerminal
+	maintenanceProgressIsTerminal = func(io.Writer) bool { return false }
+	t.Cleanup(func() { maintenanceProgressIsTerminal = oldTerminal })
+	candidate := commandMergedCandidate("/worktrees/topic", commandMergedHead)
+	setPruneMergedInventory(candidate)
+	setPruneMergedProvider(providerForCommandCandidates(candidate))
+	inspectPruneMergedDirty = func(pruneMergedCandidate) (bool, error) { return false, nil }
+	cmd, stdout, stderr := fleetTestCommand()
+
+	_ = runPruneMerged(cmd, nil)
+
+	var report prunepolicy.Report
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
+	assert.Contains(t, stderr.String(), "kwt: verify pull requests")
+}
+
 func TestPruneMergedDryRunMapsRevalidationChanges(t *testing.T) {
 	resetPruneMergedCommand(t)
 	pruneDryRun = true
@@ -422,7 +442,7 @@ func TestPruneMergedDryRunMapsRevalidationChanges(t *testing.T) {
 	require.Len(t, report.Outcomes, 1)
 	assert.Equal(t, prunepolicy.DirtyWorktree, report.Outcomes[0].Reason)
 	assert.Equal(t, "https://github.com/acme/widget/pull/17", report.Outcomes[0].Evidence["pr_url"])
-	assert.Empty(t, stderr.String())
+	assert.Contains(t, stderr.String(), "kwt: verify pull requests")
 	assert.Zero(t, removed)
 }
 

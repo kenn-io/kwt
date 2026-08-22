@@ -168,6 +168,8 @@ func init() {
 }
 
 func runDoctor(cmd *cobra.Command, _ []string) error {
+	progress := newMaintenanceProgress(cmd, !doctorQuiet)
+	defer progress.Close()
 	if doctorQuiet && doctorJSON {
 		return writeMaintenanceError(
 			cmd, "doctor", "incompatible_flags", "--quiet and --json are mutually exclusive", 2, false,
@@ -177,6 +179,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	ctx := cmd.Context()
+	progress.Phase("load inventory", 0)
 	snapshot, err := loadDoctorSnapshot()
 	if err != nil {
 		return writeMaintenanceError(
@@ -192,6 +195,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		)
 	}
 	entries := reg.List()
+	progress.Phase("inspect worktrees", 0)
 	report, err := doctorInspect(ctx, snapshot.Config, snapshot.Projects, entries, reg.CreationActive)
 	if err != nil {
 		return writeMaintenanceError(
@@ -200,11 +204,14 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	}
 	beforeFix := report
 	if doctorFix && report.Summary.Findings > 0 {
+		progress.Phase("apply fixes", report.Summary.FixableFindings)
 		if err := doctorApplyFixes(ctx, report, reg, entries); err != nil {
 			return writeMaintenanceError(
 				cmd, "doctor", "fix_failed", err.Error(), 2, doctorJSON,
 			)
 		}
+		progress.Set(report.Summary.FixableFindings)
+		progress.Phase("verify repairs", 0)
 		snapshot, err = loadDoctorSnapshot()
 		if err != nil {
 			return writeMaintenanceError(
@@ -234,6 +241,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	report.SchemaVersion = maintenance.SchemaVersion
 	report.Command = "doctor"
 	report.Fix = doctorFix
+	progress.Pause()
 	if !doctorQuiet {
 		if err := renderDoctorReport(cmd, report, doctorJSON); err != nil {
 			return writeMaintenanceError(

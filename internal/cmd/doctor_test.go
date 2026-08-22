@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -159,7 +160,7 @@ func TestDoctorReadOnlyReportsFixInstruction(t *testing.T) {
 	assertExitCode(t, err, 1)
 	assert.Zero(t, fixCalls)
 	assert.Contains(t, stdout.String(), "kwt doctor --fix")
-	assert.Empty(t, stderr.String())
+	assert.Contains(t, stderr.String(), "kwt: inspect worktrees")
 }
 
 func TestDoctorHelpDescribesMaintenanceContract(t *testing.T) {
@@ -476,7 +477,7 @@ func TestDoctorJSONEnvelope(t *testing.T) {
 	assert.Equal(t, "doctor", envelope["command"])
 	assert.Equal(t, false, envelope["fix"])
 	assert.NotContains(t, stdout.String(), "Repository:")
-	assert.Empty(t, stderr.String())
+	assert.Contains(t, stderr.String(), "kwt: inspect worktrees")
 }
 
 func TestDoctorExitCodes(t *testing.T) {
@@ -528,6 +529,65 @@ func doctorHealthyReport() maintenance.Report {
 		SchemaVersion: maintenance.SchemaVersion,
 		Summary:       maintenance.Summary{Healthy: true},
 	}
+}
+
+func TestDoctorReportsInspectionAndVerificationProgress(t *testing.T) {
+	resetDoctorCommandDeps(t)
+	doctorFix = true
+	oldTerminal := maintenanceProgressIsTerminal
+	maintenanceProgressIsTerminal = func(io.Writer) bool { return false }
+	t.Cleanup(func() { maintenanceProgressIsTerminal = oldTerminal })
+	var inspections int
+	doctorInspect = func(
+		context.Context,
+		*models.Config,
+		[]config.ProjectRegistration,
+		[]*registry.WorktreeEntry,
+		func(string) (bool, error),
+	) (maintenance.Report, error) {
+		inspections++
+		if inspections == 1 {
+			return doctorFindingReport(), nil
+		}
+		return doctorHealthyReport(), nil
+	}
+	doctorApplyFixes = func(
+		context.Context,
+		maintenance.Report,
+		doctorRegistry,
+		[]*registry.WorktreeEntry,
+	) error {
+		return nil
+	}
+	cmd, _, stderr := doctorTestCommand()
+
+	require.NoError(t, runDoctor(cmd, nil))
+	text := stderr.String()
+	assert.Contains(t, text, "kwt: inspect worktrees")
+	assert.Contains(t, text, "kwt: apply fixes 1/1")
+	assert.Contains(t, text, "kwt: verify repairs")
+}
+
+func TestDoctorQuietSuppressesProgress(t *testing.T) {
+	resetDoctorCommandDeps(t)
+	doctorQuiet = true
+	oldTerminal := maintenanceProgressIsTerminal
+	maintenanceProgressIsTerminal = func(io.Writer) bool { return false }
+	t.Cleanup(func() { maintenanceProgressIsTerminal = oldTerminal })
+	doctorInspect = func(
+		context.Context,
+		*models.Config,
+		[]config.ProjectRegistration,
+		[]*registry.WorktreeEntry,
+		func(string) (bool, error),
+	) (maintenance.Report, error) {
+		return doctorHealthyReport(), nil
+	}
+	cmd, stdout, stderr := doctorTestCommand()
+
+	require.NoError(t, runDoctor(cmd, nil))
+	assert.Empty(t, stdout.String())
+	assert.Empty(t, stderr.String())
 }
 
 func doctorTestCommand() (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
