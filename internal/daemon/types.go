@@ -9,13 +9,14 @@ import (
 const (
 	ServiceName               = "kwt"
 	APISchemaMajor            = 1
-	APISchemaVersion          = "1.11.0"
+	APISchemaVersion          = "1.12.0"
 	CapabilityStatus          = "daemon.status"
 	CapabilityShutdown        = "daemon.shutdown"
 	CapabilityProjectRemoval  = "project.removal.v1"
 	CapabilityInventory       = "worktree.inventory.v2"
 	CapabilityRemoval         = "worktree.removal.v1"
 	CapabilityGuardedRemoval  = "worktree.removal.v2"
+	CapabilityCheckoutRemoval = "worktree.removal.v3"
 	CapabilityOperationStream = "operation.stream.v1"
 	CapabilitySSHLeaseHold    = "ssh.lease.hold.v1"
 	CapabilitySSHLifecycle    = "ssh.lifecycle.v1"

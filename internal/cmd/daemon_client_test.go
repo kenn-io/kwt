@@ -255,6 +255,44 @@ func TestConditionalRemovalRejectsVersionOneDaemonBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestCheckoutConditionalRemovalRejectsVersionTwoDaemonBeforeMutation(t *testing.T) {
+	oldFactory := newDaemonController
+	oldRemove := removeWorktreeWithDaemonClient
+	t.Cleanup(func() {
+		newDaemonController = oldFactory
+		removeWorktreeWithDaemonClient = oldRemove
+	})
+
+	newDaemonController = func() (daemonController, error) {
+		return &fakeDaemonController{observation: kwtdaemon.Observation{
+			State: kwtdaemon.RuntimeReady,
+			Status: kwtdaemon.Status{Capabilities: []string{
+				kwtdaemon.CapabilityRemoval,
+				kwtdaemon.CapabilityGuardedRemoval,
+			}},
+			Client: &kwtdaemon.Client{},
+		}}, nil
+	}
+	mutated := false
+	removeWorktreeWithDaemonClient = func(
+		context.Context,
+		*kwtdaemon.Client,
+		kwt.RemovalRequest,
+	) (kwt.RemovalResult, error) {
+		mutated = true
+		return kwt.RemovalResult{}, nil
+	}
+
+	_, err := removeWorktreeThroughDaemon(context.Background(), kwt.RemovalRequest{
+		ExpectedBranch: "topic",
+		ExpectedHead:   "abc123",
+	})
+
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.DaemonIncompatible))
+	assert.False(t, mutated)
+}
+
 func TestInventoryAcceptsVersionTwoDaemon(t *testing.T) {
 	observation := kwtdaemon.Observation{
 		State: kwtdaemon.RuntimeReady,

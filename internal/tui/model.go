@@ -519,7 +519,7 @@ func (m Model) mergeStructuralDashboard(rows []Row, warnings []string) Model {
 			markStale(rows[index])
 			continue
 		}
-		if sameCheckout(previous, rows[index]) && sameGeneration(previous, rows[index]) {
+		if sameCheckout(previous, rows[index]) {
 			rows[index].Status = previous.Status
 			continue
 		}
@@ -742,19 +742,15 @@ func remoteProjection(row Row) (Row, bool) {
 	return Row{Fleet: &fleetInfo}, true
 }
 
-// sameCheckout reports whether two rows sharing a path describe the same
-// checkout. A worktree that switched branches keeps its path, so matching on
-// path alone would hand the new branch the previous one's status and hub state.
+// sameCheckout reports whether two rows describe the same local checkout.
+// Branch, generation, and HEAD can all change while the path stays fixed.
 func sameCheckout(before, now Row) bool {
-	branch := rowBranch(now)
-	if branch != rowBranch(before) {
-		return false
+	if before.Entry == nil || now.Entry == nil {
+		return before.Entry == nil && now.Entry == nil
 	}
-	if branch == "" || branch == "HEAD" {
-		// Detached: the commit is what distinguishes one checkout from another.
-		return entryCommit(before) == entryCommit(now)
-	}
-	return true
+	return sameGeneration(before, now) &&
+		rowBranch(before) == rowBranch(now) &&
+		entryCommit(before) == entryCommit(now)
 }
 
 func entryCommit(row Row) string {
@@ -1217,8 +1213,12 @@ func (m Model) handleInputKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		selectedPath := rowPath(m.selectedRow())
 		wasFilter := m.inputMode == inputFilter
 		wasProjectFilter := m.inputMode == inputProjectFilter
+		wasNewBranch := m.inputMode == inputNewBranch
 		m.inputMode = inputNone
 		m.input.Blur()
+		if wasNewBranch {
+			m.branchRow = Row{}
+		}
 		if wasFilter {
 			m.filter = ""
 			m.input.SetValue("")
@@ -1243,14 +1243,20 @@ func (m Model) handleInputKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		switch m.inputMode {
 		case inputNewBranch:
 			branch := strings.TrimSpace(m.input.Value())
+			target := m.branchRow
 			m.inputMode = inputNone
 			m.input.Blur()
 			m.input.SetValue("")
+			m.branchRow = Row{}
 			if branch == "" {
 				m.message = "branch name required"
 				return m, nil
 			}
-			row := m.selectedRow()
+			row, ok := m.currentBranchTarget(target)
+			if !ok {
+				m.message = "project inventory changed; review the current row and try again"
+				return m, nil
+			}
 			return m.startCreateWorktree(row, branch, "", branch)
 		case inputFilter:
 			m.inputMode = inputNone
@@ -1404,12 +1410,17 @@ func (m Model) handleExistingBranchKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		branch := options[clampCursor(m.branchCursor, len(options))]
-		row := m.branchRow
+		target := m.branchRow
 		m.inputMode = inputNone
 		m.input.Blur()
 		m.input.SetValue("")
 		m.branches = nil
 		m.branchRow = Row{}
+		row, ok := m.currentBranchTarget(target)
+		if !ok {
+			m.message = "project inventory changed; review the current row and try again"
+			return m, nil
+		}
 		return m.startCreateWorktree(
 			row,
 			branch.Name,
@@ -1511,6 +1522,23 @@ func (m Model) currentConfirmationRow(confirmed Row) (Row, bool) {
 			row.TmuxEndpoint != confirmed.TmuxEndpoint ||
 			row.SessionLive != confirmed.SessionLive {
 			return Row{}, false
+		}
+		return row, true
+	}
+	return Row{}, false
+}
+
+func (m Model) currentBranchTarget(target Row) (Row, bool) {
+	if target.Entry == nil {
+		return Row{}, false
+	}
+	for _, row := range m.rows {
+		if row.Entry == nil ||
+			pathIdentity(rowPath(row)) != pathIdentity(rowPath(target)) ||
+			!sameGeneration(target, row) ||
+			!equalProjectKey(rowProjectKey(target), rowProjectKey(row)) ||
+			!m.rowScopeCurrent(row) {
+			continue
 		}
 		return row, true
 	}
@@ -1631,6 +1659,7 @@ func (m Model) startNewBranch() (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.inputMode = inputNewBranch
+	m.branchRow = row
 	m.input.Prompt = fmt.Sprintf("new branch in %s: ", rowRepoName(row))
 	m.input.SetValue("")
 	return m, m.input.Focus()

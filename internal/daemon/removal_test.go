@@ -279,6 +279,10 @@ func removalTestClient(t *testing.T, remover kwt.Remover) (*Client, func()) {
 	)
 	require.NoError(t, err)
 	client := newClient(endpoint, "secret", server.Client())
-	client.capabilities = []string{CapabilityRemoval, CapabilityGuardedRemoval}
+	client.capabilities = []string{
+		CapabilityRemoval,
+		CapabilityGuardedRemoval,
+		CapabilityCheckoutRemoval,
+	}
 	return client, server.Close
 }

@@ -403,7 +403,9 @@ func (c *Client) RemoveWorktree(
 		DeleteBranch:       request.DeleteBranch,
 		ForceDeleteBranch:  request.ForceDeleteBranch,
 	})
-	if request.Session != nil || slices.Contains(c.capabilities, CapabilityGuardedRemoval) {
+	if request.Session != nil ||
+		slices.Contains(c.capabilities, CapabilityGuardedRemoval) ||
+		slices.Contains(c.capabilities, CapabilityCheckoutRemoval) {
 		expansion, expansionErr := captureRemovalExpansionContext()
 		if expansionErr != nil && request.Session != nil {
 			return kwt.RemovalResult{}, expansionErr

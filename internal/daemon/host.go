@@ -249,6 +249,7 @@ func runHost(
 				CapabilityInventory,
 				CapabilityRemoval,
 				CapabilityGuardedRemoval,
+				CapabilityCheckoutRemoval,
 			},
 			StartedAt: startedAt,
 		},

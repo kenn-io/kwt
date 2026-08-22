@@ -193,6 +193,7 @@ func TestNewRuntimeRecordAdvertisesCurrentDomainContracts(t *testing.T) {
 	assert.Contains(t, capabilities, "project.removal.v1")
 	assert.Contains(t, capabilities, "worktree.removal.v1")
 	assert.Contains(t, capabilities, "worktree.removal.v2")
+	assert.Contains(t, capabilities, "worktree.removal.v3")
 	assert.Contains(t, capabilities, CapabilityOperationStream)
 	assert.True(t, slices.IsSorted(capabilities))
 }

@@ -172,6 +172,29 @@ func TestBackgroundGlobalPreservesFreshProjectStatus(t *testing.T) {
 	assert.Equal(t, models.WorktreeStatusModified, model.rows[0].Status.Status)
 }
 
+func TestBackgroundGlobalMakesProjectStaleWhenHeadChanges(t *testing.T) {
+	project := "github.com/acme/widget"
+	row := testRow("widget", "topic", "/w/widget/topic")
+	row.Entry.RepositoryInfo.FullPath = project
+	row.Entry.Generation = "11111111111111111111111111111111"
+	row.Entry.CommitHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	row.Status = &models.WorktreeStatus{Path: rowPath(row), Status: models.WorktreeStatusModified}
+	model := currentModelWithRows(t, &fakeBackend{}, row)
+	structural := row
+	entry := *structural.Entry
+	entry.CommitHash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	structural.Entry = &entry
+	structural.Status = &models.WorktreeStatus{Path: rowPath(row), Status: models.WorktreeStatusUnknown}
+
+	model, _ = updateModel(t, model, inventoryMsg{
+		request: InventoryRequest{Scope: InventoryCurrentDashboard},
+		result:  InventoryResult{Rows: []Row{structural}, ObservedAt: time.Now(), Current: true},
+	})
+
+	assert.False(t, model.projectFresh[projectFreshnessKey(project)].Current)
+	assert.Equal(t, models.WorktreeStatusUnknown, model.rows[0].Status.Status)
+}
+
 func TestBackgroundGlobalMakesProjectStaleWhenWorktreeAppears(t *testing.T) {
 	project := "github.com/acme/widget"
 	existing := testRow("widget", "main", "/w/widget/main")
@@ -1425,6 +1448,69 @@ func TestModelNewBranchAcceptsPaste(t *testing.T) {
 	assert.Equal(t, []string{""}, backend.createSources)
 }
 
+func TestModelBranchInputRejectsChangedTarget(t *testing.T) {
+	t.Run("new branch after generation change", func(t *testing.T) {
+		row := testRow("kwt", "main", "/w/kwt/main")
+		row.Entry.RepositoryInfo.FullPath = "github.com/example/kwt"
+		row.Entry.Generation = "11111111111111111111111111111111"
+		backend := &fakeBackend{createPath: "/w/kwt/topic"}
+		model := currentModelWithRows(t, backend, row)
+		model.backgroundGlobalStarted = true
+		model, _ = updateModel(t, model, press("n"))
+		replacement := row
+		entry := *replacement.Entry
+		entry.Generation = "22222222222222222222222222222222"
+		replacement.Entry = &entry
+		model, _ = updateModel(t, model, inventoryMsg{
+			request: InventoryRequest{
+				Scope: InventoryCurrentRepository, ProjectIdentity: rowProjectKey(row),
+			},
+			result: InventoryResult{
+				Rows: []Row{replacement}, ObservedAt: time.Now(), Current: true,
+			},
+		})
+		model, _ = updateModel(t, model, paste("topic"))
+
+		model, cmd := updateModel(t, model, press("enter"))
+
+		assert.Nil(t, cmd)
+		assert.Empty(t, backend.createCalls)
+		assert.Contains(t, model.message, "changed")
+	})
+
+	t.Run("existing branch after project change", func(t *testing.T) {
+		row := testRow("kwt", "main", "/w/kwt/main")
+		row.Entry.RepositoryInfo.FullPath = "github.com/example/kwt"
+		row.Entry.Generation = "11111111111111111111111111111111"
+		backend := &fakeBackend{
+			createPath: "/w/kwt/topic",
+			branches:   []models.Branch{{Name: "topic", Source: "topic"}},
+		}
+		model := currentModelWithRows(t, backend, row)
+		model, loadCmd := updateModel(t, model, press("b"))
+		require.NotNil(t, loadCmd)
+		model, _ = updateModel(t, model, loadCmd())
+		replacement := row
+		entry := *replacement.Entry
+		info := *entry.RepositoryInfo
+		info.FullPath = "github.com/example/replacement"
+		entry.RepositoryInfo = &info
+		replacement.Entry = &entry
+		model, _ = updateModel(t, model, inventoryMsg{
+			request: InventoryRequest{Scope: InventoryCurrentDashboard, CollectStatuses: true},
+			result: InventoryResult{
+				Rows: []Row{replacement}, ObservedAt: time.Now(), Current: true,
+			},
+		})
+
+		model, cmd := updateModel(t, model, press("enter"))
+
+		assert.Nil(t, cmd)
+		assert.Empty(t, backend.createCalls)
+		assert.Contains(t, model.message, "changed")
+	})
+}
+
 func TestModelExistingBranchPickerCreatesSelectedRemote(t *testing.T) {
 	backend := &fakeBackend{
 		createPath: "/w/kwt/remote-ready",
@@ -2079,12 +2165,31 @@ func TestKillConfirmationRejectsChangedOrStaleRow(t *testing.T) {
 				return model
 			},
 		},
+		{
+			name: "worktree head changed",
+			change: func(t *testing.T, model Model, row Row) Model {
+				entry := *row.Entry
+				entry.CommitHash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+				row.Entry = &entry
+				model.backgroundGlobalStarted = true
+				model, _ = updateModel(t, model, inventoryMsg{
+					request: InventoryRequest{
+						Scope: InventoryCurrentRepository, ProjectIdentity: rowProjectKey(row),
+					},
+					result: InventoryResult{
+						Rows: []Row{row}, ObservedAt: time.Now(), Current: true,
+					},
+				})
+				return model
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			row := testRow("kwt", "feature", "/w/kwt/feature")
 			row.Entry.Generation = "11111111111111111111111111111111"
+			row.Entry.CommitHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 			row.SessionLive = true
 			row.SessionName = "kwt-workspace-kwt-feature"
 			backend := &fakeBackend{}
