@@ -128,6 +128,27 @@ func TestModelLoadsCacheThenGlobalForDirectoryPerspective(t *testing.T) {
 	assert.False(t, backend.inventoryCalls[1].CollectStatuses)
 }
 
+func TestInitialProjectRefreshFailureStillStartsBackgroundGlobal(t *testing.T) {
+	project := "github.com/acme/widget"
+	row := testRow("widget", "main", "/work/widget")
+	row.Entry.RepositoryInfo.FullPath = project
+	model := NewModel(&fakeBackend{}, rowPath(row))
+	model.rows = []Row{row}
+
+	model, cmd := updateModel(t, model, inventoryMsg{
+		request: InventoryRequest{
+			Scope: InventoryCurrentRepository, ProjectIdentity: project,
+		},
+		err: errors.New("repository unavailable"),
+	})
+
+	require.NotNil(t, cmd)
+	assert.True(t, model.backgroundGlobalStarted)
+	assert.Equal(t, InventoryCurrentDashboard, model.fetchingRequest.Scope)
+	assert.False(t, model.fetchingRequest.CollectStatuses)
+	assert.Contains(t, model.message, "repository unavailable")
+}
+
 func TestBackgroundGlobalPreservesFreshProjectStatus(t *testing.T) {
 	project := "github.com/acme/widget"
 	row := testRow("widget", "topic", "/w/widget/topic")

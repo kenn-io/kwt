@@ -365,6 +365,10 @@ func (m Model) applyInventory(msg inventoryMsg) (Model, tea.Cmd) {
 		if len(m.removalRefreshQueue) > 0 {
 			return m.startNextRemovalRefresh()
 		}
+		if msg.request.Scope == InventoryCurrentRepository && !m.backgroundGlobalStarted {
+			m.backgroundGlobalStarted = true
+			return m.startInventory(InventoryRequest{Scope: InventoryCurrentDashboard})
+		}
 		return m.startPendingRefresh()
 	}
 
