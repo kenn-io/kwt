@@ -389,7 +389,7 @@ func TestVersionOneUnguardedRemovalPreservesLegacyPayload(t *testing.T) {
 	assert.True(t, result.WorktreeRemoved)
 }
 
-func TestVersionThreeUnguardedRemovalIncludesExpansionContext(t *testing.T) {
+func TestVersionTwoUnguardedRemovalIncludesExpansionContext(t *testing.T) {
 	original := captureRemovalExpansionContext
 	captureRemovalExpansionContext = func() (kwt.ExpansionContext, error) {
 		return kwt.ExpansionContext{
@@ -408,11 +408,7 @@ func TestVersionThreeUnguardedRemovalIncludesExpansionContext(t *testing.T) {
 	}))
 	defer server.Close()
 	client := clientForUnverifiedServer(t, server, "secret")
-	client.capabilities = []string{
-		CapabilityRemoval,
-		CapabilityGuardedRemoval,
-		CapabilityCheckoutRemoval,
-	}
+	client.capabilities = []string{CapabilityRemoval, CapabilityGuardedRemoval}
 
 	result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{
 		RepositoryPath: "/repo", Path: "/repo/topic",

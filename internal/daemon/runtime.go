@@ -102,7 +102,6 @@ func NewRuntimeRecord(
 			CapabilityInventory,
 			CapabilityRemoval,
 			CapabilityGuardedRemoval,
-			CapabilityCheckoutRemoval,
 		}, ","),
 		metadataToken: token,
 	}
