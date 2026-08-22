@@ -70,6 +70,11 @@ status collection uses a bounded worker pool. Activity is the newest of the
 HEAD commit, worktree directory, and changed or untracked file times; Kwt does
 not scan every tracked file to order the dashboard.
 
+Confirmed deletions enter one background queue. The row immediately shows
+`removing…` while navigation and safe actions on other rows remain available.
+Kwt processes removals in confirmation order. A failed removal restores the
+row and reports the error; later queued removals still run.
+
 The dashboard is project-aware. Use `P` to set the active project perspective
 before creating a worktree. Press `n` for a new branch or `b` to search local
 and remote branches that are not already checked out. A selected remote branch
