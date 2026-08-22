@@ -24,9 +24,9 @@ func TestTUIBackendInventoryModesSeparateCurrencyAndStatus(t *testing.T) {
 	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	var requests []kwt.Request
 	var statusCalls int
-	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error) {
+	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, []string, error) {
 		statusCalls++
-		return map[string]*models.WorktreeStatus{}, nil
+		return map[string]*models.WorktreeStatus{}, nil, nil
 	}
 	backend.queryInventory = func(_ context.Context, request kwt.Request, _ bool, _ io.Writer) (kwt.Result, error) {
 		requests = append(requests, request)
@@ -181,8 +181,8 @@ func TestTUIBackendMutationUsesLatestDaemonConfiguration(t *testing.T) {
 	currentBase := filepath.Join(t.TempDir(), "current")
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
 	backend.resolveSessions = resolveStoppedWorkspaceSessions
-	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error) {
-		return map[string]*models.WorktreeStatus{}, nil
+	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, []string, error) {
+		return map[string]*models.WorktreeStatus{}, nil, nil
 	}
 	backend.queryInventory = func(
 		context.Context,
@@ -226,9 +226,9 @@ func TestTUIBackendDaemonInventoryUsesCacheThenCurrent(t *testing.T) {
 	backend := newTUIBackendWithLaunchDir(cfg, "/launch")
 	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	var statusBaseDirectory string
-	backend.collectStatuses = func(_ context.Context, baseDirectory string, _ []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error) {
+	backend.collectStatuses = func(_ context.Context, baseDirectory string, _ []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, []string, error) {
 		statusBaseDirectory = baseDirectory
-		return map[string]*models.WorktreeStatus{}, nil
+		return map[string]*models.WorktreeStatus{}, nil, nil
 	}
 	backend.registerProject = nil
 	backend.registerWorkspace = nil
@@ -376,8 +376,8 @@ func TestTUIBackendRegistersOnlyCurrentLaunchInventory(t *testing.T) {
 		Worktree: models.WorktreeConfig{BaseDir: t.TempDir()},
 	}, "/launch")
 	backend.resolveSessions = resolveStoppedWorkspaceSessions
-	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error) {
-		return map[string]*models.WorktreeStatus{}, nil
+	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, []string, error) {
+		return map[string]*models.WorktreeStatus{}, nil, nil
 	}
 	backend.registerWorkspace = nil
 	var registered []models.Project
@@ -433,8 +433,8 @@ func TestTUIBackendCurrentInventoryIncludesNewLaunchWorkspace(t *testing.T) {
 		Worktree: models.WorktreeConfig{BaseDir: t.TempDir()},
 	}, "/launch")
 	backend.resolveSessions = resolveStoppedWorkspaceSessions
-	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error) {
-		return map[string]*models.WorktreeStatus{}, nil
+	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, []string, error) {
+		return map[string]*models.WorktreeStatus{}, nil, nil
 	}
 	backend.registerProject = nil
 	backend.registerWorkspace = func(workspace models.Workspace) (models.Workspace, error) {

@@ -46,7 +46,7 @@ type tuiBackend struct {
 	discoverGlobalWorktrees   func(string) ([]*discovery.GlobalWorktreeEntry, error)
 	discoverProjectWorktrees  func(string) ([]*discovery.GlobalWorktreeEntry, error)
 	discoverLaunchWorktrees   func(string) ([]*discovery.GlobalWorktreeEntry, error)
-	collectStatuses           func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error)
+	collectStatuses           func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, []string, error)
 	resolveSessions           func(context.Context, []tmux.WorkspaceEndpointRequest) ([]tmux.WorkspaceSession, error)
 	liveEndpoints             func(context.Context, tmux.WorkspaceEndpointRequest) ([]tmux.SessionEndpoint, error)
 	ensureWorkspace           func(context.Context, string, string, models.Layout) (tmux.SessionEndpoint, error)
@@ -208,8 +208,9 @@ func (b *tuiBackend) LoadInventory(ctx context.Context, request dashboard.Invent
 	b.mu.Unlock()
 
 	var statusByPath map[string]*models.WorktreeStatus
+	var warnings []string
 	if request.CollectStatuses && collectStatuses != nil {
-		statusByPath, err = collectStatuses(ctx, baseDir, entries)
+		statusByPath, warnings, err = collectStatuses(ctx, baseDir, entries)
 		if err != nil {
 			return dashboard.InventoryResult{}, err
 		}
@@ -236,6 +237,7 @@ func (b *tuiBackend) LoadInventory(ctx context.Context, request dashboard.Invent
 	}
 	return dashboard.InventoryResult{
 		Rows:       rows,
+		Warnings:   warnings,
 		ObservedAt: result.ObservedAt,
 		Current:    result.Freshness == kwt.Fresh,
 	}, nil
@@ -335,8 +337,9 @@ func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboar
 	}
 
 	var statusByPath map[string]*models.WorktreeStatus
+	var statusWarnings []string
 	if includeStatuses {
-		statusByPath, discoveryErr = b.collectStatuses(
+		statusByPath, statusWarnings, discoveryErr = b.collectStatuses(
 			ctx,
 			b.cfg.Worktree.BaseDir,
 			entries,
@@ -355,7 +358,7 @@ func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboar
 		rows = append(rows, buildTUIRow(entry, st, worktreeSessions[index]))
 	}
 	rows = append(rows, workspaceRows(b.cfg.Workspaces, directorySessions)...)
-	return rows, nil, nil
+	return rows, statusWarnings, nil
 }
 
 func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]dashboard.Row, []string, error) {
@@ -390,8 +393,9 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 		renderWorkspaces = append([]models.Workspace(nil), b.cfg.Workspaces...)
 	}
 	var statusByPath map[string]*models.WorktreeStatus
+	var statusWarnings []string
 	if includeStatuses {
-		statusByPath, err = b.collectStatuses(ctx, b.cfg.Worktree.BaseDir, entries)
+		statusByPath, statusWarnings, err = b.collectStatuses(ctx, b.cfg.Worktree.BaseDir, entries)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -413,7 +417,7 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 		rows = append(rows, buildTUIRow(entry, status, worktreeSessions[index]))
 	}
 	rows = append(rows, workspaceRows(renderWorkspaces, directorySessions)...)
-	return rows, nil, nil
+	return rows, statusWarnings, nil
 }
 
 func (b *tuiBackend) applyInventoryConfig(effective *models.Config) error {
@@ -1162,13 +1166,17 @@ func collectTUIStatuses(
 	ctx context.Context,
 	baseDir string,
 	entries []*discovery.GlobalWorktreeEntry,
-) (map[string]*models.WorktreeStatus, error) {
+) (map[string]*models.WorktreeStatus, []string, error) {
 	worktrees := make([]*models.Worktree, 0, len(entries))
 	for _, entry := range entries {
+		repository := ""
+		if entry.RepositoryInfo != nil {
+			repository = entry.RepositoryInfo.FullPath
+		}
 		worktrees = append(worktrees, &models.Worktree{
 			Path:       entry.Path,
 			Branch:     entry.Branch,
-			Repository: entry.RepositoryInfo.FullPath,
+			Repository: repository,
 			CommitHash: entry.CommitHash,
 			IsMain:     entry.IsMain,
 		})
@@ -1177,13 +1185,20 @@ func collectTUIStatuses(
 	collector := status.NewStatusCollectorWithOptions(tuiStatusCollectorOptions(baseDir))
 	collection, err := collector.CollectAll(ctx, worktrees)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	statusByPath := make(map[string]*models.WorktreeStatus, len(collection.Statuses))
 	for _, st := range collection.Statuses {
 		statusByPath[st.Path] = st
 	}
-	return statusByPath, nil
+	warnings := make([]string, 0, min(len(collection.Diagnostics), 8))
+	for _, diagnostic := range collection.Diagnostics[:min(len(collection.Diagnostics), 8)] {
+		warnings = append(warnings, fmt.Sprintf("status unavailable for %s: %v", diagnostic.Path, diagnostic.Err))
+	}
+	if len(collection.Diagnostics) > len(warnings) {
+		warnings = append(warnings, fmt.Sprintf("status unavailable for %d more worktrees", len(collection.Diagnostics)-len(warnings)))
+	}
+	return statusByPath, warnings, nil
 }
 
 func tuiStatusCollectorOptions(baseDir string) status.StatusCollectorOptions {

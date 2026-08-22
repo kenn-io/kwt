@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"charm.land/bubbles/v2/key"
@@ -16,6 +17,7 @@ import (
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 )
 
 type inputMode int
@@ -57,6 +59,18 @@ type fastRowsMsg struct {
 	err      error
 }
 
+type inventoryMsg struct {
+	request InventoryRequest
+	result  InventoryResult
+	err     error
+}
+
+type scopeFreshness struct {
+	ObservedAt time.Time
+	Current    bool
+	Diagnostic error
+}
+
 // fleetRowsMsg delivers the fleet overlay for the load identified by seq;
 // stale overlays (an intervening refresh bumped loadSeq) are dropped.
 type fleetRowsMsg struct {
@@ -92,33 +106,38 @@ type Model struct {
 	theme   theme
 	input   textinput.Model
 
-	rows                []Row
-	warnings            []string
-	cursor              int
-	filter              string
-	projectPerspective  string
-	projectFilter       string
-	projectSwitchCursor int
-	branches            []models.Branch
-	branchCursor        int
-	branchRow           Row
-	branchesLoading     bool
-	layouts             []string
-	selectedLayout      string
-	inputMode           inputMode
-	confirm             confirmState
-	fetching            bool
-	inventoryCurrent    bool
-	fleetPending        bool
-	fleetCancel         context.CancelFunc
-	loadSeq             int
-	pendingRefresh      bool
-	showHelp            bool
-	message             string
-	err                 error
-	stickyError         bool
-	handoff             Handoff
-	anchorPath          string
+	rows                    []Row
+	warnings                []string
+	cursor                  int
+	filter                  string
+	projectPerspective      string
+	projectFilter           string
+	projectSwitchCursor     int
+	branches                []models.Branch
+	branchCursor            int
+	branchRow               Row
+	branchesLoading         bool
+	layouts                 []string
+	selectedLayout          string
+	inputMode               inputMode
+	confirm                 confirmState
+	fetching                bool
+	fetchingRequest         InventoryRequest
+	inventoryCurrent        bool
+	projectFresh            map[string]scopeFreshness
+	globalFresh             scopeFreshness
+	backgroundGlobalStarted bool
+	now                     func() time.Time
+	fleetPending            bool
+	fleetCancel             context.CancelFunc
+	loadSeq                 int
+	pendingRefresh          bool
+	showHelp                bool
+	message                 string
+	err                     error
+	stickyError             bool
+	handoff                 Handoff
+	anchorPath              string
 	// creating holds the destinations of worktree creations whose command has
 	// not returned yet. Git publishes a worktree before copy and setup commands
 	// finish, so a discovered row is not proof that creation is complete.
@@ -133,15 +152,17 @@ func NewModel(backend Backend, baseDir string) Model {
 	input.Prompt = ""
 
 	return Model{
-		backend:  backend,
-		baseDir:  baseDir,
-		keys:     newKeyMap(),
-		theme:    newTheme(),
-		input:    input,
-		layouts:  backend.LayoutNames(),
-		fetching: true,
-		width:    100,
-		height:   30,
+		backend:      backend,
+		baseDir:      baseDir,
+		keys:         newKeyMap(),
+		theme:        newTheme(),
+		input:        input,
+		layouts:      backend.LayoutNames(),
+		fetching:     true,
+		projectFresh: make(map[string]scopeFreshness),
+		now:          time.Now,
+		width:        100,
+		height:       30,
 	}
 }
 
@@ -181,7 +202,7 @@ func anchorRowIndex(rows []Row, anchorPath string) (int, bool) {
 }
 
 func (m Model) Init() tea.Cmd {
-	return m.fetchFastRowsCmd()
+	return m.fetchInventoryCmd(InventoryRequest{Scope: InventoryCachedDashboard})
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -192,6 +213,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case fastRowsMsg:
 		return m.applyFastRows(msg)
+	case inventoryMsg:
+		return m.applyInventory(msg)
 	case rowsMsg:
 		return m.applyRows(msg, true)
 	case fleetRowsMsg:
@@ -297,6 +320,161 @@ func (m Model) applyFastRows(msg fastRowsMsg) (Model, tea.Cmd) {
 	}
 	next.fetching = true
 	return next, next.fetchRowsCmd()
+}
+
+func (m Model) applyInventory(msg inventoryMsg) (Model, tea.Cmd) {
+	m.fetching = false
+	if msg.err != nil {
+		freshness := scopeFreshness{Diagnostic: msg.err}
+		switch msg.request.Scope {
+		case InventoryCurrentRepository:
+			freshness.ObservedAt = m.projectFresh[msg.request.ProjectIdentity].ObservedAt
+			m.projectFresh[msg.request.ProjectIdentity] = freshness
+			m.message = projectRefreshErrorMessage(msg.err)
+		case InventoryCachedDashboard, InventoryCurrentDashboard:
+			freshness.ObservedAt = m.globalFresh.ObservedAt
+			m.globalFresh = freshness
+		}
+		return m.startPendingRefresh()
+	}
+
+	switch msg.request.Scope {
+	case InventoryCachedDashboard:
+		m.globalFresh = scopeFreshness{ObservedAt: msg.result.ObservedAt}
+		m = m.replaceInventoryRows(msg.result.Rows, msg.result.Warnings, false)
+		if m.projectPerspective == "" && m.anchorPath != "" {
+			m.projectPerspective = launchPerspective(m.rows, m.anchorPath)
+		}
+		if m.projectPerspective != "" {
+			return m.startInventory(m.repositoryRequest(m.projectPerspective))
+		}
+		m.backgroundGlobalStarted = true
+		return m.startInventory(InventoryRequest{
+			Scope: InventoryCurrentDashboard, CollectStatuses: true,
+		})
+	case InventoryCurrentRepository:
+		oldRows := m.filteredRows()
+		oldCursor := m.cursor
+		m.rows = mergeRepositoryRows(m.rows, msg.result.Rows, msg.request.ProjectIdentity)
+		m.rows = mergeCreatingRows(m.rows, m.rows, m.creating)
+		m.cursor = anchorCursorByPath(oldRows, oldCursor, m.filteredRows())
+		m.warnings = msg.result.Warnings
+		m.projectFresh[msg.request.ProjectIdentity] = scopeFreshness{
+			ObservedAt: msg.result.ObservedAt, Current: msg.result.Current,
+		}
+		m.inventoryCurrent = msg.result.Current
+		if m.pendingRefresh {
+			return m.startPendingRefresh()
+		}
+		if !m.backgroundGlobalStarted {
+			m.backgroundGlobalStarted = true
+			return m.startInventory(InventoryRequest{Scope: InventoryCurrentDashboard})
+		}
+		return m.startFleetMerge()
+	case InventoryCurrentDashboard:
+		if msg.request.CollectStatuses {
+			m = m.replaceInventoryRows(msg.result.Rows, msg.result.Warnings, msg.result.Current)
+		} else {
+			m = m.mergeStructuralDashboard(msg.result.Rows, msg.result.Warnings)
+		}
+		m.globalFresh = scopeFreshness{ObservedAt: msg.result.ObservedAt, Current: msg.result.Current}
+		m.inventoryCurrent = msg.result.Current
+		if m.pendingRefresh {
+			return m.startPendingRefresh()
+		}
+		return m.startFleetMerge()
+	default:
+		m.err = fmt.Errorf("unknown inventory scope %d", msg.request.Scope)
+		return m, nil
+	}
+}
+
+func projectRefreshErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	if service.IsCode(err, service.InteractionRequired) {
+		return "project config requires trust; run kwt list there once"
+	}
+	return err.Error()
+}
+
+func (m Model) replaceInventoryRows(rows []Row, warnings []string, current bool) Model {
+	oldRows := m.filteredRows()
+	oldCursor := m.cursor
+	hadRows := len(m.rows) > 0
+	rows = mergeCreatingRows(append([]Row(nil), rows...), m.rows, m.creating)
+	sortRows(rows)
+	m.rows = rows
+	m.warnings = warnings
+	m.inventoryCurrent = current
+	if !hadRows && m.anchorPath != "" {
+		m.projectPerspective = launchPerspective(rows, m.anchorPath)
+	}
+	filtered := m.filteredRows()
+	if m.anchorPath != "" {
+		if index, ok := anchorRowIndex(filtered, m.anchorPath); ok {
+			m.cursor = index
+		} else {
+			m.cursor = anchorCursorByPath(oldRows, oldCursor, filtered)
+		}
+		if hadRows || len(rows) > 0 {
+			m.anchorPath = ""
+		}
+	} else {
+		m.cursor = anchorCursorByPath(oldRows, oldCursor, filtered)
+	}
+	m.cursor = clampCursor(m.cursor, len(filtered))
+	m = m.cancelFleetMerge()
+	m.fleetPending = false
+	return m
+}
+
+func (m Model) mergeStructuralDashboard(rows []Row, warnings []string) Model {
+	statusByPath := make(map[string]*models.WorktreeStatus)
+	for _, row := range m.rows {
+		if m.projectFresh[rowProjectKey(row)].Current && row.Status != nil {
+			statusByPath[pathIdentity(rowPath(row))] = row.Status
+		}
+	}
+	for index := range rows {
+		if status := statusByPath[pathIdentity(rowPath(rows[index]))]; status != nil {
+			rows[index].Status = status
+		}
+	}
+	return m.replaceInventoryRows(rows, warnings, false)
+}
+
+func (m Model) repositoryRequest(project string) InventoryRequest {
+	workingDirectory := ""
+	for _, row := range m.rows {
+		if equalProjectKey(rowProjectKey(row), project) && row.Entry != nil {
+			workingDirectory = row.Entry.Path
+			if row.Entry.IsMain {
+				break
+			}
+		}
+	}
+	return InventoryRequest{
+		Scope: InventoryCurrentRepository, WorkingDirectory: workingDirectory,
+		ProjectIdentity: project, CollectStatuses: true,
+	}
+}
+
+func (m Model) startInventory(request InventoryRequest) (Model, tea.Cmd) {
+	m.fetching = true
+	m.fetchingRequest = request
+	return m, m.fetchInventoryCmd(request)
+}
+
+func (m Model) startFleetMerge() (Model, tea.Cmd) {
+	if len(m.rows) == 0 {
+		return m, nil
+	}
+	m.fleetPending = true
+	ctx, cancel := context.WithCancel(context.Background())
+	m.fleetCancel = cancel
+	return m, m.fleetRowsCmd(ctx, m.loadSeq, m.rows)
 }
 
 // carryEnrichment keeps what a fast load cannot know. ListFast is authoritative
@@ -644,11 +822,17 @@ func (m Model) startPendingRefresh() (Model, tea.Cmd) {
 // arrives anyway.
 func (m Model) startFetch() (Model, tea.Cmd) {
 	m.loadSeq++
-	m.fetching = true
 	m.inventoryCurrent = false
 	m.fleetPending = false
 	m = m.cancelFleetMerge()
-	return m, m.fetchFastRowsCmd()
+	if m.projectPerspective != "" {
+		freshness := m.projectFresh[m.projectPerspective]
+		freshness.Current = false
+		m.projectFresh[m.projectPerspective] = freshness
+		return m.startInventory(m.repositoryRequest(m.projectPerspective))
+	}
+	m.globalFresh.Current = false
+	return m.startInventory(InventoryRequest{Scope: InventoryCurrentDashboard, CollectStatuses: true})
 }
 
 // mergeCreatingRows keeps pending creations visible across a listing that has
@@ -750,14 +934,18 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if m.inputMode != inputNone {
 		return m.handleInputKey(msg)
 	}
-	if !m.inventoryCurrent && (key.Matches(msg, m.keys.Open) ||
+	if (key.Matches(msg, m.keys.Open) ||
 		key.Matches(msg, m.keys.New) ||
 		key.Matches(msg, m.keys.Existing) ||
 		key.Matches(msg, m.keys.Delete) ||
 		key.Matches(msg, m.keys.Sync) ||
 		key.Matches(msg, m.keys.Shell) ||
-		key.Matches(msg, m.keys.Kill)) {
-		m.message = "inventory is refreshing; wait for current results"
+		key.Matches(msg, m.keys.Kill)) && !m.selectedScopeCurrent() {
+		if m.selectedRow().Workspace != nil {
+			m.message = "global inventory is refreshing; wait for current results"
+		} else {
+			m.message = "project inventory is refreshing; wait for current results"
+		}
 		return m, nil
 	}
 
@@ -833,6 +1021,21 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m Model) selectedScopeCurrent() bool {
+	row := m.selectedRow()
+	if row.Workspace != nil || row.Entry == nil {
+		if !m.globalFresh.ObservedAt.IsZero() || m.globalFresh.Diagnostic != nil {
+			return m.globalFresh.Current
+		}
+		return m.inventoryCurrent
+	}
+	project := rowProjectKey(row)
+	if freshness, ok := m.projectFresh[project]; ok {
+		return freshness.Current
+	}
+	return m.inventoryCurrent
 }
 
 func (m Model) handleInputKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
@@ -1281,7 +1484,7 @@ func (m Model) chooseProjectPerspective() (Model, tea.Cmd) {
 	m.input.Blur()
 	m.input.SetValue("")
 	m.cursor = m.cursorAfterProjectChange(selectedPath)
-	return m, nil
+	return m.startFetch()
 }
 
 func (m Model) cursorAfterProjectChange(selectedPath string) int {
@@ -1375,6 +1578,14 @@ func (m Model) fetchRowsCmd() tea.Cmd {
 	return func() tea.Msg {
 		rows, warnings, err := backend.List(context.Background())
 		return rowsMsg{rows: rows, warnings: warnings, err: err}
+	}
+}
+
+func (m Model) fetchInventoryCmd(request InventoryRequest) tea.Cmd {
+	backend := m.backend
+	return func() tea.Msg {
+		result, err := backend.LoadInventory(context.Background(), request)
+		return inventoryMsg{request: request, result: result, err: err}
 	}
 }
 
@@ -1628,9 +1839,24 @@ func (m Model) renderStatusLine() string {
 		return m.input.View()
 	case m.message != "":
 		return m.theme.success.Render(m.message)
+	case m.globalFresh.Diagnostic != nil:
+		return m.theme.warning.Render(m.globalFreshnessDiagnostic())
 	default:
 		return m.renderSelectionDetails()
 	}
+}
+
+func (m Model) globalFreshnessDiagnostic() string {
+	age := "unknown age"
+	if !m.globalFresh.ObservedAt.IsZero() {
+		duration := max(m.now().Sub(m.globalFresh.ObservedAt), 0)
+		if duration < time.Minute {
+			age = fmt.Sprintf("%ds old", int(duration/time.Second))
+		} else {
+			age = fmt.Sprintf("%dm old", int(duration/time.Minute))
+		}
+	}
+	return fmt.Sprintf("global inventory %s · %v", age, m.globalFresh.Diagnostic)
 }
 
 func (m Model) renderSelectionDetails() string {
