@@ -139,6 +139,96 @@ func (b *tuiBackend) List(ctx context.Context) ([]dashboard.Row, []string, error
 	return b.list(ctx, true)
 }
 
+func (b *tuiBackend) LoadInventory(ctx context.Context, request dashboard.InventoryRequest) (dashboard.InventoryResult, error) {
+	b.mu.Lock()
+	queryInventory := b.queryInventory
+	launchDir := b.launchDir
+	stderr := b.stderr
+	b.mu.Unlock()
+	if queryInventory == nil {
+		rows, warnings, err := b.list(ctx, request.CollectStatuses)
+		return dashboard.InventoryResult{Rows: rows, Warnings: warnings, Current: err == nil}, err
+	}
+
+	query := kwt.Request{IncludeProtectedSockets: true, LaunchDirectory: launchDir}
+	interactive := config.StdinInteractive()
+	switch request.Scope {
+	case dashboard.InventoryCachedDashboard:
+		query.View = kwt.ViewDashboard
+	case dashboard.InventoryCurrentRepository:
+		query.View = kwt.ViewRepository
+		query.WorkingDirectory = request.WorkingDirectory
+		interactive = false
+	case dashboard.InventoryCurrentDashboard:
+		query.View = kwt.ViewDashboard
+		query.RequireCurrent = true
+	default:
+		return dashboard.InventoryResult{}, fmt.Errorf("unknown inventory scope %d", request.Scope)
+	}
+
+	result, err := queryInventory(ctx, query, interactive, stderr)
+	if err != nil {
+		return dashboard.InventoryResult{}, err
+	}
+	entries := make([]*discovery.GlobalWorktreeEntry, 0, len(result.Snapshot.Entries))
+	for _, entry := range result.Snapshot.Entries {
+		entries = append(entries, dashboardInventoryEntry(entry))
+	}
+
+	b.mu.Lock()
+	if request.Scope == dashboard.InventoryCurrentDashboard && result.Freshness == kwt.Fresh {
+		if err := b.applyInventoryConfigLocked(result.Snapshot.Config); err != nil {
+			b.mu.Unlock()
+			return dashboard.InventoryResult{}, err
+		}
+		launchEntries := make([]*discovery.GlobalWorktreeEntry, 0, len(result.Snapshot.LaunchEntries))
+		for _, entry := range result.Snapshot.LaunchEntries {
+			launchEntries = append(launchEntries, dashboardInventoryEntry(entry))
+		}
+		b.registerLaunchProject(ctx, launchEntries)
+		b.registerLaunchWorkspace(launchEntries)
+	}
+	baseDir := ""
+	var workspaces []models.Workspace
+	if b.cfg != nil {
+		baseDir = b.cfg.Worktree.BaseDir
+		if request.Scope != dashboard.InventoryCurrentRepository {
+			workspaces = append([]models.Workspace(nil), b.cfg.Workspaces...)
+		}
+	}
+	collectStatuses := b.collectStatuses
+	resolveSessions := b.resolveSessions
+	b.mu.Unlock()
+
+	var statusByPath map[string]*models.WorktreeStatus
+	if request.CollectStatuses && collectStatuses != nil {
+		statusByPath, err = collectStatuses(ctx, baseDir, entries)
+		if err != nil {
+			return dashboard.InventoryResult{}, err
+		}
+	}
+	worktreeSessions, directorySessions, err := resolveDashboardSessionsWith(
+		ctx, resolveSessions, entries, workspaces,
+	)
+	if err != nil {
+		return dashboard.InventoryResult{}, err
+	}
+	rows := make([]dashboard.Row, 0, len(entries)+len(workspaces))
+	for index, entry := range entries {
+		worktreeStatus := statusByPath[entry.Path]
+		if worktreeStatus == nil {
+			worktreeStatus = unknownStatusForEntry(entry)
+		}
+		rows = append(rows, buildTUIRow(entry, worktreeStatus, worktreeSessions[index]))
+	}
+	rows = append(rows, workspaceRows(workspaces, directorySessions)...)
+	return dashboard.InventoryResult{
+		Rows:       rows,
+		ObservedAt: result.ObservedAt,
+		Current:    result.Freshness == kwt.Fresh,
+	}, nil
+}
+
 func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboard.Row, []string, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -358,6 +448,15 @@ func (b *tuiBackend) resolveDashboardSessions(
 	entries []*discovery.GlobalWorktreeEntry,
 	workspaces []models.Workspace,
 ) ([]tmux.WorkspaceSession, []tmux.WorkspaceSession, error) {
+	return resolveDashboardSessionsWith(ctx, b.resolveSessions, entries, workspaces)
+}
+
+func resolveDashboardSessionsWith(
+	ctx context.Context,
+	resolveSessions func(context.Context, []tmux.WorkspaceEndpointRequest) ([]tmux.WorkspaceSession, error),
+	entries []*discovery.GlobalWorktreeEntry,
+	workspaces []models.Workspace,
+) ([]tmux.WorkspaceSession, []tmux.WorkspaceSession, error) {
 	requests := make([]tmux.WorkspaceEndpointRequest, 0, len(entries)+len(workspaces))
 	entryIndexes := make([]int, 0, len(entries))
 	worktreeSessions := make([]tmux.WorkspaceSession, len(entries))
@@ -397,7 +496,7 @@ func (b *tuiBackend) resolveDashboardSessions(
 			WorkspacePath: workspace.Path,
 		})
 	}
-	resolved, err := b.resolveSessions(ctx, requests)
+	resolved, err := resolveSessions(ctx, requests)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -450,8 +549,18 @@ func bestEffortDashboardSessionResolver(
 // wanted.
 func (b *tuiBackend) MergeFleet(ctx context.Context, rows []dashboard.Row) ([]dashboard.Row, []string) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.mergeFleetRows(ctx, rows)
+	snapshot := tuiBackend{
+		readFleetState: b.readFleetState,
+		now:            b.now,
+	}
+	if b.cfg != nil {
+		cfg := *b.cfg
+		cfg.Projects = append([]models.Project(nil), b.cfg.Projects...)
+		cfg.Workspaces = append([]models.Workspace(nil), b.cfg.Workspaces...)
+		snapshot.cfg = &cfg
+	}
+	b.mu.Unlock()
+	return snapshot.mergeFleetRows(ctx, rows)
 }
 
 func (b *tuiBackend) mergeFleetRows(ctx context.Context, rows []dashboard.Row) ([]dashboard.Row, []string) {

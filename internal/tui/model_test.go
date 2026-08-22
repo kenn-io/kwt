@@ -74,6 +74,19 @@ func (b *fakeBackend) List(ctx context.Context) ([]Row, []string, error) {
 	return append([]Row(nil), b.rows...), nil, nil
 }
 
+func (b *fakeBackend) LoadInventory(_ context.Context, request InventoryRequest) (InventoryResult, error) {
+	if request.Scope == InventoryCachedDashboard {
+		b.fastListCalls++
+	} else {
+		b.listCalls++
+	}
+	return InventoryResult{
+		Rows:       append([]Row(nil), b.rows...),
+		ObservedAt: time.Now(),
+		Current:    request.Scope != InventoryCachedDashboard,
+	}, nil
+}
+
 func (b *fakeBackend) MergeFleet(ctx context.Context, rows []Row) ([]Row, []string) {
 	b.mergeFleetCalls++
 	b.mergeCtx = ctx

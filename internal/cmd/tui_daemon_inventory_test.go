@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -14,8 +15,86 @@ import (
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/tmux"
+	dashboard "go.kenn.io/kwt/internal/tui"
 	"go.kenn.io/kwt/pkg/models"
 )
+
+func TestTUIBackendInventoryModesSeparateCurrencyAndStatus(t *testing.T) {
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "/launch")
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
+	var requests []kwt.Request
+	var statusCalls int
+	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, error) {
+		statusCalls++
+		return map[string]*models.WorktreeStatus{}, nil
+	}
+	backend.queryInventory = func(_ context.Context, request kwt.Request, _ bool, _ io.Writer) (kwt.Result, error) {
+		requests = append(requests, request)
+		return kwt.Result{Freshness: kwt.Fresh, Snapshot: kwt.Snapshot{
+			Config:  &models.Config{},
+			Entries: []kwt.Entry{{Path: "/work", IsMain: true, Repository: kwt.Repository{FullPath: "github.com/acme/widget"}}},
+		}}, nil
+	}
+
+	_, _ = backend.LoadInventory(context.Background(), dashboard.InventoryRequest{Scope: dashboard.InventoryCachedDashboard})
+	_, _ = backend.LoadInventory(context.Background(), dashboard.InventoryRequest{Scope: dashboard.InventoryCurrentDashboard})
+	_, _ = backend.LoadInventory(context.Background(), dashboard.InventoryRequest{Scope: dashboard.InventoryCurrentDashboard, CollectStatuses: true})
+
+	require.Len(t, requests, 3)
+	assert.False(t, requests[0].RequireCurrent)
+	assert.True(t, requests[1].RequireCurrent)
+	assert.True(t, requests[2].RequireCurrent)
+	assert.Equal(t, 1, statusCalls)
+}
+
+func TestCurrentDashboardWithoutStatusStillAppliesConfigAndLaunchRegistration(t *testing.T) {
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "/launch")
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
+	var registered []string
+	backend.registerProject = func(_ context.Context, project models.Project) error {
+		registered = append(registered, project.Path)
+		return nil
+	}
+	backend.registerWorkspace = nil
+	backend.queryInventory = func(context.Context, kwt.Request, bool, io.Writer) (kwt.Result, error) {
+		return kwt.Result{Freshness: kwt.Fresh, Snapshot: kwt.Snapshot{
+			Config:        &models.Config{Worktree: models.WorktreeConfig{BaseDir: "/fresh-base"}},
+			Entries:       []kwt.Entry{{Path: "/launch", IsMain: true, Repository: kwt.Repository{URL: "https://github.com/acme/widget.git", FullPath: "github.com/acme/widget"}}},
+			LaunchEntries: []kwt.Entry{{Path: "/launch", IsMain: true, Repository: kwt.Repository{URL: "https://github.com/acme/widget.git", FullPath: "github.com/acme/widget"}}},
+		}}, nil
+	}
+	_, err := backend.LoadInventory(context.Background(), dashboard.InventoryRequest{Scope: dashboard.InventoryCurrentDashboard})
+	require.NoError(t, err)
+	assert.Equal(t, "/fresh-base", backend.cfg.Worktree.BaseDir)
+	assert.Equal(t, []string{"/launch"}, registered)
+}
+
+func TestInventoryQueryDoesNotHoldBackendConfigurationLock(t *testing.T) {
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "/launch")
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	backend.queryInventory = func(context.Context, kwt.Request, bool, io.Writer) (kwt.Result, error) {
+		close(entered)
+		<-release
+		return kwt.Result{}, nil
+	}
+	done := make(chan struct{})
+	go func() {
+		_, _ = backend.LoadInventory(context.Background(), dashboard.InventoryRequest{Scope: dashboard.InventoryCurrentDashboard})
+		close(done)
+	}()
+	<-entered
+
+	layouts := make(chan []string, 1)
+	go func() { layouts <- backend.LayoutNames() }()
+	select {
+	case <-layouts:
+	case <-time.After(time.Second):
+		t.Fatal("inventory query held the backend configuration lock")
+	}
+	close(release)
+	<-done
+}
 
 func TestTUIBackendApplyInventoryConfigRewiresCleanupResolver(t *testing.T) {
 	t.Setenv("PATH", filepath.Join(t.TempDir(), "missing"))

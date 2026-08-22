@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"os/exec"
+	"time"
 
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/tmux"
@@ -34,6 +35,28 @@ type Row struct {
 	Creating     bool
 }
 
+type InventoryScope int
+
+const (
+	InventoryCachedDashboard InventoryScope = iota
+	InventoryCurrentRepository
+	InventoryCurrentDashboard
+)
+
+type InventoryRequest struct {
+	Scope            InventoryScope
+	WorkingDirectory string
+	ProjectIdentity  string
+	CollectStatuses  bool
+}
+
+type InventoryResult struct {
+	Rows       []Row
+	Warnings   []string
+	ObservedAt time.Time
+	Current    bool
+}
+
 // WorkspaceInfo is the TUI-facing view of one registered directory workspace.
 type WorkspaceInfo struct {
 	Name string
@@ -63,6 +86,7 @@ type FleetInfo struct {
 }
 
 type Backend interface {
+	LoadInventory(context.Context, InventoryRequest) (InventoryResult, error)
 	// ListFast returns enough local metadata to paint dashboard rows without
 	// waiting for repository status collection.
 	ListFast(ctx context.Context) ([]Row, []string, error)
