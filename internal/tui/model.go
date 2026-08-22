@@ -94,6 +94,21 @@ type actionDoneMsg struct {
 	pendingPath string
 }
 
+type removalJob struct {
+	row              Row
+	force            bool
+	key              string
+	projectIdentity  string
+	workingDirectory string
+}
+
+type removalDoneMsg struct {
+	job     removalJob
+	err     error
+	removed bool
+	refresh bool
+}
+
 type openInTmuxReadyMsg struct {
 	process *exec.Cmd
 	message string
@@ -142,9 +157,12 @@ type Model struct {
 	// creating holds the destinations of worktree creations whose command has
 	// not returned yet. Git publishes a worktree before copy and setup commands
 	// finish, so a discovered row is not proof that creation is complete.
-	creating []string
-	width    int
-	height   int
+	creating            []string
+	removalQueue        []removalJob
+	removalActive       *removalJob
+	removalRefreshQueue []InventoryRequest
+	width               int
+	height              int
 }
 
 func NewModel(backend Backend, baseDir string) Model {
@@ -222,6 +240,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyFleetRows(msg)
 	case actionDoneMsg:
 		return m.applyActionDone(msg)
+	case removalDoneMsg:
+		return m.applyRemovalDone(msg)
 	case openInTmuxReadyMsg:
 		return m.applyOpenInTmuxReady(msg)
 	case branchListMsg:
@@ -336,6 +356,9 @@ func (m Model) applyInventory(msg inventoryMsg) (Model, tea.Cmd) {
 			freshness.ObservedAt = m.globalFresh.ObservedAt
 			m.globalFresh = freshness
 		}
+		if len(m.removalRefreshQueue) > 0 {
+			return m.startNextRemovalRefresh()
+		}
 		return m.startPendingRefresh()
 	}
 
@@ -364,6 +387,9 @@ func (m Model) applyInventory(msg inventoryMsg) (Model, tea.Cmd) {
 			ObservedAt: msg.result.ObservedAt, Current: msg.result.Current,
 		}
 		m.inventoryCurrent = msg.result.Current
+		if len(m.removalRefreshQueue) > 0 {
+			return m.startNextRemovalRefresh()
+		}
 		if m.pendingRefresh {
 			return m.startPendingRefresh()
 		}
@@ -935,6 +961,16 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if m.inputMode != inputNone {
 		return m.handleInputKey(msg)
 	}
+	if m.selectedRow().Removing && (key.Matches(msg, m.keys.Open) ||
+		key.Matches(msg, m.keys.New) ||
+		key.Matches(msg, m.keys.Existing) ||
+		key.Matches(msg, m.keys.Delete) ||
+		key.Matches(msg, m.keys.Sync) ||
+		key.Matches(msg, m.keys.Shell) ||
+		key.Matches(msg, m.keys.Kill)) {
+		m.message = "worktree removal is in progress"
+		return m, nil
+	}
 	if (key.Matches(msg, m.keys.New) ||
 		key.Matches(msg, m.keys.Existing) ||
 		key.Matches(msg, m.keys.Delete) ||
@@ -1316,7 +1352,7 @@ func (m Model) handleConfirmKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	m.confirm = confirmState{}
 	switch kind {
 	case confirmDelete:
-		return m, m.removeWorktreeCmd(row, force)
+		return m.enqueueRemoval(row, force)
 	case confirmKill:
 		return m, m.killSessionCmd(row)
 	case confirmUnregister:
@@ -1693,16 +1729,127 @@ func (m Model) materializeWorktreeCmd(row Row) tea.Cmd {
 	}
 }
 
-func (m Model) removeWorktreeCmd(row Row, force bool) tea.Cmd {
+func (m Model) enqueueRemoval(row Row, force bool) (Model, tea.Cmd) {
+	key := removalKey(row)
+	if key == "" || m.removalQueued(key) {
+		m.message = "worktree removal is already queued"
+		return m, nil
+	}
+	project := rowProjectKey(row)
+	job := removalJob{
+		row: row, force: force, key: key, projectIdentity: project,
+		workingDirectory: m.removalRefreshAnchor(project, rowPath(row)),
+	}
+	for index := range m.rows {
+		if removalKey(m.rows[index]) == key {
+			m.rows[index].Removing = true
+		}
+	}
+	m.removalQueue = append(m.removalQueue, job)
+	return m.startNextRemoval()
+}
+
+func removalKey(row Row) string {
+	generation := ""
+	if row.Entry != nil {
+		generation = row.Entry.Generation
+	}
+	return pathIdentity(rowPath(row)) + "\x00" + generation
+}
+
+func (m Model) removalQueued(key string) bool {
+	if m.removalActive != nil && m.removalActive.key == key {
+		return true
+	}
+	for _, job := range m.removalQueue {
+		if job.key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) removalRefreshAnchor(project, fallback string) string {
+	for _, row := range m.rows {
+		if row.Entry != nil && row.Entry.IsMain && equalProjectKey(rowProjectKey(row), project) {
+			return row.Entry.Path
+		}
+	}
+	return fallback
+}
+
+func (m Model) startNextRemoval() (Model, tea.Cmd) {
+	if m.removalActive != nil || len(m.removalQueue) == 0 {
+		return m, nil
+	}
+	job := m.removalQueue[0]
+	m.removalQueue = m.removalQueue[1:]
+	m.removalActive = &job
+	return m, m.removeWorktreeCmd(job)
+}
+
+func (m Model) removeWorktreeCmd(job removalJob) tea.Cmd {
 	return func() tea.Msg {
-		if err := m.backend.RemoveWorktree(context.Background(), row, force); err != nil {
-			return actionDoneMsg{
-				err:     err,
-				refresh: git.WorktreeWasRemoved(err) || actionRefreshRequired(err),
+		err := m.backend.RemoveWorktree(context.Background(), job.row, job.force)
+		return removalDoneMsg{
+			job: job, err: err,
+			removed: err == nil || git.WorktreeWasRemoved(err),
+			refresh: err == nil || git.WorktreeWasRemoved(err) || actionRefreshRequired(err),
+		}
+	}
+}
+
+func (m Model) applyRemovalDone(msg removalDoneMsg) (Model, tea.Cmd) {
+	m.removalActive = nil
+	if msg.removed {
+		oldRows := m.filteredRows()
+		oldCursor := m.cursor
+		m.rows = removeRowByPath(m.rows, rowPath(msg.job.row))
+		m.cursor = anchorCursorByPath(oldRows, oldCursor, m.filteredRows())
+	} else {
+		for index := range m.rows {
+			if removalKey(m.rows[index]) == msg.job.key {
+				m.rows[index].Removing = false
 			}
 		}
-		return actionDoneMsg{message: fmt.Sprintf("removed %s", rowLabel(row)), refresh: true}
 	}
+	if msg.err != nil {
+		m.err = msg.err
+		m.stickyError = msg.refresh
+		m.message = ""
+	} else {
+		m.message = fmt.Sprintf("removed %s", rowLabel(msg.job.row))
+	}
+	projectIdentity := msg.job.projectIdentity
+	if projectIdentity == "" {
+		projectIdentity = rowProjectKey(msg.job.row)
+	}
+	workingDirectory := msg.job.workingDirectory
+	if workingDirectory == "" {
+		workingDirectory = rowPath(msg.job.row)
+	}
+	if msg.refresh && projectIdentity != "" {
+		m.removalRefreshQueue = append(m.removalRefreshQueue, InventoryRequest{
+			Scope: InventoryCurrentRepository, ProjectIdentity: projectIdentity,
+			WorkingDirectory: workingDirectory, CollectStatuses: true,
+		})
+	}
+	if next, cmd := m.startNextRemoval(); cmd != nil {
+		return next, cmd
+	}
+	return m.startNextRemovalRefresh()
+}
+
+func (m Model) startNextRemovalRefresh() (Model, tea.Cmd) {
+	if len(m.removalRefreshQueue) == 0 {
+		return m, nil
+	}
+	request := m.removalRefreshQueue[0]
+	m.removalRefreshQueue = m.removalRefreshQueue[1:]
+	freshness := m.projectFresh[request.ProjectIdentity]
+	freshness.Current = false
+	m.projectFresh[request.ProjectIdentity] = freshness
+	return m.startInventory(request)
 }
 
 func actionRefreshRequired(err error) bool {

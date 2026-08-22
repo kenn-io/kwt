@@ -28,6 +28,7 @@ type fakeBackend struct {
 	materializePath   string
 	materializeErr    error
 	removeErr         error
+	removeWorktree    func(context.Context, Row, bool) error
 	killErr           error
 	openErr           error
 	openProcess       *exec.Cmd
@@ -312,7 +313,100 @@ func (b *fakeBackend) PreviewWorktree(row Row, branch string) (Row, error) {
 func (b *fakeBackend) RemoveWorktree(ctx context.Context, row Row, force bool) error {
 	b.removeCalls = append(b.removeCalls, rowPath(row))
 	b.removeForces = append(b.removeForces, force)
+	if b.removeWorktree != nil {
+		return b.removeWorktree(ctx, row, force)
+	}
 	return b.removeErr
+}
+
+func TestModelQueuesRemovalFIFOAndKeepsNavigationResponsive(t *testing.T) {
+	started := make(chan string, 2)
+	release := make(chan struct{}, 2)
+	backend := &fakeBackend{removeWorktree: func(_ context.Context, row Row, _ bool) error {
+		started <- rowPath(row)
+		<-release
+		return nil
+	}}
+	first := testRow("widget", "one", "/work/one")
+	second := testRow("widget", "two", "/work/two")
+	model := currentModelWithRows(t, backend, first, second)
+
+	model, firstCmd := confirmDeleteRow(t, model, 0)
+	require.NotNil(t, firstCmd)
+	model, secondCmd := confirmDeleteRow(t, model, 1)
+	assert.Nil(t, secondCmd)
+	assert.True(t, model.rows[0].Removing)
+	assert.True(t, model.rows[1].Removing)
+
+	messages := make(chan tea.Msg, 1)
+	go func() { messages <- firstCmd() }()
+	assert.Equal(t, "/work/one", <-started)
+	before := model.cursor
+	model, _ = updateModel(t, model, press("k"))
+	assert.NotEqual(t, before, model.cursor)
+	release <- struct{}{}
+	model, nextCmd := updateModel(t, model, <-messages)
+	require.NotNil(t, nextCmd)
+	go func() { messages <- nextCmd() }()
+	assert.Equal(t, "/work/two", <-started)
+	release <- struct{}{}
+	model, _ = updateModel(t, model, <-messages)
+	assert.Nil(t, model.removalActive)
+	assert.Empty(t, model.removalQueue)
+}
+
+func TestRemovalCompletionRefreshesOnlyAffectedProject(t *testing.T) {
+	backend := &fakeBackend{}
+	row := testRow("widget", "topic", "/work/widget/topic")
+	row.Entry.RepositoryInfo.FullPath = "github.com/acme/widget"
+	model := currentModelWithRows(t, backend, row)
+	job := removalJob{
+		row: row, key: removalKey(row), projectIdentity: "github.com/acme/widget",
+		workingDirectory: rowPath(row),
+	}
+	model.removalActive = &job
+
+	model, cmd := updateModel(t, model, removalDoneMsg{job: job, removed: true, refresh: true})
+	require.NotNil(t, cmd)
+	_ = cmd()
+	last := backend.inventoryCalls[len(backend.inventoryCalls)-1]
+	assert.Equal(t, InventoryCurrentRepository, last.Scope)
+	assert.Equal(t, "github.com/acme/widget", last.ProjectIdentity)
+}
+
+func TestIndeterminateRemovalKeepsRowUntilScopedRefresh(t *testing.T) {
+	row := testRow("widget", "topic", "/work/widget/topic")
+	row.Entry.RepositoryInfo.FullPath = "github.com/acme/widget"
+	model := currentModelWithRows(t, &fakeBackend{}, row)
+	job := removalJob{row: row, key: removalKey(row)}
+	model.rows[0].Removing = true
+	model.removalActive = &job
+
+	model, _ = updateModel(t, model, removalDoneMsg{
+		job: job, err: refreshRequiredActionError{errors.New("outcome unknown")}, refresh: true,
+	})
+
+	assert.NotNil(t, model.rows[0].Entry)
+	assert.False(t, model.rows[0].Removing)
+	assert.ErrorContains(t, model.err, "outcome unknown")
+}
+
+func currentModelWithRows(t *testing.T, backend *fakeBackend, rows ...Row) Model {
+	t.Helper()
+	model := NewModel(backend, rowPath(rows[0]))
+	model.rows = append([]Row(nil), rows...)
+	model.inventoryCurrent = true
+	for _, row := range rows {
+		model.projectFresh[rowProjectKey(row)] = scopeFreshness{ObservedAt: time.Now(), Current: true}
+	}
+	return model
+}
+
+func confirmDeleteRow(t *testing.T, model Model, index int) (Model, tea.Cmd) {
+	t.Helper()
+	model.cursor = index
+	model, _ = updateModel(t, model, press("d"))
+	return updateModel(t, model, press("y"))
 }
 
 func (b *fakeBackend) MaterializeWorktree(ctx context.Context, row Row) (string, error) {
@@ -1533,7 +1627,7 @@ func TestModelDeleteLiveWorktreeConfirmsAndCallsRemove(t *testing.T) {
 	_, cmd := updateModel(t, model, press("y"))
 	require.NotNil(t, cmd)
 	msg := cmd()
-	assert.IsType(t, actionDoneMsg{}, msg)
+	assert.IsType(t, removalDoneMsg{}, msg)
 	assert.Equal(t, []string{"/w/kwt/feature"}, backend.removeCalls)
 	assert.Equal(t, []bool{false}, backend.removeForces)
 }
@@ -1559,7 +1653,7 @@ func TestModelRefreshesAfterPartialRemovalWarning(t *testing.T) {
 	}
 	model := NewModel(backend, "/worktrees")
 	model, _ = updateModel(t, model, rowsMsg{rows: backend.rows})
-	done, ok := model.removeWorktreeCmd(row, false)().(actionDoneMsg)
+	done, ok := model.removeWorktreeCmd(removalJob{row: row, key: removalKey(row)})().(removalDoneMsg)
 	require.True(t, ok)
 
 	require.Error(t, done.err)
@@ -1588,7 +1682,7 @@ func TestModelRefreshesAfterIndeterminateRemoval(t *testing.T) {
 	}
 	model := NewModel(backend, "/worktrees")
 	model, _ = updateModel(t, model, rowsMsg{rows: backend.rows})
-	done, ok := model.removeWorktreeCmd(row, false)().(actionDoneMsg)
+	done, ok := model.removeWorktreeCmd(removalJob{row: row, key: removalKey(row)})().(removalDoneMsg)
 	require.True(t, ok)
 
 	require.Error(t, done.err)
@@ -1611,7 +1705,7 @@ func TestModelDeleteDirtyWorktreeConfirmsDiscardAndForcesRemove(t *testing.T) {
 	_, cmd := updateModel(t, model, press("y"))
 	require.NotNil(t, cmd)
 	msg := cmd()
-	assert.IsType(t, actionDoneMsg{}, msg)
+	assert.IsType(t, removalDoneMsg{}, msg)
 	assert.Equal(t, []string{"/w/kwt/feature"}, backend.removeCalls)
 	assert.Equal(t, []bool{true}, backend.removeForces)
 }

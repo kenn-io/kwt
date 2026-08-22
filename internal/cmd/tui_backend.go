@@ -75,6 +75,17 @@ type tuiRemovalEndpoint struct {
 	Protected bool
 }
 
+type tuiRemovalOperation struct {
+	request               kwt.RemovalRequest
+	row                   dashboard.Row
+	endpointRequest       tmux.WorkspaceEndpointRequest
+	config                *models.Config
+	remove                func(context.Context, kwt.RemovalRequest) (kwt.RemovalResult, error)
+	liveEndpoints         func(context.Context, tmux.WorkspaceEndpointRequest) ([]tmux.SessionEndpoint, error)
+	cleanupEndpoint       func(context.Context, tmux.SessionEndpoint, tmux.WorkspaceEndpointRequest) error
+	killProtectedEndpoint func(context.Context, tmux.SessionEndpoint, tmux.WorkspaceEndpointRequest) error
+}
+
 type removedWorktreeCleanupError struct{ err error }
 
 func (e *removedWorktreeCleanupError) Error() string { return e.err.Error() }
@@ -1764,30 +1775,54 @@ func sameRepositoryIdentity(left string, right string) bool {
 
 func (b *tuiBackend) RemoveWorktree(ctx context.Context, row dashboard.Row, force bool) error {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if row.Entry == nil {
-		return fmt.Errorf("no worktree selected")
-	}
-	if row.Entry.IsMain {
-		return fmt.Errorf("refusing to remove a main worktree")
-	}
-	generation := row.Entry.Generation
-	if strings.TrimSpace(generation) == "" {
-		return fmt.Errorf("worktree generation unavailable; refresh before removing")
-	}
-	repoRoot, err := b.repositoryRootForRow(row)
+	operation, err := b.prepareRemoval(row, force)
+	b.mu.Unlock()
 	if err != nil {
 		return err
 	}
-	endpointRequest := removalEndpointRequest(row)
-	result, removalErr := b.removeWorktree(ctx, kwt.RemovalRequest{
-		RepositoryPath: repoRoot,
-		Path:           row.Entry.Path, ExpectedGeneration: generation,
-		Force: force,
-	})
+	return operation.run(ctx)
+}
+
+func (b *tuiBackend) prepareRemoval(row dashboard.Row, force bool) (tuiRemovalOperation, error) {
+	if row.Entry == nil {
+		return tuiRemovalOperation{}, fmt.Errorf("no worktree selected")
+	}
+	if row.Entry.IsMain {
+		return tuiRemovalOperation{}, fmt.Errorf("refusing to remove a main worktree")
+	}
+	generation := row.Entry.Generation
+	if strings.TrimSpace(generation) == "" {
+		return tuiRemovalOperation{}, fmt.Errorf("worktree generation unavailable; refresh before removing")
+	}
+	repoRoot, err := b.repositoryRootForRow(row)
+	if err != nil {
+		return tuiRemovalOperation{}, err
+	}
+	var cfg *models.Config
+	if b.cfg != nil {
+		copyConfig := *b.cfg
+		copyConfig.Projects = append([]models.Project(nil), b.cfg.Projects...)
+		copyConfig.Workspaces = append([]models.Workspace(nil), b.cfg.Workspaces...)
+		cfg = &copyConfig
+	}
+	return tuiRemovalOperation{
+		request: kwt.RemovalRequest{
+			RepositoryPath: repoRoot,
+			Path:           row.Entry.Path, ExpectedGeneration: generation,
+			Force: force,
+		},
+		row: row, endpointRequest: removalEndpointRequest(row), config: cfg,
+		remove: b.removeWorktree, liveEndpoints: b.liveEndpoints,
+		cleanupEndpoint:       b.cleanupEndpoint,
+		killProtectedEndpoint: b.killProtectedEndpoint,
+	}, nil
+}
+
+func (operation tuiRemovalOperation) run(ctx context.Context) error {
+	result, removalErr := operation.remove(ctx, operation.request)
 	if removalErr != nil && !result.WorktreeRemoved {
 		if daemonMutationRequiresRefresh(removalErr) {
-			publishTUIFleetBestEffort(ctx, b.cfg)
+			publishTUIFleetBestEffort(ctx, operation.config)
 		}
 		if strings.Contains(removalErr.Error(), "contains modified or untracked files") ||
 			strings.Contains(removalErr.Error(), "has local changes") {
@@ -1796,19 +1831,15 @@ func (b *tuiBackend) RemoveWorktree(ctx context.Context, row dashboard.Row, forc
 		return removalErr
 	}
 
-	publishTUIFleetBestEffort(ctx, b.cfg)
+	publishTUIFleetBestEffort(ctx, operation.config)
 
-	endpoints, cleanupErr := b.removalEndpoints(
-		ctx,
-		row,
-		endpointRequest,
-	)
+	endpoints, cleanupErr := removalEndpointsWith(ctx, operation.row, operation.endpointRequest, operation.liveEndpoints)
 	for _, endpoint := range endpoints {
 		var err error
 		if endpoint.Protected {
-			err = b.killProtectedEndpoint(ctx, endpoint.Endpoint, endpointRequest)
+			err = operation.killProtectedEndpoint(ctx, endpoint.Endpoint, operation.endpointRequest)
 		} else {
-			err = b.cleanupEndpoint(ctx, endpoint.Endpoint, endpointRequest)
+			err = operation.cleanupEndpoint(ctx, endpoint.Endpoint, operation.endpointRequest)
 		}
 		if err != nil {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf(
@@ -1845,6 +1876,15 @@ func (b *tuiBackend) removalEndpoints(
 	row dashboard.Row,
 	request tmux.WorkspaceEndpointRequest,
 ) ([]tuiRemovalEndpoint, error) {
+	return removalEndpointsWith(ctx, row, request, b.liveEndpoints)
+}
+
+func removalEndpointsWith(
+	ctx context.Context,
+	row dashboard.Row,
+	request tmux.WorkspaceEndpointRequest,
+	liveEndpoints func(context.Context, tmux.WorkspaceEndpointRequest) ([]tmux.SessionEndpoint, error),
+) ([]tuiRemovalEndpoint, error) {
 	removalEndpoints := make([]tuiRemovalEndpoint, 0, 3)
 	protectedEndpoint := row.TmuxEndpoint
 	if row.Entry.Protected &&
@@ -1855,7 +1895,7 @@ func (b *tuiBackend) removalEndpoints(
 			Protected: true,
 		})
 	}
-	endpoints, err := b.liveEndpoints(ctx, request)
+	endpoints, err := liveEndpoints(ctx, request)
 	if err != nil {
 		return removalEndpoints, fmt.Errorf("inspect workspace tmux sessions: %w", err)
 	}
@@ -1872,11 +1912,14 @@ func (b *tuiBackend) killProtectedTUIEndpoint(
 	endpoint tmux.SessionEndpoint,
 	request tmux.WorkspaceEndpointRequest,
 ) error {
+	b.mu.Lock()
+	protectedNames := append([]string(nil), b.protectedNames...)
+	b.mu.Unlock()
 	request.SessionName = endpoint.SessionName
 	err := tmux.KillProtectedWorkspaceSessionsIfMatchingContext(
 		ctx,
 		endpoint.SocketName,
-		b.protectedNames,
+		protectedNames,
 		os.Getenv("TMUX_TMPDIR"),
 		request,
 	)

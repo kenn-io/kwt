@@ -243,7 +243,7 @@ func TestReadTUIFleetStatePublishesBeforeReadingHub(t *testing.T) {
 	client := &stubFleetClient{}
 	publishFleetBestEffort = func(ctx context.Context, gotCfg *models.Config, builder fleet.ManifestBuildProvider, warn *bytes.Buffer) error {
 		sequence = append(sequence, "publish")
-		assert.Same(t, cfg, gotCfg)
+		assert.Equal(t, cfg, gotCfg)
 		assert.NotNil(t, builder)
 		return errors.New("hub unavailable")
 	}
@@ -1808,7 +1808,6 @@ func TestTUIBackendRemoveWorktreeDelegatesToDaemon(t *testing.T) {
 		_ context.Context,
 		input kwt.RemovalRequest,
 	) (kwt.RemovalResult, error) {
-		requireTUIBackendStateLocked(t, backend)
 		request = input
 		return kwt.RemovalResult{
 			Path: input.Path, Branch: "daemon-tui-remove", WorktreeRemoved: true,
@@ -2257,7 +2256,7 @@ func TestTUIBackendCreateWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 	}
 	publishFleetBestEffort = func(ctx context.Context, gotCfg *models.Config, builder fleet.ManifestBuildProvider, warn *bytes.Buffer) error {
 		published++
-		assert.Same(t, cfg, gotCfg)
+		assert.Equal(t, cfg, gotCfg)
 		assert.NotNil(t, builder)
 		assert.NotNil(t, warn)
 		return errors.New("hub unavailable")
@@ -2454,7 +2453,7 @@ func TestTUIBackendRemoveWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 	}
 	publishFleetBestEffort = func(ctx context.Context, gotCfg *models.Config, builder fleet.ManifestBuildProvider, warn *bytes.Buffer) error {
 		published++
-		assert.Same(t, cfg, gotCfg)
+		assert.Equal(t, cfg, gotCfg)
 		assert.NotNil(t, builder)
 		assert.NotNil(t, warn)
 		return errors.New("hub unavailable")
@@ -4449,6 +4448,44 @@ func TestCachedLiveAttachNeverEstablishes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Same(t, wantProcess, process)
 	assert.False(t, ensured)
+}
+
+func TestTUIBackendRemovalDoesNotBlockInventoryConfiguration(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	repository := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "topic")
+	runTUITestGit(t, repository, "branch", "topic")
+	runTUITestGit(t, repository, "worktree", "add", worktreePath, "topic")
+	generation := tuiTestWorktreeGeneration(t, repository, worktreePath)
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, repository)
+	backend.liveEndpoints = func(context.Context, tmux.WorkspaceEndpointRequest) ([]tmux.SessionEndpoint, error) { return nil, nil }
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	backend.removeWorktree = func(context.Context, kwt.RemovalRequest) (kwt.RemovalResult, error) {
+		close(entered)
+		<-release
+		return kwt.RemovalResult{WorktreeRemoved: true}, nil
+	}
+	done := make(chan error, 1)
+	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
+		Path: worktreePath, Branch: "topic", Generation: generation,
+	}}
+	go func() { done <- backend.RemoveWorktree(context.Background(), row, false) }()
+	<-entered
+
+	applied := make(chan error, 1)
+	go func() { applied <- backend.applyInventoryConfig(&models.Config{}) }()
+	select {
+	case err := <-applied:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("inventory configuration blocked behind worktree removal")
+	}
+
+	close(release)
+	require.NoError(t, <-done)
 }
 
 func defaultTmuxSessions(t *testing.T) []string {
