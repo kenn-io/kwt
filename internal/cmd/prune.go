@@ -367,21 +367,66 @@ func renderPruneReport(
 		_, err := fmt.Fprintf(cmd.OutOrStdout(), "No %s worktrees found.\n", report.Policy)
 		return err
 	}
+	type outcomeGroup struct {
+		reason      prunepolicy.Reason
+		message     string
+		remediation string
+		paths       []string
+	}
+	groupsByKey := make(map[string]*outcomeGroup)
+	var groupKeys []string
 	for _, outcome := range report.Outcomes {
-		if _, err := fmt.Fprintf(
+		key := string(outcome.Reason) + "\x00" + outcome.Message + "\x00" + outcome.Remediation
+		group := groupsByKey[key]
+		if group == nil {
+			group = &outcomeGroup{reason: outcome.Reason, message: outcome.Message, remediation: outcome.Remediation}
+			groupsByKey[key] = group
+			groupKeys = append(groupKeys, key)
+		}
+		group.paths = append(group.paths, outcome.Path)
+	}
+	sort.Slice(groupKeys, func(i, j int) bool {
+		left := groupsByKey[groupKeys[i]]
+		right := groupsByKey[groupKeys[j]]
+		if left.reason != right.reason {
+			return left.reason < right.reason
+		}
+		return groupKeys[i] < groupKeys[j]
+	})
+	for _, key := range groupKeys {
+		group := groupsByKey[key]
+		sort.Slice(group.paths, func(i, j int) bool {
+			return utils.PathKey(group.paths[i]) < utils.PathKey(group.paths[j])
+		})
+		if len(group.paths) == 1 {
+			if _, err := fmt.Fprintf(
+				cmd.OutOrStdout(),
+				"[%s] %s: %s\n",
+				group.reason,
+				group.paths[0],
+				group.message,
+			); err != nil {
+				return err
+			}
+		} else if _, err := fmt.Fprintf(
 			cmd.OutOrStdout(),
-			"[%s] %s: %s\n",
-			outcome.Reason,
-			outcome.Path,
-			outcome.Message,
+			"[%s] %s\n",
+			group.reason,
+			group.message,
 		); err != nil {
 			return err
+		} else {
+			for _, path := range group.paths {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", path); err != nil {
+					return err
+				}
+			}
 		}
-		if outcome.Remediation != "" {
+		if group.remediation != "" {
 			if _, err := fmt.Fprintf(
 				cmd.OutOrStdout(),
 				"  remediation: %s\n",
-				outcome.Remediation,
+				group.remediation,
 			); err != nil {
 				return err
 			}

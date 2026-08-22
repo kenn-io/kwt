@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"reflect"
 	"sort"
@@ -69,6 +71,8 @@ var (
 	}
 	validatePruneMergedWorktree      = defaultValidatePruneMergedWorktree
 	removePruneMergedWorktree        = defaultRemovePruneMergedWorktree
+	inspectPruneMergedDirty          = defaultInspectPruneMergedDirty
+	confirmPruneMergedDirty          = defaultConfirmPruneMergedDirty
 	probePruneMergedProtectedSession = tmux.ProbeProtectedSession
 	runPruneMergedProtectedOperation = defaultRunPruneMergedProtectedOperation
 )
@@ -205,6 +209,7 @@ func removePruneMergedCandidate(
 	reg pruneMergedRegistry,
 	store pruneMergedProvenanceStore,
 	candidate pruneMergedCandidate,
+	force bool,
 ) (pruneMergedMutationResult, error) {
 	var result pruneMergedMutationResult
 	var residualWarning error
@@ -213,6 +218,7 @@ func removePruneMergedCandidate(
 		func() error {
 			removed, err := removePruneMergedWorktree(
 				candidate,
+				force,
 				func(remove func() error) (bool, error) {
 					return reg.RemoveIfMatchAfter(
 						candidate.Policy.Path,
@@ -270,6 +276,8 @@ func removePruneMergedCandidate(
 
 func runPruneMerged(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
+	progress := newMaintenanceProgress(cmd, true)
+	defer progress.Close()
 	cfg, err := loadPruneMergedConfig()
 	if err != nil {
 		return mergedPruneExecutionError(cmd, fmt.Sprintf("load global configuration: %v", err))
@@ -323,6 +331,52 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 			outcomes[index] = withMergedRemediation(outcome)
 			continue
 		}
+		dirty, inspectErr := inspectPruneMergedDirty(candidate)
+		if inspectErr != nil {
+			providerEvidence := outcome.Evidence
+			outcome = pruneMergedDirtyInspectionOutcome(candidate, inspectErr)
+			mergePruneEvidence(&outcome, providerEvidence)
+			outcomes[index] = outcome
+			continue
+		}
+		force := false
+		if dirty {
+			switch {
+			case pruneDryRun:
+				outcome.Reason = prunepolicy.WouldRequireConfirmation
+				outcome.Message = "merged worktree has local files or changes and would require confirmation"
+				outcomes[index] = outcome
+				continue
+			case pruneJSON || !stdinIsTerminal():
+				outcome.Reason = prunepolicy.ConfirmationRequired
+				outcome.Message = "merged worktree has local files or changes and requires interactive confirmation"
+				outcome.Remediation = "Run kwt prune --merged interactively to review this removal."
+				outcomes[index] = outcome
+				continue
+			default:
+				progress.Pause()
+				dirty, inspectErr = inspectPruneMergedDirty(candidate)
+				approved := false
+				if inspectErr == nil && dirty {
+					approved, inspectErr = confirmPruneMergedDirty(cmd, candidate)
+				}
+				progress.Resume()
+				if inspectErr != nil {
+					providerEvidence := outcome.Evidence
+					outcome = pruneMergedDirtyInspectionOutcome(candidate, inspectErr)
+					mergePruneEvidence(&outcome, providerEvidence)
+					outcomes[index] = outcome
+					continue
+				}
+				if dirty && !approved {
+					outcome.Reason = prunepolicy.ConfirmationDeclined
+					outcome.Message = "merged worktree removal was declined"
+					outcomes[index] = outcome
+					continue
+				}
+				force = dirty
+			}
+		}
 		if pruneDryRun {
 			if err := runPruneMergedProtectedOperation(
 				ctx, cfg, candidate,
@@ -355,7 +409,7 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 			func() error {
 				var err error
 				mutation, err = removePruneMergedCandidate(
-					ctx, reg, store, candidate,
+					ctx, reg, store, candidate, force,
 				)
 				return err
 			},
@@ -434,14 +488,62 @@ func mergedPruneExecutionError(cmd *cobra.Command, message string) error {
 
 func defaultRemovePruneMergedWorktree(
 	candidate pruneMergedCandidate,
+	force bool,
 	claim func(func() error) (bool, error),
 ) (bool, error) {
+	conditions := pruneMergedRemovalConditions(candidate)
+	conditions.RequireClean = !force
 	return git.New(candidate.RepositoryRoot).RemoveWorktreeCheckedAfterClaim(
 		candidate.Policy.Path,
-		false,
-		pruneMergedRemovalConditions(candidate),
+		force,
+		conditions,
 		claim,
 	)
+}
+
+func defaultInspectPruneMergedDirty(candidate pruneMergedCandidate) (bool, error) {
+	output, err := git.New(candidate.Policy.Path).RunCommandWithoutCredentials(
+		candidate.ProtectedNames,
+		"status", "--ignored", "--porcelain", "--untracked-files=normal",
+	)
+	return strings.TrimSpace(output) != "", err
+}
+
+func defaultConfirmPruneMergedDirty(
+	cmd *cobra.Command,
+	candidate pruneMergedCandidate,
+) (bool, error) {
+	if _, err := fmt.Fprintf(
+		cmd.ErrOrStderr(),
+		"Pull request merged. Remove %s and all local changes and files in it, including ignored files and files added before removal? [y/N] ",
+		candidate.Policy.Path,
+	); err != nil {
+		return false, err
+	}
+	reader := bufio.NewReader(cmd.InOrStdin())
+	answer, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	switch strings.ToLower(strings.TrimSpace(answer)) {
+	case "y", "yes":
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
+func pruneMergedDirtyInspectionOutcome(
+	candidate pruneMergedCandidate,
+	err error,
+) prunepolicy.Outcome {
+	outcome := pruneMergedOutcomeForError(candidate, err)
+	if outcome.Reason == prunepolicy.RemovalFailed {
+		outcome.Reason = prunepolicy.PathUnavailable
+		outcome.Message = fmt.Sprintf("inspect worktree status: %v", err)
+		outcome.Remediation = "Restore filesystem access and retry."
+	}
+	return outcome
 }
 
 func defaultValidatePruneMergedWorktree(candidate pruneMergedCandidate) error {
@@ -835,15 +937,6 @@ func defaultInspectPruneMergedCandidates(
 			attachMergedRegistrySnapshot(&candidate, registryEntries)
 			attachMergedProvenance(&candidate, records)
 			if inspection.Exists && !inspection.IsMain && backlinkMatches {
-				status, statusErr := g.RunCommandWithoutCredentials(
-					protectedNames,
-					"-C", inspection.Path, "status", "--ignored", "--porcelain", "--untracked-files=normal",
-				)
-				if statusErr != nil {
-					candidate.InitialOutcome = initialMergedOutcome(candidate.Policy, prunepolicy.PathUnavailable, fmt.Sprintf("inspect worktree status: %v", statusErr))
-				} else {
-					candidate.Policy.Dirty = strings.TrimSpace(status) != ""
-				}
 				upstream, upstreamErr := git.New(inspection.Path).
 					BranchUpstreamWithoutCredentials(inspection.Branch, protectedNames)
 				if upstreamErr == nil {
