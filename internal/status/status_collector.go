@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,13 @@ type StatusCollector struct {
 	fetchRemote    bool
 	staleThreshold time.Duration
 	basedir        string
+}
+
+type porcelainStatus struct {
+	GitStatus models.GitStatus
+	Paths     []string
+	Head      string
+	Upstream  string
 }
 
 // NewStatusCollectorWithOptions creates a new status collector with custom options.
@@ -158,154 +166,122 @@ func repositoryFullPathIdentity(info *url.RepositoryInfo) string {
 }
 
 func (c *StatusCollector) collectGitStatus(ctx context.Context, g *git.Git) (*models.GitStatus, error) {
-	status := &models.GitStatus{}
-
-	// Count modified, staged, and other file states
-	if err := c.countFileStates(ctx, g, status); err != nil {
+	parsed, err := c.collectPorcelain(ctx, g)
+	if err != nil {
 		return nil, err
 	}
-
-	// Count untracked files separately for more accurate count
-	if err := c.countUntrackedFiles(ctx, g, status); err != nil {
-		// Non-fatal: continue even if we can't count untracked files
-		status.Untracked = 0
+	if !c.fetchRemote {
+		parsed.GitStatus.Ahead = 0
+		parsed.GitStatus.Behind = 0
 	}
-
-	if c.fetchRemote {
-		// Errors are ignored as remote might not be available
-		_ = c.fetchRemoteStatus(ctx, g, status)
-	}
-
-	return status, nil
+	return &parsed.GitStatus, nil
 }
 
-// countFileStates counts modified, staged, added, deleted, and conflicted files
-func (c *StatusCollector) countFileStates(ctx context.Context, g *git.Git, status *models.GitStatus) error {
+func (c *StatusCollector) collectPorcelain(ctx context.Context, g *git.Git) (porcelainStatus, error) {
 	gitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-
-	output, err := g.RunWithContext(gitCtx, "status", "--porcelain=v1", "-uno")
+	output, err := g.RunWithContext(gitCtx, "status", "--porcelain=v2", "--branch", "-uall", "-z")
 	if err != nil {
-		return err
+		return porcelainStatus{}, err
 	}
+	return parsePorcelainV2(output)
+}
 
-	for line := range strings.SplitSeq(output, "\n") {
-		if len(line) < 3 {
+func parsePorcelainV2(output string) (porcelainStatus, error) {
+	var result porcelainStatus
+	records := strings.Split(strings.TrimSuffix(output, "\x00"), "\x00")
+	for index := 0; index < len(records); index++ {
+		record := records[index]
+		if record == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(record, "# branch.oid "):
+			result.Head = strings.TrimPrefix(record, "# branch.oid ")
+			continue
+		case strings.HasPrefix(record, "# branch.upstream "):
+			result.Upstream = strings.TrimPrefix(record, "# branch.upstream ")
+			continue
+		case strings.HasPrefix(record, "# branch.ab "):
+			fields := strings.Fields(strings.TrimPrefix(record, "# branch.ab "))
+			if len(fields) != 2 {
+				return porcelainStatus{}, fmt.Errorf("parse porcelain v2 branch.ab %q: expected ahead and behind", record)
+			}
+			ahead, err := strconv.Atoi(strings.TrimPrefix(fields[0], "+"))
+			if err != nil {
+				return porcelainStatus{}, fmt.Errorf("parse porcelain v2 ahead count %q: %w", fields[0], err)
+			}
+			behind, err := strconv.Atoi(strings.TrimPrefix(fields[1], "-"))
+			if err != nil {
+				return porcelainStatus{}, fmt.Errorf("parse porcelain v2 behind count %q: %w", fields[1], err)
+			}
+			result.GitStatus.Ahead = ahead
+			result.GitStatus.Behind = behind
+			continue
+		case record[0] == '#':
 			continue
 		}
 
-		c.processStatusLine(line, status)
+		var xy, path string
+		switch record[0] {
+		case '1':
+			fields := strings.SplitN(record, " ", 9)
+			if len(fields) != 9 || len(fields[1]) != 2 {
+				return porcelainStatus{}, fmt.Errorf("parse porcelain v2 ordinary record %q: expected 9 fields", record)
+			}
+			xy, path = fields[1], fields[8]
+		case '2':
+			fields := strings.SplitN(record, " ", 10)
+			if len(fields) != 10 || len(fields[1]) != 2 {
+				return porcelainStatus{}, fmt.Errorf("parse porcelain v2 rename record %q: expected 10 fields", record)
+			}
+			xy, path = fields[1], fields[9]
+			if index+1 >= len(records) {
+				return porcelainStatus{}, fmt.Errorf("parse porcelain v2 rename record %q: missing original path", record)
+			}
+			index++
+		case 'u':
+			fields := strings.SplitN(record, " ", 11)
+			if len(fields) != 11 || len(fields[1]) != 2 {
+				return porcelainStatus{}, fmt.Errorf("parse porcelain v2 unmerged record %q: expected 11 fields", record)
+			}
+			xy, path = fields[1], fields[10]
+			result.GitStatus.Conflicts++
+		case '?':
+			if !strings.HasPrefix(record, "? ") {
+				return porcelainStatus{}, fmt.Errorf("parse porcelain v2 untracked record %q: missing path", record)
+			}
+			path = strings.TrimPrefix(record, "? ")
+			result.GitStatus.Untracked++
+		case '!':
+			continue
+		default:
+			return porcelainStatus{}, fmt.Errorf("parse porcelain v2 record %q: unknown kind", record)
+		}
+
+		if xy != "" {
+			if xy[0] != '.' {
+				result.GitStatus.Staged++
+			}
+			switch xy[1] {
+			case 'M':
+				result.GitStatus.Modified++
+			case 'A':
+				result.GitStatus.Added++
+			case 'D':
+				result.GitStatus.Deleted++
+			case 'U':
+				if record[0] != 'u' {
+					result.GitStatus.Conflicts++
+				}
+			}
+		}
+		if path == "" {
+			return porcelainStatus{}, fmt.Errorf("parse porcelain v2 record %q: empty path", record)
+		}
+		result.Paths = append(result.Paths, path)
 	}
-
-	return nil
-}
-
-// processStatusLine processes a single line from git status output
-func (c *StatusCollector) processStatusLine(line string, status *models.GitStatus) {
-	index := line[0]
-	worktree := line[1]
-
-	if index != ' ' && index != '?' {
-		status.Staged++
-	}
-
-	switch worktree {
-	case 'M':
-		status.Modified++
-	case 'A':
-		status.Added++
-	case 'D':
-		status.Deleted++
-	case '?':
-		status.Untracked++
-	case 'U':
-		status.Conflicts++
-	}
-}
-
-// countUntrackedFiles counts untracked files using ls-files
-func (c *StatusCollector) countUntrackedFiles(ctx context.Context, g *git.Git, status *models.GitStatus) error {
-	gitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	untrackedFiles, err := g.RunWithContext(gitCtx, "ls-files", "--others", "--exclude-standard")
-	if err != nil {
-		return err
-	}
-
-	if untrackedFiles != "" {
-		status.Untracked = len(strings.Split(strings.TrimSpace(untrackedFiles), "\n"))
-	}
-
-	return nil
-}
-
-func (c *StatusCollector) fetchRemoteStatus(ctx context.Context, g *git.Git, status *models.GitStatus) error {
-	// Get current branch and upstream
-	currentBranch, err := c.getCurrentBranch(ctx, g)
-	if err != nil {
-		return err
-	}
-
-	upstream, err := c.getUpstreamBranch(ctx, g, currentBranch)
-	if err != nil || upstream == "" {
-		return err
-	}
-
-	// Count ahead/behind commits
-	c.countAheadBehind(ctx, g, upstream, status)
-
-	return nil
-}
-
-// getCurrentBranch gets the current branch name
-func (c *StatusCollector) getCurrentBranch(ctx context.Context, g *git.Git) (string, error) {
-	gitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	currentBranch, err := g.RunWithContext(gitCtx, "rev-parse", "--abbrev-ref", "HEAD")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(currentBranch), nil
-}
-
-// getUpstreamBranch gets the upstream branch for the current branch
-func (c *StatusCollector) getUpstreamBranch(ctx context.Context, g *git.Git, currentBranch string) (string, error) {
-	gitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	upstream, err := g.RunWithContext(gitCtx, "rev-parse", "--abbrev-ref", currentBranch+"@{upstream}")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(upstream), nil
-}
-
-// countAheadBehind counts commits ahead and behind upstream
-func (c *StatusCollector) countAheadBehind(ctx context.Context, g *git.Git, upstream string, status *models.GitStatus) {
-	// Count commits ahead
-	status.Ahead = c.countRevList(ctx, g, upstream+"..HEAD")
-
-	// Count commits behind
-	status.Behind = c.countRevList(ctx, g, "HEAD.."+upstream)
-}
-
-// countRevList counts commits in a revision range
-func (c *StatusCollector) countRevList(ctx context.Context, g *git.Git, revRange string) int {
-	gitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	output, err := g.RunWithContext(gitCtx, "rev-list", "--count", revRange)
-	if err != nil {
-		return 0
-	}
-
-	var count int
-	if _, err := fmt.Sscanf(strings.TrimSpace(output), "%d", &count); err != nil {
-		return 0
-	}
-	return count
+	return result, nil
 }
 
 func (c *StatusCollector) determineWorktreeState(status *models.GitStatus) models.WorktreeState {

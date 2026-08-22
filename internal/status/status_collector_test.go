@@ -6,13 +6,58 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/pkg/models"
 )
+
+func TestParsePorcelainV2CountsFilesAndBranchState(t *testing.T) {
+	raw := strings.Join([]string{
+		"# branch.oid 0123456789abcdef",
+		"# branch.head topic",
+		"# branch.upstream origin/topic",
+		"# branch.ab +2 -3",
+		"1 .M N... 100644 100644 100644 aaaaaaa aaaaaaa tracked.txt",
+		"1 A. N... 000000 100644 100644 0000000 bbbbbbb staged.txt",
+		"? untracked/one.txt",
+		"? untracked/two.txt",
+	}, "\x00") + "\x00"
+
+	got, err := parsePorcelainV2(raw)
+	require.NoError(t, err)
+	assert.Equal(t, 1, got.GitStatus.Modified)
+	assert.Equal(t, 1, got.GitStatus.Staged)
+	assert.Equal(t, 2, got.GitStatus.Untracked)
+	assert.Equal(t, 2, got.GitStatus.Ahead)
+	assert.Equal(t, 3, got.GitStatus.Behind)
+	assert.Equal(t, []string{"tracked.txt", "staged.txt", "untracked/one.txt", "untracked/two.txt"}, got.Paths)
+}
+
+func TestCollectPorcelainUsesUAllForPerFileUntrackedCount(t *testing.T) {
+	repo := newStatusTestRepositoryAt(t, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "new"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "new", "one"), []byte("1"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "new", "two"), []byte("2"), 0o644))
+
+	got, err := NewStatusCollectorWithOptions(StatusCollectorOptions{}).
+		collectPorcelain(context.Background(), git.New(repo))
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, got.GitStatus.Untracked)
+}
+
+func TestParsePorcelainV2WithoutUpstreamDefaultsAheadBehindToZero(t *testing.T) {
+	got, err := parsePorcelainV2("# branch.oid abc\x00# branch.head main\x00")
+	require.NoError(t, err)
+	assert.Zero(t, got.GitStatus.Ahead)
+	assert.Zero(t, got.GitStatus.Behind)
+}
 
 func TestCollectAllMarksCurrentPathByDirectoryBoundary(t *testing.T) {
 	root := t.TempDir()
@@ -140,4 +185,21 @@ func runStatusTestGit(t *testing.T, dir string, args ...string) {
 	}
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git %v failed: %s", args, string(output))
+}
+
+func newStatusTestRepositoryAt(t *testing.T, commitTime time.Time) string {
+	t.Helper()
+	repo := t.TempDir()
+	runStatusTestGit(t, repo, "init", "-b", "main")
+	runStatusTestGit(t, repo, "config", "user.name", "Test User")
+	runStatusTestGit(t, repo, "config", "user.email", "test@example.com")
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "README.md"), []byte("initial\n"), 0o644))
+	runStatusTestGit(t, repo, "add", "README.md")
+	command := exec.Command("git", "commit", "-m", "initial")
+	command.Dir = repo
+	stamp := commitTime.Format(time.RFC3339)
+	command.Env = append(os.Environ(), "GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp)
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "git commit failed: %s", output)
+	return repo
 }
