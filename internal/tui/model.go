@@ -88,11 +88,12 @@ type branchListMsg struct {
 }
 
 type actionDoneMsg struct {
-	message     string
-	err         error
-	refresh     bool
-	anchorPath  string
-	pendingPath string
+	message             string
+	err                 error
+	refresh             bool
+	globalStatusRefresh bool
+	anchorPath          string
+	pendingPath         string
 }
 
 type removalJob struct {
@@ -893,6 +894,17 @@ func (m Model) applyActionDone(msg actionDoneMsg) (Model, tea.Cmd) {
 		if msg.anchorPath != "" {
 			m.anchorPath = msg.anchorPath
 		}
+	}
+	if msg.globalStatusRefresh {
+		m.inventoryCurrent = false
+		m.globalFresh.Current = false
+		for project, freshness := range m.projectFresh {
+			freshness.Current = false
+			m.projectFresh[project] = freshness
+		}
+		return m.startInventory(InventoryRequest{
+			Scope: InventoryCurrentDashboard, CollectStatuses: true,
+		})
 	}
 	if msg.refresh && m.fetching {
 		m.pendingRefresh = true
@@ -1865,9 +1877,10 @@ func (m Model) materializeWorktreeCmd(row Row) tea.Cmd {
 			return actionDoneMsg{err: err}
 		}
 		return actionDoneMsg{
-			message:    fmt.Sprintf("synced %s", rowLabel(row)),
-			refresh:    true,
-			anchorPath: path,
+			message:             fmt.Sprintf("synced %s", rowLabel(row)),
+			refresh:             true,
+			globalStatusRefresh: true,
+			anchorPath:          path,
 		}
 	}
 }

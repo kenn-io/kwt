@@ -4502,6 +4502,46 @@ func TestTUIBackendRemovalDoesNotBlockInventoryConfiguration(t *testing.T) {
 	require.NoError(t, <-done)
 }
 
+func TestTUIBackendRemovalPreparationDoesNotBlockInventoryConfiguration(t *testing.T) {
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	backend.resolveRemovalRoot = func(
+		context.Context,
+		dashboard.Row,
+		*models.Config,
+	) (string, error) {
+		close(entered)
+		<-release
+		return "/repo", nil
+	}
+	backend.liveEndpoints = func(context.Context, tmux.WorkspaceEndpointRequest) ([]tmux.SessionEndpoint, error) {
+		return nil, nil
+	}
+	backend.removeWorktree = func(context.Context, kwt.RemovalRequest) (kwt.RemovalResult, error) {
+		return kwt.RemovalResult{WorktreeRemoved: true}, nil
+	}
+	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
+		Path: "/repo/topic", Branch: "topic",
+		Generation: "0123456789abcdef0123456789abcdef",
+	}}
+	done := make(chan error, 1)
+	go func() { done <- backend.RemoveWorktree(context.Background(), row, false) }()
+	<-entered
+
+	applied := make(chan error, 1)
+	go func() { applied <- backend.applyInventoryConfig(&models.Config{}) }()
+	select {
+	case err := <-applied:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("inventory configuration blocked behind worktree removal preparation")
+	}
+
+	close(release)
+	require.NoError(t, <-done)
+}
+
 func defaultTmuxSessions(t *testing.T) []string {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {

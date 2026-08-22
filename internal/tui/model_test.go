@@ -1841,6 +1841,7 @@ func TestModelMaterializeRemoteOnlyFleetRow(t *testing.T) {
 	backend := &fakeBackend{materializePath: "/worktrees/github.com/example/kwt/feature-studio-only"}
 	model := NewModel(backend, "/worktrees")
 	model, _ = updateModel(t, model, rowsMsg{rows: []Row{row}})
+	model.projectPerspective = rowProjectKey(row)
 
 	model, cmd := updateModel(t, model, press("s"))
 
@@ -1853,6 +1854,12 @@ func TestModelMaterializeRemoteOnlyFleetRow(t *testing.T) {
 	assert.True(t, done.refresh)
 	assert.Equal(t, "/worktrees/github.com/example/kwt/feature-studio-only", done.anchorPath)
 	assert.Contains(t, done.message, "synced kwt:feature/studio-only")
+
+	model, refresh := updateModel(t, model, done)
+	require.NotNil(t, refresh)
+	assert.Equal(t, InventoryCurrentDashboard, model.fetchingRequest.Scope)
+	assert.True(t, model.fetchingRequest.CollectStatuses)
+	assert.Equal(t, "github.com/example/kwt", model.projectPerspective)
 }
 
 func TestModelCancelNewBranchInputKeepsExistingFilter(t *testing.T) {

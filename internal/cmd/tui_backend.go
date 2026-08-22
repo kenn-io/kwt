@@ -67,6 +67,7 @@ type tuiBackend struct {
 	now                       func() time.Time
 	queryInventory            func(context.Context, kwt.Request, bool, io.Writer) (kwt.Result, error)
 	removeWorktree            func(context.Context, kwt.RemovalRequest) (kwt.RemovalResult, error)
+	resolveRemovalRoot        func(context.Context, dashboard.Row, *models.Config) (string, error)
 	runProjectOperation       func(context.Context, string, bool, []string, func() error) error
 	stderr                    io.Writer
 }
@@ -133,6 +134,7 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 		readFleetState:          readTUIFleetState,
 		acknowledgeRemoteSource: acknowledgeRemoteSourcePath,
 		removeWorktree:          removeDaemonWorktree,
+		resolveRemovalRoot:      repositoryRootForRowWithConfig,
 		runProjectOperation:     runTUIProjectOperation,
 		now:                     time.Now,
 	}
@@ -1777,16 +1779,18 @@ func sameRepositoryIdentity(left string, right string) bool {
 }
 
 func (b *tuiBackend) RemoveWorktree(ctx context.Context, row dashboard.Row, force bool) error {
-	b.mu.Lock()
-	operation, err := b.prepareRemoval(row, force)
-	b.mu.Unlock()
+	operation, err := b.prepareRemoval(ctx, row, force)
 	if err != nil {
 		return err
 	}
 	return operation.run(ctx)
 }
 
-func (b *tuiBackend) prepareRemoval(row dashboard.Row, force bool) (tuiRemovalOperation, error) {
+func (b *tuiBackend) prepareRemoval(
+	ctx context.Context,
+	row dashboard.Row,
+	force bool,
+) (tuiRemovalOperation, error) {
 	if row.Entry == nil {
 		return tuiRemovalOperation{}, fmt.Errorf("no worktree selected")
 	}
@@ -1802,13 +1806,21 @@ func (b *tuiBackend) prepareRemoval(row dashboard.Row, force bool) (tuiRemovalOp
 	if force && (branch == "" || head == "") {
 		return tuiRemovalOperation{}, fmt.Errorf("worktree checkout unavailable; refresh before removing")
 	}
-	repoRoot, err := b.repositoryRootForRow(row)
-	if err != nil {
-		return tuiRemovalOperation{}, err
-	}
+	b.mu.Lock()
 	var cfg *models.Config
 	if b.cfg != nil {
 		cfg = cloneTUIConfig(b.cfg)
+	}
+	resolveRemovalRoot := b.resolveRemovalRoot
+	removeWorktree := b.removeWorktree
+	liveEndpoints := b.liveEndpoints
+	cleanupEndpoint := b.cleanupEndpoint
+	killProtectedEndpoint := b.killProtectedEndpoint
+	b.mu.Unlock()
+
+	repoRoot, err := resolveRemovalRoot(ctx, row, cfg)
+	if err != nil {
+		return tuiRemovalOperation{}, err
 	}
 	return tuiRemovalOperation{
 		request: kwt.RemovalRequest{
@@ -1817,9 +1829,9 @@ func (b *tuiBackend) prepareRemoval(row dashboard.Row, force bool) (tuiRemovalOp
 			ExpectedBranch: branch, ExpectedHead: head, Force: force,
 		},
 		row: row, endpointRequest: removalEndpointRequest(row), config: cfg,
-		remove: b.removeWorktree, liveEndpoints: b.liveEndpoints,
-		cleanupEndpoint:       b.cleanupEndpoint,
-		killProtectedEndpoint: b.killProtectedEndpoint,
+		remove: removeWorktree, liveEndpoints: liveEndpoints,
+		cleanupEndpoint:       cleanupEndpoint,
+		killProtectedEndpoint: killProtectedEndpoint,
 	}, nil
 }
 
@@ -1948,15 +1960,25 @@ func (b *tuiBackend) killProtectedTUIEndpoint(
 }
 
 func (b *tuiBackend) repositoryRootForRow(row dashboard.Row) (string, error) {
+	return repositoryRootForRowWithConfig(context.Background(), row, b.cfg)
+}
+
+func repositoryRootForRowWithConfig(
+	ctx context.Context,
+	row dashboard.Row,
+	cfg *models.Config,
+) (string, error) {
 	if row.Entry == nil {
 		return "", fmt.Errorf("no worktree selected")
 	}
 
-	repoRoot, err := git.New(row.Entry.Path).GetMainRepositoryPath()
+	repoRoot, err := git.NewWithContext(ctx, row.Entry.Path).GetMainRepositoryPath()
 	if err == nil {
-		if identityErr := b.validateRepositoryRootForRow(
+		if identityErr := validateRepositoryRootForRowWithConfig(
+			ctx,
 			repoRoot,
 			row,
+			cfg,
 		); identityErr != nil {
 			return "", identityErr
 		}
@@ -1964,16 +1986,18 @@ func (b *tuiBackend) repositoryRootForRow(row dashboard.Row) (string, error) {
 	}
 	directErr := err
 
-	if b.cfg != nil {
-		for _, project := range b.cfg.Projects {
+	if cfg != nil {
+		for _, project := range cfg.Projects {
 			if !projectMatchesRow(project, row) {
 				continue
 			}
-			repoRoot, err := git.New(project.Path).GetMainRepositoryPath()
+			repoRoot, err := git.NewWithContext(ctx, project.Path).GetMainRepositoryPath()
 			if err == nil {
-				if identityErr := b.validateRepositoryRootForRow(
+				if identityErr := validateRepositoryRootForRowWithConfig(
+					ctx,
 					repoRoot,
 					row,
+					cfg,
 				); identityErr != nil {
 					return "", identityErr
 				}
@@ -1989,17 +2013,31 @@ func (b *tuiBackend) validateRepositoryRootForRow(
 	repoRoot string,
 	row dashboard.Row,
 ) error {
+	return validateRepositoryRootForRowWithConfig(
+		context.Background(),
+		repoRoot,
+		row,
+		b.cfg,
+	)
+}
+
+func validateRepositoryRootForRowWithConfig(
+	ctx context.Context,
+	repoRoot string,
+	row dashboard.Row,
+	cfg *models.Config,
+) error {
 	if row.Entry == nil || len(rowRepositoryIdentityCandidates(
 		row.Entry.RepositoryInfo,
 	)) == 0 {
 		return nil
 	}
-	if b.cfg != nil {
-		for _, project := range b.cfg.Projects {
+	if cfg != nil {
+		for _, project := range cfg.Projects {
 			if !projectMatchesRow(project, row) {
 				continue
 			}
-			projectRoot, err := git.New(project.Path).GetMainRepositoryPath()
+			projectRoot, err := git.NewWithContext(ctx, project.Path).GetMainRepositoryPath()
 			if err == nil &&
 				utils.PathKey(projectRoot) == utils.PathKey(repoRoot) {
 				return nil
@@ -2008,11 +2046,11 @@ func (b *tuiBackend) validateRepositoryRootForRow(
 	}
 
 	var projects []models.Project
-	if b.cfg != nil {
-		projects = b.cfg.Projects
+	if cfg != nil {
+		projects = cfg.Projects
 	}
 	liveInfo, err := worktree.RepositoryInfoWithProjects(
-		git.New(repoRoot),
+		git.NewWithContext(ctx, repoRoot),
 		projects,
 	)
 	if err == nil {
