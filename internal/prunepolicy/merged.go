@@ -54,8 +54,6 @@ func evaluateMergedCandidate(
 		return mergedOutcome(candidate, MainWorktree, "main worktree is never pruned")
 	case gitadapter.ValidateWorktreeGeneration(candidate.Generation) != nil:
 		return mergedOutcome(candidate, MissingGeneration, "worktree has no valid generation")
-	case candidate.Dirty:
-		return mergedOutcome(candidate, DirtyWorktree, "worktree has uncommitted changes")
 	case strings.TrimSpace(candidate.LiveRepository) == "":
 		return mergedOutcome(candidate, RepositoryChanged, "worktree origin repository identity is unavailable")
 	}

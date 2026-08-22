@@ -86,7 +86,7 @@ func TestEvaluateMerged(t *testing.T) {
 		{name: "imported fork origin with configured base", candidate: withForkOrigin(importedMergedCandidate()), provider: providerForImported(exactMergedPR(forkRepository)), want: EligibleMerged},
 		{name: "missing generation", candidate: withoutGeneration(), provider: &fakeMergedProvider{}, want: MissingGeneration},
 		{name: "invalid generation", candidate: withInvalidGeneration(), provider: &fakeMergedProvider{}, want: MissingGeneration},
-		{name: "dirty", candidate: dirtyMerged(), provider: &fakeMergedProvider{}, want: DirtyWorktree},
+		{name: "dirty", candidate: dirtyMerged(), provider: providerForCommit(exactMergedPR(forkRepository)), want: EligibleMerged},
 		{name: "main worktree", candidate: mainWorktree(), provider: &fakeMergedProvider{}, want: MainWorktree},
 		{name: "head advanced", candidate: advancedCandidate(), provider: providerForAdvancedBranch(), want: HeadAdvancedAfterPR},
 		{name: "no PR", candidate: ordinaryCandidate(forkRepository), provider: providerEmpty(), want: NoAssociatedPR},
@@ -120,6 +120,35 @@ func TestEvaluateMerged(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEvaluateMergedIgnoresDirtyStateUntilAfterProviderProof(t *testing.T) {
+	provider := providerEmpty()
+	candidate := dirtyMerged()
+
+	outcome := EvaluateMerged(context.Background(), provider, []MergedCandidate{candidate})[0]
+
+	assert.Equal(t, NoAssociatedPR, outcome.Reason)
+	assert.NotZero(t, provider.resolveCalls)
+	assert.NotZero(t, provider.commitCalls)
+}
+
+func TestEvaluateMergedReturnsEligibleForDirtyConfirmedMergedCandidate(t *testing.T) {
+	provider := providerForCommit(exactMergedPR(forkRepository))
+	candidate := dirtyMerged()
+
+	outcome := EvaluateMerged(context.Background(), provider, []MergedCandidate{candidate})[0]
+
+	assert.Equal(t, EligibleMerged, outcome.Reason)
+}
+
+func TestEvaluateMergedKeepsAdvancedDirtyHeadAsHardStop(t *testing.T) {
+	candidate := advancedCandidate()
+	candidate.Dirty = true
+
+	outcome := EvaluateMerged(context.Background(), providerForAdvancedBranch(), []MergedCandidate{candidate})[0]
+
+	assert.Equal(t, HeadAdvancedAfterPR, outcome.Reason)
 }
 
 func TestEvaluateMergedMapsProviderFailuresToStableReasons(t *testing.T) {
