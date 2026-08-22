@@ -41,10 +41,12 @@
 ### Task 1: Build the maintenance progress reporter
 
 **Files:**
+
 - Create: `internal/cmd/maintenance_progress.go`
 - Create: `internal/cmd/maintenance_progress_test.go`
 
 **Interfaces:**
+
 - Produces: `maintenanceProgress` with `Phase(string, int)`, `Set(int)`, `Pause()`, `Resume()`, and `Close()`.
 - Produces: `newMaintenanceProgress(cmd *cobra.Command, enabled bool) maintenanceProgress`.
 - Consumes: `cmd.ErrOrStderr()` and a package seam `maintenanceProgressIsTerminal(io.Writer) bool`.
@@ -208,10 +210,12 @@ Show bounded maintenance progress
 ### Task 2: Define schema-v2 confirmation outcomes
 
 **Files:**
+
 - Modify: `internal/prunepolicy/types.go`
 - Create: `internal/prunepolicy/types_test.go`
 
 **Interfaces:**
+
 - Produces: reasons `WouldRequireConfirmation`, `ConfirmationRequired`, and `ConfirmationDeclined`.
 - Produces: `SchemaVersion == 2` and reason-driven `Report.Finalize`/`Report.ExitCode` behavior.
 
@@ -283,10 +287,12 @@ Classify merged-prune confirmation outcomes
 ### Task 3: Prove merge relevance before dirtiness
 
 **Files:**
+
 - Modify: `internal/prunepolicy/merged.go`
 - Modify: `internal/prunepolicy/merged_test.go`
 
 **Interfaces:**
+
 - Consumes: schema-v2 reason constants from Task 2.
 - Produces: provider evaluation that returns `EligibleMerged` for both clean and dirty confirmed-merged candidates; the command layer performs the final fresh dirtiness classification.
 
@@ -353,12 +359,14 @@ Prove merged PRs before checking dirtiness
 ### Task 4: Add fresh dirty confirmation and evidence-bound force
 
 **Files:**
+
 - Modify: `internal/cmd/prune_merged.go`
 - Modify: `internal/cmd/prune_merged_test.go`
 - Modify: `internal/cmd/prune_test.go`
 - Modify: `internal/cmd/prune.go`
 
 **Interfaces:**
+
 - Consumes: `EligibleMerged` and the three schema-v2 reasons.
 - Consumes: `newMaintenanceProgress` from Task 1.
 - Produces: `inspectPruneMergedDirty(candidate) (bool, error)` and `confirmPruneMergedDirty(cmd, candidate) (bool, error)` seams.
@@ -554,6 +562,7 @@ Confirm removal of dirty merged worktrees
 ### Task 5: Wire progress into doctor and both prune policies
 
 **Files:**
+
 - Modify: `internal/cmd/doctor.go`
 - Modify: `internal/cmd/doctor_test.go`
 - Modify: `internal/cmd/prune.go`
@@ -562,6 +571,7 @@ Confirm removal of dirty merged worktrees
 - Modify: `internal/cmd/prune_merged_test.go`
 
 **Interfaces:**
+
 - Consumes: `newMaintenanceProgress` from Task 1.
 - Produces: phase updates around existing inspection/fix/evaluation/removal boundaries.
 
@@ -667,9 +677,11 @@ Explain doctor and prune progress
 ### Task 6: Document and verify the maintenance contract
 
 **Files:**
+
 - Modify: `docs/reference/cli.md`
 
 **Interfaces:**
+
 - Documents: progress streams, schema v2, all confirmation reasons, ignored-file deletion, and non-interactive behavior.
 
 - [ ] **Step 1: Update maintained CLI documentation**

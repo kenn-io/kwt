@@ -36,12 +36,14 @@
 ### Task 1: Render explicit removal state
 
 **Files:**
+
 - Modify: `internal/tui/backend.go`
 - Modify: `internal/tui/list.go`
 - Modify: `internal/tui/list_test.go`
 - Modify: `internal/tui/model.go` detail rendering only
 
 **Interfaces:**
+
 - Produces: `Row.Removing bool`.
 - Produces: visible status label `removing…` with precedence over Git status and activity.
 
@@ -104,10 +106,12 @@ Show worktrees being removed
 ### Task 2: Queue one removal at a time in the model
 
 **Files:**
+
 - Modify: `internal/tui/model.go`
 - Modify: `internal/tui/model_test.go`
 
 **Interfaces:**
+
 - Produces: `removalJob{row Row, force bool, key string}`.
 - Produces: `removalDoneMsg{job removalJob, err error, removed bool, refresh bool}`.
 - Adds model fields `removalQueue []removalJob` and `removalActive *removalJob`.
@@ -313,10 +317,12 @@ Queue TUI worktree removals
 ### Task 3: Release the backend lock before slow removal work
 
 **Files:**
+
 - Modify: `internal/cmd/tui_backend.go`
 - Modify: `internal/cmd/tui_test.go`
 
 **Interfaces:**
+
 - Produces: immutable `tuiRemovalOperation` prepared under `b.mu`.
 - Keeps: `Backend.RemoveWorktree(context.Context, Row, bool) error` synchronous for one job.
 
@@ -428,10 +434,12 @@ Release TUI inventory during removal
 ### Task 4: Reconcile queued completion with scoped refresh
 
 **Files:**
+
 - Modify: `internal/tui/model.go`
 - Modify: `internal/tui/model_test.go`
 
 **Interfaces:**
+
 - Consumes: per-project freshness and `InventoryRequest` from plan two.
 - Produces: project-scoped refresh after each known or indeterminate removal outcome.
 
@@ -524,9 +532,11 @@ Reconcile removals by project
 ### Task 5: Document, verify, and close the issue
 
 **Files:**
+
 - Modify: `docs/workflows/agent-workspaces.md`
 
 **Interfaces:**
+
 - Documents: FIFO queue, `removing…`, responsive actions, and failure restoration.
 
 - [ ] **Step 1: Update workflow documentation**

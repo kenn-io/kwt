@@ -1894,14 +1894,6 @@ func removalEndpointRequest(row dashboard.Row) tmux.WorkspaceEndpointRequest {
 	}
 }
 
-func (b *tuiBackend) removalEndpoints(
-	ctx context.Context,
-	row dashboard.Row,
-	request tmux.WorkspaceEndpointRequest,
-) ([]tuiRemovalEndpoint, error) {
-	return removalEndpointsWith(ctx, row, request, b.liveEndpoints)
-}
-
 func removalEndpointsWith(
 	ctx context.Context,
 	row dashboard.Row,

@@ -41,10 +41,12 @@
 ### Task 1: Parse Git porcelain v2 in one status command
 
 **Files:**
+
 - Modify: `internal/status/status_collector.go`
 - Modify: `internal/status/status_collector_test.go`
 
 **Interfaces:**
+
 - Produces: `collectPorcelain(ctx, g) (porcelainStatus, error)`.
 - Produces: `porcelainStatus{GitStatus models.GitStatus, Paths []string, Head string, Upstream string}`.
 - Replaces: v1 status, untracked listing, branch/upstream lookup, and two `rev-list --count` calls.
@@ -198,6 +200,7 @@ Collect worktree state with porcelain v2
 ### Task 2: Bound collection and calculate pragmatic activity
 
 **Files:**
+
 - Modify: `internal/status/status_collector.go`
 - Modify: `internal/status/status_collector_test.go`
 - Modify: `internal/cmd/status.go`
@@ -205,6 +208,7 @@ Collect worktree state with porcelain v2
 - Modify: `internal/fleet/manifest.go`
 
 **Interfaces:**
+
 - Produces: `Collection{Statuses []*models.WorktreeStatus, Diagnostics []Diagnostic}`.
 - Produces: `Diagnostic{Path string, Err error}`.
 - Changes: `CollectAll(context.Context, []*models.Worktree) (Collection, error)`.
@@ -358,12 +362,14 @@ Bound worktree status collection
 ### Task 3: Split inventory currency from status collection
 
 **Files:**
+
 - Modify: `internal/tui/backend.go`
 - Modify: `internal/cmd/tui_backend.go`
 - Modify: `internal/cmd/tui_daemon_inventory_test.go`
 - Modify: `internal/tui/model_test.go` fake backend methods only
 
 **Interfaces:**
+
 - Produces: `InventoryScope` and `InventoryRequest` in `internal/tui`.
 - Produces: `InventoryResult{Rows, Warnings, ObservedAt, Current}` so the model can render real cache age.
 - Replaces: `Backend.ListFast` and `Backend.List` with `Backend.LoadInventory`.
@@ -546,12 +552,14 @@ Separate inventory currency from status
 ### Task 4: Validate and merge repository-scoped refreshes
 
 **Files:**
+
 - Modify: `internal/cmd/tui_backend.go`
 - Modify: `internal/cmd/tui_daemon_inventory_test.go`
 - Modify: `internal/tui/model.go`
 - Modify: `internal/tui/model_test.go`
 
 **Interfaces:**
+
 - Produces: `validateRepositoryRows(rows []dashboard.Row, expected string) error`.
 - Produces: `mergeRepositoryRows(previous, current []Row, project string) []Row`.
 - Produces: `scopeFreshness{ObservedAt time.Time, Current bool, Diagnostic error}` plus model fields `projectFresh map[string]scopeFreshness`, `globalFresh scopeFreshness`, and `backgroundGlobalStarted bool`.
@@ -657,10 +665,12 @@ Refresh only the active TUI project
 ### Task 5: Drive per-scope freshness and one background global pass
 
 **Files:**
+
 - Modify: `internal/tui/model.go`
 - Modify: `internal/tui/model_test.go`
 
 **Interfaces:**
+
 - Consumes: `InventoryRequest` and `mergeRepositoryRows`.
 - Produces: request messages tagged with scope and project so stale responses cannot mark another scope current.
 
@@ -852,6 +862,7 @@ Track TUI freshness per project
 ### Task 6: Allow safe cached shell and live-only attach
 
 **Files:**
+
 - Modify: `internal/tmux/workspace_sessions.go`
 - Modify: `internal/tmux/workspace_sessions_integration_test.go`
 - Modify: `internal/tui/backend.go`
@@ -862,6 +873,7 @@ Track TUI freshness per project
 - Modify: `internal/cmd/tui_test.go`
 
 **Interfaces:**
+
 - Produces: `WorkspaceSessions.ResolveLive(ctx, request) (SessionEndpoint, error)`.
 - Produces: backend methods `OpenExistingInTmux` and `AttachExistingOutsideTmux`.
 - Adds: `Handoff.ExistingOnly bool`.
@@ -1002,10 +1014,12 @@ Keep cached TUI navigation available
 ### Task 7: Document and verify scoped TUI inventory
 
 **Files:**
+
 - Modify: `docs/workflows/agent-workspaces.md`
 - Modify: `docs/reference/cli.md` only if its TUI key table describes refresh gating.
 
 **Interfaces:**
+
 - Documents: cached launch, active-project refresh, global background pass, stale action rules, and status activity semantics.
 
 - [ ] **Step 1: Update maintained workflow documentation**

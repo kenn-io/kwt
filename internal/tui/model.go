@@ -1699,14 +1699,6 @@ func (m Model) fetchInventoryCmd(request InventoryRequest) tea.Cmd {
 	}
 }
 
-func (m Model) fetchFastRowsCmd() tea.Cmd {
-	backend := m.backend
-	return func() tea.Msg {
-		rows, warnings, err := backend.ListFast(context.Background())
-		return fastRowsMsg{rows: rows, warnings: warnings, err: err}
-	}
-}
-
 func (m Model) fleetRowsCmd(ctx context.Context, seq int, rows []Row) tea.Cmd {
 	backend := m.backend
 	// Copy: the merge mutates row elements while the UI keeps rendering the

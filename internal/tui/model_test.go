@@ -103,7 +103,7 @@ func TestModelLoadsCacheThenActiveProjectThenBackgroundGlobal(t *testing.T) {
 	assert.Equal(t, InventoryCachedDashboard, backend.inventoryCalls[0].Scope)
 
 	project := projectCmd()
-	model, globalCmd := updateModel(t, model, project)
+	_, globalCmd := updateModel(t, model, project)
 	require.NotNil(t, globalCmd)
 	assert.Equal(t, InventoryCurrentRepository, backend.inventoryCalls[1].Scope)
 	assert.True(t, backend.inventoryCalls[1].CollectStatuses)
