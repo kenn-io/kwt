@@ -96,6 +96,54 @@ func TestInventoryQueryDoesNotHoldBackendConfigurationLock(t *testing.T) {
 	<-done
 }
 
+func TestRepositoryInventoryRejectsGlobalFallback(t *testing.T) {
+	workingDirectory := t.TempDir()
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, workingDirectory)
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
+	backend.queryInventory = func(context.Context, kwt.Request, bool, io.Writer) (kwt.Result, error) {
+		return kwt.Result{Freshness: kwt.Fresh, Snapshot: kwt.Snapshot{Entries: []kwt.Entry{
+			{Path: workingDirectory, IsMain: true, Repository: kwt.Repository{FullPath: "github.com/acme/expected"}},
+			{Path: "/other", IsMain: true, Repository: kwt.Repository{FullPath: "github.com/acme/other"}},
+		}}}, nil
+	}
+	_, err := backend.LoadInventory(context.Background(), dashboard.InventoryRequest{
+		Scope: dashboard.InventoryCurrentRepository, WorkingDirectory: workingDirectory,
+		ProjectIdentity: "github.com/acme/expected", CollectStatuses: true,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "returned unrelated repository")
+}
+
+func TestRepositoryInventoryRejectsEmptyResult(t *testing.T) {
+	workingDirectory := t.TempDir()
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, workingDirectory)
+	backend.queryInventory = func(context.Context, kwt.Request, bool, io.Writer) (kwt.Result, error) {
+		return kwt.Result{Freshness: kwt.Fresh}, nil
+	}
+	_, err := backend.LoadInventory(context.Background(), dashboard.InventoryRequest{
+		Scope: dashboard.InventoryCurrentRepository, WorkingDirectory: workingDirectory,
+		ProjectIdentity: "github.com/acme/expected",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "returned no worktrees")
+}
+
+func TestRepositoryInventoryRejectsDeletedWorkingDirectoryBeforeQuery(t *testing.T) {
+	workingDirectory := filepath.Join(t.TempDir(), "gone")
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, workingDirectory)
+	queried := false
+	backend.queryInventory = func(context.Context, kwt.Request, bool, io.Writer) (kwt.Result, error) {
+		queried = true
+		return kwt.Result{}, nil
+	}
+	_, err := backend.LoadInventory(context.Background(), dashboard.InventoryRequest{
+		Scope: dashboard.InventoryCurrentRepository, WorkingDirectory: workingDirectory,
+		ProjectIdentity: "github.com/acme/expected",
+	})
+	require.Error(t, err)
+	assert.False(t, queried)
+}
+
 func TestTUIBackendApplyInventoryConfigRewiresCleanupResolver(t *testing.T) {
 	t.Setenv("PATH", filepath.Join(t.TempDir(), "missing"))
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")

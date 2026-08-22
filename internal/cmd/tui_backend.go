@@ -156,6 +156,13 @@ func (b *tuiBackend) LoadInventory(ctx context.Context, request dashboard.Invent
 	case dashboard.InventoryCachedDashboard:
 		query.View = kwt.ViewDashboard
 	case dashboard.InventoryCurrentRepository:
+		info, statErr := os.Stat(request.WorkingDirectory)
+		if statErr != nil {
+			return dashboard.InventoryResult{}, fmt.Errorf("repository refresh working directory: %w", statErr)
+		}
+		if !info.IsDir() {
+			return dashboard.InventoryResult{}, fmt.Errorf("repository refresh working directory is not a directory")
+		}
 		query.View = kwt.ViewRepository
 		query.WorkingDirectory = request.WorkingDirectory
 		interactive = false
@@ -222,11 +229,47 @@ func (b *tuiBackend) LoadInventory(ctx context.Context, request dashboard.Invent
 		rows = append(rows, buildTUIRow(entry, worktreeStatus, worktreeSessions[index]))
 	}
 	rows = append(rows, workspaceRows(workspaces, directorySessions)...)
+	if request.Scope == dashboard.InventoryCurrentRepository {
+		if err := validateRepositoryRows(rows, request.ProjectIdentity); err != nil {
+			return dashboard.InventoryResult{}, err
+		}
+	}
 	return dashboard.InventoryResult{
 		Rows:       rows,
 		ObservedAt: result.ObservedAt,
 		Current:    result.Freshness == kwt.Fresh,
 	}, nil
+}
+
+func validateRepositoryRows(rows []dashboard.Row, expected string) error {
+	if len(rows) == 0 {
+		return fmt.Errorf("repository refresh returned no worktrees")
+	}
+	mainFound := false
+	for _, row := range rows {
+		if row.Entry == nil || !lifecycle.EqualProjectIdentity(dashboardProjectIdentity(row), expected) {
+			return fmt.Errorf("repository refresh returned unrelated repository")
+		}
+		mainFound = mainFound || row.Entry.IsMain
+	}
+	if !mainFound {
+		return fmt.Errorf("repository refresh returned no main worktree")
+	}
+	return nil
+}
+
+func dashboardProjectIdentity(row dashboard.Row) string {
+	if row.Entry == nil || row.Entry.RepositoryInfo == nil {
+		return ""
+	}
+	info := row.Entry.RepositoryInfo
+	if info.FullPath != "" {
+		return info.FullPath
+	}
+	if info.Host != "" && info.Owner != "" && info.Repository != "" {
+		return path.Join(info.Host, info.Owner, info.Repository)
+	}
+	return ""
 }
 
 func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboard.Row, []string, error) {

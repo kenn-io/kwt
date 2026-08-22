@@ -87,6 +87,22 @@ func (b *fakeBackend) LoadInventory(_ context.Context, request InventoryRequest)
 	}, nil
 }
 
+func TestMergeRepositoryRowsPreservesDashboardRepositoryURL(t *testing.T) {
+	oldRow := testRow("widget", "topic", "/work/topic")
+	oldRow.Entry.RepositoryInfo.FullPath = "github.com/acme/widget"
+	oldRow.Entry.RepositoryURL = "https://github.com/acme/widget.git"
+	newRow := testRow("widget", "topic", "/work/topic")
+	newRow.Entry.RepositoryInfo.FullPath = "github.com/acme/widget"
+	previous := []Row{oldRow}
+	current := []Row{newRow}
+	current[0].Status = &models.WorktreeStatus{Path: "/work/topic", Status: models.WorktreeStatusModified}
+
+	merged := mergeRepositoryRows(previous, current, "github.com/acme/widget")
+
+	assert.Equal(t, "https://github.com/acme/widget.git", merged[0].Entry.RepositoryURL)
+	assert.Equal(t, models.WorktreeStatusModified, merged[0].Status.Status)
+}
+
 func (b *fakeBackend) MergeFleet(ctx context.Context, rows []Row) ([]Row, []string) {
 	b.mergeFleetCalls++
 	b.mergeCtx = ctx

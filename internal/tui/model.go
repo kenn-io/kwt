@@ -14,6 +14,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"go.kenn.io/kwt/internal/git"
+	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/pkg/models"
 )
 
@@ -357,6 +358,60 @@ func carryEnrichment(fast, previous []Row) []Row {
 		}
 	}
 	return rows
+}
+
+func mergeRepositoryRows(previous, current []Row, project string) []Row {
+	oldByCheckout := make(map[string]Row)
+	merged := make([]Row, 0, len(previous)+len(current))
+	for _, row := range previous {
+		if equalProjectKey(rowProjectKey(row), project) {
+			oldByCheckout[checkoutMergeKey(row)] = row
+			continue
+		}
+		merged = append(merged, row)
+	}
+	for _, row := range current {
+		if !equalProjectKey(rowProjectKey(row), project) {
+			continue
+		}
+		if old, ok := oldByCheckout[checkoutMergeKey(row)]; ok {
+			row = preserveDashboardFields(old, row)
+		}
+		merged = append(merged, row)
+	}
+	sortRows(merged)
+	return merged
+}
+
+func equalProjectKey(left, right string) bool {
+	return url.FoldRepositoryIdentity(left) == url.FoldRepositoryIdentity(right) && left != "" && right != ""
+}
+
+func checkoutMergeKey(row Row) string {
+	generation := ""
+	if row.Entry != nil {
+		generation = row.Entry.Generation
+	}
+	return pathIdentity(rowPath(row)) + "\x00" + generation
+}
+
+func preserveDashboardFields(previous, current Row) Row {
+	if previous.Entry == nil || current.Entry == nil {
+		return current
+	}
+	entry := *current.Entry
+	if entry.RepositoryURL == "" {
+		entry.RepositoryURL = previous.Entry.RepositoryURL
+	}
+	if entry.RepositoryInfo == nil && previous.Entry.RepositoryInfo != nil {
+		info := *previous.Entry.RepositoryInfo
+		entry.RepositoryInfo = &info
+	}
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = previous.Entry.CreatedAt
+	}
+	current.Entry = &entry
+	return current
 }
 
 // remoteProjection reduces a row that was local to what the hub still says about
