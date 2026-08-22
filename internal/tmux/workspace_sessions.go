@@ -150,6 +150,22 @@ func (s *WorkspaceSessions) LiveEndpoints(
 	return endpoints, err
 }
 
+// ResolveLive returns one verified live endpoint without creating or repairing
+// a session. Ambiguous or absent endpoints fail closed.
+func (s *WorkspaceSessions) ResolveLive(
+	ctx context.Context,
+	request WorkspaceEndpointRequest,
+) (SessionEndpoint, error) {
+	endpoints, err := s.LiveEndpoints(ctx, request)
+	if err != nil {
+		return SessionEndpoint{}, err
+	}
+	if len(endpoints) != 1 {
+		return SessionEndpoint{}, fmt.Errorf("expected exactly one live endpoint, found %d", len(endpoints))
+	}
+	return endpoints[0], nil
+}
+
 func (s *WorkspaceSessions) Establish(
 	ctx context.Context,
 	session, workspacePath string,

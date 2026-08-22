@@ -49,6 +49,7 @@ type tuiBackend struct {
 	collectStatuses           func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, []string, error)
 	resolveSessions           func(context.Context, []tmux.WorkspaceEndpointRequest) ([]tmux.WorkspaceSession, error)
 	liveEndpoints             func(context.Context, tmux.WorkspaceEndpointRequest) ([]tmux.SessionEndpoint, error)
+	resolveLive               func(context.Context, tmux.WorkspaceEndpointRequest) (tmux.SessionEndpoint, error)
 	ensureWorkspace           func(context.Context, string, string, models.Layout) (tmux.SessionEndpoint, error)
 	ensureWorktree            func(context.Context, string, string, string, models.Layout) (tmux.SessionEndpoint, error)
 	attachSession             func(context.Context, tmux.SessionEndpoint) error
@@ -109,6 +110,7 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 			tmuxDiagnosticReporter(os.Stderr),
 		),
 		liveEndpoints:           sessions.LiveEndpoints,
+		resolveLive:             sessions.ResolveLive,
 		ensureWorkspace:         sessions.Establish,
 		ensureWorktree:          sessions.EstablishWithGeneration,
 		attachSession:           sessions.Attach,
@@ -451,6 +453,7 @@ func (b *tuiBackend) applyInventoryConfigLocked(effective *models.Config) error 
 		b.reportTmuxDiagnostic,
 	)
 	b.liveEndpoints = b.workspaceSessions.LiveEndpoints
+	b.resolveLive = b.workspaceSessions.ResolveLive
 	b.ensureWorkspace = b.workspaceSessions.Establish
 	b.ensureWorktree = b.workspaceSessions.EstablishWithGeneration
 	b.attachSession = b.workspaceSessions.Attach
@@ -2037,10 +2040,75 @@ func (b *tuiBackend) OpenInTmux(
 	return b.prepareResidentAttach(ctx, endpoint)
 }
 
+func (b *tuiBackend) OpenExistingInTmux(
+	ctx context.Context,
+	row dashboard.Row,
+) (*exec.Cmd, error) {
+	b.mu.Lock()
+	resolveLive := b.resolveLive
+	acknowledge := b.acknowledgeRemoteSource
+	prepare := b.prepareResidentAttach
+	b.mu.Unlock()
+	endpoint, err := resolveExistingWorkspaceEndpoint(ctx, row, resolveLive, acknowledge)
+	if err != nil {
+		return nil, err
+	}
+	return prepare(ctx, endpoint)
+}
+
 func (b *tuiBackend) AttachOutsideTmux(row dashboard.Row, layoutName string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.attachWorkspace(context.Background(), row, layoutName, config.StdinInteractive())
+}
+
+func (b *tuiBackend) AttachExistingOutsideTmux(row dashboard.Row) error {
+	b.mu.Lock()
+	resolveLive := b.resolveLive
+	acknowledge := b.acknowledgeRemoteSource
+	attach := b.attachSession
+	b.mu.Unlock()
+	ctx := context.Background()
+	endpoint, err := resolveExistingWorkspaceEndpoint(ctx, row, resolveLive, acknowledge)
+	if err != nil {
+		return err
+	}
+	return attach(ctx, endpoint)
+}
+
+func resolveExistingWorkspaceEndpoint(
+	ctx context.Context,
+	row dashboard.Row,
+	resolveLive func(context.Context, tmux.WorkspaceEndpointRequest) (tmux.SessionEndpoint, error),
+	acknowledge func(string) error,
+) (tmux.SessionEndpoint, error) {
+	if row.Entry == nil && row.Workspace == nil {
+		return tmux.SessionEndpoint{}, fmt.Errorf("no worktree selected")
+	}
+	generation := ""
+	if row.Entry != nil {
+		generation = row.Entry.Generation
+	}
+	workspacePath := rowPaneRoot(row)
+	if err := rejectProtectedWorkspaceOpen(ctx, workspacePath, generation); err != nil {
+		return tmux.SessionEndpoint{}, err
+	}
+	if acknowledge != nil {
+		if err := acknowledge(workspacePath); err != nil {
+			return tmux.SessionEndpoint{}, err
+		}
+	}
+	if row.SessionName == "" {
+		return tmux.SessionEndpoint{}, fmt.Errorf("cached workspace has no session name")
+	}
+	if resolveLive == nil {
+		return tmux.SessionEndpoint{}, fmt.Errorf("live workspace resolver is unavailable")
+	}
+	return resolveLive(ctx, tmux.WorkspaceEndpointRequest{
+		SessionName:         row.SessionName,
+		WorkspacePath:       workspacePath,
+		WorkspaceGeneration: generation,
+	})
 }
 
 // LayoutNames returns the names the TUI layout cycler offers: the reserved

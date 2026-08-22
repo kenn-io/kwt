@@ -65,6 +65,9 @@ func runTUI(cmd *cobra.Command, args []string) error {
 func executeTUIHandoff(backend *tuiBackend, handoff dashboard.Handoff) error {
 	switch handoff.Kind {
 	case dashboard.HandoffAttach:
+		if handoff.ExistingOnly {
+			return backend.AttachExistingOutsideTmux(handoff.Row)
+		}
 		return backend.AttachOutsideTmux(handoff.Row, handoff.LayoutName)
 	case dashboard.HandoffShell:
 		return LaunchShell(rowPathForHandoff(handoff.Row))

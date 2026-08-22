@@ -184,6 +184,17 @@ func TestWorkspaceSessionsPreferKWTServerWhenBothAreValid(t *testing.T) {
 	assert.True(t, got.Live)
 }
 
+func TestResolveLiveRequiresExactlyOneVerifiedEndpoint(t *testing.T) {
+	fixture := newRealWorkspaceSessionsFixture(t)
+	fixture.createMatching(t, fixture.servers.kwtServer())
+	fixture.createMatching(t, fixture.servers.defaultServer())
+
+	_, err := fixture.sessions.ResolveLive(fixture.ctx, fixture.request())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exactly one live endpoint")
+}
+
 func TestWorkspaceSessionsEstablishOnKWTServerAfterAdoptedSessionExits(t *testing.T) {
 	fixture := newRealWorkspaceSessionsFixture(t)
 	fixture.createMatching(t, fixture.servers.defaultServer())

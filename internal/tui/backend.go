@@ -19,9 +19,10 @@ const (
 )
 
 type Handoff struct {
-	Kind       HandoffKind
-	Row        Row
-	LayoutName string
+	Kind         HandoffKind
+	Row          Row
+	LayoutName   string
+	ExistingOnly bool
 }
 
 type Row struct {
@@ -109,6 +110,7 @@ type Backend interface {
 	UnregisterWorkspace(row Row) error
 	KillSession(row Row) error
 	OpenInTmux(ctx context.Context, row Row, layoutName string) (*exec.Cmd, error)
+	OpenExistingInTmux(ctx context.Context, row Row) (*exec.Cmd, error)
 	LayoutNames() []string
 	InsideTmux() bool
 }

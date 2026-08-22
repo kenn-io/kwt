@@ -18,35 +18,36 @@ import (
 )
 
 type fakeBackend struct {
-	rows            []Row
-	fleetRows       []Row
-	fleetWarnings   []string
-	layoutNames     []string
-	insideTmux      bool
-	createPath      string
-	createErr       error
-	materializePath string
-	materializeErr  error
-	removeErr       error
-	killErr         error
-	openErr         error
-	openProcess     *exec.Cmd
-	branches        []models.Branch
-	branchErr       error
-	fastListCalls   int
-	listCalls       int
-	branchCalls     []string
-	mergeFleetCalls int
-	mergeCtx        context.Context
-	createCalls     []string
-	createSources   []string
-	materializeRows []string
-	removeCalls     []string
-	removeForces    []bool
-	killCalls       []string
-	openCalls       []string
-	inventoryCalls  []InventoryRequest
-	unregistered    []Row
+	rows              []Row
+	fleetRows         []Row
+	fleetWarnings     []string
+	layoutNames       []string
+	insideTmux        bool
+	createPath        string
+	createErr         error
+	materializePath   string
+	materializeErr    error
+	removeErr         error
+	killErr           error
+	openErr           error
+	openProcess       *exec.Cmd
+	branches          []models.Branch
+	branchErr         error
+	fastListCalls     int
+	listCalls         int
+	branchCalls       []string
+	mergeFleetCalls   int
+	mergeCtx          context.Context
+	createCalls       []string
+	createSources     []string
+	materializeRows   []string
+	removeCalls       []string
+	removeForces      []bool
+	killCalls         []string
+	openCalls         []string
+	openExistingCalls []string
+	inventoryCalls    []InventoryRequest
+	unregistered      []Row
 }
 
 type removedWithResidualFilesError struct {
@@ -201,6 +202,49 @@ func TestBackgroundGlobalFailureKeepsRowsAndShowsAge(t *testing.T) {
 	assert.Contains(t, content, "daemon refresh failed")
 }
 
+func TestModelShellOnCachedDeletedPathStaysOpen(t *testing.T) {
+	backend := &fakeBackend{rows: []Row{testRow("widget", "topic", "/missing")}}
+	model := NewModel(backend, "/work")
+	model.rows = backend.rows
+	oldValidate := validateShellDirectory
+	validateShellDirectory = func(string) error { return os.ErrNotExist }
+	t.Cleanup(func() { validateShellDirectory = oldValidate })
+
+	next, cmd := updateModel(t, model, press("c"))
+
+	assert.Nil(t, cmd)
+	assert.Equal(t, HandoffNone, next.Handoff().Kind)
+	assert.Contains(t, next.message, "no longer exists")
+}
+
+func TestCachedLiveAttachUsesExistingOnlyBackend(t *testing.T) {
+	row := testRow("widget", "topic", "/work/topic")
+	row.SessionLive = true
+	backend := &fakeBackend{rows: []Row{row}, insideTmux: true}
+	model := NewModel(backend, "/work")
+	model.rows = backend.rows
+
+	_, cmd := updateModel(t, model, press("enter"))
+
+	require.NotNil(t, cmd)
+	_ = cmd()
+	assert.Equal(t, []string{"/work/topic"}, backend.openExistingCalls)
+	assert.Empty(t, backend.openCalls)
+}
+
+func TestCachedLiveAttachOutsideTmuxMarksExistingOnlyHandoff(t *testing.T) {
+	row := testRow("widget", "topic", "/work/topic")
+	row.SessionLive = true
+	model := NewModel(&fakeBackend{rows: []Row{row}}, "/work")
+	model.rows = []Row{row}
+
+	next, cmd := updateModel(t, model, press("enter"))
+
+	require.NotNil(t, cmd)
+	assert.Equal(t, HandoffAttach, next.Handoff().Kind)
+	assert.True(t, next.Handoff().ExistingOnly)
+}
+
 func TestMergeRepositoryRowsPreservesDashboardRepositoryURL(t *testing.T) {
 	oldRow := testRow("widget", "topic", "/work/topic")
 	oldRow.Entry.RepositoryInfo.FullPath = "github.com/acme/widget"
@@ -277,6 +321,11 @@ func (b *fakeBackend) OpenInTmux(
 	layoutName string,
 ) (*exec.Cmd, error) {
 	b.openCalls = append(b.openCalls, rowPath(row)+":"+layoutName)
+	return b.openProcess, b.openErr
+}
+
+func (b *fakeBackend) OpenExistingInTmux(_ context.Context, row Row) (*exec.Cmd, error) {
+	b.openExistingCalls = append(b.openExistingCalls, rowPath(row))
 	return b.openProcess, b.openErr
 }
 
@@ -1587,6 +1636,9 @@ func TestModelKillWorkspaceConfirm(t *testing.T) {
 }
 
 func TestModelShellAndAttachHandoffsQuitFirst(t *testing.T) {
+	oldValidate := validateShellDirectory
+	validateShellDirectory = func(string) error { return nil }
+	t.Cleanup(func() { validateShellDirectory = oldValidate })
 	row := testRow("kwt", "feature", "/w/kwt/feature")
 	model := NewModel(&fakeBackend{layoutNames: []string{"quad", "focus"}}, "/worktrees")
 	model, _ = updateModel(t, model, rowsMsg{rows: []Row{row}})

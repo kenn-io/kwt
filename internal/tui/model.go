@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"slices"
 	"sort"
@@ -934,12 +935,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if m.inputMode != inputNone {
 		return m.handleInputKey(msg)
 	}
-	if (key.Matches(msg, m.keys.Open) ||
-		key.Matches(msg, m.keys.New) ||
+	if (key.Matches(msg, m.keys.New) ||
 		key.Matches(msg, m.keys.Existing) ||
 		key.Matches(msg, m.keys.Delete) ||
 		key.Matches(msg, m.keys.Sync) ||
-		key.Matches(msg, m.keys.Shell) ||
 		key.Matches(msg, m.keys.Kill)) && !m.selectedScopeCurrent() {
 		if m.selectedRow().Workspace != nil {
 			m.message = "global inventory is refreshing; wait for current results"
@@ -1341,6 +1340,17 @@ func (m Model) openSelected() (Model, tea.Cmd) {
 		m.message = "no worktree selected"
 		return m, nil
 	}
+	if !m.selectedScopeCurrent() {
+		if !row.SessionLive {
+			m.message = "project inventory is refreshing; starting a workspace waits for current results"
+			return m, nil
+		}
+		if m.backend.InsideTmux() {
+			return m, m.openExistingInTmuxCmd(row)
+		}
+		m.handoff = Handoff{Kind: HandoffAttach, Row: row, ExistingOnly: true}
+		return m, quitCmd()
+	}
 	if m.backend.InsideTmux() {
 		return m, m.openInTmuxCmd(row)
 	}
@@ -1358,8 +1368,29 @@ func (m Model) shellSelected() (Model, tea.Cmd) {
 		m.message = "sync this worktree before opening a shell"
 		return m, nil
 	}
+	if err := validateShellDirectory(rowPath(row)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			m.message = "selected worktree no longer exists"
+		} else {
+			m.message = fmt.Sprintf("cannot open shell: %v", err)
+		}
+		return m, nil
+	}
 	m.handoff = Handoff{Kind: HandoffShell, Row: row}
 	return m, quitCmd()
+}
+
+var validateShellDirectory = defaultValidateShellDirectory
+
+func defaultValidateShellDirectory(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("selected path is not a directory")
+	}
+	return nil
 }
 
 func (m Model) cycleLayout() (Model, tea.Cmd) {
@@ -1701,6 +1732,17 @@ func (m Model) openInTmuxCmd(row Row) tea.Cmd {
 	layoutName := m.selectedLayout
 	return func() tea.Msg {
 		process, err := m.backend.OpenInTmux(context.Background(), row, layoutName)
+		return openInTmuxReadyMsg{
+			process: process,
+			message: fmt.Sprintf("attached %s", rowLabel(row)),
+			err:     err,
+		}
+	}
+}
+
+func (m Model) openExistingInTmuxCmd(row Row) tea.Cmd {
+	return func() tea.Msg {
+		process, err := m.backend.OpenExistingInTmux(context.Background(), row)
 		return openInTmuxReadyMsg{
 			process: process,
 			message: fmt.Sprintf("attached %s", rowLabel(row)),

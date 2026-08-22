@@ -4424,6 +4424,33 @@ func TestTUIBackendOpenInTmuxPreparesResidentAttach(t *testing.T) {
 	assert.Same(t, wantProcess, process)
 }
 
+func TestCachedLiveAttachNeverEstablishes(t *testing.T) {
+	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
+	endpoint := tmux.SessionEndpoint{SessionName: "topic", SocketName: tmux.KWTServerSocketName}
+	backend.resolveLive = func(context.Context, tmux.WorkspaceEndpointRequest) (tmux.SessionEndpoint, error) {
+		return endpoint, nil
+	}
+	wantProcess := &exec.Cmd{}
+	backend.prepareResidentAttach = func(context.Context, tmux.SessionEndpoint) (*exec.Cmd, error) {
+		return wantProcess, nil
+	}
+	var ensured bool
+	backend.ensureWorktree = func(context.Context, string, string, string, models.Layout) (tmux.SessionEndpoint, error) {
+		ensured = true
+		return tmux.SessionEndpoint{}, nil
+	}
+	row := dashboard.Row{
+		Entry:       &discovery.GlobalWorktreeEntry{Path: "/work/topic", Branch: "topic", Generation: "0123456789abcdef0123456789abcdef"},
+		SessionName: "topic", SessionLive: true, TmuxEndpoint: endpoint,
+	}
+
+	process, err := backend.OpenExistingInTmux(context.Background(), row)
+
+	require.NoError(t, err)
+	assert.Same(t, wantProcess, process)
+	assert.False(t, ensured)
+}
+
 func defaultTmuxSessions(t *testing.T) []string {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
