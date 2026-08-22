@@ -1942,11 +1942,6 @@ func TestTUIBackendRemoveWorktreeKillsEveryMatchingEndpointAfterRemoval(t *testi
 		killed = append(killed, endpoint)
 		return nil
 	}
-	backend.killEndpoint = func(endpoint tmux.SessionEndpoint) error {
-		t.Fatalf("post-removal cleanup used unconditional kill: %+v", endpoint)
-		return nil
-	}
-
 	err := backend.RemoveWorktree(context.Background(), row, false)
 
 	require.NoError(t, err)
@@ -4053,19 +4048,27 @@ func TestTUIBackendAttachWorkspaceGuardRejectsEmptyRow(t *testing.T) {
 	assert.Equal(t, "no worktree selected", err.Error())
 }
 
-func TestTUIKillSessionUsesEndpointRetainedByRow(t *testing.T) {
+func TestTUIKillSessionUsesContextMatchedEndpoint(t *testing.T) {
 	want := tmux.SessionEndpoint{
 		SessionName: "workspace",
 	}
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
 	var killed tmux.SessionEndpoint
-	backend.killEndpoint = func(endpoint tmux.SessionEndpoint) error {
-		requireTUIBackendStateLocked(t, backend)
+	var request tmux.WorkspaceEndpointRequest
+	backend.cleanupEndpoint = func(
+		_ context.Context,
+		endpoint tmux.SessionEndpoint,
+		got tmux.WorkspaceEndpointRequest,
+	) error {
 		killed = endpoint
+		request = got
 		return nil
 	}
-
 	err := backend.KillSession(dashboard.Row{
+		Entry: &discovery.GlobalWorktreeEntry{
+			Path:       "/work/widget",
+			Generation: "11111111111111111111111111111111",
+		},
 		SessionName:  "workspace",
 		SessionLive:  true,
 		TmuxEndpoint: want,
@@ -4073,6 +4076,11 @@ func TestTUIKillSessionUsesEndpointRetainedByRow(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, want, killed)
+	assert.Equal(t, tmux.WorkspaceEndpointRequest{
+		SessionName:         "workspace",
+		WorkspacePath:       "/work/widget",
+		WorkspaceGeneration: "11111111111111111111111111111111",
+	}, request)
 }
 
 func TestDashboardInventoryEntryClassifiesProtectionFromWireMode(t *testing.T) {

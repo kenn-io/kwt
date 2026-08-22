@@ -56,7 +56,6 @@ type tuiBackend struct {
 	ensureWorktree            func(context.Context, string, string, string, models.Layout) (tmux.SessionEndpoint, error)
 	attachSession             func(context.Context, tmux.SessionEndpoint) error
 	prepareResidentAttach     func(context.Context, tmux.SessionEndpoint) (*exec.Cmd, error)
-	killEndpoint              func(tmux.SessionEndpoint) error
 	cleanupEndpoint           func(context.Context, tmux.SessionEndpoint, tmux.WorkspaceEndpointRequest) error
 	killProtectedEndpoint     func(context.Context, tmux.SessionEndpoint, tmux.WorkspaceEndpointRequest) error
 	registerProject           func(context.Context, models.Project) error
@@ -137,7 +136,6 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 		runProjectOperation:     runTUIProjectOperation,
 		now:                     time.Now,
 	}
-	backend.killEndpoint = sessions.Kill
 	backend.cleanupEndpoint = sessions.KillMatching
 	backend.killProtectedEndpoint = backend.killProtectedTUIEndpoint
 	backend.loadTargetConfig = func(repoRoot string, interactive bool) (*models.Config, error) {
@@ -478,7 +476,6 @@ func (b *tuiBackend) applyInventoryConfigLocked(effective *models.Config) error 
 	b.ensureWorktree = b.workspaceSessions.EstablishWithGeneration
 	b.attachSession = b.workspaceSessions.Attach
 	b.prepareResidentAttach = b.workspaceSessions.PrepareResidentAttach
-	b.killEndpoint = b.workspaceSessions.Kill
 	b.cleanupEndpoint = b.workspaceSessions.KillMatching
 	return nil
 }
@@ -2078,11 +2075,42 @@ func cleanComparablePath(path string) string {
 
 func (b *tuiBackend) KillSession(row dashboard.Row) error {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if row.SessionName == "" {
-		return fmt.Errorf("no live workspace")
+	cleanupEndpoint := b.cleanupEndpoint
+	killProtectedEndpoint := b.killProtectedEndpoint
+	b.mu.Unlock()
+	request, err := killEndpointRequest(row)
+	if err != nil {
+		return err
 	}
-	return b.killEndpoint(row.TmuxEndpoint)
+	endpoint := row.TmuxEndpoint
+	if endpoint.SessionName == "" {
+		endpoint.SessionName = request.SessionName
+	}
+	if row.Entry != nil && row.Entry.Protected && endpoint.SocketName != "" {
+		return killProtectedEndpoint(context.Background(), endpoint, request)
+	}
+	return cleanupEndpoint(context.Background(), endpoint, request)
+}
+
+func killEndpointRequest(row dashboard.Row) (tmux.WorkspaceEndpointRequest, error) {
+	sessionName := strings.TrimSpace(row.SessionName)
+	if sessionName == "" {
+		sessionName = strings.TrimSpace(row.TmuxEndpoint.SessionName)
+	}
+	if sessionName == "" {
+		return tmux.WorkspaceEndpointRequest{}, fmt.Errorf("no live workspace")
+	}
+	request := tmux.WorkspaceEndpointRequest{SessionName: sessionName}
+	switch {
+	case row.Entry != nil:
+		request.WorkspacePath = row.Entry.Path
+		request.WorkspaceGeneration = row.Entry.Generation
+	case row.Workspace != nil:
+		request.WorkspacePath = row.Workspace.Path
+	default:
+		return tmux.WorkspaceEndpointRequest{}, fmt.Errorf("no worktree selected")
+	}
+	return request, nil
 }
 
 func (b *tuiBackend) OpenInTmux(

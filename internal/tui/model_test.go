@@ -574,6 +574,45 @@ func TestNewerRemovalRefreshRejectsOlderGlobalInventory(t *testing.T) {
 	assert.False(t, restored)
 }
 
+func TestSuccessfulRemovalImmediatelyRejectsOlderInventory(t *testing.T) {
+	project := "github.com/acme/widget"
+	main := testRow("widget", "main", "/work/widget")
+	main.Entry.RepositoryInfo.FullPath = project
+	removed := testRow("widget", "removed", "/work/widget/removed")
+	removed.Entry.RepositoryInfo.FullPath = project
+	next := testRow("widget", "next", "/work/widget/next")
+	next.Entry.RepositoryInfo.FullPath = project
+	model := currentModelWithRows(t, &fakeBackend{}, main, removed, next)
+	model.backgroundGlobalStarted = true
+	model, _ = model.startInventory(InventoryRequest{Scope: InventoryCurrentDashboard})
+	staleSeq := model.inventorySeq
+	removedJob := removalJob{
+		row: removed, key: removalKey(removed), projectIdentity: project,
+		workingDirectory: rowPath(main),
+	}
+	nextJob := removalJob{
+		row: next, key: removalKey(next), projectIdentity: project,
+		workingDirectory: rowPath(main),
+	}
+	model.removalActive = &removedJob
+	model.removalQueue = []removalJob{nextJob}
+
+	model, nextRemovalCmd := updateModel(t, model, removalDoneMsg{
+		job: removedJob, removed: true, refresh: true,
+	})
+	require.NotNil(t, nextRemovalCmd)
+	model, _ = updateModel(t, model, inventoryMsg{
+		seq:     staleSeq,
+		request: InventoryRequest{Scope: InventoryCurrentDashboard},
+		result: InventoryResult{
+			Rows: []Row{main, removed, next}, ObservedAt: time.Now(), Current: true,
+		},
+	})
+
+	_, restored := identityRowIndex(model.rows, rowPath(removed))
+	assert.False(t, restored)
+}
+
 func TestRemovalRejectsFleetRowsStartedBeforeDeletion(t *testing.T) {
 	project := "github.com/acme/widget"
 	main := testRow("widget", "main", "/work/widget")
@@ -1980,6 +2019,62 @@ func TestModelKillWorkspaceConfirm(t *testing.T) {
 	require.NotNil(t, cmd)
 	_ = cmd()
 	assert.Equal(t, []string{"kwt-workspace-kwt-feature"}, backend.killCalls)
+}
+
+func TestKillConfirmationRejectsChangedOrStaleRow(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(*testing.T, Model, Row) Model
+	}{
+		{
+			name: "project became stale",
+			change: func(_ *testing.T, model Model, row Row) Model {
+				project := projectFreshnessKey(rowProjectKey(row))
+				freshness := model.projectFresh[project]
+				freshness.Current = false
+				model.projectFresh[project] = freshness
+				return model
+			},
+		},
+		{
+			name: "worktree generation changed",
+			change: func(t *testing.T, model Model, row Row) Model {
+				entry := *row.Entry
+				entry.Generation = "22222222222222222222222222222222"
+				row.Entry = &entry
+				model.backgroundGlobalStarted = true
+				model, _ = updateModel(t, model, inventoryMsg{
+					request: InventoryRequest{
+						Scope: InventoryCurrentRepository, ProjectIdentity: rowProjectKey(row),
+					},
+					result: InventoryResult{
+						Rows: []Row{row}, ObservedAt: time.Now(), Current: true,
+					},
+				})
+				return model
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			row := testRow("kwt", "feature", "/w/kwt/feature")
+			row.Entry.Generation = "11111111111111111111111111111111"
+			row.SessionLive = true
+			row.SessionName = "kwt-workspace-kwt-feature"
+			backend := &fakeBackend{}
+			model := currentModelWithRows(t, backend, row)
+			model, _ = model.startKill()
+			model = tt.change(t, model, row)
+
+			model, cmd := updateModel(t, model, press("y"))
+
+			assert.Nil(t, cmd)
+			assert.Empty(t, backend.killCalls)
+			assert.Equal(t, confirmNone, model.confirm.kind)
+			assert.Contains(t, model.message, "changed")
+		})
+	}
 }
 
 func TestModelShellAndAttachHandoffsQuitFirst(t *testing.T) {

@@ -1175,7 +1175,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 }
 
 func (m Model) selectedScopeCurrent() bool {
-	row := m.selectedRow()
+	return m.rowScopeCurrent(m.selectedRow())
+}
+
+func (m Model) rowScopeCurrent(row Row) bool {
 	if row.Workspace != nil || row.Entry == nil {
 		if !m.globalFresh.ObservedAt.IsZero() || m.globalFresh.Diagnostic != nil {
 			return m.globalFresh.Current
@@ -1466,6 +1469,12 @@ func (m Model) handleConfirmKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	kind := m.confirm.kind
 	force := m.confirm.force
 	m.confirm = confirmState{}
+	current, ok := m.currentConfirmationRow(row)
+	if !ok {
+		m.message = "selection changed; review the current row and try again"
+		return m, nil
+	}
+	row = current
 	switch kind {
 	case confirmDelete:
 		return m.enqueueRemoval(row, force)
@@ -1476,6 +1485,30 @@ func (m Model) handleConfirmKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
+}
+
+func (m Model) currentConfirmationRow(confirmed Row) (Row, bool) {
+	for _, row := range m.rows {
+		if !sameConfirmationTarget(confirmed, row) {
+			continue
+		}
+		if !m.rowScopeCurrent(row) ||
+			row.SessionName != confirmed.SessionName ||
+			row.TmuxEndpoint != confirmed.TmuxEndpoint ||
+			row.SessionLive != confirmed.SessionLive {
+			return Row{}, false
+		}
+		return row, true
+	}
+	return Row{}, false
+}
+
+func sameConfirmationTarget(before, now Row) bool {
+	if (before.Entry == nil) != (now.Entry == nil) ||
+		(before.Workspace == nil) != (now.Workspace == nil) {
+		return false
+	}
+	return removalKey(before) == removalKey(now)
 }
 
 func (m Model) openSelected() (Model, tea.Cmd) {
@@ -1910,6 +1943,8 @@ func (m Model) removeWorktreeCmd(job removalJob) tea.Cmd {
 func (m Model) applyRemovalDone(msg removalDoneMsg) (Model, tea.Cmd) {
 	m.removalActive = nil
 	if msg.removed {
+		m.inventorySeq++
+		m.fetching = false
 		m.loadSeq++
 		m.fleetPending = false
 		m = m.cancelFleetMerge()
