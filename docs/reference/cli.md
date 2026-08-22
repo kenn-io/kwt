@@ -79,12 +79,14 @@ ordinary command exit behavior remain unchanged.
 
 `kwt projects`, `kwt list`, `kwt remove`, and TUI inventory/removal auto-start
 or reuse a compatible local daemon. CLI inventory requires a current refresh
-and fails if one cannot complete; it never prints cached data. The TUI may
-paint from the daemon's last-known-good cache while requesting one current
-snapshot. Other worktree mutations, Git status collection, tmux attachment,
-and SSH connection lifecycle remain on their existing paths until their
-complete service migrations. `kwt ssh resolve` is the non-connecting Stage 1
-exception described below.
+and fails if one cannot complete; it never prints cached data. The TUI paints
+from the daemon's last-known-good cache, refreshes the displayed repository
+with Git status, and refreshes the global catalog without status once in the
+background. Cached rows permit shells in directories that still exist and
+attachment to sessions that Kwt re-verifies as live. Mutations and new session
+creation wait for current inventory. SSH connection lifecycle remains on its
+existing path until its complete service migration. `kwt ssh resolve` is the
+non-connecting Stage 1 exception described below.
 
 Successful `kwt list --json` and `kwt projects --json` output remains a bare
 top-level array. A daemon or inventory failure instead writes this shared

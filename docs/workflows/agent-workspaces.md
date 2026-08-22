@@ -58,6 +58,18 @@ prefix twice to address the inner client.
 
 ## Cross-project steering
 
+The dashboard opens from its cached catalog, then refreshes only the project
+you are viewing. You can search, move through rows, open a shell in an existing
+directory, or attach to a session that Kwt verifies is already live while that
+refresh runs. Creating, deleting, syncing, killing, or starting a session waits
+for current inventory.
+
+Kwt refreshes the global catalog once in the background. Choosing all projects
+runs a current global refresh and collects status for the displayed rows. Git
+status collection uses a bounded worker pool. Activity is the newest of the
+HEAD commit, worktree directory, and changed or untracked file times; Kwt does
+not scan every tracked file to order the dashboard.
+
 The dashboard is project-aware. Use `P` to set the active project perspective
 before creating a worktree. Press `n` for a new branch or `b` to search local
 and remote branches that are not already checked out. A selected remote branch
