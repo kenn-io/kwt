@@ -79,8 +79,9 @@ ordinary command exit behavior remain unchanged.
 
 `kwt projects`, `kwt list`, `kwt remove`, and TUI inventory/removal auto-start
 or reuse a compatible local daemon. CLI inventory requires a current refresh
-and fails if one cannot complete; it never prints cached data. The TUI paints
-from the daemon's last-known-good cache, refreshes the displayed repository
+and fails if one cannot complete; it never prints cached data. When available,
+the TUI paints the daemon's last-known-good cache; a cold start waits for the
+initial current inventory. It then refreshes the displayed repository
 with Git status, and refreshes the global catalog without status once in the
 background. Cached rows permit shells in directories that still exist and
 attachment to sessions that Kwt re-verifies as live. Mutations and new session

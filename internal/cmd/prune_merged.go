@@ -70,6 +70,7 @@ var (
 		return pullrequest.NewAuthenticatedGitHubProvider(ctx)
 	}
 	validatePruneMergedWorktree      = defaultValidatePruneMergedWorktree
+	validatePruneMergedDirtyWorktree = defaultValidatePruneMergedDirtyWorktree
 	removePruneMergedWorktree        = defaultRemovePruneMergedWorktree
 	inspectPruneMergedDirty          = defaultInspectPruneMergedDirty
 	confirmPruneMergedDirty          = defaultConfirmPruneMergedDirty
@@ -362,6 +363,17 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 		if dirty {
 			switch {
 			case pruneDryRun:
+				if err := runPruneMergedProtectedOperation(ctx, cfg, candidate, func() error {
+					return withPruneMergedOwnershipGuard(ctx, reg, store, candidate, func() error {
+						return validatePruneMergedDirtyWorktree(candidate)
+					})
+				}); err != nil {
+					providerEvidence := outcome.Evidence
+					outcome = pruneMergedOutcomeForError(candidate, err)
+					mergePruneEvidence(&outcome, providerEvidence)
+					outcomes[index] = outcome
+					continue
+				}
 				outcome.Reason = prunepolicy.WouldRequireConfirmation
 				outcome.Message = "merged worktree has local files or changes and would require confirmation"
 				outcomes[index] = outcome
@@ -571,6 +583,12 @@ func defaultValidatePruneMergedWorktree(candidate pruneMergedCandidate) error {
 		candidate.Policy.Path,
 		pruneMergedRemovalConditions(candidate),
 	)
+}
+
+func defaultValidatePruneMergedDirtyWorktree(candidate pruneMergedCandidate) error {
+	conditions := pruneMergedRemovalConditions(candidate)
+	conditions.RequireClean = false
+	return git.New(candidate.RepositoryRoot).ValidateWorktreeRemoval(candidate.Policy.Path, conditions)
 }
 
 func withPruneMergedOwnershipGuard(

@@ -216,7 +216,11 @@ func repositoryFullPathIdentity(info *url.RepositoryInfo) string {
 func (c *StatusCollector) collectPorcelain(ctx context.Context, g *git.Git) (porcelainStatus, error) {
 	gitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	output, err := g.RunWithContext(gitCtx, "status", "--porcelain=v2", "--branch", "-uall", "-z")
+	args := []string{"status", "--porcelain=v2", "--branch", "-uall", "-z"}
+	if !c.fetchRemote {
+		args = append(args, "--no-ahead-behind")
+	}
+	output, err := g.RunWithContext(gitCtx, args...)
 	if err != nil {
 		return porcelainStatus{}, err
 	}
@@ -243,11 +247,16 @@ func parsePorcelainV2(output string) (porcelainStatus, error) {
 			if len(fields) != 2 {
 				return porcelainStatus{}, fmt.Errorf("parse porcelain v2 branch.ab %q: expected ahead and behind", record)
 			}
-			ahead, err := strconv.Atoi(strings.TrimPrefix(fields[0], "+"))
+			aheadText := strings.TrimPrefix(fields[0], "+")
+			behindText := strings.TrimPrefix(fields[1], "-")
+			if aheadText == "?" && behindText == "?" {
+				continue
+			}
+			ahead, err := strconv.Atoi(aheadText)
 			if err != nil {
 				return porcelainStatus{}, fmt.Errorf("parse porcelain v2 ahead count %q: %w", fields[0], err)
 			}
-			behind, err := strconv.Atoi(strings.TrimPrefix(fields[1], "-"))
+			behind, err := strconv.Atoi(behindText)
 			if err != nil {
 				return porcelainStatus{}, fmt.Errorf("parse porcelain v2 behind count %q: %w", fields[1], err)
 			}
@@ -360,9 +369,29 @@ func (c *StatusCollector) lastActivity(ctx context.Context, path string, changed
 		info, statErr := os.Stat(filepath.Join(path, filepath.FromSlash(relative)))
 		if statErr == nil && info.ModTime().After(latest) {
 			latest = info.ModTime().UTC()
+		} else if statErr != nil {
+			parentTime := nearestExistingParentTime(path, relative)
+			if parentTime.After(latest) {
+				latest = parentTime
+			}
 		}
 	}
 	return latest, ctx.Err()
+}
+
+func nearestExistingParentTime(root, relative string) time.Time {
+	candidate := filepath.Dir(filepath.Join(root, filepath.FromSlash(relative)))
+	root = filepath.Clean(root)
+	for utils.IsSameOrChildPath(candidate, root) {
+		if info, err := os.Stat(candidate); err == nil {
+			return info.ModTime().UTC()
+		}
+		if candidate == root {
+			break
+		}
+		candidate = filepath.Dir(candidate)
+	}
+	return time.Time{}
 }
 
 // getLastActivityFallback is the fallback method when git commands fail

@@ -118,6 +118,25 @@ func TestLastActivityUsesNewWorktreeRootForCleanOldHead(t *testing.T) {
 	assert.Equal(t, rootTime, result.Statuses[0].LastActivity)
 }
 
+func TestLastActivityUsesParentDirectoryForDeletedNestedFile(t *testing.T) {
+	repo := newStatusTestRepositoryAt(t, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	nested := filepath.Join(repo, "nested")
+	require.NoError(t, os.Mkdir(nested, 0o755))
+	tracked := filepath.Join(nested, "tracked.txt")
+	require.NoError(t, os.WriteFile(tracked, []byte("tracked"), 0o644))
+	runStatusTestGit(t, repo, "add", "nested/tracked.txt")
+	runStatusTestGit(t, repo, "commit", "-m", "add nested file")
+	recent := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, os.Remove(tracked))
+	require.NoError(t, os.Chtimes(nested, recent, recent))
+
+	result, err := NewStatusCollectorWithOptions(StatusCollectorOptions{Workers: 1}).
+		CollectAll(context.Background(), []*models.Worktree{{Path: repo, Branch: "main"}})
+
+	require.NoError(t, err)
+	assert.Equal(t, recent, result.Statuses[0].LastActivity)
+}
+
 func TestCollectAllCanceledContextReturnsNoPartialCollection(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

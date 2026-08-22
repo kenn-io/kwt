@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -163,11 +165,12 @@ func (b *tuiBackend) LoadInventory(ctx context.Context, request dashboard.Invent
 		return dashboard.InventoryResult{Rows: rows, Warnings: warnings, Current: err == nil}, err
 	}
 
-	query := kwt.Request{IncludeProtectedSockets: true, LaunchDirectory: launchDir}
+	query := kwt.Request{IncludeProtectedSockets: true}
 	interactive := config.StdinInteractive()
 	switch request.Scope {
 	case dashboard.InventoryCachedDashboard:
 		query.View = kwt.ViewDashboard
+		query.LaunchDirectory = launchDir
 	case dashboard.InventoryCurrentRepository:
 		info, statErr := os.Stat(request.WorkingDirectory)
 		if statErr != nil {
@@ -181,6 +184,7 @@ func (b *tuiBackend) LoadInventory(ctx context.Context, request dashboard.Invent
 		interactive = false
 	case dashboard.InventoryCurrentDashboard:
 		query.View = kwt.ViewDashboard
+		query.LaunchDirectory = launchDir
 		query.RequireCurrent = true
 	default:
 		return dashboard.InventoryResult{}, fmt.Errorf("unknown inventory scope %d", request.Scope)
@@ -244,7 +248,7 @@ func (b *tuiBackend) LoadInventory(ctx context.Context, request dashboard.Invent
 	}
 	rows = append(rows, workspaceRows(workspaces, directorySessions)...)
 	if request.Scope == dashboard.InventoryCurrentRepository {
-		if err := validateRepositoryRows(rows, request.ProjectIdentity); err != nil {
+		if err := validateRepositoryRows(rows, request.ProjectIdentity, request.WorkingDirectory); err != nil {
 			return dashboard.InventoryResult{}, err
 		}
 	}
@@ -256,19 +260,24 @@ func (b *tuiBackend) LoadInventory(ctx context.Context, request dashboard.Invent
 	}, nil
 }
 
-func validateRepositoryRows(rows []dashboard.Row, expected string) error {
+func validateRepositoryRows(rows []dashboard.Row, expected, workingDirectory string) error {
 	if len(rows) == 0 {
 		return fmt.Errorf("repository refresh returned no worktrees")
 	}
 	mainFound := false
+	anchorFound := false
 	for _, row := range rows {
 		if row.Entry == nil || !lifecycle.EqualProjectIdentity(dashboardProjectIdentity(row), expected) {
 			return fmt.Errorf("repository refresh returned unrelated repository")
 		}
 		mainFound = mainFound || row.Entry.IsMain
+		anchorFound = anchorFound || utils.IsSameOrChildPath(workingDirectory, row.Entry.Path)
 	}
 	if !mainFound {
 		return fmt.Errorf("repository refresh returned no main worktree")
+	}
+	if !anchorFound {
+		return fmt.Errorf("repository refresh anchor is outside returned worktrees")
 	}
 	return nil
 }
@@ -1244,10 +1253,6 @@ func readTUIFleetState(ctx context.Context, cfg *models.Config) (fleet.FleetStat
 	if err != nil {
 		return fleet.FleetState{}, err
 	}
-	if cfg != nil && cfg.Fleet.Enabled {
-		var publishWarning bytes.Buffer
-		_ = publishFleetBestEffort(ctx, cfg, newFleetManifestBuilder(), &publishWarning)
-	}
 	state, _, notModified, err := client.State(ctx, "")
 	if err != nil {
 		return fleet.FleetState{}, err
@@ -1800,10 +1805,7 @@ func (b *tuiBackend) prepareRemoval(row dashboard.Row, force bool) (tuiRemovalOp
 	}
 	var cfg *models.Config
 	if b.cfg != nil {
-		copyConfig := *b.cfg
-		copyConfig.Projects = append([]models.Project(nil), b.cfg.Projects...)
-		copyConfig.Workspaces = append([]models.Workspace(nil), b.cfg.Workspaces...)
-		cfg = &copyConfig
+		cfg = cloneTUIConfig(b.cfg)
 	}
 	return tuiRemovalOperation{
 		request: kwt.RemovalRequest{
@@ -1816,6 +1818,27 @@ func (b *tuiBackend) prepareRemoval(row dashboard.Row, force bool) (tuiRemovalOp
 		cleanupEndpoint:       b.cleanupEndpoint,
 		killProtectedEndpoint: b.killProtectedEndpoint,
 	}, nil
+}
+
+func cloneTUIConfig(value *models.Config) *models.Config {
+	if value == nil {
+		return nil
+	}
+	copyConfig := *value
+	copyConfig.Agents = maps.Clone(value.Agents)
+	copyConfig.Projects = slices.Clone(value.Projects)
+	copyConfig.Workspaces = slices.Clone(value.Workspaces)
+	copyConfig.RepositorySettings = slices.Clone(value.RepositorySettings)
+	for index := range copyConfig.RepositorySettings {
+		copyConfig.RepositorySettings[index].SetupCommands = slices.Clone(value.RepositorySettings[index].SetupCommands)
+		copyConfig.RepositorySettings[index].CopyFiles = slices.Clone(value.RepositorySettings[index].CopyFiles)
+	}
+	copyConfig.Layouts.Presets = slices.Clone(value.Layouts.Presets)
+	for index := range copyConfig.Layouts.Presets {
+		copyConfig.Layouts.Presets[index].Panes = slices.Clone(value.Layouts.Presets[index].Panes)
+	}
+	copyConfig.Naming.SanitizeChars = maps.Clone(value.Naming.SanitizeChars)
+	return &copyConfig
 }
 
 func (operation tuiRemovalOperation) run(ctx context.Context) error {

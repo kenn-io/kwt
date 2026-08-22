@@ -124,7 +124,8 @@ classification:
 - `--dry-run` never prompts. It reports `would_require_confirmation`, counts the
   candidate in `Summary.WouldRemove`, and includes that reason in the
   successful `ExitCode` allowlist unless another hard blocker exists.
-- `--json` and non-interactive removal never prompt or remove a dirty candidate.
+- `--json` and non-interactive removal never prompt or remove a dirty candidate,
+  except that `--dry-run` takes precedence because it never mutates anything.
   They report the distinct `confirmation_required` reason, count it as skipped,
   continue evaluating other candidates, and return the existing
   skipped-candidate failure status.
@@ -147,7 +148,8 @@ The JSON report remains a complete per-path record.
 
 The daemon remains the sole owner of the persistent global dashboard cache.
 The TUI launches with the existing non-current `ViewDashboard` request and
-paints cached rows immediately.
+paints cached rows immediately when a cache exists. A cold start waits for the
+service's initial current inventory.
 
 After cached rows identify the launch project, the TUI sends an existing
 `ViewRepository` request with that project's working directory. Repository
@@ -176,7 +178,10 @@ view does not populate. New project entries can be inserted only after their
 repository identity passes scope validation. Missing project entries are
 removed from that project's slice after a successful scoped refresh.
 
-When the active project is current, the TUI starts one non-blocking current
+When cached rows cannot identify the launch project, the TUI starts a current
+dashboard refresh directly so a new or moved launch repository can be
+discovered and registered. Otherwise, when the active project is current, the
+TUI starts one non-blocking current
 `ViewDashboard` request per TUI session. This pass refreshes the daemon's global
 cache, global directory workspaces, and launch entries. It does not trigger
 global Git status collection and does not gate navigation. When it completes,
@@ -192,6 +197,10 @@ with status. Every fresh current dashboard result applies its effective config
 and performs launch-project and launch-workspace registration even when status
 collection is disabled. Status collection is no longer the switch that enables
 those side effects.
+
+The TUI fleet overlay reads existing hub state without publishing a new global
+manifest. Command-driven mutations retain their existing publication path, so
+opening the dashboard never reintroduces fleet-wide status collection.
 
 Directory workspaces and launch entries have global freshness. Their mutations
 require a current global result. Entering an all-project view starts a global
@@ -218,7 +227,8 @@ Last activity is the maximum of:
 
 - HEAD commit time;
 - worktree root modification time; and
-- modification times of changed and untracked files named by porcelain output.
+- modification times of changed and untracked files named by porcelain output;
+  for a deleted path, the nearest existing parent directory time.
 
 The collector does not list or stat every tracked file. An ordinary status
 failure returns an unknown status plus a per-row diagnostic so other rows still

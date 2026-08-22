@@ -232,7 +232,7 @@ func TestCollectTUIStatusesSurfacesPerRowDiagnostic(t *testing.T) {
 	assert.Contains(t, warnings[0], "status unavailable for "+missing)
 }
 
-func TestReadTUIFleetStatePublishesBeforeReadingHub(t *testing.T) {
+func TestReadTUIFleetStateReadsHubWithoutPublishingGlobalStatus(t *testing.T) {
 	resetFleetCommandDeps(t)
 
 	cfg := &models.Config{Fleet: models.FleetConfig{
@@ -261,11 +261,10 @@ func TestReadTUIFleetStatePublishesBeforeReadingHub(t *testing.T) {
 	_, err := readTUIFleetState(context.Background(), cfg)
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"client", "builder", "publish", "state"}, sequence,
-		"the client must be validated before the expensive manifest build")
+	assert.Equal(t, []string{"client", "state"}, sequence)
 }
 
-func TestReadTUIFleetStateIgnoresPublishWarningWithoutPanicking(t *testing.T) {
+func TestReadTUIFleetStateDoesNotBuildManifest(t *testing.T) {
 	resetFleetCommandDeps(t)
 
 	cfg := &models.Config{Fleet: models.FleetConfig{
@@ -274,7 +273,8 @@ func TestReadTUIFleetStateIgnoresPublishWarningWithoutPanicking(t *testing.T) {
 	}}
 	client := &stubFleetClient{}
 	newFleetManifestBuilder = func() fleet.ManifestBuildProvider {
-		return &stubFleetManifestBuilder{err: errors.New("build failed")}
+		t.Fatal("TUI fleet reads must not build a global manifest")
+		return nil
 	}
 	publishFleetBestEffort = func(ctx context.Context, gotCfg *models.Config, builder fleet.ManifestBuildProvider, warn *bytes.Buffer) error {
 		return fleet.PublishBestEffort(ctx, gotCfg, builder, warn)

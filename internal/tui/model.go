@@ -431,6 +431,7 @@ func (m Model) replaceInventoryRows(rows []Row, warnings []string, current bool)
 	oldCursor := m.cursor
 	hadRows := len(m.rows) > 0
 	rows = mergeCreatingRows(append([]Row(nil), rows...), m.rows, m.creating)
+	rows = m.applyRemovalState(rows)
 	sortRows(rows)
 	m.rows = rows
 	m.warnings = warnings
@@ -458,18 +459,45 @@ func (m Model) replaceInventoryRows(rows []Row, warnings []string, current bool)
 }
 
 func (m Model) mergeStructuralDashboard(rows []Row, warnings []string) Model {
-	statusByPath := make(map[string]*models.WorktreeStatus)
+	previousByPath := make(map[string]Row)
 	for _, row := range m.rows {
 		if m.projectFresh[rowProjectKey(row)].Current && row.Status != nil {
-			statusByPath[pathIdentity(rowPath(row))] = row.Status
+			previousByPath[pathIdentity(rowPath(row))] = row
 		}
 	}
 	for index := range rows {
-		if status := statusByPath[pathIdentity(rowPath(rows[index]))]; status != nil {
-			rows[index].Status = status
+		if previous, ok := previousByPath[pathIdentity(rowPath(rows[index]))]; ok {
+			if sameCheckout(previous, rows[index]) && sameGeneration(previous, rows[index]) {
+				rows[index].Status = previous.Status
+			} else {
+				freshness := m.projectFresh[rowProjectKey(previous)]
+				freshness.Current = false
+				m.projectFresh[rowProjectKey(previous)] = freshness
+			}
 		}
 	}
 	return m.replaceInventoryRows(rows, warnings, false)
+}
+
+func sameGeneration(left, right Row) bool {
+	if left.Entry == nil || right.Entry == nil {
+		return false
+	}
+	return left.Entry.Generation == right.Entry.Generation
+}
+
+func (m Model) applyRemovalState(rows []Row) []Row {
+	removing := make(map[string]bool, len(m.removalQueue)+1)
+	if m.removalActive != nil {
+		removing[m.removalActive.key] = true
+	}
+	for _, job := range m.removalQueue {
+		removing[job.key] = true
+	}
+	for index := range rows {
+		rows[index].Removing = removing[removalKey(rows[index])]
+	}
+	return rows
 }
 
 func (m Model) repositoryRequest(project string) InventoryRequest {
@@ -749,16 +777,31 @@ func (m Model) applyFleetRows(msg fleetRowsMsg) (Model, tea.Cmd) {
 	}
 	m.fleetPending = false
 	m = m.cancelFleetMerge()
-	m.warnings = msg.warnings
+	m.warnings = appendUniqueStrings(m.warnings, msg.warnings...)
 
 	oldRows := m.filteredRows()
 	oldCursor := m.cursor
 	rows := append([]Row(nil), msg.rows...)
 	rows = mergeCreatingRows(rows, m.rows, m.creating)
 	sortRows(rows)
-	m.rows = rows
+	m.rows = m.applyRemovalState(rows)
 	m.cursor = anchorCursorByPath(oldRows, oldCursor, m.filteredRows())
 	return m, nil
+}
+
+func appendUniqueStrings(existing []string, additions ...string) []string {
+	seen := make(map[string]bool, len(existing)+len(additions))
+	result := append([]string(nil), existing...)
+	for _, value := range existing {
+		seen[value] = true
+	}
+	for _, value := range additions {
+		if value != "" && !seen[value] {
+			result = append(result, value)
+			seen[value] = true
+		}
+	}
+	return result
 }
 
 func (m Model) applyActionDone(msg actionDoneMsg) (Model, tea.Cmd) {

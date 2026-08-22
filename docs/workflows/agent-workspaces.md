@@ -58,8 +58,9 @@ prefix twice to address the inner client.
 
 ## Cross-project steering
 
-The dashboard opens from its cached catalog, then refreshes only the project
-you are viewing. You can search, move through rows, open a shell in an existing
+When a cached catalog is available, the dashboard paints it first, then
+refreshes only the project you are viewing. A cold start waits for the initial
+current inventory. You can search, move through rows, open a shell in an existing
 directory, or attach to a session that Kwt verifies is already live while that
 refresh runs. Creating, deleting, syncing, killing, or starting a session waits
 for current inventory.

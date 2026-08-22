@@ -225,6 +225,7 @@ func TestPruneMergedDirtyDryRunWouldRequireConfirmation(t *testing.T) {
 	setPruneMergedInventory(candidate)
 	setPruneMergedProvider(providerForCommandCandidates(candidate))
 	inspectPruneMergedDirty = func(pruneMergedCandidate) (bool, error) { return true, nil }
+	validatePruneMergedDirtyWorktree = func(pruneMergedCandidate) error { return nil }
 	cmd, stdout, _ := fleetTestCommand()
 
 	err := runPruneMerged(cmd, nil)
@@ -1881,6 +1882,7 @@ func resetPruneMergedDeps(t *testing.T) {
 	oldInspect := inspectPruneMergedCandidates
 	oldProvider := newPruneMergedProvider
 	oldValidate := validatePruneMergedWorktree
+	oldValidateDirty := validatePruneMergedDirtyWorktree
 	oldRemove := removePruneMergedWorktree
 	oldInspectDirty := inspectPruneMergedDirty
 	oldConfirmDirty := confirmPruneMergedDirty
@@ -1894,6 +1896,7 @@ func resetPruneMergedDeps(t *testing.T) {
 		inspectPruneMergedCandidates = oldInspect
 		newPruneMergedProvider = oldProvider
 		validatePruneMergedWorktree = oldValidate
+		validatePruneMergedDirtyWorktree = oldValidateDirty
 		removePruneMergedWorktree = oldRemove
 		inspectPruneMergedDirty = oldInspectDirty
 		confirmPruneMergedDirty = oldConfirmDirty

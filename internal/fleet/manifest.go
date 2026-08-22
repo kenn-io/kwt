@@ -404,6 +404,11 @@ func collectChangeStatus(ctx context.Context, cfg *models.Config, worktree model
 		}
 		return ChangeStatus{}, time.Time{}, nil
 	}
+	if len(collection.Diagnostics) > 0 {
+		return ChangeStatus{}, time.Time{}, fmt.Errorf(
+			"collect status for %s: %w", worktree.Path, collection.Diagnostics[0].Err,
+		)
+	}
 	gitStatus := collection.Statuses[0].GitStatus
 	return ChangeStatus{
 		Modified:  gitStatus.Modified,
