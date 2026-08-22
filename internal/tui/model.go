@@ -496,17 +496,30 @@ func (m Model) mergeStructuralDashboard(rows []Row, warnings []string) Model {
 			previousByPath[pathIdentity(rowPath(row))] = row
 		}
 	}
-	for index := range rows {
-		if previous, ok := previousByPath[pathIdentity(rowPath(rows[index]))]; ok {
-			if sameCheckout(previous, rows[index]) && sameGeneration(previous, rows[index]) {
-				rows[index].Status = previous.Status
-			} else {
-				project := projectFreshnessKey(rowProjectKey(previous))
-				freshness := m.projectFresh[project]
-				freshness.Current = false
-				m.projectFresh[project] = freshness
-			}
+	markStale := func(row Row) {
+		if row.Entry == nil {
+			return
 		}
+		project := projectFreshnessKey(rowProjectKey(row))
+		if project == "" {
+			return
+		}
+		freshness := m.projectFresh[project]
+		freshness.Current = false
+		m.projectFresh[project] = freshness
+	}
+	for index := range rows {
+		previous, ok := previousByPath[pathIdentity(rowPath(rows[index]))]
+		if !ok {
+			markStale(rows[index])
+			continue
+		}
+		if sameCheckout(previous, rows[index]) && sameGeneration(previous, rows[index]) {
+			rows[index].Status = previous.Status
+			continue
+		}
+		markStale(previous)
+		markStale(rows[index])
 	}
 	return m.replaceInventoryRows(rows, warnings, false)
 }

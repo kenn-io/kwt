@@ -151,6 +151,33 @@ func TestBackgroundGlobalPreservesFreshProjectStatus(t *testing.T) {
 	assert.Equal(t, models.WorktreeStatusModified, model.rows[0].Status.Status)
 }
 
+func TestBackgroundGlobalMakesProjectStaleWhenWorktreeAppears(t *testing.T) {
+	project := "github.com/acme/widget"
+	existing := testRow("widget", "main", "/w/widget/main")
+	existing.Entry.RepositoryInfo.FullPath = project
+	added := testRow("widget", "topic", "/w/widget/topic")
+	added.Entry.RepositoryInfo.FullPath = project
+	model := NewModel(&fakeBackend{}, rowPath(existing))
+	model.rows = []Row{existing}
+	model.projectFresh[projectFreshnessKey(project)] = scopeFreshness{
+		ObservedAt: time.Now(), Current: true,
+	}
+	existing.Status = nil
+	added.Status = nil
+
+	model, _ = updateModel(t, model, inventoryMsg{
+		request: InventoryRequest{Scope: InventoryCurrentDashboard},
+		result: InventoryResult{
+			Rows: []Row{existing, added}, ObservedAt: time.Now(), Current: true,
+		},
+	})
+	model.cursor = indexByPath(model.filteredRows(), rowPath(added))
+	model, _ = updateModel(t, model, press("d"))
+
+	assert.Equal(t, confirmNone, model.confirm.kind)
+	assert.Contains(t, model.message, "project inventory is refreshing")
+}
+
 func TestStatusFreeGlobalRefreshDoesNotAuthorizeProjectMutation(t *testing.T) {
 	row := testRow("widget", "topic", "/w/widget/topic")
 	row.Entry.RepositoryInfo.FullPath = "github.com/acme/widget"
