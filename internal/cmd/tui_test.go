@@ -1793,8 +1793,9 @@ func TestTUIBackendRemoveWorktreeDelegatesToDaemon(t *testing.T) {
 	worktreePath := filepath.Join(t.TempDir(), "daemon-tui-remove")
 	runTUITestGit(t, repoPath, "worktree", "add", "-b", "daemon-tui-remove", worktreePath)
 	generation := tuiTestWorktreeGeneration(t, repoPath, worktreePath)
+	head := strings.TrimSpace(runTUITestGitOutput(t, worktreePath, "rev-parse", "HEAD"))
 	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
-		Path: worktreePath, Branch: "daemon-tui-remove", Generation: generation,
+		Path: worktreePath, Branch: "daemon-tui-remove", CommitHash: head, Generation: generation,
 	}, SessionName: "workspace"}
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
 	backend.liveEndpoints = func(
@@ -1820,6 +1821,8 @@ func TestTUIBackendRemoveWorktreeDelegatesToDaemon(t *testing.T) {
 	assert.Equal(t, utils.PathKey(repoPath), utils.PathKey(request.RepositoryPath))
 	assert.Equal(t, utils.PathKey(worktreePath), utils.PathKey(request.Path))
 	assert.Equal(t, generation, request.ExpectedGeneration)
+	assert.Equal(t, "daemon-tui-remove", request.ExpectedBranch)
+	assert.Equal(t, head, request.ExpectedHead)
 	assert.DirExists(t, worktreePath, "only the daemon service may perform the mutation")
 }
 

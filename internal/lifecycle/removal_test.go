@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,6 +128,58 @@ func TestRemovalServiceRejectsChangedGeneration(t *testing.T) {
 	assert.False(t, result.WorktreeRemoved)
 	assert.True(t, service.IsCode(err, service.Conflict))
 	assert.DirExists(t, worktreePath)
+}
+
+func TestRemovalServiceRejectsChangedCheckout(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(*testing.T, string)
+	}{
+		{
+			name: "branch",
+			change: func(t *testing.T, worktreePath string) {
+				runRemovalGit(t, worktreePath, "switch", "-c", "replacement")
+			},
+		},
+		{
+			name: "head",
+			change: func(t *testing.T, worktreePath string) {
+				require.NoError(t, os.WriteFile(
+					filepath.Join(worktreePath, "change.txt"), []byte("changed\n"), 0o644,
+				))
+				runRemovalGit(t, worktreePath, "add", "change.txt")
+				runRemovalGit(t, worktreePath, "commit", "-m", "change head")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repositoryPath, worktreePath := removalRepository(t, "confirmed")
+			generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+			require.NoError(t, err)
+			head, err := git.New(worktreePath).RunCommand("rev-parse", "HEAD")
+			require.NoError(t, err)
+			tt.change(t, worktreePath)
+
+			result, err := NewRemovalService(RemovalServiceOptions{Home: t.TempDir()}).Remove(
+				context.Background(),
+				RemovalRequest{
+					RepositoryPath:     repositoryPath,
+					Path:               worktreePath,
+					ExpectedGeneration: generation,
+					ExpectedBranch:     "confirmed",
+					ExpectedHead:       strings.TrimSpace(head),
+					Force:              true,
+				},
+			)
+
+			require.Error(t, err)
+			assert.True(t, service.IsCode(err, service.Conflict))
+			assert.False(t, result.WorktreeRemoved)
+			assert.DirExists(t, worktreePath)
+		})
+	}
 }
 
 func TestRemovalServiceTerminatesConfirmedSessionBeforeRemovingWorktree(t *testing.T) {

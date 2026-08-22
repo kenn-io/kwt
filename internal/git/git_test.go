@@ -1098,6 +1098,8 @@ func TestRemoveWorktreeTransactionAfterClaimHoldsMutationLock(t *testing.T) {
 	result, claimed, err := g.RemoveWorktreeTransactionAfterClaim(
 		worktreePath,
 		generation,
+		"",
+		"",
 		false,
 		false,
 		false,

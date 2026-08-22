@@ -1168,6 +1168,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			} else {
 				m.cursor = clampCursor(m.cursor, len(m.filteredRows()))
 			}
+			return m.startFetch()
 		}
 	}
 
@@ -1493,6 +1494,7 @@ func (m Model) currentConfirmationRow(confirmed Row) (Row, bool) {
 			continue
 		}
 		if !m.rowScopeCurrent(row) ||
+			!sameCheckout(confirmed, row) ||
 			row.SessionName != confirmed.SessionName ||
 			row.TmuxEndpoint != confirmed.TmuxEndpoint ||
 			row.SessionLive != confirmed.SessionLive {

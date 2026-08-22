@@ -1797,6 +1797,11 @@ func (b *tuiBackend) prepareRemoval(row dashboard.Row, force bool) (tuiRemovalOp
 	if strings.TrimSpace(generation) == "" {
 		return tuiRemovalOperation{}, fmt.Errorf("worktree generation unavailable; refresh before removing")
 	}
+	branch := strings.TrimSpace(row.Entry.Branch)
+	head := strings.TrimSpace(row.Entry.CommitHash)
+	if force && (branch == "" || head == "") {
+		return tuiRemovalOperation{}, fmt.Errorf("worktree checkout unavailable; refresh before removing")
+	}
 	repoRoot, err := b.repositoryRootForRow(row)
 	if err != nil {
 		return tuiRemovalOperation{}, err
@@ -1809,7 +1814,7 @@ func (b *tuiBackend) prepareRemoval(row dashboard.Row, force bool) (tuiRemovalOp
 		request: kwt.RemovalRequest{
 			RepositoryPath: repoRoot,
 			Path:           row.Entry.Path, ExpectedGeneration: generation,
-			Force: force,
+			ExpectedBranch: branch, ExpectedHead: head, Force: force,
 		},
 		row: row, endpointRequest: removalEndpointRequest(row), config: cfg,
 		remove: b.removeWorktree, liveEndpoints: b.liveEndpoints,

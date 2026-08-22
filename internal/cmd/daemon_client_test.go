@@ -212,7 +212,7 @@ func TestTrustRequirementDecodesHTTPDetailTypes(t *testing.T) {
 	assert.True(t, requirement.Truncated)
 }
 
-func TestGuardedRemovalRejectsVersionOneDaemonBeforeMutation(t *testing.T) {
+func TestConditionalRemovalRejectsVersionOneDaemonBeforeMutation(t *testing.T) {
 	oldFactory := newDaemonController
 	oldRemove := removeWorktreeWithDaemonClient
 	t.Cleanup(func() {
@@ -239,13 +239,20 @@ func TestGuardedRemovalRejectsVersionOneDaemonBeforeMutation(t *testing.T) {
 		return kwt.RemovalResult{}, nil
 	}
 
-	_, err := removeWorktreeThroughDaemon(context.Background(), kwt.RemovalRequest{
-		Session: &tmux.RemovalSessionCondition{},
-	})
+	requests := map[string]kwt.RemovalRequest{
+		"session condition":  {Session: &tmux.RemovalSessionCondition{}},
+		"checkout condition": {ExpectedBranch: "topic", ExpectedHead: "abc123"},
+	}
+	for name, request := range requests {
+		t.Run(name, func(t *testing.T) {
+			mutated = false
+			_, err := removeWorktreeThroughDaemon(context.Background(), request)
 
-	require.Error(t, err)
-	assert.True(t, service.IsCode(err, service.DaemonIncompatible))
-	assert.False(t, mutated, "an older daemon must be rejected before removal is dispatched")
+			require.Error(t, err)
+			assert.True(t, service.IsCode(err, service.DaemonIncompatible))
+			assert.False(t, mutated, "an older daemon must be rejected before removal is dispatched")
+		})
+	}
 }
 
 func TestInventoryAcceptsVersionTwoDaemon(t *testing.T) {

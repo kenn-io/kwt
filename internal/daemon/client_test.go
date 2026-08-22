@@ -413,12 +413,16 @@ func TestVersionTwoUnguardedRemovalIncludesExpansionContext(t *testing.T) {
 	result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{
 		RepositoryPath: "/repo", Path: "/repo/topic",
 		ExpectedGeneration: "0123456789abcdef0123456789abcdef",
+		ExpectedBranch:     "topic",
+		ExpectedHead:       "abc123",
 	})
 
 	require.NoError(t, err)
 	assert.True(t, result.WorktreeRemoved)
 	assert.Equal(t, "/repo/topic", received.Expansion.WorkingDirectory)
 	assert.Equal(t, "secret", received.Expansion.Environment["FLEET_TOKEN"])
+	assert.Equal(t, "topic", received.ExpectedBranch)
+	assert.Equal(t, "abc123", received.ExpectedHead)
 }
 
 func TestGuardedRemovalRequiresExpansionCapture(t *testing.T) {

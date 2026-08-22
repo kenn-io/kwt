@@ -21,6 +21,8 @@ type RemovalRequest struct {
 	RepositoryPath     string                   `json:"repository_path"`
 	Path               string                   `json:"path"`
 	ExpectedGeneration string                   `json:"expected_generation"`
+	ExpectedBranch     string                   `json:"expected_branch,omitempty"`
+	ExpectedHead       string                   `json:"expected_head,omitempty"`
 	Expansion          ExpansionContext         `json:"expansion,omitempty"`
 	Force              bool                     `json:"force,omitempty"`
 	DeleteBranch       bool                     `json:"delete_branch,omitempty"`
@@ -173,6 +175,8 @@ func (s *removalService) Remove(
 	).RemoveWorktreeTransactionAfterClaim(
 		request.Path,
 		request.ExpectedGeneration,
+		request.ExpectedBranch,
+		request.ExpectedHead,
 		request.Force,
 		request.DeleteBranch,
 		request.ForceDeleteBranch,

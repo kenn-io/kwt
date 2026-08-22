@@ -228,7 +228,7 @@ func removeWorktreeThroughDaemon(
 			return kwt.RemovalResult{}, err
 		}
 		requiredCapability := kwtdaemon.CapabilityRemoval
-		if request.Session != nil {
+		if request.Session != nil || request.ExpectedBranch != "" || request.ExpectedHead != "" {
 			requiredCapability = kwtdaemon.CapabilityGuardedRemoval
 		}
 		if observation.Client == nil ||

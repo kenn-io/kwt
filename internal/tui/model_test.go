@@ -2054,6 +2054,24 @@ func TestKillConfirmationRejectsChangedOrStaleRow(t *testing.T) {
 				return model
 			},
 		},
+		{
+			name: "worktree checkout changed",
+			change: func(t *testing.T, model Model, row Row) Model {
+				entry := *row.Entry
+				entry.Branch = "replacement"
+				row.Entry = &entry
+				model.backgroundGlobalStarted = true
+				model, _ = updateModel(t, model, inventoryMsg{
+					request: InventoryRequest{
+						Scope: InventoryCurrentRepository, ProjectIdentity: rowProjectKey(row),
+					},
+					result: InventoryResult{
+						Rows: []Row{row}, ObservedAt: time.Now(), Current: true,
+					},
+				})
+				return model
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -2779,8 +2797,11 @@ func TestEscapeClearsSearchFilterBeforeProjectPerspective(t *testing.T) {
 	assert.Empty(t, model.filter, "first escape clears the search filter")
 	assert.NotEmpty(t, model.projectPerspective, "perspective survives the first escape")
 
-	model, _ = updateModel(t, model, press("esc"))
+	model, refreshCmd := updateModel(t, model, press("esc"))
 	assert.Empty(t, model.projectPerspective, "second escape clears the perspective")
+	require.NotNil(t, refreshCmd)
+	assert.Equal(t, InventoryCurrentDashboard, model.fetchingRequest.Scope)
+	assert.True(t, model.fetchingRequest.CollectStatuses)
 }
 
 func TestRowsLoadMergesFleetAsynchronously(t *testing.T) {
