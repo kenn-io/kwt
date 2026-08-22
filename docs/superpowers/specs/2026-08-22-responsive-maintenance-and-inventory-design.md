@@ -42,8 +42,10 @@ stdout.
 When the error stream is a terminal, the reporter owns one updating line. It
 starts with a spinner and the current phase. After a phase knows its total, it
 shows `completed/total` and an estimated time remaining based on completed
-items. It clears the transient line before a prompt, diagnostic, or final
-report and redraws it if work continues.
+items in that phase. ETA history resets at every phase boundary so local Git
+checks and provider calls do not distort each other's estimate. It clears the
+transient line before a prompt, diagnostic, or final report and redraws it if
+work continues.
 
 When the error stream is not a terminal, the reporter emits bounded milestone
 lines: phase start, periodic count milestones, and phase completion. It does
@@ -84,27 +86,56 @@ the outcome. Candidate evaluation follows this order:
 6. Check cleanliness only after steps 1–5 prove that the candidate is a merged
    worktree.
 
+The cleanliness result used for classification is collected after merge proof
+for every mode; the candidate-discovery snapshot no longer decides the outcome.
+
+This ordering intentionally sends every structurally valid candidate to the
+provider, including dirty candidates that previously stopped before a provider
+call. Provider checks remain sequential and expose their progress as one phase.
+Authentication and rate-limit failures retain their existing typed outcomes.
+An unrelated dirty worktree now resolves to the same successful
+`no_associated_pr` or `pr_not_merged` outcome as an unrelated clean worktree.
+Earlier source or repository failures can likewise replace the old premature
+`dirty_worktree` reason with their more specific failure reason.
+
 A clean confirmed-merged candidate follows the existing dry-run or removal
 path. A dirty confirmed-merged candidate has a distinct confirmation-required
 classification:
 
-- During an interactive, non-JSON removal, prompt once for that worktree. The
-  prompt names the path and says that its pull request merged but the worktree
-  has local changes. The default answer is no.
+- Ignored files count as dirty. Forced removal deletes the complete worktree,
+  so build output and other ignored files must be inside the confirmation
+  boundary rather than silently discarded.
+- Immediately before an interactive prompt, rerun the protected, credential-free
+  status inspection. If the worktree became clean, use the normal non-forced
+  path. If inspection fails, stop that candidate. If it remains dirty, prompt
+  once for that worktree.
+- The prompt names the path and says that its pull request merged. It asks to
+  remove the complete worktree and all local changes and files in it, including
+  ignored files and files added before removal. This wording makes the user's
+  authorization cover changes that race with the prompt. The default answer is
+  no.
 - Yes authorizes forced Git removal for only that candidate. All ownership,
   generation, pull-request evidence, protected-session, and lock-scoped
   revalidation still run immediately before mutation.
-- No records a normal declined outcome and continues. A run containing only
-  successful removals, unrelated candidates, and user declines exits
-  successfully.
-- `--dry-run` never prompts. It reports that the dirty merged candidate would
-  require confirmation and continues successfully unless another hard blocker
-  exists.
+- No records `confirmation_declined` and continues. That reason counts as
+  skipped in the summary but is in the successful `ExitCode` allowlist. A run
+  containing only successful removals, unrelated candidates, and user declines
+  exits successfully.
+- `--dry-run` never prompts. It reports `would_require_confirmation`, counts the
+  candidate in `Summary.WouldRemove`, and includes that reason in the
+  successful `ExitCode` allowlist unless another hard blocker exists.
 - `--json` and non-interactive removal never prompt or remove a dirty candidate.
-  They report `confirmation_required`, continue evaluating other candidates,
-  and return the existing skipped-candidate failure status.
+  They report the distinct `confirmation_required` reason, count it as skipped,
+  continue evaluating other candidates, and return the existing
+  skipped-candidate failure status.
 - `--force` remains unavailable with `--merged`; the confirmation is narrow and
   evidence-bound rather than a fleet-wide bypass.
+
+`would_require_confirmation`, `confirmation_required`, and
+`confirmation_declined` are new machine-readable reasons. The prune report
+schema version increases from 1 to 2 because consumers can observe the new
+classification and exit semantics. There is no dual-schema compatibility
+path.
 
 The final human report groups repeated outcomes instead of printing the same
 remediation after every path. It prints the summary after progress has stopped.
@@ -151,6 +182,16 @@ cache, global directory workspaces, and launch entries. It does not trigger
 global Git status collection and does not gate navigation. When it completes,
 the TUI merges structural catalog changes while preserving fresher scoped
 status and path-anchored selection.
+
+The backend inventory interface carries currency and status collection as two
+independent decisions. Cached launch uses non-current inventory without status;
+an active repository refresh uses current repository inventory with status;
+the background global pass uses current dashboard inventory without status;
+and an explicitly displayed all-project view uses current dashboard inventory
+with status. Every fresh current dashboard result applies its effective config
+and performs launch-project and launch-workspace registration even when status
+collection is disabled. Status collection is no longer the switch that enables
+those side effects.
 
 Directory workspaces and launch entries have global freshness. Their mutations
 require a current global result. Entering an all-project view starts a global
@@ -256,7 +297,9 @@ than source text.
 - Merged-prune policy tests prove that unrelated dirty worktrees are ignored,
   dirty confirmed-merged worktrees require confirmation, yes removes only the
   confirmed candidate, no continues successfully, non-interactive and JSON
-  modes fail closed, and an advanced head remains a hard stop.
+  modes fail closed, ignored-only content requires confirmation, status is
+  rechecked before prompting, the three new reasons produce their specified
+  summary and exit behavior, and an advanced head remains a hard stop.
 - Repository-refresh tests use real temporary Git repositories where scope and
   porcelain behavior matter. They cover global fallback rejection, deleted
   paths, non-interactive trust requirements, dashboard-field preservation,
@@ -276,10 +319,9 @@ Focused package tests run after each component. Final verification uses
 
 Update the CLI reference for maintenance progress and dirty merged
 confirmation. Update TUI help or workflow documentation for scoped freshness,
-cached-row actions, and the `removing…` state. Machine-readable schemas change
-only if the new prune outcome needs a documented additive reason; the existing
-schema version remains unless compatibility tests prove that an increment is
-required.
+cached-row actions, and the `removing…` state. Document prune report schema
+version 2 and all three new confirmation reasons. Do not retain a version 1
+output mode.
 
 ## Delivery order
 
