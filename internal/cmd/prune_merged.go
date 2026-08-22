@@ -282,10 +282,12 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 	progress.Phase("discover candidates", 0)
 	cfg, err := loadPruneMergedConfig()
 	if err != nil {
+		progress.Pause()
 		return mergedPruneExecutionError(cmd, fmt.Sprintf("load global configuration: %v", err))
 	}
 	reg, err := openPruneMergedRegistry()
 	if err != nil {
+		progress.Pause()
 		return mergedPruneExecutionError(cmd, fmt.Sprintf("open worktree registry: %v", err))
 	}
 	store := openPruneMergedProvenanceStore()
@@ -296,10 +298,12 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 		}
 		return nil
 	}); err != nil {
+		progress.Pause()
 		return mergedPruneExecutionError(cmd, fmt.Sprintf("read pull-request provenance: %v", err))
 	}
 	candidates, err := inspectPruneMergedCandidates(ctx, cfg, records, reg.List())
 	if err != nil {
+		progress.Pause()
 		return mergedPruneExecutionError(cmd, err.Error())
 	}
 	sort.Slice(candidates, func(left, right int) bool {
@@ -349,8 +353,10 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 			outcomes[index] = withMergedRemediation(outcome)
 			continue
 		}
+		if processedEligible > 0 {
+			progress.Set(processedEligible)
+		}
 		processedEligible++
-		progress.Set(processedEligible)
 		dirty, inspectErr := inspectPruneMergedDirty(candidate)
 		if inspectErr != nil {
 			providerEvidence := outcome.Evidence
@@ -480,6 +486,7 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 		}
 		outcomes[index] = outcome
 	}
+	progress.Set(processedEligible)
 
 	report := prunepolicy.Report{
 		SchemaVersion: prunepolicy.SchemaVersion,

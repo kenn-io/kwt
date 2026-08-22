@@ -182,6 +182,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	progress.Phase("load inventory", 0)
 	snapshot, err := loadDoctorSnapshot()
 	if err != nil {
+		progress.Pause()
 		return writeMaintenanceError(
 			cmd, "doctor", "inspection_failed",
 			fmt.Sprintf("load global configuration: %v", err), 2, doctorJSON,
@@ -189,6 +190,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	}
 	reg, err := openDoctorRegistry()
 	if err != nil {
+		progress.Pause()
 		return writeMaintenanceError(
 			cmd, "doctor", "inspection_failed",
 			fmt.Sprintf("open worktree registry: %v", err), 2, doctorJSON,
@@ -198,6 +200,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	progress.Phase("inspect worktrees", 0)
 	report, err := doctorInspect(ctx, snapshot.Config, snapshot.Projects, entries, reg.CreationActive)
 	if err != nil {
+		progress.Pause()
 		return writeMaintenanceError(
 			cmd, "doctor", "inspection_failed", err.Error(), 2, doctorJSON,
 		)
@@ -206,6 +209,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	if doctorFix && report.Summary.Findings > 0 {
 		progress.Phase("apply fixes", report.Summary.FixableFindings)
 		if err := doctorApplyFixes(ctx, report, reg, entries); err != nil {
+			progress.Pause()
 			return writeMaintenanceError(
 				cmd, "doctor", "fix_failed", err.Error(), 2, doctorJSON,
 			)
@@ -214,6 +218,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		progress.Phase("verify repairs", 0)
 		snapshot, err = loadDoctorSnapshot()
 		if err != nil {
+			progress.Pause()
 			return writeMaintenanceError(
 				cmd, "doctor", "inspection_failed",
 				fmt.Sprintf("reload global configuration after fixes: %v", err), 2, doctorJSON,
@@ -221,6 +226,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		}
 		reg, err = openDoctorRegistry()
 		if err != nil {
+			progress.Pause()
 			return writeMaintenanceError(
 				cmd, "doctor", "inspection_failed",
 				fmt.Sprintf("reopen worktree registry after fixes: %v", err), 2, doctorJSON,
@@ -228,6 +234,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		}
 		report, err = doctorInspect(ctx, snapshot.Config, snapshot.Projects, reg.List(), reg.CreationActive)
 		if err != nil {
+			progress.Pause()
 			return writeMaintenanceError(
 				cmd, "doctor", "inspection_failed",
 				fmt.Sprintf("rescan after fixes: %v", err), 2, doctorJSON,

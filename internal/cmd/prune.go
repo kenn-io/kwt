@@ -125,6 +125,7 @@ func runPruneExpired(cmd *cobra.Command, _ []string) error {
 	progress.Phase("load candidates", 0)
 	reg, err := openPruneExpiredRegistry()
 	if err != nil {
+		progress.Pause()
 		return writeMaintenanceError(
 			cmd, "prune", "inspection_failed",
 			fmt.Sprintf("open worktree registry: %v", err), 2, pruneJSON,
