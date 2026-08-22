@@ -2673,6 +2673,40 @@ func TestTUIBackendRemoveWorktreeRejectsReplacementGeneration(t *testing.T) {
 	err = backend.RemoveWorktree(context.Background(), row, true)
 
 	require.ErrorContains(t, err, "generation changed")
+	var refreshRequired interface{ RefreshRequired() bool }
+	require.ErrorAs(t, err, &refreshRequired)
+	assert.True(t, refreshRequired.RefreshRequired())
+	assert.DirExists(t, worktreePath)
+}
+
+func TestTUIBackendRemoveWorktreeChangedHeadRequiresRefresh(t *testing.T) {
+	t.Setenv("KWT_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "changed-head-worktree")
+	runTUITestGit(t, repoPath, "worktree", "add", "-b", "codex/changed-head", worktreePath)
+	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
+		Branch:     "codex/changed-head",
+		CommitHash: strings.TrimSpace(runTUITestGitOutput(t, worktreePath, "rev-parse", "HEAD")),
+		Path:       worktreePath,
+		Generation: tuiTestWorktreeGeneration(t, repoPath, worktreePath),
+	}}
+	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, "new.txt"), []byte("new\n"), 0644))
+	runTUITestGit(t, worktreePath, "add", "new.txt")
+	runTUITestGit(t, worktreePath, "commit", "-m", "advance checkout")
+	backend := newTUIBackendWithLaunchDir(&models.Config{
+		Worktree: models.WorktreeConfig{BaseDir: t.TempDir()},
+	}, "")
+	useInProcessTUIRemoval(t, backend)
+
+	err := backend.RemoveWorktree(context.Background(), row, true)
+
+	require.Error(t, err)
+	var refreshRequired interface{ RefreshRequired() bool }
+	require.ErrorAs(t, err, &refreshRequired)
+	assert.True(t, refreshRequired.RefreshRequired())
 	assert.DirExists(t, worktreePath)
 }
 
@@ -2800,6 +2834,9 @@ func TestTUIBackendRemoveWorktreeDirtyErrorDoesNotSuggestCLIForce(t *testing.T) 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "uncommitted changes")
 	assert.NotContains(t, err.Error(), "kwt remove --force")
+	var refreshRequired interface{ RefreshRequired() bool }
+	require.ErrorAs(t, err, &refreshRequired)
+	assert.True(t, refreshRequired.RefreshRequired())
 	assert.DirExists(t, worktreePath)
 }
 

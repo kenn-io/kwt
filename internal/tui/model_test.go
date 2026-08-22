@@ -361,6 +361,32 @@ func TestRepositoryRefreshNormalizesProjectFreshnessIdentity(t *testing.T) {
 	assert.Equal(t, confirmDelete, model.confirm.kind)
 }
 
+func TestRepositoryRefreshPreservesPendingCreationAbsentFromResult(t *testing.T) {
+	project := "github.com/acme/widget"
+	main := testRow("widget", "main", "/w/widget")
+	main.Entry.RepositoryInfo.FullPath = project
+	pending := testRow("widget", "topic", "/w/widget/topic")
+	pending.Entry.RepositoryInfo.FullPath = project
+	pending.Creating = true
+	model := NewModel(&fakeBackend{}, rowPath(main))
+	model.rows = []Row{main, pending}
+	model.creating = []string{rowPath(pending)}
+	model.backgroundGlobalStarted = true
+
+	model, _ = updateModel(t, model, inventoryMsg{
+		request: InventoryRequest{
+			Scope: InventoryCurrentRepository, ProjectIdentity: project,
+		},
+		result: InventoryResult{
+			Rows: []Row{main}, ObservedAt: time.Now(), Current: true,
+		},
+	})
+
+	index, ok := identityRowIndex(model.rows, rowPath(pending))
+	require.True(t, ok)
+	assert.True(t, model.rows[index].Creating)
+}
+
 func TestAllProjectsStartsCurrentGlobalStatusRefresh(t *testing.T) {
 	row := testRow("widget", "main", "/w/widget")
 	row.Entry.RepositoryInfo.FullPath = "github.com/acme/widget"

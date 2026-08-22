@@ -394,8 +394,9 @@ func (m Model) applyInventory(msg inventoryMsg) (Model, tea.Cmd) {
 	case InventoryCurrentRepository:
 		oldRows := m.filteredRows()
 		oldCursor := m.cursor
+		previousRows := m.rows
 		m.rows = mergeRepositoryRows(m.rows, msg.result.Rows, msg.request.ProjectIdentity)
-		m.rows = mergeCreatingRows(m.rows, m.rows, m.creating)
+		m.rows = mergeCreatingRows(m.rows, previousRows, m.creating)
 		m.rows = m.applyRemovalState(m.rows)
 		m.cursor = anchorCursorByPath(oldRows, oldCursor, m.filteredRows())
 		m.warnings = msg.result.Warnings

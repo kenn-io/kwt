@@ -90,9 +90,17 @@ type tuiRemovalOperation struct {
 
 type removedWorktreeCleanupError struct{ err error }
 
+type tuiRemovalRefreshRequiredError struct{ err error }
+
 func (e *removedWorktreeCleanupError) Error() string { return e.err.Error() }
 func (e *removedWorktreeCleanupError) Unwrap() error { return e.err }
 func (*removedWorktreeCleanupError) WorktreeRemoved() bool {
+	return true
+}
+
+func (e *tuiRemovalRefreshRequiredError) Error() string { return e.err.Error() }
+func (e *tuiRemovalRefreshRequiredError) Unwrap() error { return e.err }
+func (*tuiRemovalRefreshRequiredError) RefreshRequired() bool {
 	return true
 }
 
@@ -1859,12 +1867,19 @@ func cloneTUIConfig(value *models.Config) *models.Config {
 func (operation tuiRemovalOperation) run(ctx context.Context) error {
 	result, removalErr := operation.remove(ctx, operation.request)
 	if removalErr != nil && !result.WorktreeRemoved {
-		if daemonMutationRequiresRefresh(removalErr) {
+		dirtyConflict := strings.Contains(
+			removalErr.Error(), "contains modified or untracked files",
+		) || strings.Contains(removalErr.Error(), "has local changes")
+		refreshRequired := daemonMutationRequiresRefresh(removalErr) ||
+			service.IsCode(removalErr, service.Conflict) || dirtyConflict
+		if refreshRequired {
 			publishTUIFleetBestEffort(ctx, operation.config)
 		}
-		if strings.Contains(removalErr.Error(), "contains modified or untracked files") ||
-			strings.Contains(removalErr.Error(), "has local changes") {
-			return fmt.Errorf("worktree has uncommitted changes")
+		if dirtyConflict {
+			removalErr = errors.New("worktree has uncommitted changes")
+		}
+		if refreshRequired {
+			return &tuiRemovalRefreshRequiredError{err: removalErr}
 		}
 		return removalErr
 	}
