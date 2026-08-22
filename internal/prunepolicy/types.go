@@ -1,7 +1,7 @@
 // Package prunepolicy defines stable, provider-neutral prune outcomes.
 package prunepolicy
 
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 type Reason string
 
@@ -31,6 +31,9 @@ const (
 	PathUnavailable             Reason = "path_unavailable"
 	RemovalFailed               Reason = "removal_failed"
 	CleanupIncomplete           Reason = "cleanup_incomplete"
+	WouldRequireConfirmation    Reason = "would_require_confirmation"
+	ConfirmationRequired        Reason = "confirmation_required"
+	ConfirmationDeclined        Reason = "confirmation_declined"
 	ProtectedSessionLive        Reason = "protected_session_live"
 	ProtectedEndpointIncomplete Reason = "protected_endpoint_inventory_incomplete"
 	RegistrationChanged         Reason = "registration_changed"
@@ -68,7 +71,7 @@ func (r *Report) Finalize() {
 		switch outcome.Reason {
 		case Removed:
 			r.Summary.Removed++
-		case WouldRemove:
+		case WouldRemove, WouldRequireConfirmation:
 			r.Summary.WouldRemove++
 		default:
 			r.Summary.Skipped++
@@ -81,7 +84,7 @@ func (r *Report) Finalize() {
 func (r Report) ExitCode() int {
 	for _, outcome := range r.Outcomes {
 		switch outcome.Reason {
-		case Removed, WouldRemove, NoAssociatedPR, PRNotMerged:
+		case Removed, WouldRemove, WouldRequireConfirmation, ConfirmationDeclined, NoAssociatedPR, PRNotMerged:
 			continue
 		default:
 			return 1
