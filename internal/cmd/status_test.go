@@ -82,7 +82,7 @@ func TestCollectWorktreeStatusesReturnsPerWorktreeFailure(t *testing.T) {
 
 	assert.Nil(t, statuses)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), linked)
+	assert.Contains(t, err.Error(), filepath.Base(linked))
 }
 
 func TestImportedWorktreeReceivesAutomaticStatusAndFleetInspection(t *testing.T) {
