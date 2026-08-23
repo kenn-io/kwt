@@ -202,7 +202,8 @@ func TestChangesInitializationFailureUsesSharedJSONEnvelope(t *testing.T) {
 	resetChangesCommand(t)
 	changesJSON = true
 	originalInitErr := configInitErr
-	configInitErr = errors.New("config unavailable")
+	privateConfigErr := errors.New("private config path: /private/config.toml")
+	configInitErr = privateConfigErr
 	t.Cleanup(func() { configInitErr = originalInitErr })
 	var stdout, stderr bytes.Buffer
 	changesCmd.SetOut(&stdout)
@@ -217,12 +218,13 @@ func TestChangesInitializationFailureUsesSharedJSONEnvelope(t *testing.T) {
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &envelope))
 	assert.Equal(t, service.InspectionFailed, envelope.Error.Code)
 	assert.False(t, envelope.Error.Retryable)
-	assert.Contains(t, envelope.Error.Message, "config unavailable")
+	assert.Equal(t, "failed to initialize configuration", envelope.Error.Message)
 	assert.Equal(
 		t,
-		"kwt changes: inspection_failed: failed to initialize configuration: config unavailable\n",
+		"kwt changes: inspection_failed: failed to initialize configuration\n",
 		stderr.String(),
 	)
+	assert.ErrorIs(t, err, privateConfigErr)
 }
 
 func TestRunChangesWritesStableJSONFailures(t *testing.T) {

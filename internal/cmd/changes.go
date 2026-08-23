@@ -51,7 +51,7 @@ func changesPreRun(cmd *cobra.Command, args []string) error {
 	if err := globalOnlyPreRun(cmd, args); err != nil {
 		return writeChangesFailure(cmd, service.NewError(
 			service.InspectionFailed,
-			fmt.Sprintf("failed to %v", err),
+			"failed to initialize configuration",
 			false,
 			nil,
 			err,
@@ -190,13 +190,15 @@ func writeChangesFailure(cmd *cobra.Command, err error) error {
 	if typed.Code == service.InvalidRequest || typed.Code == service.NotFound {
 		exitCode = 2
 	}
-	return writeCommandFailure(
+	failure := writeCommandFailure(
 		cmd,
 		typed.Descriptor,
 		exitCode,
 		changesJSON,
 		"changes",
 	)
+	failure.cause = typed.Err
+	return failure
 }
 
 func writeChangesHuman(output io.Writer, result kwt.InspectionResult) error {

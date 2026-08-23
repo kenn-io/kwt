@@ -15,12 +15,13 @@ type jsonErrorEnvelope struct {
 type commandFailure struct {
 	descriptor service.Descriptor
 	exitCode   int
+	cause      error
 }
 
 func (e *commandFailure) Error() string { return e.descriptor.Message }
 func (e *commandFailure) ExitCode() int { return e.exitCode }
 func (e *commandFailure) Unwrap() error {
-	return service.NewDescriptorError(e.descriptor, nil)
+	return service.NewDescriptorError(e.descriptor, e.cause)
 }
 
 func writeCommandFailure(
@@ -29,7 +30,7 @@ func writeCommandFailure(
 	exitCode int,
 	jsonRequested bool,
 	prefix string,
-) error {
+) *commandFailure {
 	cmd.Root().SilenceUsage = true
 	cmd.Root().SilenceErrors = true
 	if jsonRequested {
