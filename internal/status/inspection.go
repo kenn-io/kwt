@@ -306,9 +306,13 @@ func inspectionInvalid(message string) error {
 }
 
 func inspectionFailure(cause error) error {
+	message := "worktree inspection failed"
+	if errors.Is(cause, git.ErrStdoutLimitExceeded) {
+		message = "worktree change list is too large to inspect"
+	}
 	return service.NewError(
 		service.InspectionFailed,
-		"worktree inspection failed",
+		message,
 		false,
 		nil,
 		cause,

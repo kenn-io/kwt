@@ -469,6 +469,13 @@ porcelain-v2 sides; `original_path` is present for a rename or copy.
 `summary.staged` is orthogonal to the mutually exclusive semantic buckets and
 does not include conflicted paths.
 
+An untracked-only worktree has overall `state: "modified"`; use
+`summary.untracked` and each file's `worktree: "untracked"` value to distinguish
+it from tracked modifications. If the exact change list exceeds the bounded
+status-output limit, the command returns non-retryable `inspection_failed` with
+`worktree change list is too large to inspect` rather than returning partial
+file records.
+
 The optional expected repository and generation flags are independent
 compare-and-fail guards. A mismatch returns retryable `registration_changed`;
 the caller must refresh instead of presenting the discarded snapshot. The

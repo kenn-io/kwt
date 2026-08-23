@@ -26,6 +26,11 @@ still fail the snapshot. Compatible records with the same resulting path are
 coalesced into one file entry while preserving independent index, worktree,
 and original-path fields; incompatible duplicates fail the snapshot.
 
+The Git adapter limits stdout and stderr to 1 MiB each. If an exact change list
+exceeds the stdout limit, inspection never returns a partial snapshot. Its safe
+public message is `worktree change list is too large to inspect`; the original
+limit error remains available only to the in-process caller.
+
 The module root aliases these values and `InspectionService`, so an in-process
 consumer can use the same contract without Cobra, HTTP, or daemon ownership.
 

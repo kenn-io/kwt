@@ -536,6 +536,34 @@ func TestInspectionServiceClassifiesReadAndCollectionFailures(t *testing.T) {
 	}
 }
 
+func TestInspectionServiceReportsOversizedChangeList(t *testing.T) {
+	path := t.TempDir()
+	inspector := inspectionServiceForTest(
+		inspectionInventoryWithConfig(path, ""),
+		func(context.Context, string, []string) (string, error) {
+			return inspectionTestGeneration, nil
+		},
+		func(context.Context, string, []string) (ChangeSet, error) {
+			return ChangeSet{}, fmt.Errorf(
+				"collect local changes: %w",
+				gitpkg.ErrStdoutLimitExceeded,
+			)
+		},
+		time.Now,
+	)
+
+	got, err := inspector.Inspect(
+		context.Background(),
+		InspectionRequest{Path: path},
+	)
+
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.InspectionFailed))
+	assert.Equal(t, "worktree change list is too large to inspect", err.Error())
+	assert.ErrorIs(t, err, gitpkg.ErrStdoutLimitExceeded)
+	assert.Equal(t, InspectionResult{}, got)
+}
+
 func TestInspectionServiceRechecksGenerationAfterCollectionFailure(t *testing.T) {
 	path := t.TempDir()
 	collectionFailure := errors.New("status collection failed")
@@ -850,7 +878,7 @@ func TestInspectionServiceInspectsRealPrimaryAndLinkedWorktrees(t *testing.T) {
 		[]byte("untracked\n"),
 		0o644,
 	))
-	requestPath := primary
+	var requestPath string
 	if runtime.GOOS == "windows" {
 		requestPath = strings.ToUpper(primary)
 	} else {

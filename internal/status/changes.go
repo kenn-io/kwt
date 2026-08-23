@@ -9,11 +9,7 @@ import (
 	"go.kenn.io/kwt/internal/git"
 )
 
-const (
-	collectChangesTimeout     = 5 * time.Second
-	collectUntrackedFilesAll  = "all"
-	collectUntrackedFilesNone = "no"
-)
+const collectChangesTimeout = 5 * time.Second
 
 // FileState is the semantic state of one side of a changed path.
 type FileState string
@@ -70,20 +66,6 @@ func CollectChanges(
 	path string,
 	protectedNames []string,
 ) (ChangeSet, error) {
-	return collectChanges(
-		ctx,
-		path,
-		protectedNames,
-		collectUntrackedFilesAll,
-	)
-}
-
-func collectChanges(
-	ctx context.Context,
-	path string,
-	protectedNames []string,
-	untrackedFiles string,
-) (ChangeSet, error) {
 	gitContext, cancel := context.WithTimeout(ctx, collectChangesTimeout)
 	defer cancel()
 
@@ -99,7 +81,7 @@ func collectChanges(
 		"status",
 		"--porcelain=v2",
 		"-z",
-		"--untracked-files="+untrackedFiles,
+		"--untracked-files=all",
 	)
 	if err != nil {
 		if gitContext.Err() != nil {

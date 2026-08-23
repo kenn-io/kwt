@@ -174,9 +174,9 @@ func arePorcelainV2ObjectIDs(fields [][]byte) bool {
 			return false
 		}
 		for _, digit := range field {
-			if !((digit >= '0' && digit <= '9') ||
-				(digit >= 'a' && digit <= 'f') ||
-				(digit >= 'A' && digit <= 'F')) {
+			if (digit < '0' || digit > '9') &&
+				(digit < 'a' || digit > 'f') &&
+				(digit < 'A' || digit > 'F') {
 				return false
 			}
 		}

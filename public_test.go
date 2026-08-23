@@ -22,7 +22,6 @@ func TestRootPackageExposesInspectionService(t *testing.T) {
 	if inspector == nil {
 		t.Fatal("inspection service is unavailable from the root package")
 	}
-	var _ kwt.Inspector = inspector
 	var _ = kwt.InspectionRequest{}
 	var _ = kwt.InspectionResult{
 		Worktree: kwt.WorktreeIdentity{},
