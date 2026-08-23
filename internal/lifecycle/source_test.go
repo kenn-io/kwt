@@ -264,6 +264,32 @@ func TestSourceSnapshotIncludesEffectiveGlobalConfig(t *testing.T) {
 	assert.Equal(t, "quad", result.Snapshot.Config.Layouts.Default)
 }
 
+func TestSourceRepositorySnapshotIncludesEffectiveGlobalConfig(t *testing.T) {
+	home := t.TempDir()
+	repository := filepath.Join(t.TempDir(), "repository")
+	for _, args := range [][]string{
+		{"init", "-b", "main", repository},
+		{"-C", repository, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial"},
+	} {
+		command := exec.Command("git", args...)
+		require.NoError(t, command.Run())
+	}
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home, "config.toml"),
+		[]byte("[fleet]\ntoken_env = 'CUSTOM_FLEET_TOKEN'\n"),
+		0o600,
+	))
+
+	result, err := NewSource(SourceOptions{Home: home}).Load(context.Background(), Request{
+		View: ViewRepository, WorkingDirectory: repository,
+		Expansion: testExpansion(t), UntrustedConfig: IgnoreUntrustedConfig,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Snapshot.Config)
+	assert.Equal(t, "CUSTOM_FLEET_TOKEN", result.Snapshot.Config.Fleet.TokenEnv)
+}
+
 func TestSourceRejectsRelativeRepositoryDirectory(t *testing.T) {
 	_, err := NewSource(SourceOptions{Home: t.TempDir()}).Load(context.Background(), Request{
 		View: ViewRepository, WorkingDirectory: "relative", Expansion: testExpansion(t),

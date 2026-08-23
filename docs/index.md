@@ -61,12 +61,15 @@ kwt add -b feature/new-ui              # isolated checkout + tmux workspace
 kwt exec feature/new-ui -- make test   # run a command in the worktree
 cd "$(kwt get feature/new-ui)"         # resolve a worktree path
 kwt list --json                        # machine-readable worktree state
+kwt changes --json                     # exact changed-file snapshot
 kwt remove -b feature/new-ui           # delete the worktree and its branch
 ```
 
 `kwt pr import` checks a GitHub pull request out into a fresh worktree, and
 `kwt status` shows which branches are dirty, ahead, or behind — useful when
-several agents are working in parallel. Configurable
+several agents are working in parallel. `kwt changes [path]` inspects one exact
+worktree when a script needs deterministic staged and working-tree file states.
+Configurable
 [layouts](workflows/agent-workspaces.md) define the tmux panes each workspace
 starts with, from a single shell to a preset arrangement of agents.
 

@@ -99,6 +99,7 @@ func NewRuntimeRecord(
 			CapabilitySSHLeaseHold,
 			CapabilitySSHLifecycle,
 			CapabilitySSHResolve,
+			CapabilityInventoryConfig,
 			CapabilityInventory,
 			CapabilityRemoval,
 			CapabilityGuardedRemoval,

@@ -24,6 +24,7 @@ type StatusCollectorOptions struct {
 	StaleThreshold time.Duration
 	BaseDir        string
 	Workers        int
+	ProtectedNames []string
 }
 
 // StatusCollector collects status information for worktrees.
@@ -32,6 +33,7 @@ type StatusCollector struct {
 	staleThreshold  time.Duration
 	basedir         string
 	workers         int
+	protectedNames  []string
 	activityTimeout time.Duration
 	runHead         func(context.Context, string) (string, error)
 }
@@ -66,16 +68,19 @@ func NewStatusCollectorWithOptions(opts StatusCollectorOptions) *StatusCollector
 		opts.Workers = 1
 	}
 
-	return &StatusCollector{
+	collector := &StatusCollector{
 		fetchRemote:     opts.FetchRemote,
 		staleThreshold:  opts.StaleThreshold,
 		basedir:         opts.BaseDir,
 		workers:         opts.Workers,
+		protectedNames:  append([]string(nil), opts.ProtectedNames...),
 		activityTimeout: 5 * time.Second,
-		runHead: func(ctx context.Context, path string) (string, error) {
-			return git.New(path).RunWithContext(ctx, "show", "-s", "--format=%ct", "HEAD")
-		},
 	}
+	collector.runHead = func(ctx context.Context, path string) (string, error) {
+		return git.NewForInventory(ctx, path, collector.protectedNames).
+			RunWithContext(ctx, "show", "-s", "--format=%ct", "HEAD")
+	}
+	return collector
 }
 
 // CollectAll collects status for all provided worktrees with bounded concurrency.
@@ -162,7 +167,7 @@ submit:
 
 func (c *StatusCollector) collectOne(ctx context.Context, worktree *models.Worktree) (*models.WorktreeStatus, error) {
 	repository := strings.TrimSpace(worktree.Repository)
-	g := git.New(worktree.Path)
+	g := git.NewForInventory(ctx, worktree.Path, c.protectedNames)
 	if repository == "" {
 		repository = c.repositoryIdentity(g, worktree.Path)
 	}

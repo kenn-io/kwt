@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/status"
@@ -233,6 +234,7 @@ func collectWorktreeStatuses(ctx context.Context, cfg *models.Config, printer *u
 		FetchRemote:    !statusNoFetch,
 		StaleThreshold: time.Duration(statusStaleDays) * 24 * time.Hour,
 		BaseDir:        cfg.Worktree.BaseDir,
+		ProtectedNames: credentials.ProtectedNames(cfg),
 	})
 	collection, err := collector.CollectAll(ctx, worktrees)
 	if err != nil {

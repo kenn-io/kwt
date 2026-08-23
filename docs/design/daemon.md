@@ -45,11 +45,15 @@ immediately, then continues reporting observed drain state while it waits.
 Active work and leases may finish until `daemon.replacement_grace`; the default
 is five minutes.
 
-The API schema is `1.11.0`. It exposes authenticated status, graceful shutdown,
+The API schema is `1.12.0`. It exposes authenticated status, graceful shutdown,
 worktree inventory, guarded project unregistration, and repository-config
 approval under `/api/v1`, proof-capable liveness at `/api/ping`, and
 credential-free OpenAPI at `/openapi.json`. Inventory clients require the
-`worktree.inventory.v2` capability; guarded unregistration requires
+`worktree.inventory.v2` capability. Foreground change inspection additionally
+requires `worktree.inventory.config.v1`, which guarantees that repository
+inventory carries the effective global configuration used to derive protected
+environment-variable names. A client fails closed rather than running Git when
+that capability or configuration is absent. Guarded unregistration requires
 `project.removal.v1`, SSH route resolution requires `ssh.resolve.v1`, and
 daemon-owned connection leases require `ssh.lifecycle.v1`. Worktree removal
 uses `worktree.removal.v2` for session, branch, and HEAD guards. Clients that bind

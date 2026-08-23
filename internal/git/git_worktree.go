@@ -1898,6 +1898,12 @@ func (g *Git) worktreeGitDirWithoutCredentials(
 ) (string, error) {
 	commonDir, commonDirErr := g.worktreeCommonDir(protectedNames)
 	if commonDirErr != nil {
+		var pathErr *os.PathError
+		if errors.As(commonDirErr, &pathErr) &&
+			pathErr.Op == "chdir" &&
+			errors.Is(pathErr.Err, os.ErrNotExist) {
+			commonDirErr = errors.Join(ErrWorktreeNotFound, commonDirErr)
+		}
 		return "", fmt.Errorf(
 			"resolve worktree Git directory: %w",
 			commonDirErr,

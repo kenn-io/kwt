@@ -298,7 +298,7 @@ func (s *currentSource) loadRepository(
 	if request.ForceGlobal {
 		entries, loadErr := s.loadGlobal(ctx, resolved.Config)
 		return Result{Snapshot: Snapshot{
-			Projects: projects, Entries: entries,
+			Config: resolved.Config, Projects: projects, Entries: entries,
 			Workspaces: append([]models.Workspace(nil), resolved.Config.Workspaces...),
 		}, Notes: publicNotes(resolved.Notes)}, loadErr
 	}
@@ -314,7 +314,7 @@ func (s *currentSource) loadRepository(
 	if !isRepository {
 		entries, loadErr := s.loadGlobal(ctx, resolved.Config)
 		return Result{Snapshot: Snapshot{
-			Projects: projects, Entries: entries,
+			Config: resolved.Config, Projects: projects, Entries: entries,
 			Workspaces: append([]models.Workspace(nil), resolved.Config.Workspaces...),
 		}, Notes: publicNotes(resolved.Notes)}, loadErr
 	}
@@ -337,7 +337,7 @@ func (s *currentSource) loadRepository(
 		return Result{}, err
 	}
 	return Result{Snapshot: Snapshot{
-		Projects: projects, Entries: entries,
+		Config: resolved.Config, Projects: projects, Entries: entries,
 		Workspaces: append([]models.Workspace(nil), resolved.Config.Workspaces...),
 	}, Notes: publicNotes(resolved.Notes)}, nil
 }

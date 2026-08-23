@@ -17,6 +17,24 @@ func TestRootPackageExposesWorktreeServices(t *testing.T) {
 	}
 }
 
+func TestRootPackageExposesInspectionService(t *testing.T) {
+	inspector := kwt.NewInspectionService(kwt.InspectionServiceOptions{})
+	if inspector == nil {
+		t.Fatal("inspection service is unavailable from the root package")
+	}
+	var _ kwt.Inspector = inspector
+	var _ = kwt.InspectionRequest{}
+	var _ = kwt.InspectionResult{
+		Worktree: kwt.WorktreeIdentity{},
+		Changes: kwt.ChangeSet{
+			State: kwt.ChangeStateClean,
+			Files: []kwt.FileChange{{
+				Index: kwt.FileStateAdded,
+			}},
+		},
+	}
+}
+
 func TestRootPackageExposesSSHAskpassDispatch(t *testing.T) {
 	exitCode, handled := kwt.RunSSHAskpassHelper(
 		[]string{"host-application"},

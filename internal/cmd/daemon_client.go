@@ -258,6 +258,37 @@ func queryInventoryForCLI(
 	interactive bool,
 	stderr io.Writer,
 ) (kwt.Result, error) {
+	return queryInventoryForCLIWithRequirement(
+		ctx,
+		request,
+		interactive,
+		stderr,
+		requireInventoryCapability,
+	)
+}
+
+func queryInspectionInventoryForCLI(
+	ctx context.Context,
+	request kwt.Request,
+	interactive bool,
+	stderr io.Writer,
+) (kwt.Result, error) {
+	return queryInventoryForCLIWithRequirement(
+		ctx,
+		request,
+		interactive,
+		stderr,
+		requireInspectionInventoryCapability,
+	)
+}
+
+func queryInventoryForCLIWithRequirement(
+	ctx context.Context,
+	request kwt.Request,
+	interactive bool,
+	stderr io.Writer,
+	requireCapability func(kwtdaemon.Observation) error,
+) (kwt.Result, error) {
 	controller, err := newDaemonController()
 	if err != nil {
 		return kwt.Result{}, err
@@ -269,7 +300,12 @@ func queryInventoryForCLI(
 	}
 	declined := false
 	for {
-		result, queryErr := queryDaemonInventory(ctx, controller, request)
+		result, queryErr := queryDaemonInventory(
+			ctx,
+			controller,
+			request,
+			requireCapability,
+		)
 		if queryErr == nil {
 			writeConfigNotes(stderr, result.Notes, interactive, declined)
 			return result, nil
@@ -294,7 +330,7 @@ func queryInventoryForCLI(
 		if startErr != nil {
 			return kwt.Result{}, startErr
 		}
-		if err := requireInventoryCapability(observation); err != nil {
+		if err := requireCapability(observation); err != nil {
 			return kwt.Result{}, err
 		}
 		if err := observation.Client.ApproveConfig(ctx, kwt.ConfigApproval{
@@ -310,13 +346,14 @@ func queryDaemonInventory(
 	ctx context.Context,
 	controller daemonController,
 	request kwt.Request,
+	requireCapability func(kwtdaemon.Observation) error,
 ) (kwt.Result, error) {
 	for {
 		observation, err := controller.Start(ctx)
 		if err != nil {
 			return kwt.Result{}, err
 		}
-		if err := requireInventoryCapability(observation); err != nil {
+		if err := requireCapability(observation); err != nil {
 			return kwt.Result{}, err
 		}
 		result, err := observation.Client.Inventory(ctx, request)
@@ -354,6 +391,27 @@ func requireInventoryCapability(observation kwtdaemon.Observation) error {
 		return service.NewError(
 			service.DaemonIncompatible,
 			"the running kwt daemon does not provide worktree inventory",
+			false,
+			nil,
+			nil,
+		)
+	}
+	return nil
+}
+
+func requireInspectionInventoryCapability(
+	observation kwtdaemon.Observation,
+) error {
+	if err := requireInventoryCapability(observation); err != nil {
+		return err
+	}
+	if !slices.Contains(
+		observation.Status.Capabilities,
+		kwtdaemon.CapabilityInventoryConfig,
+	) {
+		return service.NewError(
+			service.DaemonIncompatible,
+			"the running kwt daemon does not provide config-bearing worktree inventory",
 			false,
 			nil,
 			nil,

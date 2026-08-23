@@ -68,6 +68,17 @@ func main() {
 		schemaVersion = "2.0.0"
 		record.Metadata["schema_major"] = strconv.Itoa(schemaMajor)
 		record.Metadata["schema_version"] = schemaVersion
+	} else if *mode == "legacy_inventory" {
+		schemaVersion = "1.11.0"
+		record.Metadata["schema_version"] = schemaVersion
+		capabilities := strings.Split(record.Metadata["capabilities"], ",")
+		kept := capabilities[:0]
+		for _, capability := range capabilities {
+			if capability != "worktree.inventory.config.v1" {
+				kept = append(kept, capability)
+			}
+		}
+		record.Metadata["capabilities"] = strings.Join(kept, ",")
 	}
 	if _, err := kwtdaemon.RuntimeStore(*home).Write(record); err != nil {
 		log.Fatal(err)

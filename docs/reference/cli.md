@@ -19,6 +19,7 @@ Other PID lookup failures report the underlying tmux error.
 | `kwt open`       | Open or establish a workspace session.                 |
 | `kwt list`       | List worktrees.                                        |
 | `kwt status`     | Show Git status, sync state, and activity.             |
+| `kwt changes`    | Inspect changed files in one exact worktree.           |
 | `kwt projects`   | List registered project repositories.                  |
 | `kwt pr`         | Discover and import pull requests through JSON.        |
 | `kwt get`        | Print a matching worktree path.                        |
@@ -45,6 +46,10 @@ kwt branches --json
 kwt open parser
 kwt open /path/to/worktree --start-session
 kwt status
+kwt changes --json
+kwt changes /path/to/worktree \
+  --expected-repository github.com/acme/widget \
+  --expected-generation <worktree.generation> --json
 kwt pr list --project github.com/acme/widget --json
 kwt pr import 17 --project github.com/acme/widget \
   --expected-repository github.com/acme/widget \
@@ -77,17 +82,17 @@ override when you intend to install an otherwise unordered build. Replacement
 and restart print drain progress to stderr before waiting; JSON stdout and
 ordinary command exit behavior remain unchanged.
 
-`kwt projects`, `kwt list`, `kwt remove`, and TUI inventory/removal auto-start
-or reuse a compatible local daemon. CLI inventory requires a current refresh
-and fails if one cannot complete; it never prints cached data. When available,
-the TUI paints the daemon's last-known-good cache; a cold start waits for the
-initial current inventory. It then refreshes the displayed repository
-with Git status, and refreshes the global catalog without status once in the
-background. Cached rows permit shells in directories that still exist and
-attachment to sessions that Kwt re-verifies as live. Mutations and new session
-creation wait for current inventory. SSH connection lifecycle remains on its
-existing path until its complete service migration. `kwt ssh resolve` is the
-non-connecting Stage 1 exception described below.
+`kwt projects`, `kwt list`, `kwt changes`, `kwt remove`, and TUI
+inventory/removal auto-start or reuse a compatible local daemon. CLI inventory
+requires a current refresh and fails if one cannot complete; it never prints
+cached data. When available, the TUI paints the daemon's last-known-good cache;
+a cold start waits for the initial current inventory. It then refreshes the
+displayed repository with Git status, and refreshes the global catalog without
+status once in the background. Cached rows permit shells in directories that
+still exist and attachment to sessions that Kwt re-verifies as live. Mutations
+and new session creation wait for current inventory. SSH connection lifecycle
+remains on its existing path until its complete service migration. `kwt ssh
+resolve` is the non-connecting Stage 1 exception described below.
 
 Successful `kwt list --json` and `kwt projects --json` output remains a bare
 top-level array. A daemon or inventory failure instead writes this shared
@@ -399,6 +404,97 @@ without a client creating it bare or bypassing protected attach policy. See
 `kwt open` and dashboard open actions refuse protected pull-request imports
 and direct the user through `kwt pr attach`.
 `created_at` and `generation` are populated in both local and `-g` mode.
+
+## `kwt changes`
+
+```sh
+kwt changes
+kwt changes /path/to/worktree
+kwt changes /path/to/worktree --json
+kwt changes /path/to/worktree \
+  --expected-repository github.com/acme/widget \
+  --expected-generation 0123456789abcdef0123456789abcdef \
+  --json
+```
+
+`changes` returns one point-in-time local change set for one exact registered
+worktree. The optional path defaults to the current directory. The foreground
+CLI converts the literal path to an absolute path without resolving it to a
+different spelling; inventory then applies the platform's native canonical
+path comparison and returns the authoritative worktree path.
+
+Human output identifies the quoted repository and worktree path, durable
+generation, and observation time before listing quoted changed paths. Each
+path has separate `staged` and `working tree` states; `-` means that side has no
+change, including an unmerged index slot that is not a staged change. Rename
+output shows the quoted original and resulting paths. A clean worktree says
+`No changed files`.
+
+`--json` emits one `InspectionResult` object:
+
+```json
+{
+  "worktree": {
+    "repository": "github.com/acme/widget",
+    "path": "/work/widget",
+    "generation": "0123456789abcdef0123456789abcdef"
+  },
+  "changes": {
+    "state": "modified",
+    "summary": {
+      "modified": 1,
+      "added": 0,
+      "deleted": 0,
+      "untracked": 0,
+      "staged": 0,
+      "conflicts": 0
+    },
+    "files": [
+      {
+        "path": "README.md",
+        "worktree": "modified"
+      }
+    ]
+  },
+  "observed_at": "2026-08-20T18:00:00Z"
+}
+```
+
+`files` is always present, including `"files": []` for a clean worktree.
+Paths are JSON strings, so valid UTF-8 names containing spaces, tabs, newlines,
+and native Windows path forms do not require a secondary delimiter convention.
+Ill-formed UTF-8 Unix filename bytes are not a lossless part of this JSON
+contract. File order is deterministic. `index` and `worktree` describe the two
+porcelain-v2 sides; `original_path` is present for a rename or copy.
+`summary.staged` is orthogonal to the mutually exclusive semantic buckets and
+does not include conflicted paths.
+
+The optional expected repository and generation flags are independent
+compare-and-fail guards. A mismatch returns retryable `registration_changed`;
+the caller must refresh instead of presenting the discarded snapshot. The
+other stable command codes are `invalid_request`, `not_found`, and
+`inspection_failed`, plus the shared daemon and inventory codes that can occur
+while obtaining current authoritative inventory. `invalid_request` and
+`not_found` exit `2`; other domain failures exit `1`. With `--json`, failures
+use the shared `{ "error": ... }` envelope. Error `code`, `retryable`, and
+documented detail types are contractual; `message` remains explanatory prose.
+Exhausting the command's internal Git budget returns retryable
+`inspection_failed`; cancellation by the caller remains a context cancellation.
+
+Inventory comes from the same-machine daemon, but both durable-generation
+checks and the bounded porcelain-v2 status read execute in the invoking
+foreground process. The command strips Kwt-protected credentials, disables
+optional Git index writes, uses a locale-independent parser, and honors the
+five-second Git-operation budget; cleanup is additionally bounded to 100
+milliseconds when a descendant retains an output descriptor. `kwt changes`
+requires the daemon's config-bearing inventory capability and fails closed if
+effective configuration is absent. A compatible older daemon without that
+capability returns `daemon_incompatible`; with `daemon.auto_restart = "newer"`
+a provably newer client may replace it, while `"never"` requires an explicit
+daemon restart. The command does not fetch, calculate activity or
+ahead/behind state, run diff or numstat, generate patches, discover siblings,
+watch, or require tmux. The same command and JSON contract are available on
+macOS, Linux, and Windows.
 
 ## `kwt tmux`
 

@@ -12,6 +12,7 @@ abstraction belongs in `kwt`.
 - [TUI and project registry](tui-projects.md)
 - [Multi-machine sync architecture](multi-machine-sync.md)
 - [Worktree maintenance](worktree-maintenance.md)
+- [Worktree change inspection](worktree-changes.md)
 - [Local service daemon](daemon.md)
 
 Feature specs and implementation plans should be folded into these maintained

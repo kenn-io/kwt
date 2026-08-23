@@ -190,6 +190,7 @@ func TestNewRuntimeRecordAdvertisesCurrentDomainContracts(t *testing.T) {
 	capabilities := strings.Split(record.Metadata[metadataCapabilities], ",")
 	assert.Contains(t, capabilities, "worktree.inventory.v2")
 	assert.NotContains(t, capabilities, "worktree.inventory.v1")
+	assert.Contains(t, capabilities, "worktree.inventory.config.v1")
 	assert.Contains(t, capabilities, "project.removal.v1")
 	assert.Contains(t, capabilities, "worktree.removal.v1")
 	assert.Contains(t, capabilities, "worktree.removal.v2")

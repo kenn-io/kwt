@@ -24,11 +24,15 @@ import kwt "go.kenn.io/kwt"
 
 inventory := kwt.NewInventoryService(kwt.InventoryServiceOptions{Source: source})
 removals := kwt.NewRemovalService(kwt.RemovalServiceOptions{Home: kwtHome})
+inspections := kwt.NewInspectionService(kwt.InspectionServiceOptions{
+    Inventory: inventory,
+})
 ```
 
-The root package contains transport-neutral inventory and worktree lifecycle
-contracts. The CLI/TUI adapt them to kwt's local daemon; Go applications can
-construct the same services directly without Huma, Cobra, or daemon ownership.
+The root package contains transport-neutral inventory, lifecycle, and
+generation-safe change-inspection contracts. The CLI/TUI adapt them to kwt's
+local daemon; Go applications can construct the same services directly without
+Huma, Cobra, or daemon ownership.
 
 ## Install
 
@@ -84,6 +88,8 @@ kwt open ~/notes --start-session
 # Inspect worktrees and git status
 kwt list
 kwt status
+kwt changes
+kwt changes /path/to/worktree --json
 
 # Discover and import a GitHub PR without launching tmux
 kwt pr list --project github.com/acme/widget --json

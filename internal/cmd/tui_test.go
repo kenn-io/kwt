@@ -210,10 +210,13 @@ func TestBuildTUIRowMarksLiveSessionWhenRepositoryInfoPresent(t *testing.T) {
 }
 
 func TestTUIStatusCollectorOptionsFetchesSyncState(t *testing.T) {
-	opts := tuiStatusCollectorOptions("/worktrees")
+	protectedNames := []string{"CUSTOM_FLEET_TOKEN"}
+	opts := tuiStatusCollectorOptions("/worktrees", protectedNames)
+	protectedNames[0] = "MUTATED_AFTER_CALL"
 
 	assert.True(t, opts.FetchRemote)
 	assert.Equal(t, "/worktrees", opts.BaseDir)
+	assert.Equal(t, []string{"CUSTOM_FLEET_TOKEN"}, opts.ProtectedNames)
 }
 
 func TestCollectTUIStatusesSurfacesPerRowDiagnostic(t *testing.T) {
@@ -223,7 +226,7 @@ func TestCollectTUIStatusesSurfacesPerRowDiagnostic(t *testing.T) {
 		RepositoryInfo: &url.RepositoryInfo{FullPath: "github.com/acme/widget"},
 	}
 
-	statuses, warnings, err := collectTUIStatuses(context.Background(), t.TempDir(), []*discovery.GlobalWorktreeEntry{entry})
+	statuses, warnings, err := collectTUIStatuses(context.Background(), t.TempDir(), []*discovery.GlobalWorktreeEntry{entry}, nil)
 
 	require.NoError(t, err)
 	require.Contains(t, statuses, missing)

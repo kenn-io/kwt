@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -82,6 +83,51 @@ func TestCollectPorcelainUsesUAllForPerFileUntrackedCount(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 2, got.GitStatus.Untracked)
+}
+
+func TestStatusCollectorStripsConfiguredCredentialFromEveryGitCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("command recorder uses a POSIX shell")
+	}
+	repo := newStatusTestRepositoryAt(t, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	realGit, err := exec.LookPath("git")
+	require.NoError(t, err)
+	wrapperDir := t.TempDir()
+	logPath := filepath.Join(wrapperDir, "git.log")
+	require.NoError(t, os.WriteFile(filepath.Join(wrapperDir, "git"), []byte(`#!/bin/sh
+if [ "${CUSTOM_FLEET_TOKEN+x}" = x ]; then
+  credential=present
+else
+  credential=absent
+fi
+printf '%s|%s\n' "$*" "$credential" >> "$KWT_TEST_GIT_LOG"
+exec "$KWT_TEST_REAL_GIT" "$@"
+`), 0o755))
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("KWT_TEST_GIT_LOG", logPath)
+	t.Setenv("KWT_TEST_REAL_GIT", realGit)
+	t.Setenv("CUSTOM_FLEET_TOKEN", "must-not-reach-git")
+
+	protectedNames := []string{"CUSTOM_FLEET_TOKEN"}
+	collector := NewStatusCollectorWithOptions(StatusCollectorOptions{
+		ProtectedNames: protectedNames,
+	})
+	protectedNames[0] = "MUTATED_AFTER_CONSTRUCTION"
+	_, err = collector.CollectAll(context.Background(), []*models.Worktree{{
+		Path: repo, Branch: "main",
+	}})
+
+	require.NoError(t, err)
+	logBytes, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(logBytes)), "\n")
+	require.NotEmpty(t, lines)
+	for _, line := range lines {
+		assert.True(t, strings.HasSuffix(line, "|absent"), "credential reached git command %q", line)
+	}
+	log := string(logBytes)
+	assert.Contains(t, log, "status --porcelain=v2 --branch -uall -z --no-ahead-behind|absent")
+	assert.Contains(t, log, "show -s --format=%ct HEAD|absent")
 }
 
 func TestParsePorcelainV2WithoutUpstreamDefaultsAheadBehindToZero(t *testing.T) {

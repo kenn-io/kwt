@@ -9,10 +9,11 @@ import (
 const (
 	ServiceName               = "kwt"
 	APISchemaMajor            = 1
-	APISchemaVersion          = "1.11.0"
+	APISchemaVersion          = "1.12.0"
 	CapabilityStatus          = "daemon.status"
 	CapabilityShutdown        = "daemon.shutdown"
 	CapabilityProjectRemoval  = "project.removal.v1"
+	CapabilityInventoryConfig = "worktree.inventory.config.v1"
 	CapabilityInventory       = "worktree.inventory.v2"
 	CapabilityRemoval         = "worktree.removal.v1"
 	CapabilityGuardedRemoval  = "worktree.removal.v2"

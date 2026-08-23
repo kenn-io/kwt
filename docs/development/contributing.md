@@ -12,7 +12,7 @@ verified with the repo's commands.
 | `internal/tui`       | Bubble Tea dashboard model, rendering, and pure TUI helpers. |
 | `internal/config`    | Global and local config loading, trust, and persistence.     |
 | `internal/discovery` | Worktree discovery.                                          |
-| `internal/status`    | Git status collection.                                       |
+| `internal/status`    | Git status collection and worktree change inspection.        |
 | `internal/tmux`      | tmux session, layout, and runner behavior.                   |
 | `internal/worktree`  | Worktree creation, setup commands, and copied files.         |
 | `pkg/models`         | Shared data models.                                          |

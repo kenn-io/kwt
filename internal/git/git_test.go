@@ -1,6 +1,7 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +21,324 @@ import (
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
 )
+
+func TestRunBytesWithEnvironmentPreservesEmbeddedNUL(t *testing.T) {
+	g := NewForInventory(context.Background(), t.TempDir(), nil)
+	g.executable = os.Args[0]
+
+	got, err := g.RunBytesWithEnvironment(
+		map[string]string{"KWT_TEST_GIT_BYTE_HELPER": "1"},
+		"-test.run=^TestGitByteRunnerHelperProcess$",
+		"--",
+		"nul",
+	)
+
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal([]byte{'a', 0, 'b'}, got), "output = %v", got)
+}
+
+func TestRunBytesWithEnvironmentBoundsStdoutAndStderrIndependently(t *testing.T) {
+	tests := []struct {
+		name     string
+		scenario string
+		wantErr  error
+	}{
+		{name: "stdout", scenario: "stdout-limit", wantErr: ErrStdoutLimitExceeded},
+		{name: "stderr", scenario: "stderr-limit", wantErr: ErrStderrLimitExceeded},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewForInventory(context.Background(), t.TempDir(), nil)
+			g.executable = os.Args[0]
+
+			_, err := g.RunBytesWithEnvironment(
+				map[string]string{"KWT_TEST_GIT_BYTE_HELPER": "1"},
+				"-test.run=^TestGitByteRunnerHelperProcess$",
+				"--",
+				tt.scenario,
+			)
+
+			require.Error(t, err)
+			assert.ErrorIs(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestRunBytesWithEnvironmentPreservesRunErrorWhenOutputLimitExceeded(t *testing.T) {
+	g := NewForInventory(context.Background(), t.TempDir(), nil)
+	g.executable = os.Args[0]
+
+	_, err := g.RunBytesWithEnvironment(
+		map[string]string{"KWT_TEST_GIT_BYTE_HELPER": "1"},
+		"-test.run=^TestGitByteRunnerHelperProcess$",
+		"--",
+		"stderr-limit-exit",
+	)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrStderrLimitExceeded)
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 7, exitErr.ExitCode())
+}
+
+func TestRunBytesWithEnvironmentPreservesRunErrorOnNonZeroExit(t *testing.T) {
+	g := NewForInventory(context.Background(), t.TempDir(), nil)
+	g.executable = os.Args[0]
+
+	_, err := g.RunBytesWithEnvironment(
+		map[string]string{"KWT_TEST_GIT_BYTE_HELPER": "1"},
+		"-test.run=^TestGitByteRunnerHelperProcess$",
+		"--",
+		"stderr-exit",
+	)
+
+	require.Error(t, err)
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 7, exitErr.ExitCode())
+	assert.ErrorContains(t, err, "bounded diagnostic")
+}
+
+func TestRunBytesWithEnvironmentPreservesExecutableLookupError(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	g := NewForInventory(context.Background(), t.TempDir(), nil)
+
+	_, err := g.RunBytesWithEnvironment(nil, "status")
+
+	require.Error(t, err)
+	var executableErr *exec.Error
+	require.ErrorAs(t, err, &executableErr)
+	assert.NotEmpty(t, executableErr.Err)
+}
+
+func TestRunBytesWithEnvironmentHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	g := NewForInventory(ctx, t.TempDir(), nil)
+	g.executable = os.Args[0]
+
+	_, err := g.RunBytesWithEnvironment(
+		map[string]string{"KWT_TEST_GIT_BYTE_HELPER": "1"},
+		"-test.run=^TestGitByteRunnerHelperProcess$",
+		"--",
+		"sleep",
+	)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestRunBytesWithEnvironmentBoundsRetainedOutputPipes(t *testing.T) {
+	for _, descriptor := range []string{"stdout", "stderr"} {
+		t.Run(descriptor, func(t *testing.T) {
+			pidPath := filepath.Join(t.TempDir(), "descendant.pid")
+			t.Cleanup(func() {
+				data, err := os.ReadFile(pidPath)
+				if err != nil {
+					return
+				}
+				pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+				if err != nil {
+					return
+				}
+				process, err := os.FindProcess(pid)
+				if err == nil {
+					_ = process.Kill()
+				}
+			})
+			g := NewForInventory(context.Background(), t.TempDir(), nil)
+			g.executable = os.Args[0]
+
+			started := time.Now()
+			_, err := g.RunBytesWithEnvironment(
+				map[string]string{
+					"KWT_TEST_GIT_BYTE_HELPER":    "1",
+					"KWT_TEST_GIT_DESCENDANT_PID": pidPath,
+				},
+				"-test.run=^TestGitByteRunnerHelperProcess$",
+				"--",
+				"retain-"+descriptor,
+			)
+			elapsed := time.Since(started)
+
+			require.Error(t, err)
+			assert.ErrorIs(t, err, exec.ErrWaitDelay)
+			assert.Less(t, elapsed, time.Second)
+		})
+	}
+}
+
+func TestRunCommandAllowsSuccessfulCommandsToFinishRetainedOutputPipes(t *testing.T) {
+	pidPath := filepath.Join(t.TempDir(), "descendant.pid")
+	t.Cleanup(func() {
+		data, err := os.ReadFile(pidPath)
+		if err != nil {
+			return
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+		if err != nil {
+			return
+		}
+		process, err := os.FindProcess(pid)
+		if err == nil {
+			_ = process.Kill()
+		}
+	})
+	donePath := filepath.Join(t.TempDir(), "descendant.done")
+	t.Setenv("KWT_TEST_GIT_BYTE_HELPER", "1")
+	t.Setenv("KWT_TEST_GIT_DESCENDANT_PID", pidPath)
+	t.Setenv("KWT_TEST_GIT_PIPE_HOLDER_DONE", donePath)
+	t.Setenv("KWT_TEST_GIT_PIPE_HOLDER_DELAY", "2s")
+	g := New(t.TempDir())
+	g.executable = os.Args[0]
+
+	_, err := g.RunCommand(
+		"-test.run=^TestGitByteRunnerHelperProcess$",
+		"--",
+		"retain-stdout",
+	)
+
+	require.NoError(t, err)
+	assert.NoFileExists(t, donePath)
+}
+
+func TestInventoryGitAllowsBranchDeletionToFinishRetainedHookPipes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a POSIX Git hook")
+	}
+
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "delete-with-retained-hook-pipe")
+	require.NoError(t, repo.run("checkout", "main"))
+	hooksDir := t.TempDir()
+	donePath := filepath.Join(t.TempDir(), "hook-descendant.done")
+	t.Setenv("KWT_TEST_GIT_HOOK_DONE", donePath)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(hooksDir, "reference-transaction"),
+		[]byte("#!/bin/sh\nif [ \"$1\" = committed ]; then\n  (sleep 2; : > \"$KWT_TEST_GIT_HOOK_DONE\") &\nfi\n"),
+		0o755,
+	))
+	require.NoError(t, repo.run("config", "core.hooksPath", hooksDir))
+	g := NewForInventory(context.Background(), repo.Path, nil)
+
+	err := g.DeleteBranch("delete-with-retained-hook-pipe", true)
+
+	require.NoError(t, err)
+	assert.NoFileExists(t, donePath)
+	_, err = g.RunCommand(
+		"show-ref",
+		"--verify",
+		"refs/heads/delete-with-retained-hook-pipe",
+	)
+	require.Error(t, err)
+}
+
+func TestRunBytesWithEnvironmentUsesInventoryEnvironmentAndOverrides(t *testing.T) {
+	t.Setenv("GIT_DIR", "/tmp/redirected.git")
+	t.Setenv("KWT_TEST_SECRET", "secret")
+	g := NewForInventory(
+		context.Background(),
+		t.TempDir(),
+		[]string{"KWT_TEST_SECRET"},
+	)
+	g.executable = os.Args[0]
+
+	got, err := g.RunBytesWithEnvironment(
+		map[string]string{
+			"GIT_OPTIONAL_LOCKS":       "0",
+			"KWT_TEST_GIT_BYTE_HELPER": "1",
+			"LC_ALL":                   "C",
+		},
+		"-test.run=^TestGitByteRunnerHelperProcess$",
+		"--",
+		"environment",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(
+		t,
+		"git_dir=|secret=|locks=0|locale=C",
+		string(got),
+	)
+}
+
+func TestGitByteRunnerHelperProcess(t *testing.T) {
+	if os.Getenv("KWT_TEST_GIT_BYTE_HELPER") != "1" {
+		return
+	}
+	if os.Getenv("KWT_TEST_GIT_PIPE_HOLDER") == "1" {
+		delay := 2 * time.Second
+		if configured := os.Getenv("KWT_TEST_GIT_PIPE_HOLDER_DELAY"); configured != "" {
+			parsed, err := time.ParseDuration(configured)
+			if err != nil {
+				os.Exit(5)
+			}
+			delay = parsed
+		}
+		time.Sleep(delay)
+		if donePath := os.Getenv("KWT_TEST_GIT_PIPE_HOLDER_DONE"); donePath != "" {
+			if err := os.WriteFile(donePath, []byte("done\n"), 0o600); err != nil {
+				os.Exit(6)
+			}
+		}
+		os.Exit(0)
+	}
+
+	switch os.Args[len(os.Args)-1] {
+	case "nul":
+		_, _ = os.Stdout.Write([]byte{'a', 0, 'b'})
+	case "stdout-limit":
+		_, _ = os.Stdout.Write(bytes.Repeat([]byte{'o'}, commandOutputLimit+1))
+		_, _ = os.Stderr.Write([]byte("bounded diagnostic"))
+	case "stderr-limit":
+		_, _ = os.Stdout.Write([]byte("bounded output"))
+		_, _ = os.Stderr.Write(bytes.Repeat([]byte{'e'}, commandOutputLimit+1))
+	case "stderr-limit-exit":
+		_, _ = os.Stderr.Write(bytes.Repeat([]byte{'e'}, commandOutputLimit+1))
+		os.Exit(7)
+	case "stderr-exit":
+		_, _ = os.Stderr.Write([]byte("bounded diagnostic"))
+		os.Exit(7)
+	case "sleep":
+		time.Sleep(time.Minute)
+	case "retain-stdout", "retain-stderr":
+		descriptor := strings.TrimPrefix(os.Args[len(os.Args)-1], "retain-")
+		descendant := exec.Command(
+			os.Args[0],
+			"-test.run=^TestGitByteRunnerHelperProcess$",
+		)
+		descendant.Env = append(os.Environ(), "KWT_TEST_GIT_PIPE_HOLDER=1")
+		if descriptor == "stdout" {
+			descendant.Stdout = os.Stdout
+		} else {
+			descendant.Stderr = os.Stderr
+		}
+		if err := descendant.Start(); err != nil {
+			os.Exit(3)
+		}
+		if err := os.WriteFile(
+			os.Getenv("KWT_TEST_GIT_DESCENDANT_PID"),
+			[]byte(strconv.Itoa(descendant.Process.Pid)),
+			0o600,
+		); err != nil {
+			os.Exit(4)
+		}
+	case "environment":
+		_, _ = fmt.Fprintf(
+			os.Stdout,
+			"git_dir=%s|secret=%s|locks=%s|locale=%s",
+			os.Getenv("GIT_DIR"),
+			os.Getenv("KWT_TEST_SECRET"),
+			os.Getenv("GIT_OPTIONAL_LOCKS"),
+			os.Getenv("LC_ALL"),
+		)
+	default:
+		os.Exit(2)
+	}
+	os.Exit(0)
+}
 
 func TestGitOperationsUseInstanceContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1465,6 +1785,25 @@ func TestReadWorktreeGenerationClassifiesMissingWorktree(t *testing.T) {
 	_, err := New(repo.Path).ReadWorktreeGeneration(
 		filepath.Join(t.TempDir(), "missing-worktree"),
 	)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrWorktreeNotFound)
+}
+
+func TestReadWorktreeGenerationClassifiesRemovedWorkingDirectory(t *testing.T) {
+	repo := NewTestRepository(t)
+	repo.CreateBranch(t, "removed-worktree")
+	worktreePath := filepath.Join(t.TempDir(), "removed-worktree")
+	repo.CreateWorktree(t, worktreePath, "removed-worktree")
+	_, err := New(repo.Path).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	require.NoError(t, os.RemoveAll(worktreePath))
+
+	_, err = NewForInventory(
+		context.Background(),
+		worktreePath,
+		nil,
+	).ReadWorktreeGeneration(worktreePath)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrWorktreeNotFound)

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/status"
@@ -391,8 +392,9 @@ func collectChangeStatus(ctx context.Context, cfg *models.Config, worktree model
 	}
 	worktree.Branch = branch
 	collector := status.NewStatusCollectorWithOptions(status.StatusCollectorOptions{
-		FetchRemote: false,
-		BaseDir:     cfg.Worktree.BaseDir,
+		FetchRemote:    false,
+		BaseDir:        cfg.Worktree.BaseDir,
+		ProtectedNames: credentials.ProtectedNames(cfg),
 	})
 	collection, err := collector.CollectAll(ctx, []*models.Worktree{&worktree})
 	if err != nil || len(collection.Statuses) == 0 || collection.Statuses[0] == nil {

@@ -1,7 +1,10 @@
 // Package kwt provides embeddable worktree inventory and lifecycle services.
 package kwt
 
-import "go.kenn.io/kwt/internal/lifecycle"
+import (
+	"go.kenn.io/kwt/internal/lifecycle"
+	"go.kenn.io/kwt/internal/status"
+)
 
 type (
 	View                         = lifecycle.View
@@ -33,6 +36,16 @@ type (
 	ProjectRemovalResult         = lifecycle.ProjectRemovalResult
 	ProjectRemover               = lifecycle.ProjectRemover
 	ProjectRemovalServiceOptions = lifecycle.ProjectRemovalServiceOptions
+	FileState                    = status.FileState
+	FileChange                   = status.FileChange
+	ChangeState                  = status.ChangeState
+	ChangeSummary                = status.ChangeSummary
+	ChangeSet                    = status.ChangeSet
+	InspectionRequest            = status.InspectionRequest
+	WorktreeIdentity             = status.WorktreeIdentity
+	InspectionResult             = status.InspectionResult
+	Inspector                    = status.Inspector
+	InspectionServiceOptions     = status.InspectionServiceOptions
 )
 
 const (
@@ -49,6 +62,19 @@ const (
 
 	RequireConfigInteraction = lifecycle.RequireConfigInteraction
 	IgnoreUntrustedConfig    = lifecycle.IgnoreUntrustedConfig
+
+	FileStateModified   = status.FileStateModified
+	FileStateAdded      = status.FileStateAdded
+	FileStateDeleted    = status.FileStateDeleted
+	FileStateRenamed    = status.FileStateRenamed
+	FileStateCopied     = status.FileStateCopied
+	FileStateConflicted = status.FileStateConflicted
+	FileStateUntracked  = status.FileStateUntracked
+
+	ChangeStateClean      = status.ChangeStateClean
+	ChangeStateModified   = status.ChangeStateModified
+	ChangeStateStaged     = status.ChangeStateStaged
+	ChangeStateConflicted = status.ChangeStateConflicted
 )
 
 func CaptureExpansionContext() (ExpansionContext, error) {
@@ -73,4 +99,8 @@ func NewRemovalService(options RemovalServiceOptions) Remover {
 
 func NewProjectRemovalService(options ProjectRemovalServiceOptions) ProjectRemover {
 	return lifecycle.NewProjectRemovalService(options)
+}
+
+func NewInspectionService(options InspectionServiceOptions) Inspector {
+	return status.NewInspectionService(options)
 }

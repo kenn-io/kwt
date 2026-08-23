@@ -125,7 +125,6 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 		},
 		discoverProjectWorktrees: discoverLaunchRepoWorktrees,
 		discoverLaunchWorktrees:  discoverLaunchRepoWorktrees,
-		collectStatuses:          collectTUIStatuses,
 		resolveSessions: bestEffortDashboardSessionResolver(
 			sessions.ResolveAllBestEffort,
 			tmuxDiagnosticReporter(os.Stderr),
@@ -150,6 +149,13 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 	backend.killProtectedEndpoint = backend.killProtectedTUIEndpoint
 	backend.loadTargetConfig = func(repoRoot string, interactive bool) (*models.Config, error) {
 		return config.LoadForTargetFrom(backend.cfg, repoRoot, interactive)
+	}
+	backend.collectStatuses = func(
+		ctx context.Context,
+		baseDir string,
+		entries []*discovery.GlobalWorktreeEntry,
+	) (map[string]*models.WorktreeStatus, []string, error) {
+		return collectTUIStatuses(ctx, baseDir, entries, backend.protectedNames)
 	}
 	return backend
 }
@@ -1197,6 +1203,7 @@ func collectTUIStatuses(
 	ctx context.Context,
 	baseDir string,
 	entries []*discovery.GlobalWorktreeEntry,
+	protectedNames []string,
 ) (map[string]*models.WorktreeStatus, []string, error) {
 	worktrees := make([]*models.Worktree, 0, len(entries))
 	for _, entry := range entries {
@@ -1213,7 +1220,7 @@ func collectTUIStatuses(
 		})
 	}
 
-	collector := status.NewStatusCollectorWithOptions(tuiStatusCollectorOptions(baseDir))
+	collector := status.NewStatusCollectorWithOptions(tuiStatusCollectorOptions(baseDir, protectedNames))
 	collection, err := collector.CollectAll(ctx, worktrees)
 	if err != nil {
 		return nil, nil, err
@@ -1232,10 +1239,11 @@ func collectTUIStatuses(
 	return statusByPath, warnings, nil
 }
 
-func tuiStatusCollectorOptions(baseDir string) status.StatusCollectorOptions {
+func tuiStatusCollectorOptions(baseDir string, protectedNames []string) status.StatusCollectorOptions {
 	return status.StatusCollectorOptions{
-		FetchRemote: true,
-		BaseDir:     baseDir,
+		FetchRemote:    true,
+		BaseDir:        baseDir,
+		ProtectedNames: append([]string(nil), protectedNames...),
 	}
 }
 

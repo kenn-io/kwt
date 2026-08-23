@@ -25,6 +25,7 @@ const (
 	DaemonTransportFailed                Code = "daemon_transport_failed"
 	InventoryTimeout                     Code = "inventory_timeout"
 	InventoryFailed                      Code = "inventory_failed"
+	InspectionFailed                     Code = "inspection_failed"
 	RemovalFailed                        Code = "removal_failed"
 	ProjectNotFound                      Code = "project_not_found"
 	RegistrationChanged                  Code = "registration_changed"
