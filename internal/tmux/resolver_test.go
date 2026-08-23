@@ -76,13 +76,13 @@ func newResolverTestCommands(path, session string) (*fakeEndpointCommand, *fakeE
 		workspaceGenerationOption: resolverTestGeneration,
 	}
 	return &fakeEndpointCommand{
-			options:      cloneStringMap(matching),
-			optionErrors: make(map[string]error),
-		}, &fakeEndpointCommand{
-			options:            cloneStringMap(matching),
-			optionErrors:       make(map[string]error),
-			requireEnumeration: true,
-		}
+		options:      cloneStringMap(matching),
+		optionErrors: make(map[string]error),
+	}, &fakeEndpointCommand{
+		options:            cloneStringMap(matching),
+		optionErrors:       make(map[string]error),
+		requireEnumeration: true,
+	}
 }
 
 func cloneStringMap(values map[string]string) map[string]string {

@@ -2316,18 +2316,18 @@ func TestRunPRAttachUsesTransferredProvenanceAliasHistory(t *testing.T) {
 	) (pullrequest.Project, []pullrequest.Workspace, error) {
 		assert.Equal(t, record, got)
 		return pullrequest.Project{
-				Identity: registeredIdentity,
-				Path:     record.Project.Path,
-			}, []pullrequest.Workspace{{
-				Path:       workspacePath,
-				Branch:     branch,
-				Repository: registeredIdentity,
-				SessionName: tmux.WorkspaceSessionName(
-					registeredInfo,
-					branch,
-					workspacePath,
-				),
-			}}, nil
+			Identity: registeredIdentity,
+			Path:     record.Project.Path,
+		}, []pullrequest.Workspace{{
+			Path:       workspacePath,
+			Branch:     branch,
+			Repository: registeredIdentity,
+			SessionName: tmux.WorkspaceSessionName(
+				registeredInfo,
+				branch,
+				workspacePath,
+			),
+		}}, nil
 	}
 	attached := false
 	attachExistingPRWorkspaceSession = func(

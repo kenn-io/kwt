@@ -55,6 +55,7 @@ func buildDaemonTestBinary(t *testing.T, build daemonTestBuild) string {
 	command := exec.Command(
 		"go",
 		"build",
+		"-buildvcs=false",
 		"-ldflags",
 		"-X go.kenn.io/kwt/internal/cmd.version="+build.Version+
 			" -X go.kenn.io/kwt/internal/cmd.commit="+build.Revision+

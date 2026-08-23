@@ -319,7 +319,7 @@ Run `kwt <command> --help` for flags and examples.
 
 - Git 2.20+
   - Git 2.31+ for `kwt doctor` and `kwt prune --expired` or `--merged`
-- Go 1.26+ to build from source
+- Go 1.27+ to build from source
 - tmux for workspace launch and `kwt tmux`
 
 ## Documentation

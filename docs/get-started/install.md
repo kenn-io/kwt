@@ -7,7 +7,7 @@ commands, but the worktree-oriented CLI can still be used without it.
 
 ## Install with Go
 
-If you have Go 1.26 or newer, install the latest tagged version:
+If you have Go 1.27 or newer, install the latest tagged version:
 
 ```sh
 go install go.kenn.io/kwt/cmd/kwt@latest
