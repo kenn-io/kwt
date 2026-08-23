@@ -290,19 +290,6 @@ func (s *Service) importBranch(
 	project Project,
 	pr PullRequest,
 ) (string, error) {
-	workspaces, err := s.backend.ListWorkspaces(ctx)
-	if err != nil {
-		return "", NewError(
-			CodeWorkspaceCreation,
-			"failed to inspect project workspaces",
-			false,
-			err,
-		)
-	}
-	byPath := make(map[string]Workspace, len(workspaces))
-	for _, workspace := range workspaces {
-		byPath[utils.CanonicalPath(workspace.Path)] = workspace
-	}
 	records := make(map[string]Provenance)
 	if err := s.store.View(ctx, func(current map[string]Provenance) error {
 		for key, record := range current {
@@ -316,6 +303,22 @@ func (s *Service) importBranch(
 			false,
 			err,
 		)
+	}
+	// Workspace creation precedes its provenance commit. Read provenance first
+	// so a concurrent import cannot pair a new record with an older workspace
+	// snapshot and select a reassociation branch for a live import.
+	workspaces, err := s.backend.ListWorkspaces(ctx)
+	if err != nil {
+		return "", NewError(
+			CodeWorkspaceCreation,
+			"failed to inspect project workspaces",
+			false,
+			err,
+		)
+	}
+	byPath := make(map[string]Workspace, len(workspaces))
+	for _, workspace := range workspaces {
+		byPath[utils.CanonicalPath(workspace.Path)] = workspace
 	}
 	return s.importBranchFromState(records, byPath, project, pr), nil
 }
