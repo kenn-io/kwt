@@ -96,12 +96,21 @@ func inventoryEnvironment(env, protectedNames []string) []string {
 	result := make([]string, 0, len(filtered)+1)
 	for _, entry := range filtered {
 		name, _, ok := strings.Cut(entry, "=")
-		if ok && strings.HasPrefix(strings.ToUpper(name), "GIT_") {
+		if ok && isInventoryGitRedirect(name) {
 			continue
 		}
 		result = append(result, entry)
 	}
 	return append(result, "GIT_TERMINAL_PROMPT=0")
+}
+
+func isInventoryGitRedirect(name string) bool {
+	switch strings.ToUpper(name) {
+	case "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_NAMESPACE":
+		return true
+	default:
+		return false
+	}
 }
 
 // NewFromCwd creates a new Git instance using the current working directory.

@@ -355,7 +355,14 @@ func TestInventoryEnvironmentRemovesGitRoutingAndCredentials(t *testing.T) {
 		"HOME=/home/test",
 		"GIT_DIR=/tmp/redirected.git",
 		"git_work_tree=/tmp/redirected-worktree",
+		"GIT_COMMON_DIR=/tmp/redirected-common",
+		"GIT_INDEX_FILE=/tmp/redirected-index",
+		"GIT_NAMESPACE=redirected",
 		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=core.filemode",
+		"GIT_CONFIG_VALUE_0=false",
+		"GIT_CONFIG_GLOBAL=/tmp/global.gitconfig",
+		"GIT_ALTERNATE_OBJECT_DIRECTORIES=/tmp/objects",
 		"KWT_GITHUB_TOKEN=builtin-secret",
 		"CUSTOM_FLEET_TOKEN=custom-secret",
 	}, []string{"CUSTOM_FLEET_TOKEN"})
@@ -363,6 +370,11 @@ func TestInventoryEnvironmentRemovesGitRoutingAndCredentials(t *testing.T) {
 	assert.ElementsMatch(t, []string{
 		"PATH=/usr/bin",
 		"HOME=/home/test",
+		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=core.filemode",
+		"GIT_CONFIG_VALUE_0=false",
+		"GIT_CONFIG_GLOBAL=/tmp/global.gitconfig",
+		"GIT_ALTERNATE_OBJECT_DIRECTORIES=/tmp/objects",
 		"GIT_TERMINAL_PROMPT=0",
 	}, got)
 }

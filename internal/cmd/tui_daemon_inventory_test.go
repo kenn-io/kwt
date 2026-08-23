@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,7 +28,7 @@ func TestTUIBackendInventoryModesSeparateCurrencyAndStatus(t *testing.T) {
 	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	var requests []kwt.Request
 	var statusCalls int
-	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, []string, error) {
+	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry, []string) (map[string]*models.WorktreeStatus, []string, error) {
 		statusCalls++
 		return map[string]*models.WorktreeStatus{}, nil, nil
 	}
@@ -144,6 +148,59 @@ func TestRepositoryInventoryRejectsDeletedWorkingDirectoryBeforeQuery(t *testing
 	assert.False(t, queried)
 }
 
+func TestRepositoryInventoryUsesFreshCredentialNamesForStatus(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("command recorder uses a POSIX shell")
+	}
+	repository := newTUITestRepo(t)
+	backend := newTUIBackendWithLaunchDir(&models.Config{
+		Fleet: models.FleetConfig{TokenEnv: "OLD_FLEET_TOKEN"},
+	}, repository)
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
+	backend.queryInventory = func(context.Context, kwt.Request, bool, io.Writer) (kwt.Result, error) {
+		return kwt.Result{Freshness: kwt.Fresh, Snapshot: kwt.Snapshot{
+			Config: &models.Config{Fleet: models.FleetConfig{TokenEnv: "NEW_FLEET_TOKEN"}},
+			Entries: []kwt.Entry{{
+				Path: repository, Branch: "main", IsMain: true,
+				Repository: kwt.Repository{FullPath: "github.com/acme/widget"},
+			}},
+		}}, nil
+	}
+
+	realGit, err := exec.LookPath("git")
+	require.NoError(t, err)
+	wrapperDir := t.TempDir()
+	logPath := filepath.Join(wrapperDir, "git.log")
+	require.NoError(t, os.WriteFile(filepath.Join(wrapperDir, "git"), []byte(`#!/bin/sh
+if [ "${NEW_FLEET_TOKEN+x}" = x ]; then
+  credential=present
+else
+  credential=absent
+fi
+printf '%s|%s\n' "$*" "$credential" >> "$KWT_TEST_GIT_LOG"
+exec "$KWT_TEST_REAL_GIT" "$@"
+`), 0o755))
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("KWT_TEST_GIT_LOG", logPath)
+	t.Setenv("KWT_TEST_REAL_GIT", realGit)
+	t.Setenv("NEW_FLEET_TOKEN", "must-not-reach-git")
+
+	_, err = backend.LoadInventory(context.Background(), dashboard.InventoryRequest{
+		Scope: dashboard.InventoryCurrentRepository, WorkingDirectory: repository,
+		ProjectIdentity: "github.com/acme/widget", CollectStatuses: true,
+	})
+
+	require.NoError(t, err)
+	logBytes, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(logBytes)), "\n")
+	require.NotEmpty(t, lines)
+	for _, line := range lines {
+		assert.True(t, strings.HasSuffix(line, "|absent"), "credential reached git command %q", line)
+	}
+	assert.Equal(t, "OLD_FLEET_TOKEN", backend.cfg.Fleet.TokenEnv)
+}
+
 func TestTUIBackendApplyInventoryConfigRewiresCleanupResolver(t *testing.T) {
 	t.Setenv("PATH", filepath.Join(t.TempDir(), "missing"))
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
@@ -181,7 +238,7 @@ func TestTUIBackendMutationUsesLatestDaemonConfiguration(t *testing.T) {
 	currentBase := filepath.Join(t.TempDir(), "current")
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
 	backend.resolveSessions = resolveStoppedWorkspaceSessions
-	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, []string, error) {
+	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry, []string) (map[string]*models.WorktreeStatus, []string, error) {
 		return map[string]*models.WorktreeStatus{}, nil, nil
 	}
 	backend.queryInventory = func(
@@ -226,7 +283,7 @@ func TestTUIBackendDaemonInventoryUsesCacheThenCurrent(t *testing.T) {
 	backend := newTUIBackendWithLaunchDir(cfg, "/launch")
 	backend.resolveSessions = resolveStoppedWorkspaceSessions
 	var statusBaseDirectory string
-	backend.collectStatuses = func(_ context.Context, baseDirectory string, _ []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, []string, error) {
+	backend.collectStatuses = func(_ context.Context, baseDirectory string, _ []*discovery.GlobalWorktreeEntry, _ []string) (map[string]*models.WorktreeStatus, []string, error) {
 		statusBaseDirectory = baseDirectory
 		return map[string]*models.WorktreeStatus{}, nil, nil
 	}
@@ -376,7 +433,7 @@ func TestTUIBackendRegistersOnlyCurrentLaunchInventory(t *testing.T) {
 		Worktree: models.WorktreeConfig{BaseDir: t.TempDir()},
 	}, "/launch")
 	backend.resolveSessions = resolveStoppedWorkspaceSessions
-	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, []string, error) {
+	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry, []string) (map[string]*models.WorktreeStatus, []string, error) {
 		return map[string]*models.WorktreeStatus{}, nil, nil
 	}
 	backend.registerWorkspace = nil
@@ -433,7 +490,7 @@ func TestTUIBackendCurrentInventoryIncludesNewLaunchWorkspace(t *testing.T) {
 		Worktree: models.WorktreeConfig{BaseDir: t.TempDir()},
 	}, "/launch")
 	backend.resolveSessions = resolveStoppedWorkspaceSessions
-	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, []string, error) {
+	backend.collectStatuses = func(context.Context, string, []*discovery.GlobalWorktreeEntry, []string) (map[string]*models.WorktreeStatus, []string, error) {
 		return map[string]*models.WorktreeStatus{}, nil, nil
 	}
 	backend.registerProject = nil

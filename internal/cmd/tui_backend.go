@@ -48,7 +48,7 @@ type tuiBackend struct {
 	discoverGlobalWorktrees   func(string) ([]*discovery.GlobalWorktreeEntry, error)
 	discoverProjectWorktrees  func(string) ([]*discovery.GlobalWorktreeEntry, error)
 	discoverLaunchWorktrees   func(string) ([]*discovery.GlobalWorktreeEntry, error)
-	collectStatuses           func(context.Context, string, []*discovery.GlobalWorktreeEntry) (map[string]*models.WorktreeStatus, []string, error)
+	collectStatuses           func(context.Context, string, []*discovery.GlobalWorktreeEntry, []string) (map[string]*models.WorktreeStatus, []string, error)
 	resolveSessions           func(context.Context, []tmux.WorkspaceEndpointRequest) ([]tmux.WorkspaceSession, error)
 	liveEndpoints             func(context.Context, tmux.WorkspaceEndpointRequest) ([]tmux.SessionEndpoint, error)
 	resolveLive               func(context.Context, tmux.WorkspaceEndpointRequest) (tmux.SessionEndpoint, error)
@@ -125,6 +125,7 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 		},
 		discoverProjectWorktrees: discoverLaunchRepoWorktrees,
 		discoverLaunchWorktrees:  discoverLaunchRepoWorktrees,
+		collectStatuses:          collectTUIStatuses,
 		resolveSessions: bestEffortDashboardSessionResolver(
 			sessions.ResolveAllBestEffort,
 			tmuxDiagnosticReporter(os.Stderr),
@@ -149,13 +150,6 @@ func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBacken
 	backend.killProtectedEndpoint = backend.killProtectedTUIEndpoint
 	backend.loadTargetConfig = func(repoRoot string, interactive bool) (*models.Config, error) {
 		return config.LoadForTargetFrom(backend.cfg, repoRoot, interactive)
-	}
-	backend.collectStatuses = func(
-		ctx context.Context,
-		baseDir string,
-		entries []*discovery.GlobalWorktreeEntry,
-	) (map[string]*models.WorktreeStatus, []string, error) {
-		return collectTUIStatuses(ctx, baseDir, entries, backend.protectedNames)
 	}
 	return backend
 }
@@ -212,6 +206,11 @@ func (b *tuiBackend) LoadInventory(ctx context.Context, request dashboard.Invent
 	for _, entry := range result.Snapshot.Entries {
 		entries = append(entries, dashboardInventoryEntry(entry))
 	}
+	var repositoryProtectedNames []string
+	if request.Scope == dashboard.InventoryCurrentRepository &&
+		result.Freshness == kwt.Fresh && result.Snapshot.Config != nil {
+		repositoryProtectedNames = credentials.ProtectedNames(result.Snapshot.Config)
+	}
 
 	b.mu.Lock()
 	if request.Scope == dashboard.InventoryCurrentDashboard && result.Freshness == kwt.Fresh {
@@ -235,13 +234,17 @@ func (b *tuiBackend) LoadInventory(ctx context.Context, request dashboard.Invent
 		}
 	}
 	collectStatuses := b.collectStatuses
+	protectedNames := append([]string(nil), b.protectedNames...)
+	if repositoryProtectedNames != nil {
+		protectedNames = repositoryProtectedNames
+	}
 	resolveSessions := b.resolveSessions
 	b.mu.Unlock()
 
 	var statusByPath map[string]*models.WorktreeStatus
 	var warnings []string
 	if request.CollectStatuses && collectStatuses != nil {
-		statusByPath, warnings, err = collectStatuses(ctx, baseDir, entries)
+		statusByPath, warnings, err = collectStatuses(ctx, baseDir, entries, protectedNames)
 		if err != nil {
 			return dashboard.InventoryResult{}, err
 		}
@@ -379,6 +382,7 @@ func (b *tuiBackend) list(ctx context.Context, includeStatuses bool) ([]dashboar
 			ctx,
 			b.cfg.Worktree.BaseDir,
 			entries,
+			b.protectedNames,
 		)
 		if discoveryErr != nil {
 			return nil, nil, discoveryErr
@@ -431,7 +435,12 @@ func (b *tuiBackend) listDaemon(ctx context.Context, includeStatuses bool) ([]da
 	var statusByPath map[string]*models.WorktreeStatus
 	var statusWarnings []string
 	if includeStatuses {
-		statusByPath, statusWarnings, err = b.collectStatuses(ctx, b.cfg.Worktree.BaseDir, entries)
+		statusByPath, statusWarnings, err = b.collectStatuses(
+			ctx,
+			b.cfg.Worktree.BaseDir,
+			entries,
+			b.protectedNames,
+		)
 		if err != nil {
 			return nil, nil, err
 		}
