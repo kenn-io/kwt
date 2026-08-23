@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/git"
+	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/service"
 )
 
@@ -28,8 +29,16 @@ func TestChangesSubprocessInspectsPrimaryAndLinkedWorktreesWithGuards(t *testing
 	linkedResult := runChangesSubprocessJSON(t, binary, home, linked, linked)
 	assert.Equal(t, "github.com/acme/widget", primaryResult.Worktree.Repository)
 	assert.Equal(t, "github.com/acme/widget", linkedResult.Worktree.Repository)
-	assert.Equal(t, canonicalTestPath(t, primary), primaryResult.Worktree.Path)
-	assert.Equal(t, canonicalTestPath(t, linked), linkedResult.Worktree.Path)
+	assert.Equal(
+		t,
+		utils.PathKey(canonicalTestPath(t, primary)),
+		utils.PathKey(primaryResult.Worktree.Path),
+	)
+	assert.Equal(
+		t,
+		utils.PathKey(canonicalTestPath(t, linked)),
+		utils.PathKey(linkedResult.Worktree.Path),
+	)
 	assert.NotEqual(t, primaryResult.Worktree.Generation, linkedResult.Worktree.Generation)
 
 	stdout, stderr, err := runInventoryCommand(
