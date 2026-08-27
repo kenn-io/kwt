@@ -481,6 +481,40 @@ func TestRunProjectsAddJSONRegistersCanonicalProject(t *testing.T) {
 	assert.Equal(t, response.Project.Project, registered)
 }
 
+func TestResolveProjectForRegistrationAcceptsBareContainer(t *testing.T) {
+	containerPath, mainPath := newTUIBareContainerRepo(t)
+	canonicalMainPath, err := filepath.EvalSymlinks(mainPath)
+	require.NoError(t, err)
+
+	project, err := resolveProjectForRegistration(containerPath)
+
+	require.NoError(t, err)
+	assert.Equal(t, "github.com/acme/widget", project.Repository)
+	assert.Equal(t, "widget", project.Name)
+	assert.Equal(t, canonicalMainPath, project.Path)
+}
+
+func newTUIBareContainerRepo(t *testing.T) (string, string) {
+	t.Helper()
+
+	seedPath := newTUITestRepo(t)
+	containerPath := filepath.Join(t.TempDir(), "widget")
+	barePath := filepath.Join(containerPath, ".bare")
+	mainPath := filepath.Join(containerPath, "main")
+	require.NoError(t, os.MkdirAll(containerPath, 0755))
+	runTUITestGit(t, "", "clone", "--bare", seedPath, barePath)
+	runTUITestGit(
+		t,
+		barePath,
+		"remote",
+		"set-url",
+		"origin",
+		"git@github.com:acme/widget.git",
+	)
+	runTUITestGit(t, barePath, "worktree", "add", mainPath, "main")
+	return containerPath, mainPath
+}
+
 func TestRunProjectsAddJSONWritesStableInvalidRepositoryError(t *testing.T) {
 	projectsAddJSON = true
 	t.Cleanup(func() { projectsAddJSON = false })

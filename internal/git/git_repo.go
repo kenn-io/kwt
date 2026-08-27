@@ -32,6 +32,31 @@ func (g *Git) GetMainRepositoryPath() (string, error) {
 	return g.getMainRepoRoot()
 }
 
+// GetBareContainerPath returns the parent directory shared by a conventional
+// bare-container repository's worktrees. It returns an empty path for other
+// repository layouts.
+func (g *Git) GetBareContainerPath() (string, error) {
+	commonDirOutput, err := g.run("rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", fmt.Errorf("failed to get git common dir: %w", err)
+	}
+	commonDir := strings.TrimSpace(commonDirOutput)
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(g.workDir, commonDir)
+	}
+	commonDir = utils.CanonicalPath(commonDir)
+
+	output, err := g.run("worktree", "list", "--porcelain")
+	if err != nil {
+		return "", fmt.Errorf("failed to list repository worktrees: %w", err)
+	}
+	entries := gitworktree.ParsePorcelain(output)
+	if _, ok := bareContainerAnchor(entries, commonDir); !ok {
+		return "", nil
+	}
+	return utils.CanonicalPath(filepath.Dir(commonDir)), nil
+}
+
 // GetMainRepositoryPathWithoutCredentials resolves the main repository while
 // removing the named credentials from Git's environment.
 func (g *Git) GetMainRepositoryPathWithoutCredentials(
@@ -152,6 +177,9 @@ func (g *Git) getMainRepoRootWithoutCredentials(
 	if utils.PathKey(inventoryMain) != utils.PathKey(commonDir) {
 		return inventoryMain, nil
 	}
+	if anchor, ok := bareContainerAnchor(entries, commonDir); ok {
+		return anchor, nil
+	}
 	coreWorktree, coreErr := g.runWithoutCredentials(
 		protectedNames,
 		"config", "--path", "--get", "core.worktree",
@@ -179,6 +207,23 @@ func (g *Git) getMainRepoRootWithoutCredentials(
 		"main worktree path is unavailable for separate Git directory %s",
 		commonDir,
 	)
+}
+
+func bareContainerAnchor(
+	entries []gitworktree.PorcelainEntry,
+	commonDir string,
+) (string, bool) {
+	if len(entries) == 0 || !entries[0].Bare ||
+		utils.PathKey(entries[0].Path) != utils.PathKey(commonDir) {
+		return "", false
+	}
+	anchor := utils.CanonicalPath(filepath.Join(filepath.Dir(commonDir), "main"))
+	for _, entry := range entries[1:] {
+		if !entry.Bare && utils.PathKey(entry.Path) == utils.PathKey(anchor) {
+			return anchor, true
+		}
+	}
+	return "", false
 }
 
 // getRootDir returns the repository root directory.

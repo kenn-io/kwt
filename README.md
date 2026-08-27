@@ -270,6 +270,11 @@ Noninteractive clients can register an existing checkout explicitly with
 They can unregister it without deleting repository or worktree data with
 `kwt projects remove /absolute/repository/path --json`.
 
+Kwt also recognizes bare-container repositories where `.bare/` manages a
+checked-out `main/` worktree and flat sibling worktrees. Register either the
+container or any of its worktrees; Kwt leaves `.bare/` out of inventory and
+creates generated worktrees beside `main/` using the sanitized branch name.
+
 ### Repository Setup
 
 Optional `repository_settings` copy files or run commands when new worktrees are

@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/table"
 	"go.kenn.io/kwt/internal/url"
+	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
@@ -361,10 +362,23 @@ func resolveProjectForRegistration(path string) (models.Project, error) {
 	repositoryGit := git.New(absolutePath)
 	mainPath, err := repositoryGit.GetMainRepositoryPath()
 	if err != nil {
-		return models.Project{}, fmt.Errorf(
-			"%s is not an accessible Git repository",
-			absolutePath,
-		)
+		candidateGit := git.New(filepath.Join(absolutePath, "main"))
+		containerPath, containerErr := candidateGit.GetBareContainerPath()
+		if containerErr != nil ||
+			utils.PathKey(containerPath) != utils.PathKey(absolutePath) {
+			return models.Project{}, fmt.Errorf(
+				"%s is not an accessible Git repository",
+				absolutePath,
+			)
+		}
+		repositoryGit = candidateGit
+		mainPath, err = repositoryGit.GetMainRepositoryPath()
+		if err != nil {
+			return models.Project{}, fmt.Errorf(
+				"%s is not an accessible Git repository",
+				absolutePath,
+			)
+		}
 	}
 	if resolved, err := filepath.EvalSymlinks(mainPath); err == nil {
 		mainPath = resolved

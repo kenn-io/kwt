@@ -783,9 +783,12 @@ existing record by repository identity.
 
 `kwt projects add <path>` registers an existing Git checkout without opening
 the dashboard. A linked-worktree path resolves to its main repository before
-registration, and repeating the command updates the existing entry rather than
-adding a duplicate. Registration changes serialize with protected project
-operations across both the old and new repository identities.
+registration. For a bare-container layout, callers may pass the container
+directory itself; Kwt registers its checked-out `main/` worktree and excludes
+the `.bare/` control directory from worktree inventory. Repeating the command
+updates the existing entry rather than adding a duplicate. Registration changes
+serialize with protected project operations across both the old and new
+repository identities.
 
 Machine callers use `kwt projects remove <exact-registered-path>
 --expected-repository <identity> --expected-registration <fingerprint> --json`

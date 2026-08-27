@@ -361,10 +361,13 @@ func (g *Git) inspectWorktreesLocked(
 	if mainDirErr != nil {
 		return nil, fmt.Errorf("resolve main worktree path: %w", mainDirErr)
 	}
-	if len(entries) != 0 {
+	if len(entries) != 0 && !entries[0].Bare {
 		entries[0].Path = mainDir
 	}
 	for _, entry := range entries {
+		if entry.Bare {
+			continue
+		}
 		if excluded != "" && comparableWorktreePath(entry.Path) == excluded {
 			continue
 		}

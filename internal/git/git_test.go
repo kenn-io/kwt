@@ -515,6 +515,31 @@ func newSeparateGitDirectoryRepository(t *testing.T) (string, string) {
 	return mainPath, linkedPath
 }
 
+func newBareContainerRepository(t *testing.T) (string, string, string) {
+	t.Helper()
+	container := filepath.Join(t.TempDir(), "widget")
+	barePath := filepath.Join(container, ".bare")
+	seedPath := filepath.Join(t.TempDir(), "seed")
+	mainPath := filepath.Join(container, "main")
+	linkedPath := filepath.Join(container, "feature-topic")
+	require.NoError(t, os.MkdirAll(container, 0o755))
+	gitOutput(t, filepath.Dir(seedPath), "init", "-b", "main", seedPath)
+	gitOutput(t, seedPath, "config", "user.name", "Test User")
+	gitOutput(t, seedPath, "config", "user.email", "test@example.com")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(seedPath, "README.md"),
+		[]byte("# Bare container\n"),
+		0o644,
+	))
+	gitOutput(t, seedPath, "add", "README.md")
+	gitOutput(t, seedPath, "commit", "-m", "Initial commit")
+	gitOutput(t, filepath.Dir(barePath), "clone", "--bare", seedPath, barePath)
+	gitOutput(t, barePath, "worktree", "add", mainPath, "main")
+	gitOutput(t, mainPath, "branch", "feature/topic")
+	gitOutput(t, barePath, "worktree", "add", linkedPath, "feature/topic")
+	return container, mainPath, linkedPath
+}
+
 func commitTestFile(t *testing.T, dir, name, contents, message string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0644); err != nil {
@@ -3776,6 +3801,37 @@ func TestGetMainRepositoryPathResolvesSeparateGitDirectoryMain(t *testing.T) {
 	assert.Equal(t, utils.PathKey(mainPath), utils.PathKey(got))
 }
 
+func TestGetMainRepositoryPathResolvesBareContainerAnchor(t *testing.T) {
+	_, mainPath, linkedPath := newBareContainerRepository(t)
+
+	for _, worktreePath := range []string{mainPath, linkedPath} {
+		got, err := New(worktreePath).GetMainRepositoryPath()
+
+		require.NoError(t, err)
+		assert.Equal(t, utils.PathKey(mainPath), utils.PathKey(got))
+	}
+}
+
+func TestGetBareContainerPathRecognizesContainerWorktrees(t *testing.T) {
+	container, mainPath, linkedPath := newBareContainerRepository(t)
+
+	for _, worktreePath := range []string{mainPath, linkedPath} {
+		got, err := New(worktreePath).GetBareContainerPath()
+
+		require.NoError(t, err)
+		assert.Equal(t, utils.PathKey(container), utils.PathKey(got))
+	}
+}
+
+func TestGetBareContainerPathIgnoresRegularRepository(t *testing.T) {
+	repo := NewTestRepository(t)
+
+	got, err := New(repo.Path).GetBareContainerPath()
+
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
 func TestGetMainRepositoryPathRejectsUnresolvedSeparateGitDirectoryLinkedWorktree(
 	t *testing.T,
 ) {
@@ -3825,6 +3881,23 @@ func TestInspectWorktreesNormalizesSeparateGitDirectoryMain(t *testing.T) {
 	linkedInspection := requireWorktreeInspection(t, inspections, linkedPath)
 	assert.True(t, mainInspection.IsMain)
 	assert.False(t, linkedInspection.IsMain)
+}
+
+func TestInspectWorktreesExcludesBareContainerControlDirectory(t *testing.T) {
+	container, mainPath, linkedPath := newBareContainerRepository(t)
+
+	inspections, err := New(linkedPath).InspectWorktrees()
+
+	require.NoError(t, err)
+	require.Len(t, inspections, 2)
+	mainInspection := requireWorktreeInspection(t, inspections, mainPath)
+	linkedInspection := requireWorktreeInspection(t, inspections, linkedPath)
+	assert.True(t, mainInspection.IsMain)
+	assert.False(t, linkedInspection.IsMain)
+	for _, inspection := range inspections {
+		assert.NotEqual(t, utils.PathKey(filepath.Join(container, ".bare")),
+			utils.PathKey(inspection.Path))
+	}
 }
 
 func TestListWorktrees_IsMainFromWorktree(t *testing.T) {

@@ -55,6 +55,10 @@ type GitInterface interface {
 	GetMainRepositoryPath() (string, error)
 }
 
+type bareContainerGit interface {
+	GetBareContainerPath() (string, error)
+}
+
 // Manager handles worktree operations.
 type Manager struct {
 	git                   GitInterface
@@ -646,6 +650,30 @@ func (m *Manager) generateWorktreePathForRepository(
 		}
 	}
 	branch = encodeBranchForWorktreePath(branch)
+	if repositoryGit, ok := m.git.(bareContainerGit); ok {
+		containerPath, err := repositoryGit.GetBareContainerPath()
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve bare repository container: %w", err)
+		}
+		if containerPath != "" {
+			naming := m.config.Naming
+			processor, err := template.NewWithEnvironmentOptions(
+				"{{.Branch}}",
+				naming.SanitizeChars,
+				template.EnvironmentOptions{
+					ExpandSanitizeChars: !naming.SanitizeCharsRepositoryLocal,
+				},
+			)
+			if err != nil {
+				return "", fmt.Errorf("failed to prepare bare-container naming: %w", err)
+			}
+			path, err := processor.GeneratePath(containerPath, repoInfo, branch)
+			if err != nil {
+				return "", fmt.Errorf("failed to generate bare-container path: %w", err)
+			}
+			return path, ensurePathWithinBase(containerPath, path)
+		}
+	}
 
 	// Determine effective base directory: per-repo setting overrides global
 	baseDir := m.config.Worktree.BaseDir

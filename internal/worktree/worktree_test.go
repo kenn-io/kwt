@@ -23,6 +23,7 @@ type mockGit struct {
 	worktrees         []models.Worktree
 	repoName          string
 	repoPath          string
+	bareContainerPath string
 	repoURL           string
 	repoURLError      error
 	addError          error
@@ -329,6 +330,10 @@ func (m *mockGit) GetMainRepositoryPath() (string, error) {
 		return "/mock/repo/path", nil
 	}
 	return m.repoPath, nil
+}
+
+func (m *mockGit) GetBareContainerPath() (string, error) {
+	return m.bareContainerPath, nil
 }
 
 func (m *mockGit) AddWorktreeFromBase(path, branch, baseBranch string) error {
@@ -1671,6 +1676,33 @@ func TestPreparePathDoesNotExpandRepositoryLocalTemplateOutput(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, path, "credential-must-not-appear-in-path")
 	assert.Contains(t, path, "$KWT_GITHUB_TOKEN")
+}
+
+func TestPreparePathUsesBareContainerSiblingLayout(t *testing.T) {
+	containerPath := filepath.Join(t.TempDir(), "widget")
+	manager := New(
+		&mockGit{
+			repoURL:           "https://github.com/acme/widget.git",
+			bareContainerPath: containerPath,
+		},
+		&models.Config{
+			Worktree: models.WorktreeConfig{
+				BaseDir: filepath.Join(t.TempDir(), "global-worktrees"),
+			},
+			Naming: models.NamingConfig{
+				Template: "{{.FullPath}}/{{.Branch}}",
+				SanitizeChars: map[string]string{
+					"/": "-",
+					":": "-",
+				},
+			},
+		},
+	)
+
+	path, err := manager.PreparePath("", "feature/widgets")
+
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(containerPath, "feature-widgets"), path)
 }
 
 func TestAddRejectsTmuxFormatPathBeforeMutation(t *testing.T) {

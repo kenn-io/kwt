@@ -58,6 +58,10 @@ panes = ["agent:codex", "agent:claude", "agent:roborev", ""]
 The default places newly created worktrees under `~/.kwt/worktrees`. Relative
 paths in a trusted repository-local `.kwt.toml` are resolved from that
 repository's root; a repository-local `worktree.basedir` cannot be empty.
+For a detected bare-container repository (`.bare/` with a checked-out `main/`
+worktree), generated paths preserve the repository's flat sibling layout
+instead: the container is the base and the sanitized branch name is the
+directory name. An explicit command-line path still takes precedence.
 Repository-local path fields cannot reference environment variables, including
 `naming.template` and `naming.sanitize_chars` replacements. Generated paths
 influenced by repository-local naming are not environment-expanded after
