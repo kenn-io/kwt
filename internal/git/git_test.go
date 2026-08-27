@@ -516,9 +516,16 @@ func newSeparateGitDirectoryRepository(t *testing.T) (string, string) {
 }
 
 func newBareContainerRepository(t *testing.T) (string, string, string) {
+	return newNamedBareContainerRepository(t, ".bare")
+}
+
+func newNamedBareContainerRepository(
+	t *testing.T,
+	controlDirectory string,
+) (string, string, string) {
 	t.Helper()
 	container := filepath.Join(t.TempDir(), "widget")
-	barePath := filepath.Join(container, ".bare")
+	barePath := filepath.Join(container, controlDirectory)
 	seedPath := filepath.Join(t.TempDir(), "seed")
 	mainPath := filepath.Join(container, "main")
 	linkedPath := filepath.Join(container, "feature-topic")
@@ -3827,6 +3834,15 @@ func TestGetBareContainerPathIgnoresRegularRepository(t *testing.T) {
 	repo := NewTestRepository(t)
 
 	got, err := New(repo.Path).GetBareContainerPath()
+
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+func TestGetBareContainerPathIgnoresOtherBareRepositoryNames(t *testing.T) {
+	_, mainPath, _ := newNamedBareContainerRepository(t, "repo.git")
+
+	got, err := New(mainPath).GetBareContainerPath()
 
 	require.NoError(t, err)
 	assert.Empty(t, got)

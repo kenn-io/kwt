@@ -213,7 +213,8 @@ func bareContainerAnchor(
 	entries []gitworktree.PorcelainEntry,
 	commonDir string,
 ) (string, bool) {
-	if len(entries) == 0 || !entries[0].Bare ||
+	if filepath.Base(commonDir) != ".bare" ||
+		len(entries) == 0 || !entries[0].Bare ||
 		utils.PathKey(entries[0].Path) != utils.PathKey(commonDir) {
 		return "", false
 	}

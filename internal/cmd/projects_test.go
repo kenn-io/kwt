@@ -494,11 +494,32 @@ func TestResolveProjectForRegistrationAcceptsBareContainer(t *testing.T) {
 	assert.Equal(t, canonicalMainPath, project.Path)
 }
 
+func TestResolveProjectForRegistrationPrefersNestedBareContainer(t *testing.T) {
+	outerPath := newTUITestRepo(t)
+	containerPath := filepath.Join(outerPath, "nested", "widget")
+	mainPath := newTUIBareContainerRepoAt(t, containerPath)
+	canonicalMainPath, err := filepath.EvalSymlinks(mainPath)
+	require.NoError(t, err)
+
+	project, err := resolveProjectForRegistration(containerPath)
+
+	require.NoError(t, err)
+	assert.Equal(t, "github.com/acme/widget", project.Repository)
+	assert.Equal(t, "widget", project.Name)
+	assert.Equal(t, canonicalMainPath, project.Path)
+}
+
 func newTUIBareContainerRepo(t *testing.T) (string, string) {
 	t.Helper()
 
-	seedPath := newTUITestRepo(t)
 	containerPath := filepath.Join(t.TempDir(), "widget")
+	return containerPath, newTUIBareContainerRepoAt(t, containerPath)
+}
+
+func newTUIBareContainerRepoAt(t *testing.T, containerPath string) string {
+	t.Helper()
+
+	seedPath := newTUITestRepo(t)
 	barePath := filepath.Join(containerPath, ".bare")
 	mainPath := filepath.Join(containerPath, "main")
 	require.NoError(t, os.MkdirAll(containerPath, 0755))
@@ -512,7 +533,7 @@ func newTUIBareContainerRepo(t *testing.T) (string, string) {
 		"git@github.com:acme/widget.git",
 	)
 	runTUITestGit(t, barePath, "worktree", "add", mainPath, "main")
-	return containerPath, mainPath
+	return mainPath
 }
 
 func TestRunProjectsAddJSONWritesStableInvalidRepositoryError(t *testing.T) {
