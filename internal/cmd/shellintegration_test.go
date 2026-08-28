@@ -10,6 +10,7 @@ import (
 )
 
 func TestCompletionBash_LaunchShellTrue(t *testing.T) {
+	isolateCommandTestHome(t)
 	viper.Reset()
 	t.Cleanup(func() { viper.Reset() })
 	viper.Set("cd.launch_shell", true)
@@ -30,6 +31,7 @@ func TestCompletionBash_LaunchShellTrue(t *testing.T) {
 }
 
 func TestCompletionBash_LaunchShellFalse(t *testing.T) {
+	isolateCommandTestHome(t)
 	viper.Reset()
 	t.Cleanup(func() { viper.Reset() })
 	viper.Set("cd.launch_shell", false)
@@ -53,6 +55,7 @@ func TestCompletionBash_LaunchShellFalse(t *testing.T) {
 }
 
 func TestCompletionBash_OutputsCompletionScript(t *testing.T) {
+	isolateCommandTestHome(t)
 	viper.Reset()
 	t.Cleanup(func() { viper.Reset() })
 	viper.Set("cd.launch_shell", true)
@@ -76,6 +79,7 @@ func TestCompletionBash_OutputsCompletionScript(t *testing.T) {
 }
 
 func TestCompletionFish(t *testing.T) {
+	isolateCommandTestHome(t)
 	viper.Reset()
 	t.Cleanup(func() { viper.Reset() })
 	viper.Set("cd.launch_shell", true)
@@ -96,6 +100,7 @@ func TestCompletionFish(t *testing.T) {
 }
 
 func TestCompletionZsh(t *testing.T) {
+	isolateCommandTestHome(t)
 	viper.Reset()
 	t.Cleanup(func() { viper.Reset() })
 	viper.Set("cd.launch_shell", true)
@@ -116,6 +121,7 @@ func TestCompletionZsh(t *testing.T) {
 }
 
 func TestCompletionZsh_LaunchShellFalse(t *testing.T) {
+	isolateCommandTestHome(t)
 	viper.Reset()
 	t.Cleanup(func() { viper.Reset() })
 	viper.Set("cd.launch_shell", false)
@@ -139,6 +145,7 @@ func TestCompletionZsh_LaunchShellFalse(t *testing.T) {
 }
 
 func TestCompletionFish_LaunchShellFalse(t *testing.T) {
+	isolateCommandTestHome(t)
 	viper.Reset()
 	t.Cleanup(func() { viper.Reset() })
 	viper.Set("cd.launch_shell", false)
@@ -162,6 +169,7 @@ func TestCompletionFish_LaunchShellFalse(t *testing.T) {
 }
 
 func TestCompletionPowershell(t *testing.T) {
+	isolateCommandTestHome(t)
 	var buf bytes.Buffer
 	rootCmd.SetOut(&buf)
 	completionPowershellCmd.SetOut(&buf)
@@ -178,6 +186,7 @@ func TestCompletionPowershell(t *testing.T) {
 }
 
 func TestCompletionInvalidSubcommand(t *testing.T) {
+	isolateCommandTestHome(t)
 	rootCmd.SetArgs([]string{"completion", "invalid"})
 
 	err := rootCmd.Execute()
@@ -208,6 +217,7 @@ func TestCompletionCmd_Structure(t *testing.T) {
 }
 
 func TestCompletion_LaunchShellFalse_WrapsCdOnly(t *testing.T) {
+	isolateCommandTestHome(t)
 	tests := []struct {
 		name   string
 		shell  string

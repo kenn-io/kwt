@@ -17,10 +17,10 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            test: go test ./...
+            test: go run ./internal/testharness/cmd -- ./...
           - os: windows-latest
             test: >-
-              go test
+              go run ./internal/testharness/cmd --
               ./cmd/kwt
               ./internal/cmd
               ./internal/command
@@ -51,9 +51,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: ${{ contains(fromJSON('["ubuntu-latest","ubuntu-24.04","ubuntu-22.04"]'), matrix.os) && github.repository == 'kenn-io/kwt' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
-
-      - name: Download modules
-        run: go mod download
 
       - name: Test
         run: ${{ matrix.test }}

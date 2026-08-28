@@ -187,6 +187,17 @@ func runPrepared(
 		}
 		failed = true
 	}
+	entries, stateErr := os.ReadDir(filepath.Join(scratch, "kwt"))
+	if stateErr != nil {
+		_, _ = fmt.Fprintf(stderr, "inspect shared harness KWT_HOME: %v\n", stateErr)
+		failed = true
+	} else if len(entries) > 0 {
+		_, _ = fmt.Fprintln(stderr, "tests used shared harness KWT_HOME; each stateful test must set its own KWT_HOME:")
+		for _, entry := range entries {
+			_, _ = fmt.Fprintf(stderr, "  %s\n", entry.Name())
+		}
+		failed = true
+	}
 	if failed {
 		return 1
 	}
@@ -236,7 +247,7 @@ func requireGitVersion(output string) error {
 	}
 	if major < 2 || major == 2 && minor < minimumGitMinor {
 		return fmt.Errorf(
-			"Git 2.%d or newer is required; found Git %d.%d.%d",
+			"git 2.%d or newer is required; found Git %d.%d.%d",
 			minimumGitMinor,
 			major,
 			minor,
@@ -250,7 +261,8 @@ func preparationEnvironment(base []string, scratch string) []string {
 	return appendOwnedEnvironment(
 		withoutEnvironment(base, func(key string) bool {
 			return strings.HasPrefix(strings.ToUpper(key), "GIT_") ||
-				strings.EqualFold(key, "KWT_HOME")
+				strings.EqualFold(key, "KWT_HOME") ||
+				strings.EqualFold(key, "KWT_TEST_HARNESS")
 		}),
 		scratch,
 		"",
@@ -263,6 +275,7 @@ func isolatedEnvironment(base []string, scratch, proxyAddress string) []string {
 			upper := strings.ToUpper(key)
 			return strings.HasPrefix(upper, "GIT_") ||
 				strings.EqualFold(key, "KWT_HOME") ||
+				strings.EqualFold(key, "KWT_TEST_HARNESS") ||
 				upper == "HTTP_PROXY" || upper == "HTTPS_PROXY" ||
 				upper == "ALL_PROXY" || upper == "NO_PROXY"
 		}),
@@ -285,6 +298,7 @@ func appendOwnedEnvironment(environment []string, scratch, proxyAddress string) 
 	proxyURL := "http://" + proxyAddress
 	return append(result,
 		"GIT_ALLOW_PROTOCOL=file",
+		"KWT_TEST_HARNESS="+filepath.Join(scratch, "kwt"),
 		"HTTP_PROXY="+proxyURL,
 		"HTTPS_PROXY="+proxyURL,
 		"ALL_PROXY="+proxyURL,

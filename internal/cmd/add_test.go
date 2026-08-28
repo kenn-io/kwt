@@ -227,6 +227,7 @@ func TestAddFromRemoteBranchCreatesTrackingWorktreeWithoutLaunching(t *testing.T
 }
 
 func TestRegisterWorktreeExpirationRejectsRecreatedWorktree(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -292,6 +293,7 @@ func TestRegisterWorktreeExpirationRejectsRecreatedWorktree(t *testing.T) {
 }
 
 func TestRegisterWorktreeExpirationCreatesOrdinaryWorktreeEntry(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -330,6 +332,7 @@ func TestRegisterWorktreeExpirationCreatesOrdinaryWorktreeEntry(t *testing.T) {
 }
 
 func TestRegisterWorktreeExpirationUsesDestinationRemoteIdentity(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	repoPath := newTUITestRepo(t)
@@ -354,6 +357,7 @@ func TestRegisterWorktreeExpirationUsesDestinationRemoteIdentity(t *testing.T) {
 }
 
 func TestRegisterWorktreeExpirationRejectsRelativeDestinationRemote(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	repoPath := newTUITestRepo(t)
@@ -378,6 +382,7 @@ func TestRegisterWorktreeExpirationRejectsRelativeDestinationRemote(t *testing.T
 }
 
 func TestRegisterWorktreeExpirationRejectsProvisionalCreation(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -746,4 +751,9 @@ panes = [""]
 `, baseDir, hub.URL)
 	require.NoError(t, os.WriteFile(filepath.Join(kwtHome, "config.toml"), []byte(configText), 0600))
 	require.NoError(t, config.Init())
+}
+
+func isolateCommandTestHome(t *testing.T) {
+	t.Helper()
+	t.Setenv("KWT_HOME", t.TempDir())
 }

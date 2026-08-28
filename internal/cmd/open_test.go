@@ -210,6 +210,7 @@ func TestOpenStartSessionFlagGroups(t *testing.T) {
 }
 
 func TestOpenSelectedDirectoryWorkspaceEnsuresOrAttaches(t *testing.T) {
+	isolateCommandTestHome(t)
 	tests := []struct {
 		name         string
 		startSession bool
@@ -264,6 +265,7 @@ func TestOpenSelectedDirectoryWorkspaceEnsuresOrAttaches(t *testing.T) {
 }
 
 func TestOpenSelectedDirectoryWorkspaceRequestsCanonicalSession(t *testing.T) {
+	isolateCommandTestHome(t)
 	resetWorkspaceCommandDeps(t)
 	workspace := models.Workspace{Name: "renamed", Path: t.TempDir()}
 	liveName := tmux.DirWorkspaceSessionName("old-name", workspace.Path)
@@ -298,6 +300,7 @@ func TestOpenSelectedDirectoryWorkspaceRequestsCanonicalSession(t *testing.T) {
 }
 
 func TestOpenAttachesToEndpointReturnedByEstablishment(t *testing.T) {
+	isolateCommandTestHome(t)
 	resetWorkspaceCommandDeps(t)
 	workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
 	resolveDirectorySessions = func(workspaces []models.Workspace) ([]tmux.WorkspaceSession, error) {
@@ -331,6 +334,7 @@ func TestOpenAttachesToEndpointReturnedByEstablishment(t *testing.T) {
 }
 
 func TestOpenStartSessionJSONWritesEstablishedEndpointOnly(t *testing.T) {
+	isolateCommandTestHome(t)
 	resetWorkspaceCommandDeps(t)
 	workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
 	resolveDirectorySessions = func(workspaces []models.Workspace) ([]tmux.WorkspaceSession, error) {
@@ -423,6 +427,7 @@ func TestOpenSelectedDirectoryWorkspaceUsesDirectoryLayoutDefault(t *testing.T) 
 }
 
 func TestRunOpenWithContextChoosesRegisteredDirectory(t *testing.T) {
+	isolateCommandTestHome(t)
 	for _, startSession := range []bool{false, true} {
 		t.Run(map[bool]string{false: "attach", true: "start only"}[startSession], func(t *testing.T) {
 			resetWorkspaceCommandDeps(t)

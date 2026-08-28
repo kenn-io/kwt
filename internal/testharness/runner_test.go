@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -20,7 +21,7 @@ func TestRequireGitVersion(t *testing.T) {
 		output  string
 		wantErr string
 	}{
-		{name: "too old", output: "git version 2.31.8", wantErr: "Git 2.32 or newer is required; found Git 2.31.8"},
+		{name: "too old", output: "git version 2.31.8", wantErr: "git 2.32 or newer is required; found Git 2.31.8"},
 		{name: "minimum", output: "git version 2.32.0"},
 		{name: "windows suffix", output: "git version 2.55.0.windows.1"},
 		{name: "newer major", output: "git version 3.0.0"},
@@ -64,6 +65,7 @@ func TestIsolatedEnvironmentReplacesGitKWTAndProxyState(t *testing.T) {
 	assertEnvironmentValue(t, got, "PATH", "/developer/bin")
 	assertEnvironmentValue(t, got, "GOCACHE", "/developer/go-cache")
 	assertEnvironmentValue(t, got, "KWT_HOME", filepath.Join(scratch, "kwt"))
+	assertEnvironmentValue(t, got, "KWT_TEST_HARNESS", filepath.Join(scratch, "kwt"))
 	assertEnvironmentValue(t, got, "GIT_CONFIG_GLOBAL", filepath.Join(scratch, "gitconfig"))
 	assertEnvironmentValue(t, got, "GIT_CONFIG_NOSYSTEM", "1")
 	assertEnvironmentValue(t, got, "GIT_TERMINAL_PROMPT", "0")
@@ -174,7 +176,7 @@ func TestRunRejectsGitOlderThan232BeforeGoCommands(t *testing.T) {
 	if got, want := strings.Join(commands, "\n"), "git version"; got != want {
 		t.Fatalf("commands = %q, want %q", got, want)
 	}
-	if !strings.Contains(stderr.String(), "Git 2.32 or newer is required") {
+	if !strings.Contains(stderr.String(), "git 2.32 or newer is required") {
 		t.Fatalf("stderr = %q, want Git version requirement", stderr.String())
 	}
 }
@@ -231,6 +233,48 @@ func TestRunFailsAfterSuccessfulTestsAttemptOutboundHTTP(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "GET missed-fixture.example") {
 		t.Fatalf("stderr = %q, want recorded outbound request", stderr.String())
+	}
+}
+
+func TestRunFailsWhenTestsUseSharedHarnessKwtHome(t *testing.T) {
+	execute := func(
+		_ context.Context,
+		environment []string,
+		_, _ io.Writer,
+		name string,
+		args ...string,
+	) (string, error) {
+		command := strings.Join(append([]string{name}, args...), " ")
+		switch command {
+		case "git version":
+			return "git version 2.55.0", nil
+		case "go mod download":
+			return "", nil
+		case "go test ./internal/example":
+			kwtHome := environmentValue(t, environment, "KWT_HOME")
+			return "", os.WriteFile(filepath.Join(kwtHome, "registry.json"), []byte("{}"), 0o600)
+		default:
+			t.Fatalf("unexpected command %q", command)
+			return "", nil
+		}
+	}
+	var stderr bytes.Buffer
+
+	exitCode := runWith(
+		context.Background(),
+		[]string{"./internal/example"},
+		io.Discard,
+		&stderr,
+		[]string{"HOME=/developer/home"},
+		execute,
+	)
+
+	if exitCode == 0 {
+		t.Fatal("runWith exit code = 0, want failure")
+	}
+	if !strings.Contains(stderr.String(), "tests used shared harness KWT_HOME") ||
+		!strings.Contains(stderr.String(), "registry.json") {
+		t.Fatalf("stderr = %q, want shared KWT_HOME failure", stderr.String())
 	}
 }
 

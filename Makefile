@@ -1,8 +1,8 @@
 # Variables
 BINARY_NAME := kwt
 PACKAGE := go.kenn.io/kwt
-VERSION := $(shell git describe --tags --always --dirty)
-LDFLAGS := -s -w -X $(PACKAGE)/internal/cmd.version=$(VERSION)
+VERSION = $(shell git describe --tags --always --dirty)
+LDFLAGS = -s -w -X $(PACKAGE)/internal/cmd.version=$(VERSION)
 GO_FILES := $(shell find . -name '*.go' -type f -not -path './vendor/*')
 
 # Build variables
@@ -17,6 +17,7 @@ endif
 INSTALL_DIR ?= $(GO_PATH_FIRST)/bin
 VERCEL_SCOPE ?= kenn-software
 VERCEL_PROJECT ?= kwt-docs
+GO_TEST_RUNNER := go run ./internal/testharness/cmd --
 
 .PHONY: all build clean test test-verbose test-coverage lint fmt vet install help docs-install docs-assets docs-assets-test docs-build docs-serve docs-check docs-deploy
 
@@ -56,29 +57,29 @@ clean:
 ## test: Run tests
 test:
 	@echo "Running tests..."
-	@go test ./...
+	@$(GO_TEST_RUNNER) ./...
 
 ## test-verbose: Run tests with verbose output
 test-verbose:
 	@echo "Running tests (verbose)..."
-	@go test -v ./...
+	@$(GO_TEST_RUNNER) -v ./...
 
 ## test-coverage: Run tests with coverage
 test-coverage:
 	@echo "Running tests with coverage..."
-	@go test -cover ./...
+	@$(GO_TEST_RUNNER) -cover ./...
 
 ## test-coverage-report: Generate and open coverage report
 test-coverage-report:
 	@echo "Generating coverage report..."
-	@go test -coverprofile=coverage.out ./...
+	@$(GO_TEST_RUNNER) -coverprofile=coverage.out ./...
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
 
 ## bench: Run benchmarks
 bench:
 	@echo "Running benchmarks..."
-	@go test -bench=. -benchmem ./...
+	@$(GO_TEST_RUNNER) -bench=. -benchmem ./...
 
 ## docs-install: Install docs toolchain
 docs-install:

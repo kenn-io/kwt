@@ -2329,6 +2329,7 @@ func TestTUIBackendCreateWorktreeLosesToProjectRemoval(t *testing.T) {
 }
 
 func TestTUIBackendExistingLocalBranchRemainsUnreviewed(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -2972,6 +2973,7 @@ func TestTUIBackendMaterializeWorktreeRequiresCurrentRegistration(t *testing.T) 
 }
 
 func TestTUIBackendMaterializeWorktreeUsesSelectedProjectConfig(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -3029,6 +3031,7 @@ func TestTUIBackendMaterializeWorktreeUsesSelectedProjectConfig(t *testing.T) {
 }
 
 func TestTUIBackendMaterializeWorktreeTracksRemoteOnlyBranch(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -3097,6 +3100,7 @@ func TestTUIBackendMaterializeWorktreeTracksRemoteOnlyBranch(t *testing.T) {
 }
 
 func TestTUIBackendMaterializeWorktreeRejectsStaleLocalHead(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -3142,6 +3146,7 @@ func TestTUIBackendMaterializeWorktreeRejectsStaleLocalHead(t *testing.T) {
 }
 
 func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnStaleHead(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -3202,6 +3207,7 @@ func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnStaleHead(t *tes
 func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnCheckoutFailure(
 	t *testing.T,
 ) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -3311,6 +3317,7 @@ func TestTUIBackendMaterializeWorktreeReportsBranchRollbackFailure(t *testing.T)
 }
 
 func TestTUIBackendMaterializeWorktreeUnregistersWhenHeadCannotBeRead(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -3421,6 +3428,7 @@ func TestTUIBackendMaterializeWorktreeSkipsRepositorySetupCommands(t *testing.T)
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("setup command execution requires sh")
 	}
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -4357,6 +4365,7 @@ func TestTUIWorktreeAttachUsesBranchObservedInsideLifecycleGuard(t *testing.T) {
 }
 
 func TestTUIBackendAttachAcknowledgesRemoteSourceBeforeWorkspaceLaunch(t *testing.T) {
+	isolateCommandTestHome(t)
 	workspacePath := t.TempDir()
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
 	var acknowledged string
@@ -4440,6 +4449,7 @@ func TestTUIBackendRefusesProtectedPullRequestWorkspace(t *testing.T) {
 // detached session on the user's default tmux server merely because a unit
 // test needs to prove a workspace-only row clears the selection guard.
 func TestTUIBackendAttachWorkspacePassesWorkspaceRowToRunner(t *testing.T) {
+	isolateCommandTestHome(t)
 	workspacePath := t.TempDir()
 	row := dashboard.Row{
 		Workspace: &dashboard.WorkspaceInfo{Name: "notes", Path: workspacePath},
@@ -4475,6 +4485,7 @@ func TestTUIBackendAttachWorkspacePassesWorkspaceRowToRunner(t *testing.T) {
 }
 
 func TestTUIBackendOpenInTmuxPreparesResidentAttach(t *testing.T) {
+	isolateCommandTestHome(t)
 	row := dashboard.Row{
 		Workspace: &dashboard.WorkspaceInfo{Name: "notes", Path: t.TempDir()},
 	}
@@ -4510,6 +4521,7 @@ func TestTUIBackendOpenInTmuxPreparesResidentAttach(t *testing.T) {
 }
 
 func TestCachedLiveAttachNeverEstablishes(t *testing.T) {
+	isolateCommandTestHome(t)
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
 	endpoint := tmux.SessionEndpoint{SessionName: "topic", SocketName: tmux.KWTServerSocketName}
 	backend.resolveLive = func(context.Context, tmux.WorkspaceEndpointRequest) (tmux.SessionEndpoint, error) {

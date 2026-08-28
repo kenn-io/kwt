@@ -86,6 +86,7 @@ func TestCollectWorktreeStatusesReturnsPerWorktreeFailure(t *testing.T) {
 }
 
 func TestImportedWorktreeReceivesAutomaticStatusAndFleetInspection(t *testing.T) {
+	isolateCommandTestHome(t)
 	resetStatusTestFlags(t)
 	resetFleetCommandDeps(t)
 	t.Setenv("HOME", t.TempDir())
