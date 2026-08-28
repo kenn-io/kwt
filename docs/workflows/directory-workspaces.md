@@ -66,7 +66,7 @@ kwt open ~/notes --start-session --json
 New sessions use kwt's dedicated tmux server. A verified matching session on
 the default server can be reused during an upgrade. Treat the endpoint in this
 result as one observation for the immediate attachment; use all three session
-endpoint fields together. The [embedding guide](https://kwt.sh/integrations/embedding/)
+endpoint fields together. The [embedding guide](../integrations/embedding.md)
 explains when to use this boundary.
 
 ## Remove the registration

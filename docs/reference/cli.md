@@ -1,7 +1,16 @@
 # CLI Reference
 
-Run `kwt <command> --help` for command-specific flags. This page summarizes the
-stable command surface.
+Use this page for stable command behavior, JSON fields, exit status, and guarded
+automation contracts. Run `kwt <command> --help` for the complete flags on the
+installed version.
+
+For task-first guidance, start with the [quickstart](../get-started/quickstart.md)
+or [worktree lifecycle](../workflows/worktree-maintenance.md). Agent and terminal
+clients should read [Agent workspaces](../workflows/agent-workspaces.md) before
+using session endpoints. Applications choosing between the Go package, daemon,
+CLI, tmux, and SSH boundaries should start with
+[Embed and connect kwt](../integrations/embedding.md). Pull-request imports have
+their own [protected automation contract](pull-requests.md).
 
 Kwt requires Git 2.20 or newer. `kwt doctor` and the `kwt prune --expired` or
 `--merged` policies require Git 2.31 or newer: maintenance inventory relies on

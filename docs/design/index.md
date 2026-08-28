@@ -1,11 +1,13 @@
 # Design Notes
 
-These notes preserve the design intent and architecture behind `kwt` after a
-feature ships.
+These notes preserve the design intent and architecture behind kwt after a
+feature ships. They explain why a contract has its current boundary; they are
+not the starting point for using that contract.
 
-Start with the guide and reference pages for day-to-day use. Read these notes
-when changing behavior, reviewing a proposed feature, or deciding whether a new
-abstraction belongs in `kwt`.
+Start with [Embed and connect kwt](../integrations/embedding.md) when building a
+client, or with the workflow guides for day-to-day use. Read these notes when
+changing behavior, reviewing a proposed feature, or deciding whether a new
+abstraction belongs in kwt.
 
 ## Available notes
 

@@ -90,7 +90,7 @@ until you [configure it](multi-machine-sync.md).
       is one application that embeds these services for local and SSH-hosted
       workspaces.
     </p>
-    <a class="kwt-text-link" href="https://ghosthub.ai">See Ghosthub →</a>
+    <a class="kwt-text-link" href="integrations/embedding/">Embed and connect kwt →</a>
   </div>
 </aside>
 

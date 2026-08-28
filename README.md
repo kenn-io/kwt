@@ -92,7 +92,9 @@ inspections := kwt.NewInspectionService(kwt.InspectionServiceOptions{
 
 The CLI and terminal dashboard use the same core services through kwt's local
 daemon. The [package documentation](https://pkg.go.dev/go.kenn.io/kwt) contains
-the public Go API.
+the public Go API. See [Embed and connect kwt](docs/integrations/embedding.md)
+to choose between direct Go services, the local daemon or CLI, and a tmux
+session endpoint.
 
 ## Configuration
 

@@ -1,5 +1,16 @@
 # Configuration
 
+Use global configuration for machine-wide worktree paths, layouts, agents,
+registered projects, directory workspaces, and lifecycle policy. A trusted
+repository can override only the settings that are safe to scope to that
+repository. Daemon replacement and SSH connection policy are always global.
+Multi-machine sync is optional and also global-only.
+
+Start with [Agent workspaces](../workflows/agent-workspaces.md) for a practical
+layout example or [Multi-machine sync](../multi-machine-sync.md) before enabling
+fleet settings. This page defines the complete keys, trust boundaries, and
+storage locations.
+
 Global config lives at `~/.config/kwt/config.toml`, or at
 `$KWT_HOME/config.toml` when `KWT_HOME` is set. Repository-local overrides live
 in `.kwt.toml` and are trust-gated before use. When `KWT_HOME` is set, that same
