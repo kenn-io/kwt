@@ -6,12 +6,12 @@ these interfaces, but none of them is specific to Ghosthub.
 
 ## Choose an integration boundary
 
-| Boundary | Use it when |
-| -------- | ----------- |
-| CLI and JSON | An agent, script, or remote shell can run a kwt process for each action. |
-| Go services | Your Go application wants inventory, removal, inspection, or SSH services in process. |
-| Local daemon | A separate same-machine process needs current shared inventory, one lifecycle owner, or streamed operation events. |
-| Tmux session endpoint | Your application owns the terminal client and needs kwt to establish the correct workspace first. |
+| Boundary              | Use it when                                                                                                        |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| CLI and JSON          | An agent, script, or remote shell can run a kwt process for each action.                                           |
+| Go services           | Your Go application wants inventory, removal, inspection, or SSH services in process.                              |
+| Local daemon          | A separate same-machine process needs current shared inventory, one lifecycle owner, or streamed operation events. |
+| Tmux session endpoint | Your application owns the terminal client and needs kwt to establish the correct workspace first.                  |
 
 Start with the CLI unless process startup or in-process composition is a real
 constraint. It preserves kwt's command behavior, stable JSON, and exit status
@@ -82,11 +82,11 @@ or in-process session-endpoint operation.
 Worktree and directory-workspace JSON describes a selected endpoint with three
 fields:
 
-| Field | Meaning |
-| ----- | ------- |
-| `session_name` | The exact tmux session to attach to. |
+| Field              | Meaning                                                                                  |
+| ------------------ | ---------------------------------------------------------------------------------------- |
+| `session_name`     | The exact tmux session to attach to.                                                     |
 | `tmux_socket_name` | The selected named server or protected socket; an empty value has mode-specific meaning. |
-| `tmux_attach_mode` | `direct` for an ordinary endpoint or `protected` for the pull-request attachment flow. |
+| `tmux_attach_mode` | `direct` for an ordinary endpoint or `protected` for the pull-request attachment flow.   |
 
 Never infer attachment policy from whether the socket name is empty. A direct
 empty socket can name a verified adopted session on tmux's default server. A

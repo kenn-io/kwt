@@ -38,7 +38,7 @@ Other PID lookup failures report the underlying tmux error.
 | `kwt doctor`     | Inspect or repair structural worktree consistency.     |
 | `kwt prune`      | Remove live worktrees by an explicit policy.           |
 | `kwt sync`       | Publish and inspect multi-machine sync state.          |
-| `kwt ssh`        | Resolve, hold, and use reviewed OpenSSH routes.         |
+| `kwt ssh`        | Resolve, hold, and use reviewed OpenSSH routes.        |
 | `kwt tmux`       | Manage standalone tmux sessions.                       |
 | `kwt workspace`  | Manage directory workspaces.                           |
 | `kwt config`     | Read and write config values.                          |

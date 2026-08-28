@@ -29,15 +29,15 @@ the current layout choice. Press `enter` on the row to attach again later.
 
 These keys cover the first workflow:
 
-| Key     | Action                                      |
-| ------- | ------------------------------------------- |
-| `n`     | Create a new branch and worktree.           |
-| `b`     | Create a worktree from an existing branch.  |
-| `enter` | Open or attach to the selected workspace.   |
-| `L`     | Choose the workspace's tmux layout.         |
-| `d`     | Remove the selected worktree.               |
-| `?`     | Show the complete dashboard key reference.  |
-| `q`     | Quit the dashboard.                         |
+| Key     | Action                                     |
+| ------- | ------------------------------------------ |
+| `n`     | Create a new branch and worktree.          |
+| `b`     | Create a worktree from an existing branch. |
+| `enter` | Open or attach to the selected workspace.  |
+| `L`     | Choose the workspace's tmux layout.        |
+| `d`     | Remove the selected worktree.              |
+| `?`     | Show the complete dashboard key reference. |
+| `q`     | Quit the dashboard.                        |
 
 When you finish, select the new worktree and press `d`. kwt confirms the exact
 checkout before removing it. Primary checkouts cannot be removed from the
