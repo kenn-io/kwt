@@ -972,6 +972,100 @@ func TestRemovalServiceRejectsActiveCreation(t *testing.T) {
 	assert.True(t, registered)
 }
 
+func TestRemovalServiceRejectsProcessWithWorkingDirectoryInsideWorktree(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "process-cwd")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	workingDirectory := filepath.Join(worktreePath, "nested")
+	require.NoError(t, os.Mkdir(workingDirectory, 0o755))
+	command := startRemovalProcess(t, workingDirectory)
+
+	result, err := NewRemovalService(RemovalServiceOptions{Home: t.TempDir()}).Remove(
+		context.Background(),
+		RemovalRequest{
+			RepositoryPath: repositoryPath,
+			Path:           worktreePath, ExpectedGeneration: generation,
+		},
+	)
+
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.Conflict))
+	assert.Contains(t, err.Error(), fmt.Sprintf("PID %d", command.Process.Pid))
+	assert.False(t, result.WorktreeRemoved)
+	assert.DirExists(t, worktreePath)
+}
+
+func TestRemovalServiceForceRemovesWorktreeUsedAsProcessWorkingDirectory(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "force-process-cwd")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	command := startRemovalProcess(t, worktreePath)
+
+	result, err := NewRemovalService(RemovalServiceOptions{Home: t.TempDir()}).Remove(
+		context.Background(),
+		RemovalRequest{
+			RepositoryPath: repositoryPath,
+			Path:           worktreePath, ExpectedGeneration: generation,
+			Force: true,
+		},
+	)
+
+	require.NoError(t, err, "process PID %d should be bypassed by force", command.Process.Pid)
+	assert.True(t, result.WorktreeRemoved)
+	assert.NoDirExists(t, worktreePath)
+}
+
+func TestRemovalServiceResumesGuardedSessionWhenProcessUsesWorktree(t *testing.T) {
+	repositoryPath, worktreePath := removalRepository(t, "guarded-process-cwd")
+	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	require.NoError(t, err)
+	home := t.TempDir()
+	registerRemovalRepository(t, home, repositoryPath)
+	guard := &recordingRemovalSessionGuard{}
+	command := startRemovalProcess(t, worktreePath)
+
+	result, err := NewRemovalService(RemovalServiceOptions{
+		Home: home, SessionGuard: guard,
+	}).Remove(context.Background(), RemovalRequest{
+		RepositoryPath: repositoryPath,
+		Path:           worktreePath, ExpectedGeneration: generation,
+		Expansion: testExpansion(t),
+		Session: &RemovalSessionCondition{
+			SessionName: removalSessionName(t, worktreePath, "guarded-process-cwd"),
+			Absent:      true,
+		},
+	})
+
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.Conflict))
+	assert.Contains(t, err.Error(), fmt.Sprintf("PID %d", command.Process.Pid))
+	assert.True(t, guard.quiesced)
+	assert.True(t, guard.resumed)
+	assert.False(t, guard.terminated)
+	assert.False(t, result.WorktreeRemoved)
+	assert.DirExists(t, worktreePath)
+}
+
+func startRemovalProcess(t *testing.T, workingDirectory string) *exec.Cmd {
+	t.Helper()
+	command := exec.Command(os.Args[0], "-test.run=TestRemovalProcessHelper")
+	command.Dir = workingDirectory
+	command.Env = append(os.Environ(), "KWT_REMOVAL_PROCESS_HELPER=1")
+	require.NoError(t, command.Start())
+	t.Cleanup(func() {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+	})
+	return command
+}
+
+func TestRemovalProcessHelper(t *testing.T) {
+	if os.Getenv("KWT_REMOVAL_PROCESS_HELPER") != "1" {
+		return
+	}
+	select {}
+}
+
 func TestRemovalServiceIgnoresDaemonRepositoryRoutingEnvironment(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "routed-remove")
 	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)

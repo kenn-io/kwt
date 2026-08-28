@@ -65,7 +65,7 @@ Use -g flag to always show all worktrees from the base directory.`,
   # Delete by pattern matching
   kwt remove feature/old
 
-  # Force delete even if dirty
+  # Force delete even if dirty or in use by a process
   kwt remove -f feature/broken
 
   # Delete worktree and branch
@@ -91,7 +91,7 @@ Use -g flag to always show all worktrees from the base directory.`,
 func init() {
 	rootCmd.AddCommand(removeCmd)
 
-	removeCmd.Flags().BoolVarP(&removeForce, "force", "f", false, "Force delete even if dirty")
+	removeCmd.Flags().BoolVarP(&removeForce, "force", "f", false, "Force delete even if dirty or in use by a process")
 	removeCmd.Flags().BoolVarP(&removeDryRun, "dry-run", "d", false, "Show deletion targets only")
 	removeCmd.Flags().BoolVarP(&removeGlobal, "global", "g", false, "Remove from any worktree in the configured base directory")
 	removeCmd.Flags().StringVar(&removeIfGeneration, "if-generation", "", "Remove only if the worktree generation matches")

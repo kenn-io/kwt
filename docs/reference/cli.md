@@ -529,6 +529,12 @@ Removal is executed by the same-machine daemon through kwt's public Go service.
 The daemon reopens the named repository and revalidates the exact path,
 generation, main-worktree status, and lock state while holding the repository's
 cross-process mutation lock. It also performs generation-safe registry cleanup.
+Immediately before removal, it rejects a worktree used as the current working
+directory of a visible live process, including a process whose working
+directory is nested inside the worktree. The conflict lists the process IDs to
+stop. If the operating system refuses working-directory inspection for a live
+process owned by the current user, removal also fails closed with that PID.
+`--force` bypasses both process checks and Git's dirty-worktree refusal.
 The CLI and TUI retain selection, output, fleet publication, and tmux-session
 cleanup; stale inventory alone never authorizes deletion.
 Automation that has confirmed terminal-session state can add
