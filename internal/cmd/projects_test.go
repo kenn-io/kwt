@@ -509,6 +509,41 @@ func TestResolveProjectForRegistrationPrefersNestedBareContainer(t *testing.T) {
 	assert.Equal(t, canonicalMainPath, project.Path)
 }
 
+func TestResolveProjectForRegistrationIgnoresRegularMainRepository(t *testing.T) {
+	projectPath := newTUITestRepo(t)
+	runTUITestGit(
+		t,
+		projectPath,
+		"remote",
+		"add",
+		"origin",
+		"git@github.com:acme/project.git",
+	)
+	nestedMainPath := filepath.Join(projectPath, "main")
+	runTUITestGit(t, "", "init", "-b", "main", nestedMainPath)
+	runTUITestGit(t, nestedMainPath, "config", "user.name", "Test User")
+	runTUITestGit(t, nestedMainPath, "config", "user.email", "test@example.com")
+	runTUITestGit(t, nestedMainPath, "commit", "--allow-empty", "-m", "Initial commit")
+	runTUITestGit(
+		t,
+		nestedMainPath,
+		"remote",
+		"add",
+		"origin",
+		"git@github.com:acme/nested.git",
+	)
+	t.Chdir(projectPath)
+	canonicalProjectPath, err := filepath.EvalSymlinks(projectPath)
+	require.NoError(t, err)
+
+	project, err := resolveProjectForRegistration(projectPath)
+
+	require.NoError(t, err)
+	assert.Equal(t, "github.com/acme/project", project.Repository)
+	assert.Equal(t, "project", project.Name)
+	assert.Equal(t, canonicalProjectPath, project.Path)
+}
+
 func newTUIBareContainerRepo(t *testing.T) (string, string) {
 	t.Helper()
 

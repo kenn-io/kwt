@@ -364,6 +364,7 @@ func resolveProjectForRegistration(path string) (models.Project, error) {
 	candidateGit := git.New(filepath.Join(absolutePath, "main"))
 	containerPath, containerErr := candidateGit.GetBareContainerPath()
 	if containerErr == nil &&
+		containerPath != "" &&
 		utils.PathKey(containerPath) == utils.PathKey(absolutePath) {
 		repositoryGit = candidateGit
 		mainPath, err = repositoryGit.GetMainRepositoryPath()
