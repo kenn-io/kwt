@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -718,6 +720,10 @@ func initCommandTestConfig(t *testing.T, baseDir string) {
 	t.Setenv("HOME", home)
 	t.Setenv("KWT_HOME", kwtHome)
 	t.Setenv("KWT_FLEET_TOKEN", "secret")
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(hub.Close)
 
 	configText := fmt.Sprintf(`[worktree]
 basedir = %q
@@ -726,7 +732,7 @@ auto_mkdir = true
 [fleet]
 enabled = true
 host_id = "test-host"
-hub_url = "https://hub.example.test"
+hub_url = %q
 token_env = "KWT_FLEET_TOKEN"
 
 [layouts]
@@ -737,7 +743,7 @@ auto_launch_on_add = false
 name = "shell"
 arrange = "tiled"
 panes = [""]
-`, baseDir)
+`, baseDir, hub.URL)
 	require.NoError(t, os.WriteFile(filepath.Join(kwtHome, "config.toml"), []byte(configText), 0600))
 	require.NoError(t, config.Init())
 }

@@ -2262,7 +2262,7 @@ func TestTUIBackendCreateWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	repoPath := newTUITestRepo(t)
-	runTUITestGit(t, repoPath, "remote", "add", "origin", "https://github.com/example/kwt.git")
+	addLocalTUIOrigin(t, repoPath)
 	cfg := &models.Config{
 		Fleet:    models.FleetConfig{Enabled: true},
 		Worktree: models.WorktreeConfig{BaseDir: filepath.Join(t.TempDir(), "worktrees"), AutoMkdir: true},
@@ -2372,7 +2372,7 @@ func TestTUIBackendExistingLocalBranchRemainsUnreviewed(t *testing.T) {
 
 func TestTUIBackendWorktreeCreationUsesSelectedRepositoryConfig(t *testing.T) {
 	repoPath := newTUITestRepo(t)
-	runTUITestGit(t, repoPath, "remote", "add", "origin", "https://github.com/example/kwt.git")
+	addLocalTUIOrigin(t, repoPath)
 	globalBase := filepath.Join(t.TempDir(), "global-worktrees")
 	selectedBase := filepath.Join(t.TempDir(), "selected-worktrees")
 	globalCfg := &models.Config{
@@ -2415,7 +2415,7 @@ func TestTUIBackendCreateWorktreeDoesNotExpandRepositoryLocalTemplate(t *testing
 	t.Setenv("KWT_GITHUB_TOKEN", secret)
 
 	repoPath := newTUITestRepo(t)
-	runTUITestGit(t, repoPath, "remote", "add", "origin", "https://github.com/example/kwt.git")
+	addLocalTUIOrigin(t, repoPath)
 	cfg := &models.Config{
 		Worktree: models.WorktreeConfig{BaseDir: filepath.Join(t.TempDir(), "worktrees"), AutoMkdir: true},
 		Naming: models.NamingConfig{
@@ -3750,6 +3750,15 @@ func newTUITestRepo(t *testing.T) string {
 	runTUITestGit(t, repoPath, "add", ".")
 	runTUITestGit(t, repoPath, "commit", "-m", "Initial commit")
 	return repoPath
+}
+
+func addLocalTUIOrigin(t *testing.T, repoPath string) {
+	t.Helper()
+
+	remotePath := filepath.Join(t.TempDir(), "origin.git")
+	runTUITestGit(t, "", "init", "--bare", "-b", "main", remotePath)
+	runTUITestGit(t, repoPath, "remote", "add", "origin", remotePath)
+	runTUITestGit(t, repoPath, "push", "-u", "origin", "main")
 }
 
 func runTUITestGit(t *testing.T, dir string, args ...string) {
