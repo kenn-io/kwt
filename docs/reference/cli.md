@@ -384,6 +384,11 @@ added to the top-level JSON array.
 identity for conditional removal), `repository` (the `host/owner/name` slug,
 or a `local/<path>` fallback for a repository without a usable remote — see
 below), `session_name`, `tmux_socket_name`, and `tmux_attach_mode`.
+When a branch is switched or renamed while its session remains live,
+`session_name` reports that verified live name even though its branch component
+is stale. Otherwise it reports the canonical name kwt will use for the next
+launch. Kwt verifies the worktree generation before associating a live session,
+so a worktree recreated at the same path does not inherit the previous session.
 `tmux_socket_name` selects the endpoint; `tmux_attach_mode` selects direct or
 protected attachment behavior. For a stopped workspace, inventory
 reports the intended `kwt`/`direct` endpoint. It reports the empty default

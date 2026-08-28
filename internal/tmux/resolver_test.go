@@ -416,6 +416,30 @@ func TestResolverBatchEnumeratesEachEndpointOnce(t *testing.T) {
 	assert.Equal(t, []string{"list-sessions"}, defaultServer.calls)
 }
 
+func TestResolverBatchPreservesLiveSessionNameAfterBranchChange(t *testing.T) {
+	request := resolverTestRequest()
+	suffix := "-" + template.ShortHash(request.WorkspacePath)
+	request.SessionName = "kwt-wt-widget-feature-b" + suffix
+	originalName := "kwt-wt-widget-feature-a" + suffix
+	canonical, defaultServer := newResolverTestCommands(
+		request.WorkspacePath,
+		request.SessionName,
+	)
+	canonical.sessions = []string{originalName}
+	resolver := newEndpointResolver(canonical, defaultServer, nil)
+
+	got, err := resolver.resolveAllBestEffort(
+		context.Background(),
+		[]WorkspaceEndpointRequest{request},
+	)
+
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.NoError(t, got[0].Err)
+	assert.Equal(t, canonicalEndpoint(originalName), got[0].Session.Endpoint)
+	assert.True(t, got[0].Session.Live)
+}
+
 func TestResolverBatchKeepsResolvingAfterWorkspaceSafetyError(t *testing.T) {
 	first := WorkspaceEndpointRequest{
 		SessionName:         "kwt-wt-widget-main-01234567",
