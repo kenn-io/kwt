@@ -55,6 +55,10 @@ Notable user-facing changes to kwt, grouped by release.
 
 ### Safety
 
+- Refuse to remove a worktree while a visible live process has its current
+  working directory at or below the worktree path. The conflict lists the
+  offending process IDs. An uninspectable live process owned by the current
+  user also blocks removal; explicit `kwt remove --force` bypasses either guard.
 - Bind project unregistration to the exact registry entry observed through
   `kwt projects --json`. Machine callers now send its opaque registration
   fingerprint alongside the exact path and credential-free repository

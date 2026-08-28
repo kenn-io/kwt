@@ -206,8 +206,20 @@ func (s *removalService) Remove(
 						return err
 					}
 					if err := quiescePreflightAndTerminate(
-						ctx, s.sessionGuard, sessionCondition, preflight,
+						ctx, s.sessionGuard, sessionCondition, func() error {
+							if err := preflight(); err != nil {
+								return err
+							}
+							if request.Force {
+								return nil
+							}
+							return rejectProcessesUsingWorktree(ctx, request.Path)
+						},
 					); err != nil {
+						return err
+					}
+				} else if !request.Force {
+					if err := rejectProcessesUsingWorktree(ctx, request.Path); err != nil {
 						return err
 					}
 				}
@@ -317,6 +329,16 @@ func classifyRemovalError(err error, result RemovalResult) error {
 	if errors.As(err, &sessionCondition) {
 		details["reason"] = sessionCondition.Error()
 		return service.NewError(service.Conflict, sessionCondition.Error(), true, details, err)
+	}
+	var processCondition *worktreeProcessConditionError
+	if errors.As(err, &processCondition) {
+		details["reason"] = "process_working_directory_live"
+		return service.NewError(service.Conflict, processCondition.Error(), true, details, err)
+	}
+	var processInspection *worktreeProcessInspectionError
+	if errors.As(err, &processInspection) {
+		details["reason"] = "process_working_directory_indeterminate"
+		return service.NewError(service.Conflict, processInspection.Error(), true, details, err)
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return service.NewError(service.Busy, "worktree removal canceled", true, details, err)
