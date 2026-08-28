@@ -2,9 +2,11 @@
 
 Kwt runs at most one writable local service daemon for each canonical kwt
 home. The daemon is a host for kwt domain services; it is not the multi-machine
-sync hub. It owns worktree inventory reads and guarded project unregistration;
-other worktree mutations, status collection, tmux attachment, and SSH lifecycle
-move in later slices.
+sync hub. It owns current worktree inventory, repository-config approval,
+worktree and project removal, and reviewed SSH route and lease lifecycle. It
+also carries bounded operation events. Git status and changed-file collection
+remain in the foreground client, and tmux workspace establishment is not a
+daemon route.
 
 The process binds an automatically selected IPv4 loopback port and publishes
 an owner-only runtime record under `<kwt-home>/runtime`. Clients verify the
@@ -46,9 +48,10 @@ Active work and leases may finish until `daemon.replacement_grace`; the default
 is five minutes.
 
 The API schema is `1.12.0`. It exposes authenticated status, graceful shutdown,
-worktree inventory, guarded project unregistration, and repository-config
-approval under `/api/v1`, proof-capable liveness at `/api/ping`, and
-credential-free OpenAPI at `/openapi.json`. Inventory clients require the
+worktree inventory, repository-config approval, guarded worktree and project
+removal, operation events, and SSH route and lease lifecycle under `/api/v1`.
+It exposes proof-capable liveness at `/api/ping` and credential-free OpenAPI at
+`/openapi.json`. Inventory clients require the
 `worktree.inventory.v2` capability. Foreground change inspection additionally
 requires `worktree.inventory.config.v1`, which guarantees that repository
 inventory carries the effective global configuration used to derive protected
@@ -263,5 +266,5 @@ a completed removal, an unchanged registration, and a same-path replacement.
 For remote use, including Ghosthub, the remote shell invokes the remote `kwt`
 CLI and that CLI talks only to its same-machine loopback daemon. The daemon is
 never exposed as a remote service. A monitoring read may start or replace a
-daemon after a kwt upgrade; the later SSH lease migration must retain the
-documented replacement-grace behavior for active sessions.
+daemon after a kwt upgrade. Active SSH leases participate in the documented
+replacement grace period and are never transferred to the successor.

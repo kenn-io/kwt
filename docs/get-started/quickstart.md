@@ -24,8 +24,8 @@ shows its primary checkout and linked worktrees alongside your other registered
 projects.
 
 Create a worktree with `n`, enter a branch name such as `feature/new-ui`, and
-confirm. kwt creates the isolated checkout and starts its default tmux
-workspace. Press `enter` on the row to attach again later.
+confirm. kwt creates the isolated checkout and starts its tmux workspace with
+the current layout choice. Press `enter` on the row to attach again later.
 
 These keys cover the first workflow:
 

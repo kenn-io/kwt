@@ -32,7 +32,7 @@ hide:
 ## Work interactively
 
 ```sh
-go install go.kenn.io/kwt/cmd/kwt@latest
+go install go.kenn.io/kwt/cmd/kwt@v0.5.0
 kwt
 ```
 

@@ -5,18 +5,24 @@ verified with the repo's commands.
 
 ## Repository layout
 
-| Path                 | Responsibility                                               |
-| -------------------- | ------------------------------------------------------------ |
-| `cmd/kwt`            | Main package.                                                |
-| `internal/cmd`       | Cobra command wiring and real backend integration.           |
-| `internal/tui`       | Bubble Tea dashboard model, rendering, and pure TUI helpers. |
-| `internal/config`    | Global and local config loading, trust, and persistence.     |
-| `internal/discovery` | Worktree discovery.                                          |
-| `internal/status`    | Git status collection and worktree change inspection.        |
-| `internal/tmux`      | tmux session, layout, and runner behavior.                   |
-| `internal/worktree`  | Worktree creation, setup commands, and copied files.         |
-| `pkg/models`         | Shared data models.                                          |
-| `docs`               | Zensical docs and maintained design notes.                   |
+| Path                   | Responsibility                                               |
+| ---------------------- | ------------------------------------------------------------ |
+| `cmd/kwt`              | Main package.                                                |
+| `kwt.go`, `ssh.go`     | Public embeddable service surface.                           |
+| `service`              | Shared operation and typed-error contracts.                  |
+| `internal/cmd`         | Cobra command wiring and real backend integration.           |
+| `internal/daemon`      | Same-machine service host and client.                        |
+| `internal/lifecycle`   | Inventory and guarded lifecycle services.                    |
+| `internal/ssh`         | OpenSSH route, prompt, and lease ownership.                  |
+| `internal/tui`         | Bubble Tea dashboard model, rendering, and pure TUI helpers. |
+| `internal/config`      | Global and local config loading, trust, and persistence.     |
+| `internal/discovery`   | Worktree discovery.                                          |
+| `internal/status`      | Git status collection and worktree change inspection.        |
+| `internal/tmux`        | tmux session, layout, and runner behavior.                   |
+| `internal/worktree`    | Worktree creation, setup commands, and copied files.         |
+| `internal/testharness` | Isolated Go test runner.                                     |
+| `pkg/models`           | Shared data models.                                          |
+| `docs`                 | Zensical docs and maintained design notes.                   |
 
 ## Local installation
 
@@ -46,9 +52,13 @@ make build
 Focused package tests are useful while iterating:
 
 ```sh
-go test ./internal/tui
-go test ./internal/config ./internal/cmd ./internal/tui
+go run ./internal/testharness/cmd -- ./internal/tui
+go run ./internal/testharness/cmd -- ./internal/config ./internal/cmd ./internal/tui
 ```
+
+The test runner requires Git 2.32 or newer. It downloads modules before the
+test boundary, then isolates kwt and Git state and fails if a test attempts an
+external Git or HTTP transport. Use it for focused runs as well as `make test`.
 
 ## OpenSSH projection maintenance
 
