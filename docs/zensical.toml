@@ -23,6 +23,7 @@ nav = [
     { "Configuration" = "reference/configuration.md" },
   ] },
   { "Workflows" = [
+    { "Worktree lifecycle" = "workflows/worktree-maintenance.md" },
     { "Agent workspaces" = "workflows/agent-workspaces.md" },
     { "Directory workspaces" = "workflows/directory-workspaces.md" },
     { "Multi-machine sync" = "multi-machine-sync.md" },
