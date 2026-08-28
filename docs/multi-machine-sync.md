@@ -1,71 +1,52 @@
-# Multi-machine Sync
+# Multi-machine sync
 
-Multi-machine sync gives `kwt` a shared view of active worktrees across the
-trusted machines you use for development. It answers practical questions:
+Use multi-machine sync to compare worktree state across your trusted development
+machines. It shows where a branch exists, whether machines observed different
+heads, and where dirty files were last seen. You can then create a local
+worktree from a remote-only branch observation.
 
-- Which branches did I sync onto the desktop?
-- Is this worktree missing on the laptop?
-- Did another host observe a different head for the same branch?
-- Which machine last saw dirty or untracked files?
+This state is advisory. kwt does not transfer files or commits, clone
+repositories, delete remote worktrees, or lock a branch on another machine.
 
-It is advisory. `kwt` publishes worktree manifests and renders the combined
-state, but it does not sync file contents, clone repositories, delete worktrees,
-or lock branches on other hosts.
+## Compare machines in the dashboard
 
-## How it works
+When sync is enabled, the dashboard combines remote observations with local
+worktrees:
 
-One machine runs the hub. Every enabled machine, including the hub machine,
-publishes a local manifest. The hub stores the latest manifest for each host and
-serves a grouped multi-machine view.
+- `WORKSPACE` shows `remote` when a row exists on another machine but not here.
+- Selected-row details name the source machine and path.
+- `HEADS` shows `local only`, `remote only`, or a differing source host. Local
+  rows can also show Git push and pull counts such as `↑2` or `↓1`.
+- `CHANGES` shows local counts such as `~3 ?2`, or prefixes them with `remote`
+  when only another machine reported changes.
+- Wide terminals can show a `MACHINES` column. Narrower views keep worktree
+  status visible instead.
 
-The public command namespace is `kwt sync`:
+The command-line view publishes this machine best-effort, then reads the hub:
 
 ```sh
-kwt sync serve
-kwt sync publish
 kwt sync status
-kwt sync forget <host-id>
 ```
 
-`kwt sync status` publishes this host best-effort before reading the hub. Worktree
-mutation commands also publish after successful local changes when multi-machine
-sync is enabled.
+## Create a local worktree from a remote observation
 
-## Dashboard workflow
+Select a remote-only branch row and press `s`. kwt uses the matching local
+project and its normal worktree naming rules. The branch must already be
+available in the local repository or on a fetched remote.
 
-The dashboard is the main day-to-day surface. When multi-machine sync is enabled,
-`kwt tui` includes multi-machine observations alongside local worktrees:
+If the source machine has unpushed commits, push or fetch them first. When the
+hub supplied a head commit, kwt verifies that the new worktree matches it and
+removes the checkout if it does not. Dirty files are never copied.
 
-- `WORKSPACE` shows `remote` for rows that exist somewhere else but not here.
-- Selected-row details show the source machine and path for remote-only rows.
-- Wide terminals may also show `MACHINES`; narrower terminals prioritize the
-  worktree status columns and keep the table within roughly 100 columns.
-- `HEADS` reports observed machine state. It shows `local only` or
-  `remote only` when a branch exists on only one side, `same` or `diff <host>`
-  when more than one machine reports the row, and nonzero Git push/pull counts
-  such as `↑2` or `↓1` for local-only rows.
-- `CHANGES` reports dirty state. Local dirty state is shown as counts such as
-  `~3 ?2`; dirty state observed only on another machine is summarized as
-  `remote ~3 ?2`, with the selected-row details naming the source host.
+Remote-only sync skips repository setup, including `copy_files` and
+`setup_commands`. Review the checkout before pressing `enter` to start its
+workspace. Detached-head observations are shown for awareness but cannot be
+synced by the current protocol.
 
-Select a remote-only branch row and press `s` to sync it onto the current
-machine using the matching local project root and normal worktree naming rules.
-Press `c` on a local row to open a shell there; press Enter to attach the tmux
-workspace.
-This checks out a branch that is already available in the current repository or
-on a fetched remote; if the source machine has unpushed commits, push or fetch
-those commits first. When the hub reported a head commit, `kwt` verifies that
-the created worktree matches it and removes the stale checkout if it does not.
-`kwt` does not transfer commit objects or dirty files.
-Remote-only sync does not run repository setup (`copy_files` or
-`setup_commands`); those hooks are reserved for locally initiated `kwt add`
-worktrees.
-Detached-head rows are shown for awareness but are not synced by the current
-protocol.
+## Configure a hub and clients
 
-## Configure it
-
-Multi-machine sync is disabled by default. Enable it explicitly:
+Multi-machine sync is disabled by default. One machine runs the loopback hub;
+every enabled machine publishes its latest local manifest to that hub.
 
 ```toml
 [fleet]
@@ -79,31 +60,38 @@ listen_addr = "127.0.0.1:8787"
 store_path = "~/.local/share/kwt/fleet/state.json"
 ```
 
-Use `token_file` or `token_env`; do not put the token inline in `config.toml`.
-Plain `http://` hub URLs are allowed only for loopback hosts, and those
-connections bypass environment-configured HTTP proxies. Every multi-machine
-hub URL must use HTTPS. The hub listener likewise accepts only loopback
-addresses, so expose it through Tailscale Serve, Caddy, or an equivalent
-private TLS endpoint that forwards to the loopback listener.
+Provide the bearer token through `token_file` or `token_env`; do not put it
+directly in `config.toml`. A hub URL must use HTTPS unless it names a loopback
+host. The hub itself accepts only a loopback listen address, so expose it
+through a private TLS endpoint that forwards to the listener.
 
-## Freshness and differences
+Start the hub and publish from a client with:
 
-Each host reports the Git state it can observe locally: branch or detached head,
-head commit, local ahead/behind relative to that host's remote-tracking refs,
-dirty counts, path, and last activity.
+```sh
+kwt sync serve
+kwt sync publish
+```
 
-The multi-machine view deliberately avoids claiming ancestry it cannot prove. If
-two hosts report different heads for the same branch, `kwt` reports that they
-differ; it does not say one host is behind another unless the local Git clone has
-the commits needed to prove that relationship.
+Successful local worktree mutations also publish best-effort when sync is
+enabled. A publication failure produces a warning but does not turn a completed
+local mutation into a failure.
 
-## Retired hosts
+## Understand freshness and differences
 
-The hub keeps the latest manifest per host until you remove it:
+Each machine reports the Git facts it can see locally: branch or detached head,
+head commit, ahead and behind counts against its own remote-tracking refs, dirty
+counts, path, and last activity.
+
+The combined view does not claim ancestry that no machine proved. If two hosts
+report different heads, kwt says they differ. It says one is behind only when
+the local clone has the commits needed to establish that relationship.
+
+The hub keeps the latest manifest for each host until you remove it. Forget a
+retired or renamed machine so its old observations disappear:
 
 ```sh
 kwt sync forget old-host
 ```
 
-Use this when a machine is retired or renamed so old observations stop appearing
-in the multi-machine view.
+See [Multi-machine sync architecture](design/multi-machine-sync.md) for the
+manifest identity, merge, freshness, and trust model.
