@@ -250,6 +250,7 @@ func TestInit(t *testing.T) {
 	// Set test environment
 	t.Setenv("HOME", tmpDir)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, ".config"))
+	t.Setenv("KWT_HOME", "")
 
 	// Reset viper to clean state
 	viper.Reset()
@@ -896,6 +897,7 @@ func TestSetGlobalDoesNotWriteLocalSettings(t *testing.T) {
 	// Set HOME for Unix and USERPROFILE for Windows to ensure os.UserHomeDir() is isolated
 	t.Setenv("HOME", homeDir)
 	t.Setenv("USERPROFILE", homeDir)
+	t.Setenv("KWT_HOME", "")
 
 	// Create global config in isolated HOME
 	globalConfigPath := filepath.Join(homeDir, ".config", "kwt", "config.toml")
@@ -1544,6 +1546,7 @@ copy_files = [".env.evil"]
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 		t.Setenv("USERPROFILE", home)
+		t.Setenv("KWT_HOME", "")
 
 		absPath, data := writeLocalConfig(t, t.TempDir(), []byte("[worktree]\nbasedir = \"/from-local\"\n"))
 
@@ -1693,6 +1696,7 @@ func TestDefaultLayoutsConfig(t *testing.T) {
 	// never the real ~/.config/kwt (Init calls viper.SafeWriteConfig).
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
+	t.Setenv("KWT_HOME", "")
 
 	viper.Reset()
 	t.Cleanup(viper.Reset)
@@ -1892,6 +1896,7 @@ func TestInitIsGlobalOnly(t *testing.T) {
 	// Isolate the global config dir (getConfigDir uses $HOME) so Init reads
 	// defaults, not the developer's real ~/.config/kwt.
 	t.Setenv("HOME", dir)
+	t.Setenv("KWT_HOME", "")
 	localTOML := []byte("[layouts]\ndefault = \"from-cwd\"\n")
 	localConfigPath := filepath.Join(dir, ".kwt.toml")
 	require.NoError(t, os.WriteFile(localConfigPath, localTOML, 0o644))
@@ -1946,6 +1951,7 @@ func TestLoadRepoLayoutDefaultTrustedReturnsDefault(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("KWT_HOME", "")
 
 	repo := t.TempDir()
 	localTOML := []byte("[layouts]\ndefault = \"focus\"\n")

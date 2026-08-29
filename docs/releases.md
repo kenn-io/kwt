@@ -6,16 +6,16 @@ settles; upgrade notes call out changes that require attention.
 
 ## How releases work
 
-`v0.4.0` is the first release produced by the automated artifact pipeline. It
-is installable through Go:
+Install v0.5.0 through Go:
 
 ```sh
-go install go.kenn.io/kwt/cmd/kwt@v0.4.0
+go install go.kenn.io/kwt/cmd/kwt@v0.5.0
 ```
 
 Semantic-version tags run the full test suite and publish a GitHub Release with
-platform archives, generated release notes, and checksums. `v0.3.0` was the
-first versioned tag, but predates that automated artifact pipeline.
+platform archives, generated release notes, and checksums. `v0.4.0` was the
+first release produced by this automated artifact pipeline. `v0.3.0` was the
+first versioned tag and predates packaged archives.
 
 The latest published version and its notes live on
 [GitHub Releases](https://github.com/kenn-io/kwt/releases). Install the newest

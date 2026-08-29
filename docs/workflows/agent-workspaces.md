@@ -1,16 +1,17 @@
-# Agent Workspaces
+# Agent workspaces
 
-`kwt` is useful when each branch deserves its own terminal workspace and agents
-should not fight over one checkout.
+Give each agent its own branch, worktree, and tmux workspace so parallel tasks
+do not compete for one checkout. kwt exposes the same lifecycle to a person in
+the dashboard and to an agent through commands and JSON.
 
-## Layouts
+## Configure a layout
 
-Layouts define tmux panes. Keep them explicit and boring:
+A layout defines the tmux panes that kwt creates for a workspace. Add reusable
+agent commands and a layout to your global configuration:
 
 ```toml
 [agents]
 codex = "codex"
-claude = "claude"
 roborev = "roborev tui"
 
 [[layouts.presets]]
@@ -19,68 +20,99 @@ arrange = "even-horizontal"
 panes = ["agent:codex", "agent:roborev", ""]
 ```
 
-The empty string creates a plain shell. Agent commands can include flags, but
-approval and sandbox bypass flags should be deliberate local choices.
+The empty string creates a plain shell. Agent commands can contain flags, but
+approval or sandbox bypass settings should remain deliberate local choices.
 
-Layouts are opt-in: without `--layout`, `--select-layout`, or a
-`layouts.default`, a workspace is a blank single-pane session. The reserved
-name `none` selects the blank session explicitly.
+Layouts are opt-in. Select one with `--layout`, `--select-layout`, the dashboard
+`L` key, or `layouts.default`. Without a selection, kwt creates a blank
+single-pane workspace. The reserved layout name `none` requests that blank
+workspace explicitly.
 
-## Working loop
+## Create an isolated worktree
+
+Create a branch, checkout, and workspace together:
 
 ```sh
-kwt add -b fix/flaky-status
+kwt add -b fix/flaky-status --layout review
+```
+
+Use `--no-launch` when the agent needs only the checkout. A worktree created
+from an existing local or remote branch always starts inert, even when a default
+layout exists:
+
+```sh
+kwt add --from origin/fix/flaky-status fix/flaky-status
+```
+
+Inspect contributor-controlled files before opening that workspace. kwt does
+not run configured setup, copy files, or start tmux during existing-branch
+creation.
+
+## Run and inspect work
+
+Run a command without attaching to tmux:
+
+```sh
 kwt exec fix/flaky-status -- go test ./internal/status
+```
+
+Use the human summaries while steering several tasks:
+
+```sh
+kwt status
+kwt changes "$(kwt get fix/flaky-status)"
+```
+
+Use JSON when another tool needs current inventory or an exact changed-file
+snapshot:
+
+```sh
+kwt list --json
+kwt changes "$(kwt get fix/flaky-status)" --json
+```
+
+The change result is bound to the worktree generation. If that checkout is
+removed or replaced during inspection, kwt discards the stale result.
+
+## Attach to the workspace
+
+Open the workspace as a person:
+
+```sh
 kwt open fix/flaky-status
 ```
 
-For long-running agent work, keep one branch per worktree, one tmux workspace per
-branch, and let `kwt status` show which branches are dirty, ahead, behind, or
-quiet.
-
-Kwt keeps workspaces and standalone `kwt tmux` jobs on a dedicated
-tmux server named `kwt`. On POSIX systems, inspect it manually with:
+Establish it for another terminal client without attaching kwt's process:
 
 ```sh
-env -u TMUX_TMPDIR tmux -L kwt list-sessions
+kwt open "$(kwt get fix/flaky-status)" --start-session --json
 ```
 
-Kwt temporarily adopts a verified matching session on the default
-server during rollout; if both endpoints contain a valid match, the dedicated
-server wins. `kwt tmux list` shows `[kwt]` or `[default]` for this reason.
-Mixed old and new Kwt binaries may still create parallel same-name sessions,
-so cooperating automation should be upgraded together.
+New ordinary workspaces run on kwt's dedicated tmux server, `tmux -L kwt`,
+instead of sharing the default server with personal sessions. During an upgrade,
+kwt can reuse a verified matching workspace already running on the default
+server. Upgrade cooperating clients together so an older client does not create
+a parallel session there.
 
-Opening a workspace from a client on another tmux server creates a nested
-client after removing the outer `TMUX` and `TMUX_PANE` selectors. Detach to
-return to the outer server. If both clients share the default prefix, send the
-prefix twice to address the inner client.
+The JSON result names the selected endpoint with `session_name`,
+`tmux_socket_name`, and `tmux_attach_mode`. Use those fields together; do not
+infer the attachment policy from a socket name. The
+[CLI reference](../reference/cli.md#kwt-open) defines the complete contract.
 
-## Cross-project steering
+## Clean up
 
-When a cached catalog is available, the dashboard paints it first, then
-refreshes only the project you are viewing. A cold start waits for the initial
-current inventory. You can search, move through rows, open a shell in an existing
-directory, or attach to a session that Kwt verifies is already live while that
-refresh runs. Creating, deleting, syncing, killing, or starting a session waits
-for current inventory.
+Inspect the final state, then remove the worktree and branch:
 
-Kwt refreshes the global catalog once in the background. Choosing all projects
-runs a current global refresh and collects status for the displayed rows. Git
-status collection uses a bounded worker pool. Activity is the newest of the
-HEAD commit, worktree directory, and changed or untracked file times; Kwt does
-not scan every tracked file to order the dashboard.
+```sh
+kwt changes "$(kwt get fix/flaky-status)"
+kwt remove -b fix/flaky-status
+```
 
-Confirmed deletions enter one background queue. The row immediately shows
-`removing…` while navigation and safe actions on other rows remain available.
-Kwt processes removals in confirmation order. A failed removal restores the
-row and reports the error; later queued removals still run.
+Removal refuses dirty work and reports live processes whose current directory
+is inside the checkout. Treat `--force` as an explicit decision after reviewing
+those conflicts. See [Worktree lifecycle and maintenance](worktree-maintenance.md)
+for pruning, doctor, and partial-cleanup outcomes.
 
-The dashboard is project-aware. Use `P` to set the active project perspective
-before creating a worktree. Press `n` for a new branch or `b` to search local
-and remote branches that are not already checked out. A selected remote branch
-is checked out without repository hooks, configured filters, setup commands, or
-workspace commands. It still participates in ordinary status and fleet
-observation. Review it before pressing `enter`; that explicit attach
-acknowledges the checkout and creates its session. Use lowercase `p` for a
-temporary project-name filter and `/` for row search.
+The dashboard refreshes the active project first and processes confirmed
+removals in order without blocking navigation. For its cache, concurrency, and
+stale-row rules, see [TUI and project registry](../design/tui-projects.md).

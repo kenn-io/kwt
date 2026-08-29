@@ -256,6 +256,7 @@ func TestAskpassHelperSubprocessReturnsPromptResponse(t *testing.T) {
 
 	command := exec.Command(os.Args[0], "-test.run=TestAskpassProtocolHelperProcess")
 	command.Env = append(transport.Environment(),
+		"GOCOVERDIR="+t.TempDir(),
 		"KWT_TEST_ASKPASS_PROTOCOL_HELPER=1",
 		"KWT_TEST_ASKPASS_PROMPT=Password:",
 	)

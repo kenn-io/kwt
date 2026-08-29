@@ -90,14 +90,14 @@ body {
 }
 
 .kwt-hero {
-  margin: clamp(2.5rem, 7vw, 5.5rem) 0 clamp(3rem, 7vw, 5rem);
+  margin: clamp(1.5rem, 4vw, 3rem) 0 clamp(2rem, 5vw, 3.5rem);
 }
 
 .kwt-hero__copy h1 {
   margin: 0.25rem 0 1rem;
-  max-width: 18ch;
-  font-size: clamp(2.5rem, 5vw, 4.4rem);
-  line-height: 1;
+  max-width: 22ch;
+  font-size: clamp(1.75rem, 3vw, 2.6rem);
+  line-height: 1.05;
 }
 
 .kwt-eyebrow {
@@ -123,9 +123,16 @@ body {
   margin-top: 1.7rem;
 }
 
+.kwt-hero__proof {
+  margin: 0.85rem 0 0;
+  color: var(--md-default-fg-color--lighter);
+  font-size: 0.76rem;
+}
+
 .kwt-hero__preview {
   overflow: hidden;
-  margin: clamp(2rem, 5vw, 3rem) 0 0;
+  max-width: 56rem;
+  margin: clamp(1.5rem, 3vw, 2rem) 0 0;
   border: 1px solid rgba(126, 177, 185, 0.2);
   border-radius: 0.7rem;
   background: #07141b;
@@ -202,12 +209,6 @@ body {
 
   .md-content__inner:has(.kwt-hero) {
     max-width: 64rem;
-  }
-}
-
-@media screen and (max-width: 60rem) {
-  .kwt-hero__copy h1 {
-    max-width: 15ch;
   }
 }
 

@@ -2261,11 +2261,12 @@ func TestTUIBackendCreateWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	repoPath := newTUITestRepo(t)
-	runTUITestGit(t, repoPath, "remote", "add", "origin", "https://github.com/example/kwt.git")
+	fixtureRoot := newShortTUITestRoot(t)
+	repoPath := newTUITestRepoAt(t, filepath.Join(fixtureRoot, "repo"))
+	addLocalTUIOrigin(t, repoPath)
 	cfg := &models.Config{
 		Fleet:    models.FleetConfig{Enabled: true},
-		Worktree: models.WorktreeConfig{BaseDir: filepath.Join(t.TempDir(), "worktrees"), AutoMkdir: true},
+		Worktree: models.WorktreeConfig{BaseDir: filepath.Join(fixtureRoot, "worktrees"), AutoMkdir: true},
 	}
 	published := 0
 	newFleetManifestBuilder = func() fleet.ManifestBuildProvider {
@@ -2329,6 +2330,7 @@ func TestTUIBackendCreateWorktreeLosesToProjectRemoval(t *testing.T) {
 }
 
 func TestTUIBackendExistingLocalBranchRemainsUnreviewed(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -2371,10 +2373,11 @@ func TestTUIBackendExistingLocalBranchRemainsUnreviewed(t *testing.T) {
 }
 
 func TestTUIBackendWorktreeCreationUsesSelectedRepositoryConfig(t *testing.T) {
-	repoPath := newTUITestRepo(t)
-	runTUITestGit(t, repoPath, "remote", "add", "origin", "https://github.com/example/kwt.git")
-	globalBase := filepath.Join(t.TempDir(), "global-worktrees")
-	selectedBase := filepath.Join(t.TempDir(), "selected-worktrees")
+	fixtureRoot := newShortTUITestRoot(t)
+	repoPath := newTUITestRepoAt(t, filepath.Join(fixtureRoot, "repo"))
+	addLocalTUIOrigin(t, repoPath)
+	globalBase := filepath.Join(fixtureRoot, "global-worktrees")
+	selectedBase := filepath.Join(fixtureRoot, "selected-worktrees")
 	globalCfg := &models.Config{
 		Worktree: models.WorktreeConfig{BaseDir: globalBase, AutoMkdir: true},
 	}
@@ -2415,7 +2418,7 @@ func TestTUIBackendCreateWorktreeDoesNotExpandRepositoryLocalTemplate(t *testing
 	t.Setenv("KWT_GITHUB_TOKEN", secret)
 
 	repoPath := newTUITestRepo(t)
-	runTUITestGit(t, repoPath, "remote", "add", "origin", "https://github.com/example/kwt.git")
+	addLocalTUIOrigin(t, repoPath)
 	cfg := &models.Config{
 		Worktree: models.WorktreeConfig{BaseDir: filepath.Join(t.TempDir(), "worktrees"), AutoMkdir: true},
 		Naming: models.NamingConfig{
@@ -2972,6 +2975,7 @@ func TestTUIBackendMaterializeWorktreeRequiresCurrentRegistration(t *testing.T) 
 }
 
 func TestTUIBackendMaterializeWorktreeUsesSelectedProjectConfig(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -3029,6 +3033,7 @@ func TestTUIBackendMaterializeWorktreeUsesSelectedProjectConfig(t *testing.T) {
 }
 
 func TestTUIBackendMaterializeWorktreeTracksRemoteOnlyBranch(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -3097,6 +3102,7 @@ func TestTUIBackendMaterializeWorktreeTracksRemoteOnlyBranch(t *testing.T) {
 }
 
 func TestTUIBackendMaterializeWorktreeRejectsStaleLocalHead(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -3142,6 +3148,7 @@ func TestTUIBackendMaterializeWorktreeRejectsStaleLocalHead(t *testing.T) {
 }
 
 func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnStaleHead(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -3202,6 +3209,7 @@ func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnStaleHead(t *tes
 func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnCheckoutFailure(
 	t *testing.T,
 ) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -3311,6 +3319,7 @@ func TestTUIBackendMaterializeWorktreeReportsBranchRollbackFailure(t *testing.T)
 }
 
 func TestTUIBackendMaterializeWorktreeUnregistersWhenHeadCannotBeRead(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -3421,6 +3430,7 @@ func TestTUIBackendMaterializeWorktreeSkipsRepositorySetupCommands(t *testing.T)
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("setup command execution requires sh")
 	}
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -3741,7 +3751,23 @@ func TestDiscoverLaunchRepoWorktreesRejectsRelativeDotlessRemote(t *testing.T) {
 func newTUITestRepo(t *testing.T) string {
 	t.Helper()
 
-	repoPath := filepath.Join(t.TempDir(), "repo")
+	return newTUITestRepoAt(t, filepath.Join(t.TempDir(), "repo"))
+}
+
+func newShortTUITestRoot(t *testing.T) string {
+	t.Helper()
+
+	root, err := os.MkdirTemp("", "kwt-tui-")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, os.RemoveAll(root))
+	})
+	return root
+}
+
+func newTUITestRepoAt(t *testing.T, repoPath string) string {
+	t.Helper()
+
 	runTUITestGit(t, "", "init", "-b", "main", repoPath)
 	runTUITestGit(t, repoPath, "config", "user.name", "Test User")
 	runTUITestGit(t, repoPath, "config", "user.email", "test@example.com")
@@ -3750,6 +3776,15 @@ func newTUITestRepo(t *testing.T) string {
 	runTUITestGit(t, repoPath, "add", ".")
 	runTUITestGit(t, repoPath, "commit", "-m", "Initial commit")
 	return repoPath
+}
+
+func addLocalTUIOrigin(t *testing.T, repoPath string) {
+	t.Helper()
+
+	remotePath := filepath.Join(t.TempDir(), "origin.git")
+	runTUITestGit(t, "", "init", "--bare", "-b", "main", remotePath)
+	runTUITestGit(t, repoPath, "remote", "add", "origin", remotePath)
+	runTUITestGit(t, repoPath, "push", "-u", "origin", "main")
 }
 
 func runTUITestGit(t *testing.T, dir string, args ...string) {
@@ -4348,6 +4383,7 @@ func TestTUIWorktreeAttachUsesBranchObservedInsideLifecycleGuard(t *testing.T) {
 }
 
 func TestTUIBackendAttachAcknowledgesRemoteSourceBeforeWorkspaceLaunch(t *testing.T) {
+	isolateCommandTestHome(t)
 	workspacePath := t.TempDir()
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
 	var acknowledged string
@@ -4431,6 +4467,7 @@ func TestTUIBackendRefusesProtectedPullRequestWorkspace(t *testing.T) {
 // detached session on the user's default tmux server merely because a unit
 // test needs to prove a workspace-only row clears the selection guard.
 func TestTUIBackendAttachWorkspacePassesWorkspaceRowToRunner(t *testing.T) {
+	isolateCommandTestHome(t)
 	workspacePath := t.TempDir()
 	row := dashboard.Row{
 		Workspace: &dashboard.WorkspaceInfo{Name: "notes", Path: workspacePath},
@@ -4466,6 +4503,7 @@ func TestTUIBackendAttachWorkspacePassesWorkspaceRowToRunner(t *testing.T) {
 }
 
 func TestTUIBackendOpenInTmuxPreparesResidentAttach(t *testing.T) {
+	isolateCommandTestHome(t)
 	row := dashboard.Row{
 		Workspace: &dashboard.WorkspaceInfo{Name: "notes", Path: t.TempDir()},
 	}
@@ -4501,6 +4539,7 @@ func TestTUIBackendOpenInTmuxPreparesResidentAttach(t *testing.T) {
 }
 
 func TestCachedLiveAttachNeverEstablishes(t *testing.T) {
+	isolateCommandTestHome(t)
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
 	endpoint := tmux.SessionEndpoint{SessionName: "topic", SocketName: tmux.KWTServerSocketName}
 	backend.resolveLive = func(context.Context, tmux.WorkspaceEndpointRequest) (tmux.SessionEndpoint, error) {

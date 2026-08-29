@@ -1,19 +1,51 @@
 # Pull-request automation
 
-kwt owns GitHub pull-request discovery and workspace import. A client such as a
-desktop application should render the records returned by kwt and pass the
-selected pull-request identifier back to kwt. It should not call GitHub,
-construct Git refs or worktree names, or reproduce workspace setup.
+Use kwt to discover a GitHub pull request, import it into an isolated inert
+worktree, inspect the checkout, and attach through its protected tmux boundary.
+kwt preserves the contributor branch's exact push destination while keeping
+repository setup and agent commands stopped until you choose to run them.
 
-`kwt pr list` and `kwt pr import` are noninteractive and always emit JSON.
-Pass `--json` explicitly to document that a caller depends on the automation
-contract:
+## Discover, import, inspect, and attach
+
+List pull requests for a registered project:
 
 ```sh
 kwt pr list --project github.com/acme/widget --state open --json
+```
+
+Pass the selected ID back to kwt to create the worktree:
+
+```sh
 kwt pr import github:github.com/acme/widget#17 \
   --project github.com/acme/widget --json
 ```
+
+The result includes `workspace.path`. Review that exact checkout before running
+project code:
+
+```sh
+kwt changes /path/from/import-result
+```
+
+Attach only through the protected PR command:
+
+```sh
+kwt pr attach /path/from/import-result
+```
+
+Direct `kwt open` and dashboard attachment refuse imported pull-request
+workspaces. The protected command rechecks the live worktree and its recorded
+project before it creates or repairs the isolated tmux session.
+
+## Automation contract
+
+kwt owns GitHub discovery, Git refs, worktree naming, push routing, and protected
+session setup. A client should render the records returned by kwt and pass the
+selected pull-request ID back. It should not reproduce those rules itself.
+
+`kwt pr list` and `kwt pr import` are noninteractive and always emit JSON. The
+examples keep `--json` explicit to document that the caller depends on the
+automation contract.
 
 Clients that present their own direct tmux client can ask kwt to establish
 the canonical workspace session without attaching kwt's process:

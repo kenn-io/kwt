@@ -17,10 +17,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            test: go test ./...
+            packages: ./...
           - os: windows-latest
-            test: >-
-              go test
+            packages: >-
               ./cmd/kwt
               ./internal/cmd
               ./internal/command
@@ -45,6 +44,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -52,11 +53,94 @@ jobs:
           go-version-file: go.mod
           cache: ${{ contains(fromJSON('["ubuntu-latest","ubuntu-24.04","ubuntu-22.04"]'), matrix.os) && github.repository == 'kenn-io/kwt' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
 
-      - name: Download modules
-        run: go mod download
+      - name: Test
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          TEST_PACKAGES: ${{ matrix.packages }}
+        run: |
+          kwt_test_home="$RUNNER_TEMP/kwt-test-home"
+          mkdir -p "$kwt_test_home"
+          clean_env=(
+            env -i
+            "CGO_ENABLED=${CGO_ENABLED:-}"
+            "GOCACHE=${GOCACHE:-}"
+            "GOARCH=${GOARCH:-}"
+            "GOMODCACHE=${GOMODCACHE:-}"
+            "GOPATH=${GOPATH:-}"
+            "GOOS=${GOOS:-}"
+            "GOROOT=${GOROOT:-}"
+            "HOME=$HOME"
+            "LANG=${LANG:-}"
+            "LC_ALL=${LC_ALL:-}"
+            "LC_CTYPE=${LC_CTYPE:-}"
+            "NIX_SSL_CERT_FILE=${NIX_SSL_CERT_FILE:-}"
+            "PATH=$PATH"
+            "SSL_CERT_DIR=${SSL_CERT_DIR:-}"
+            "SSL_CERT_FILE=${SSL_CERT_FILE:-}"
+            "TMPDIR=${TMPDIR:-}"
+            "XDG_CACHE_HOME=${XDG_CACHE_HOME:-}"
+            GOAUTH=off
+            GOENV=off
+            GOPROXY=https://proxy.golang.org
+            GOSUMDB=sum.golang.org
+            GOTOOLCHAIN=auto
+            'GOVCS=*:off'
+            GIT_CONFIG_GLOBAL=/dev/null
+            GIT_CONFIG_NOSYSTEM=1
+            GIT_TERMINAL_PROMPT=0
+          )
+          read -r -a test_packages <<< "$TEST_PACKAGES"
+          "${clean_env[@]}" go -C tools/testbootstrap test ./...
+          "${clean_env[@]}" "KWT_HOME=$kwt_test_home" \
+            go -C tools/testbootstrap run . -- "${test_packages[@]}"
 
       - name: Test
-        run: ${{ matrix.test }}
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TEST_PACKAGES: ${{ matrix.packages }}
+        run: |
+          $testPackages = $env:TEST_PACKAGES -split ' '
+          $kwtTestHome = Join-Path $env:RUNNER_TEMP 'kwt-test-home'
+          $gitConfig = Join-Path $env:RUNNER_TEMP 'kwt-test-gitconfig'
+          New-Item -ItemType Directory -Force $kwtTestHome | Out-Null
+          New-Item -ItemType File -Force $gitConfig | Out-Null
+
+          $allowedNames = @(
+            'APPDATA', 'CGO_ENABLED', 'COMSPEC', 'GOCACHE', 'GOARCH',
+            'GOMODCACHE', 'GOPATH', 'GOOS', 'GOROOT', 'HOME', 'HOMEDRIVE',
+            'HOMEPATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'LOCALAPPDATA',
+            'NIX_SSL_CERT_FILE', 'PATH', 'PATHEXT', 'PROGRAMDATA',
+            'SSL_CERT_DIR', 'SSL_CERT_FILE', 'SYSTEMROOT', 'TEMP', 'TMP',
+            'TMPDIR', 'USERPROFILE', 'WINDIR', 'XDG_CACHE_HOME'
+          )
+          $allowed = @{}
+          foreach ($name in $allowedNames) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            if ($null -ne $value) {
+              $allowed[$name] = $value
+            }
+          }
+          Get-ChildItem Env: | Remove-Item
+          foreach ($entry in $allowed.GetEnumerator()) {
+            [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value)
+          }
+          $env:GOAUTH = 'off'
+          $env:GOENV = 'off'
+          $env:GOPROXY = 'https://proxy.golang.org'
+          $env:GOSUMDB = 'sum.golang.org'
+          $env:GOTOOLCHAIN = 'auto'
+          $env:GOVCS = '*:off'
+          $env:GIT_CONFIG_GLOBAL = $gitConfig
+          $env:GIT_CONFIG_NOSYSTEM = '1'
+          $env:GIT_TERMINAL_PROMPT = '0'
+
+          & go -C tools/testbootstrap test ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:KWT_HOME = $kwtTestHome
+          & go -C tools/testbootstrap run . -- @testPackages
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build
         run: go build ./cmd/kwt
@@ -72,6 +156,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Setup uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0

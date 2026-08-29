@@ -1,17 +1,22 @@
 # Install kwt
 
-kwt supports macOS 13 or later, Linux, and Windows. Git 2.20 or newer is
-required. The `kwt doctor` command and `kwt prune --expired` or `--merged`
-policies require Git 2.31 or newer. tmux is required for workspace launch and
-the `kwt tmux` commands, but the worktree-oriented CLI can still be used without
-it.
+Choose a Go install, a release archive, or a source build. kwt supports:
+
+- macOS 13 or newer, Linux, and Windows;
+- Git 2.20 or newer;
+- Git 2.31 or newer for `kwt doctor`, `kwt prune --expired`, and
+  `kwt prune --merged`;
+- tmux 2.1 or newer for workspace launch and `kwt tmux`; and
+- Go 1.27 or newer for `go install` and source builds.
+
+The worktree-oriented CLI can still be used without tmux.
 
 ## Install with Go
 
-If you have Go 1.27 or newer, install the latest tagged version:
+Install v0.5.0 with:
 
 ```sh
-go install go.kenn.io/kwt/cmd/kwt@latest
+go install go.kenn.io/kwt/cmd/kwt@v0.5.0
 ```
 
 Go places the binary in `$(go env GOPATH)/bin` by default. Make sure that
@@ -21,17 +26,16 @@ directory is on `PATH`, then confirm the installation:
 kwt version
 ```
 
-To pin an exact version, replace `latest` with a semantic-version tag:
+Use `@latest` when you want Go to select the newest tagged release:
 
 ```sh
-go install go.kenn.io/kwt/cmd/kwt@v0.3.0
+go install go.kenn.io/kwt/cmd/kwt@latest
 ```
 
 ## Download a release archive
 
-For tags published through the current release pipeline, the
-[GitHub Releases](https://github.com/kenn-io/kwt/releases) page provides
-archives for:
+The [GitHub Releases](https://github.com/kenn-io/kwt/releases) page provides
+v0.5.0 archives for:
 
 - macOS 13 or later on Apple silicon and Intel;
 - Linux on ARM64 and AMD64; and

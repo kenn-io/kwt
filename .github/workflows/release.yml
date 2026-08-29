@@ -22,6 +22,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -30,7 +31,42 @@ jobs:
           cache: true
 
       - name: Test
-        run: go test ./...
+        shell: bash
+        run: |
+          kwt_test_home="$RUNNER_TEMP/kwt-test-home"
+          mkdir -p "$kwt_test_home"
+          clean_env=(
+            env -i
+            "CGO_ENABLED=${CGO_ENABLED:-}"
+            "GOCACHE=${GOCACHE:-}"
+            "GOARCH=${GOARCH:-}"
+            "GOMODCACHE=${GOMODCACHE:-}"
+            "GOPATH=${GOPATH:-}"
+            "GOOS=${GOOS:-}"
+            "GOROOT=${GOROOT:-}"
+            "HOME=$HOME"
+            "LANG=${LANG:-}"
+            "LC_ALL=${LC_ALL:-}"
+            "LC_CTYPE=${LC_CTYPE:-}"
+            "NIX_SSL_CERT_FILE=${NIX_SSL_CERT_FILE:-}"
+            "PATH=$PATH"
+            "SSL_CERT_DIR=${SSL_CERT_DIR:-}"
+            "SSL_CERT_FILE=${SSL_CERT_FILE:-}"
+            "TMPDIR=${TMPDIR:-}"
+            "XDG_CACHE_HOME=${XDG_CACHE_HOME:-}"
+            GOAUTH=off
+            GOENV=off
+            GOPROXY=https://proxy.golang.org
+            GOSUMDB=sum.golang.org
+            GOTOOLCHAIN=auto
+            'GOVCS=*:off'
+            GIT_CONFIG_GLOBAL=/dev/null
+            GIT_CONFIG_NOSYSTEM=1
+            GIT_TERMINAL_PROMPT=0
+          )
+          "${clean_env[@]}" go -C tools/testbootstrap test ./...
+          "${clean_env[@]}" "KWT_HOME=$kwt_test_home" \
+            go -C tools/testbootstrap run . -- ./...
 
       - name: Release
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7

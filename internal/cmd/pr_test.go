@@ -58,7 +58,8 @@ func (f *fakePRService) Import(_ context.Context, project pullrequest.Project, s
 
 func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 	t.Helper()
-	if os.Getenv("KWT_HOME") == "" {
+	if os.Getenv("KWT_HOME") == "" ||
+		os.Getenv("KWT_HOME") == os.Getenv("KWT_TEST_HARNESS") {
 		t.Setenv("KWT_HOME", t.TempDir())
 	}
 	home, err := config.CanonicalHome()

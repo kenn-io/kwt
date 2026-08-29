@@ -1,7 +1,7 @@
 [project]
 site_name = "kwt"
 site_url = "https://kwt.sh/"
-site_description = "A terminal dashboard for managing Git worktrees, and a scriptable CLI for agents working in isolated checkouts with tmux sessions."
+site_description = "A Git worktree manager with a terminal dashboard for people and a scriptable CLI for agents and other tools."
 site_author = "Kenn Software LLC"
 copyright = 'Copyright &copy; 2026 <a href="https://kenn.io">Kenn Software LLC</a>'
 docs_dir = "docs"
@@ -17,15 +17,17 @@ nav = [
     { "Quickstart" = "get-started/quickstart.md" },
     { "Changelog" = "changelog.md" },
   ] },
-  { "Reference" = [
-    { "CLI" = "reference/cli.md" },
-    { "Pull-request automation" = "reference/pull-requests.md" },
-    { "Configuration" = "reference/configuration.md" },
-  ] },
   { "Workflows" = [
+    { "Worktree lifecycle" = "workflows/worktree-maintenance.md" },
     { "Agent workspaces" = "workflows/agent-workspaces.md" },
     { "Directory workspaces" = "workflows/directory-workspaces.md" },
     { "Multi-machine sync" = "multi-machine-sync.md" },
+  ] },
+  { "Integrate" = [
+    { "Embedding kwt" = "integrations/embedding.md" },
+    { "CLI" = "reference/cli.md" },
+    { "Pull-request automation" = "reference/pull-requests.md" },
+    { "Configuration" = "reference/configuration.md" },
   ] },
   { "Project" = [
     { "Releases" = "releases.md" },
@@ -34,9 +36,11 @@ nav = [
     { "Releasing" = "development/releasing.md" },
     { "Design notes" = [
       { "Overview" = "design/index.md" },
+      { "Local service daemon" = "design/daemon.md" },
       { "TUI and project registry" = "design/tui-projects.md" },
       { "Multi-machine sync architecture" = "design/multi-machine-sync.md" },
       { "Worktree maintenance" = "design/worktree-maintenance.md" },
+      { "Worktree change inspection" = "design/worktree-changes.md" },
     ] },
   ] },
 ]

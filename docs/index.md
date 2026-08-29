@@ -1,24 +1,29 @@
 ---
-title: Git worktrees for terminal workflows
-description: A terminal dashboard for managing Git worktrees, and a scriptable CLI for agents working in isolated checkouts with tmux sessions.
+title: Git worktrees and agent workspaces
+description: Manage isolated Git worktrees and tmux workspaces from a terminal dashboard or a scriptable CLI.
 hide:
   - toc
 ---
 
 <section class="kwt-hero">
   <div class="kwt-hero__copy">
-    <h1>One worktree per branch. One tmux session per worktree.</h1>
+    <h1>Git worktrees and agent workspaces, managed from one place.</h1>
     <p class="kwt-hero__lede">
-      kwt is a Git worktree manager with two surfaces. The dashboard is for
-      you: see and manage the worktrees across all your projects from one
-      keyboard-driven view. The CLI is for your coding agents: plain commands
-      and stable JSON for creating worktrees and working inside their tmux
-      sessions.
+      kwt is a Git worktree manager with a terminal dashboard for people and a
+      scriptable CLI for agents and other tools. It creates isolated checkouts,
+      opens their tmux workspaces, shows their current state, and cleans them up
+      safely across all your projects.
     </p>
     <div class="kwt-hero__actions">
       <a class="md-button md-button--primary" href="get-started/install/">Install kwt</a>
       <a class="md-button" href="get-started/quickstart/">Quickstart</a>
     </div>
+    <p class="kwt-hero__proof">
+      kwt powers Git worktrees in
+      <a href="https://ghosthub.ai"><strong>Ghosthub</strong></a>, which brings
+      tmux, Herdr, and Zellij sessions from your Mac and SSH hosts into one
+      native terminal.
+    </p>
   </div>
   <figure class="kwt-hero__preview">
     <img
@@ -30,15 +35,15 @@ hide:
   </figure>
 </section>
 
-## The dashboard, for you
+## Work interactively
 
 ```sh
-go install go.kenn.io/kwt/cmd/kwt@latest
+go install go.kenn.io/kwt/cmd/kwt@v0.5.0
 kwt
 ```
 
-Run `kwt` inside a repository and it registers the project, discovers its
-worktrees, and opens a full-screen dashboard. From one view you can:
+Run `kwt` inside a repository to register the project and open the dashboard.
+From one keyboard-driven view, you can:
 
 - Attach to a worktree's tmux session (`enter`), creating it when needed.
 - Create a branch and worktree (`n`), or search local and remote branches for
@@ -47,31 +52,28 @@ worktrees, and opens a full-screen dashboard. From one view you can:
 - Delete worktrees (`d`), kill live sessions (`K`), and switch the active
   project (`P`).
 
-A plain directory can be a workspace too: run `kwt` there and `enter` opens a
-tmux session in place. The [quickstart](get-started/quickstart.md) walks
-through the full key map.
+A plain directory can be a workspace too. Run `kwt` there, and `enter` opens a
+tmux session in place. Follow the [quickstart](get-started/quickstart.md) to
+create and use your first workspace.
 
-## The CLI, for your agents
+## Automate worktrees
 
-Every dashboard operation is also a plain command, so coding agents and
-scripts can manage worktrees and their bound tmux sessions without a UI:
+Agents and other tools can manage the same lifecycle with plain commands and
+stable JSON:
 
 ```sh
-kwt add -b feature/new-ui              # isolated checkout + tmux workspace
-kwt exec feature/new-ui -- make test   # run a command in the worktree
-cd "$(kwt get feature/new-ui)"         # resolve a worktree path
-kwt list --json                        # machine-readable worktree state
-kwt changes --json                     # exact changed-file snapshot
-kwt remove -b feature/new-ui           # delete the worktree and its branch
+kwt add -b feature/new-ui
+kwt exec feature/new-ui -- make test
+kwt changes --json
+kwt remove -b feature/new-ui
 ```
 
-`kwt pr import` checks a GitHub pull request out into a fresh worktree, and
-`kwt status` shows which branches are dirty, ahead, or behind — useful when
-several agents are working in parallel. `kwt changes [path]` inspects one exact
-worktree when a script needs deterministic staged and working-tree file states.
-Configurable
-[layouts](workflows/agent-workspaces.md) define the tmux panes each workspace
-starts with, from a single shell to a preset arrangement of agents.
+Use `kwt list --json` to discover worktrees, `kwt get` to resolve an exact path,
+and `kwt pr import` to create an inert workspace from a GitHub pull request.
+Configurable [layouts](workflows/agent-workspaces.md) define the tmux panes each
+workspace starts with. See [Agent workspaces](workflows/agent-workspaces.md) for
+a complete automation loop and the [CLI reference](reference/cli.md) for the
+machine contracts.
 
 ## Guardrails
 
@@ -83,18 +85,18 @@ until you [configure it](multi-machine-sync.md).
 
 <aside class="kwt-ecosystem">
   <div>
-    <p class="kwt-eyebrow">Bundled by Ghosthub</p>
-    <h2>The same worktree engine, inside a native terminal.</h2>
+    <p class="kwt-eyebrow">Build on kwt</p>
+    <h2>The same lifecycle is available to other applications.</h2>
   </div>
   <div>
     <p>
-      <a href="https://ghosthub.ai"><strong>Ghosthub</strong></a> bundles kwt
-      to manage project registration, linked worktrees, pull-request imports,
-      and canonical tmux sessions across local and SSH-hosted workspaces. Use
-      Ghosthub for a native macOS experience or kwt directly from any supported
-      terminal.
+      Public Go services, the local daemon, stable JSON, and explicit tmux
+      session endpoints let clients reuse kwt without rebuilding its worktree
+      safety rules. <a href="https://ghosthub.ai"><strong>Ghosthub</strong></a>
+      is one application that embeds these services for local and SSH-hosted
+      workspaces.
     </p>
-    <a class="kwt-text-link" href="https://ghosthub.ai">Explore Ghosthub →</a>
+    <a class="kwt-text-link" href="integrations/embedding/">Embed and connect kwt →</a>
   </div>
 </aside>
 

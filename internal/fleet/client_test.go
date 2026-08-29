@@ -196,7 +196,8 @@ func TestClientRejectsPlaintextTailnetBeforeEnvironmentProxy(t *testing.T) {
 	baseEnv := make([]string, 0, len(os.Environ()))
 	for _, env := range os.Environ() {
 		key, _, _ := strings.Cut(env, "=")
-		if strings.EqualFold(key, "HTTP_PROXY") || strings.EqualFold(key, "NO_PROXY") || key == "REQUEST_METHOD" ||
+		if strings.EqualFold(key, "HTTP_PROXY") || strings.EqualFold(key, "HTTPS_PROXY") ||
+			strings.EqualFold(key, "ALL_PROXY") || strings.EqualFold(key, "NO_PROXY") || key == "REQUEST_METHOD" ||
 			key == "KWT_TEST_PROXY_HELPER" {
 			continue
 		}

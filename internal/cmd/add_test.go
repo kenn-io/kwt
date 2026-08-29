@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -225,6 +227,7 @@ func TestAddFromRemoteBranchCreatesTrackingWorktreeWithoutLaunching(t *testing.T
 }
 
 func TestRegisterWorktreeExpirationRejectsRecreatedWorktree(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -290,6 +293,7 @@ func TestRegisterWorktreeExpirationRejectsRecreatedWorktree(t *testing.T) {
 }
 
 func TestRegisterWorktreeExpirationCreatesOrdinaryWorktreeEntry(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -328,6 +332,7 @@ func TestRegisterWorktreeExpirationCreatesOrdinaryWorktreeEntry(t *testing.T) {
 }
 
 func TestRegisterWorktreeExpirationUsesDestinationRemoteIdentity(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	repoPath := newTUITestRepo(t)
@@ -352,6 +357,7 @@ func TestRegisterWorktreeExpirationUsesDestinationRemoteIdentity(t *testing.T) {
 }
 
 func TestRegisterWorktreeExpirationRejectsRelativeDestinationRemote(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	repoPath := newTUITestRepo(t)
@@ -376,6 +382,7 @@ func TestRegisterWorktreeExpirationRejectsRelativeDestinationRemote(t *testing.T
 }
 
 func TestRegisterWorktreeExpirationRejectsProvisionalCreation(t *testing.T) {
+	isolateCommandTestHome(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -718,6 +725,10 @@ func initCommandTestConfig(t *testing.T, baseDir string) {
 	t.Setenv("HOME", home)
 	t.Setenv("KWT_HOME", kwtHome)
 	t.Setenv("KWT_FLEET_TOKEN", "secret")
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(hub.Close)
 
 	configText := fmt.Sprintf(`[worktree]
 basedir = %q
@@ -726,7 +737,7 @@ auto_mkdir = true
 [fleet]
 enabled = true
 host_id = "test-host"
-hub_url = "https://hub.example.test"
+hub_url = %q
 token_env = "KWT_FLEET_TOKEN"
 
 [layouts]
@@ -737,7 +748,12 @@ auto_launch_on_add = false
 name = "shell"
 arrange = "tiled"
 panes = [""]
-`, baseDir)
+`, baseDir, hub.URL)
 	require.NoError(t, os.WriteFile(filepath.Join(kwtHome, "config.toml"), []byte(configText), 0600))
 	require.NoError(t, config.Init())
+}
+
+func isolateCommandTestHome(t *testing.T) {
+	t.Helper()
+	t.Setenv("KWT_HOME", t.TempDir())
 }

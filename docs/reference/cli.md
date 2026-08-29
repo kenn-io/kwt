@@ -1,7 +1,16 @@
 # CLI Reference
 
-Run `kwt <command> --help` for command-specific flags. This page summarizes the
-stable command surface.
+Use this page for stable command behavior, JSON fields, exit status, and guarded
+automation contracts. Run `kwt <command> --help` for the complete flags on the
+installed version.
+
+For task-first guidance, start with the [quickstart](../get-started/quickstart.md)
+or [worktree lifecycle](../workflows/worktree-maintenance.md). Agent and terminal
+clients should read [Agent workspaces](../workflows/agent-workspaces.md) before
+using session endpoints. Applications choosing between the Go package, daemon,
+CLI, tmux, and SSH boundaries should start with
+[Embed and connect kwt](../integrations/embedding.md). Pull-request imports have
+their own [protected automation contract](pull-requests.md).
 
 Kwt requires Git 2.20 or newer. `kwt doctor` and the `kwt prune --expired` or
 `--merged` policies require Git 2.31 or newer: maintenance inventory relies on
@@ -29,6 +38,7 @@ Other PID lookup failures report the underlying tmux error.
 | `kwt doctor`     | Inspect or repair structural worktree consistency.     |
 | `kwt prune`      | Remove live worktrees by an explicit policy.           |
 | `kwt sync`       | Publish and inspect multi-machine sync state.          |
+| `kwt ssh`        | Resolve, hold, and use reviewed OpenSSH routes.        |
 | `kwt tmux`       | Manage standalone tmux sessions.                       |
 | `kwt workspace`  | Manage directory workspaces.                           |
 | `kwt config`     | Read and write config values.                          |
@@ -90,9 +100,10 @@ a cold start waits for the initial current inventory. It then refreshes the
 displayed repository with Git status, and refreshes the global catalog without
 status once in the background. Cached rows permit shells in directories that
 still exist and attachment to sessions that Kwt re-verifies as live. Mutations
-and new session creation wait for current inventory. SSH connection lifecycle
-remains on its existing path until its complete service migration. `kwt ssh
-resolve` is the non-connecting Stage 1 exception described below.
+and new session creation wait for current inventory. SSH route resolution and
+connection leases use the same-machine daemon. For `kwt ssh exec` and `kwt ssh
+copy`, the daemon owns the reviewed route and lease while the foreground kwt
+process runs the system SSH or SFTP child and streams its output.
 
 Successful `kwt list --json` and `kwt projects --json` output remains a bare
 top-level array. A daemon or inventory failure instead writes this shared
@@ -120,15 +131,14 @@ SSH caller can distinguish a remote-shell transport failure.
 
 Daemon ownership must not buffer human-facing operation progress. Removal
 continues to print each selected worktree's result as soon as that target
-finishes. Before longer mutations such as add, pull-request import, doctor,
-prune, or SSH lifecycle move behind the daemon, their ordered status events
-must stream to CLI stderr as they occur; machine-readable stdout and established
-exit codes remain unchanged. The daemon now provides the bounded
-`operation.stream.v1` transport for that migration: progress and warnings are
-flushed to stderr, prompt responses are bound to the prompt that requested
-them, and only the owning command writes its final stdout result. This
-capability alone does not change any command's execution owner or user-facing
-behavior.
+finishes. SSH lifecycle uses the bounded `operation.stream.v1` transport for
+ordered progress and prompts. If longer mutations such as add, pull-request
+import, doctor, or prune move behind the daemon, their status events must
+likewise reach CLI stderr as they occur; machine-readable stdout and established
+exit codes remain unchanged. Progress and warnings are flushed to stderr,
+prompt responses are bound to the prompt that requested them, and only the
+owning command writes its final stdout result. Advertising the capability alone
+does not change a command's execution owner or user-facing behavior.
 
 An interrupted client may resume one retained stream from its last accepted
 event sequence on the same daemon. If the daemon or retained result is gone,
