@@ -2239,7 +2239,9 @@ func useInProcessTUIRemoval(t *testing.T, backend *tuiBackend) {
 		return nil, nil
 	}
 	backend.removeWorktree = kwt.NewRemovalService(
-		kwt.RemovalServiceOptions{Home: home},
+		kwt.RemovalServiceOptions{
+			Home: home, ProcessGuard: allowTestRemovalProcesses,
+		},
 	).Remove
 }
 
@@ -4274,6 +4276,7 @@ func TestTUIWorktreeAttachCannotRaceGuardedRemoval(t *testing.T) {
 	go func() {
 		_, removeErr := lifecycle.NewRemovalService(lifecycle.RemovalServiceOptions{
 			Home: home, SessionGuard: removalGuard,
+			ProcessGuard: allowTestRemovalProcesses,
 		}).Remove(context.Background(), lifecycle.RemovalRequest{
 			RepositoryPath: repoPath,
 			Path:           worktreePath, ExpectedGeneration: generation,

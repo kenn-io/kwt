@@ -871,6 +871,7 @@ func TestDirectOpenCannotRaceGuardedRemoval(t *testing.T) {
 	go func() {
 		_, removeErr := lifecycle.NewRemovalService(lifecycle.RemovalServiceOptions{
 			Home: home, SessionGuard: removalGuard,
+			ProcessGuard: allowTestRemovalProcesses,
 		}).Remove(context.Background(), lifecycle.RemovalRequest{
 			RepositoryPath: repoPath,
 			Path:           worktreePath, ExpectedGeneration: generation,

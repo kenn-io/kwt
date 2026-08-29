@@ -13,10 +13,26 @@ description: Release history for kwt
   stays out of worktree inventory, and generated worktrees preserve the flat
   sibling layout using the sanitized branch name. An explicit destination path
   still takes precedence.
-- Block worktree removal only when a live process's working directory is
-  verified to be at or below the worktree path. A process whose working
-  directory the operating system refuses to disclose (such as `systemd --user`
-  in every systemd user session) no longer fails removal.
+- Deliver each SSH askpass protocol frame in a single socket write, so a
+  helper answering a prompt with no hint text can no longer fail spuriously
+  when the responder closes the connection first.
+
+## 0.5.1
+
+<small>2026-08-29</small>
+
+kwt 0.5.1 is the publishable build of the 0.5 release. The original 0.5.0 tag
+did not produce release artifacts because its verification jobs depended on
+the host runner's process table and path syntax. This release makes those
+checks portable without changing the CLI's removal safeguards.
+
+Applications that embed kwt can now supply
+`RemovalServiceOptions.ProcessGuard` when they already have their own way to
+detect processes that use a worktree. kwt's default remains unchanged: removal
+stops when a process uses the worktree or when that check is inconclusive,
+unless the caller explicitly uses `Force`.
+
+[Compare v0.5.0...v0.5.1](https://github.com/kenn-io/kwt/compare/v0.5.0...v0.5.1)
 
 ## 0.5.0
 

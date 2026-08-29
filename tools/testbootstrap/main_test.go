@@ -11,7 +11,7 @@ import (
 
 func TestBootstrapEnvironmentUsesStrictAllowlist(t *testing.T) {
 	scratch := t.TempDir()
-	callerKwtHome := filepath.Join(t.TempDir(), "kwt")
+	callerKwtHome := filepath.Join(t.TempDir(), "ambient", "kwt")
 	got := bootstrapEnvironment([]string{
 		"PATH=/tools",
 		"TEMP=/tmp",

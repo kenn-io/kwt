@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"fmt"
+	"os/user"
 	"slices"
 	"strings"
 
@@ -12,9 +13,13 @@ import (
 
 type worktreeProcessConditionError struct{ pids []int32 }
 
+type worktreeProcessInspectionError struct{ pids []int32 }
+
 type worktreeProcess interface {
 	pid() int32
 	CwdWithContext(context.Context) (string, error)
+	StatusWithContext(context.Context) ([]string, error)
+	UsernameWithContext(context.Context) (string, error)
 }
 
 type systemWorktreeProcess struct{ *process.Process }
@@ -31,6 +36,20 @@ func (e *worktreeProcessConditionError) Error() string {
 	}
 	return fmt.Sprintf(
 		"worktree is in use by processes with working directories inside it (PIDs %s); stop the processes or rerun with --force",
+		strings.Join(values, ", "),
+	)
+}
+
+func (e *worktreeProcessInspectionError) Error() string {
+	values := processIDStrings(e.pids)
+	if len(values) == 1 {
+		return fmt.Sprintf(
+			"cannot verify whether process PID %s uses the worktree because its working directory could not be inspected; stop the process or rerun with --force",
+			values[0],
+		)
+	}
+	return fmt.Sprintf(
+		"cannot verify whether processes with PIDs %s use the worktree because their working directories could not be inspected; stop the processes or rerun with --force",
 		strings.Join(values, ", "),
 	)
 }
@@ -60,19 +79,26 @@ func rejectProcessCandidatesUsingWorktree(
 	path string,
 	processes []worktreeProcess,
 ) error {
+	currentUser, err := user.Current()
+	if err != nil {
+		return fmt.Errorf("resolve current user for process inspection: %w", err)
+	}
 	pids := make([]int32, 0)
+	uninspectablePIDs := make([]int32, 0)
 	for _, candidate := range processes {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		// Only positive evidence blocks removal. Working directories the
-		// operating system refuses to disclose stay out of the verdict:
-		// every systemd Linux user session owns capability-bearing processes
-		// (systemd --user, (sd-pam)) whose /proc cwd is unreadable even to
-		// the same user, so failing closed here would reject every default
-		// removal on such hosts.
 		workingDirectory, err := candidate.CwdWithContext(ctx)
 		if err != nil || workingDirectory == "" {
+			statuses, statusErr := candidate.StatusWithContext(ctx)
+			if statusErr == nil && slices.Contains(statuses, process.Zombie) {
+				continue
+			}
+			username, usernameErr := candidate.UsernameWithContext(ctx)
+			if usernameErr == nil && username == currentUser.Username {
+				uninspectablePIDs = append(uninspectablePIDs, candidate.pid())
+			}
 			continue
 		}
 		if utils.IsSameOrChildPath(workingDirectory, path) {
@@ -82,6 +108,10 @@ func rejectProcessCandidatesUsingWorktree(
 	if len(pids) > 0 {
 		slices.Sort(pids)
 		return &worktreeProcessConditionError{pids: pids}
+	}
+	if len(uninspectablePIDs) > 0 {
+		slices.Sort(uninspectablePIDs)
+		return &worktreeProcessInspectionError{pids: uninspectablePIDs}
 	}
 	return nil
 }
