@@ -5,6 +5,23 @@ description: Release history for kwt
 
 # Changelog
 
+## 0.5.1
+
+<small>2026-08-29</small>
+
+kwt 0.5.1 is the publishable build of the 0.5 release. The original 0.5.0 tag
+did not produce release artifacts because its verification jobs depended on
+the host runner's process table and path syntax. This release makes those
+checks portable without changing the CLI's removal safeguards.
+
+Applications that embed kwt can now supply
+`RemovalServiceOptions.ProcessGuard` when they already have their own way to
+detect processes that use a worktree. kwt's default remains unchanged: removal
+stops when a process uses the worktree or when that check is inconclusive,
+unless the caller explicitly uses `Force`.
+
+[Compare v0.5.0...v0.5.1](https://github.com/kenn-io/kwt/compare/v0.5.0...v0.5.1)
+
 ## 0.5.0
 
 <small>2026-08-28</small>

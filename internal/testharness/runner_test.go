@@ -97,6 +97,7 @@ func TestIsolatedEnvironmentReplacesGitKWTAndProxyState(t *testing.T) {
 	assertEnvironmentValue(t, got, "GOCACHE", "/developer/go-cache")
 	assertEnvironmentValue(t, got, "KWT_HOME", filepath.Join(scratch, "kwt"))
 	assertEnvironmentValue(t, got, "KWT_TEST_HARNESS", filepath.Join(scratch, "kwt"))
+	assertEnvironmentValue(t, got, "HOST_PROC", filepath.Join(scratch, "proc"))
 	assertEnvironmentValue(t, got, "GIT_CONFIG_GLOBAL", filepath.Join(scratch, "gitconfig"))
 	assertEnvironmentValue(t, got, "GIT_CONFIG_NOSYSTEM", "1")
 	assertEnvironmentValue(t, got, "GIT_TERMINAL_PROMPT", "0")

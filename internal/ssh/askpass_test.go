@@ -264,7 +264,13 @@ func TestAskpassHelperSubprocessReturnsPromptResponse(t *testing.T) {
 	command.Stderr = &stderr
 	output, err := command.Output()
 
-	require.NoError(t, err)
+	require.NoErrorf(
+		t,
+		err,
+		"askpass helper stderr = %q; transport error = %v",
+		stderr.String(),
+		transport.Err(),
+	)
 	assert.Equal(t, "subprocess-secret\n", string(output))
 	assert.Empty(t, stderr.String())
 }

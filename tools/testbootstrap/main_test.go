@@ -11,6 +11,7 @@ import (
 
 func TestBootstrapEnvironmentUsesStrictAllowlist(t *testing.T) {
 	scratch := t.TempDir()
+	callerKwtHome := filepath.Join(t.TempDir(), "ambient", "kwt")
 	got := bootstrapEnvironment([]string{
 		"PATH=/tools",
 		"TEMP=/tmp",
@@ -21,7 +22,7 @@ func TestBootstrapEnvironmentUsesStrictAllowlist(t *testing.T) {
 		"NO_PROXY=ambient.example",
 		"GIT_CONFIG_GLOBAL=/ambient/gitconfig",
 		"GIT_ASKPASS=/ambient/askpass",
-		"KWT_HOME=/ambient/kwt",
+		"KWT_HOME=" + callerKwtHome,
 		"KWT_GITHUB_TOKEN=github-secret",
 		"CUSTOM_FLEET_TOKEN=fleet-secret",
 		"GOAUTH=netrc",
@@ -50,7 +51,7 @@ func TestBootstrapEnvironmentUsesStrictAllowlist(t *testing.T) {
 		"GIT_TERMINAL_PROMPT":    "0",
 		"KWT_HOME":               filepath.Join(scratch, "kwt"),
 		"KWT_TEST_BOOTSTRAP":     "1",
-		callerKwtHomeEnvironment: "/ambient/kwt",
+		callerKwtHomeEnvironment: callerKwtHome,
 	} {
 		if gotValue := values[key]; gotValue != want {
 			t.Errorf("%s = %q, want %q", key, gotValue, want)

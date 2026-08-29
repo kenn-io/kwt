@@ -655,10 +655,13 @@ func resetRemoveCommandFlags(t *testing.T) {
 		request kwt.RemovalRequest,
 	) (kwt.RemovalResult, error) {
 		return kwt.NewRemovalService(kwt.RemovalServiceOptions{
-			Home: os.Getenv("KWT_HOME"),
+			Home:         os.Getenv("KWT_HOME"),
+			ProcessGuard: allowTestRemovalProcesses,
 		}).Remove(ctx, request)
 	}
 }
+
+func allowTestRemovalProcesses(context.Context, string) error { return nil }
 
 func removalConditionTestCommand() *cobra.Command {
 	cmd := &cobra.Command{}

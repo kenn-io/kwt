@@ -45,11 +45,15 @@ type Remover interface {
 type RemovalServiceOptions struct {
 	Home         string
 	SessionGuard tmux.RemovalSessionGuard
+	// ProcessGuard replaces the default live-process check. Embedders that set
+	// it are responsible for enforcing their own worktree-use policy.
+	ProcessGuard func(context.Context, string) error
 }
 
 type removalService struct {
 	home         string
 	sessionGuard tmux.RemovalSessionGuard
+	processGuard func(context.Context, string) error
 }
 
 var newRemovalInventoryGit = git.NewForInventory
@@ -59,7 +63,15 @@ func NewRemovalService(options RemovalServiceOptions) Remover {
 	if guard == nil {
 		guard = tmux.NewRemovalSessionGuard("")
 	}
-	return &removalService{home: options.Home, sessionGuard: guard}
+	processGuard := options.ProcessGuard
+	if processGuard == nil {
+		processGuard = rejectProcessesUsingWorktree
+	}
+	return &removalService{
+		home:         options.Home,
+		sessionGuard: guard,
+		processGuard: processGuard,
+	}
 }
 
 func (s *removalService) Remove(
@@ -213,13 +225,13 @@ func (s *removalService) Remove(
 							if request.Force {
 								return nil
 							}
-							return rejectProcessesUsingWorktree(ctx, request.Path)
+							return s.processGuard(ctx, request.Path)
 						},
 					); err != nil {
 						return err
 					}
 				} else if !request.Force {
-					if err := rejectProcessesUsingWorktree(ctx, request.Path); err != nil {
+					if err := s.processGuard(ctx, request.Path); err != nil {
 						return err
 					}
 				}

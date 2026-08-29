@@ -45,6 +45,13 @@ later mutation applies only to the checkout or project entry that the user
 reviewed. The inspection service returns one generation-safe changed-file
 snapshot.
 
+The removal service checks the host process table by default and refuses to
+remove a worktree when it is in use or the check is inconclusive. An embedder
+that already owns an equivalent process-isolation boundary can supply
+`RemovalServiceOptions.ProcessGuard`. That callback replaces kwt's default
+check, so the embedder is responsible for preserving its own worktree-use
+policy. Callers can still request the documented `Force` override explicitly.
+
 An SSH lifecycle owner also supplies an executable that dispatches
 `kwt.RunSSHAskpassHelper` before normal application startup. This keeps prompt
 transport inside kwt's reviewed boundary.

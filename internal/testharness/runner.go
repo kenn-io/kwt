@@ -183,6 +183,13 @@ func runWith(
 		_ = cleanup()
 		return 1
 	}
+	// gopsutil reads HOST_PROC on Linux. An empty process table keeps removal
+	// fixtures independent of unrelated processes on the test host.
+	if err = os.Mkdir(filepath.Join(scratch, "proc"), 0o700); err != nil {
+		_, _ = fmt.Fprintf(stderr, "create isolated process table: %v\n", err)
+		_ = cleanup()
+		return 1
+	}
 	if err = os.WriteFile(filepath.Join(scratch, "gitconfig"), nil, 0o600); err != nil {
 		_, _ = fmt.Fprintf(stderr, "create isolated Git config: %v\n", err)
 		_ = cleanup()
@@ -341,19 +348,21 @@ func preparationEnvironment(base, protectedNames []string, scratch string) []str
 }
 
 func isolatedEnvironment(base, protectedNames []string, scratch, proxyAddress string) []string {
-	return appendOwnedEnvironment(
+	environment := appendOwnedEnvironment(
 		withoutEnvironment(credentials.StripEnvironment(base, protectedNames), func(key string) bool {
 			upper := strings.ToUpper(key)
 			return strings.HasPrefix(upper, "GIT_") ||
 				strings.EqualFold(key, "KWT_HOME") ||
 				strings.EqualFold(key, "KWT_TEST_HARNESS") ||
 				strings.EqualFold(key, callerKwtHomeEnvironment) ||
+				strings.EqualFold(key, "HOST_PROC") ||
 				upper == "HTTP_PROXY" || upper == "HTTPS_PROXY" ||
 				upper == "ALL_PROXY" || upper == "NO_PROXY"
 		}),
 		scratch,
 		proxyAddress,
 	)
+	return append(environment, "HOST_PROC="+filepath.Join(scratch, "proc"))
 }
 
 func appendOwnedEnvironment(environment []string, scratch, proxyAddress string) []string {
