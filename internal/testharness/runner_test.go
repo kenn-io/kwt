@@ -44,6 +44,29 @@ func TestRequireGitVersion(t *testing.T) {
 	}
 }
 
+func TestBootstrapEnvironmentContract(t *testing.T) {
+	if os.Getenv("KWT_TEST_BOOTSTRAP") != "1" {
+		t.Skip("requires the outer test bootstrap")
+	}
+	for _, key := range []string{"GOPRIVATE", "GONOPROXY", "GONOSUMDB", "MY_TOKEN"} {
+		if _, ok := os.LookupEnv(key); ok {
+			t.Fatalf("%s reached the test process", key)
+		}
+	}
+	for key, want := range map[string]string{
+		"GOAUTH":      "off",
+		"GOENV":       "off",
+		"GOPROXY":     "https://proxy.golang.org",
+		"GOSUMDB":     "sum.golang.org",
+		"GOTOOLCHAIN": "auto",
+		"GOVCS":       "*:off",
+	} {
+		if got := os.Getenv(key); got != want {
+			t.Fatalf("%s = %q, want %q", key, got, want)
+		}
+	}
+}
+
 func TestIsolatedEnvironmentReplacesGitKWTAndProxyState(t *testing.T) {
 	scratch := t.TempDir()
 	base := []string{
