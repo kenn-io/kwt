@@ -100,7 +100,7 @@ func run(
 	commandArgs := append([]string{"run", "./internal/testharness/cmd", "--"}, args...)
 	command := exec.CommandContext(ctx, "go", commandArgs...)
 	command.Dir = repositoryRoot
-	command.Env = bootstrapEnvironment(os.Environ(), scratch)
+	command.Env = bootstrapEnvironment(os.Environ(), scratch, workingDirectory)
 	command.Stdin = stdin
 	command.Stdout = stdout
 	command.Stderr = stderr
@@ -115,7 +115,7 @@ func run(
 	return 1
 }
 
-func bootstrapEnvironment(base []string, scratch string) []string {
+func bootstrapEnvironment(base []string, scratch, workingDirectory string) []string {
 	values := make(map[string]string, len(allowedEnvironment))
 	callerKwtHome := ""
 	for _, entry := range base {
@@ -126,6 +126,9 @@ func bootstrapEnvironment(base []string, scratch string) []string {
 		key = strings.ToUpper(key)
 		if key == "KWT_HOME" {
 			callerKwtHome = value
+			if value != "" && !filepath.IsAbs(value) && !strings.HasPrefix(value, "~") {
+				callerKwtHome = filepath.Clean(filepath.Join(workingDirectory, value))
+			}
 		}
 		if _, allowed := allowedEnvironment[key]; allowed {
 			values[key] = value

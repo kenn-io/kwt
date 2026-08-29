@@ -32,7 +32,7 @@ func TestBootstrapEnvironmentUsesStrictAllowlist(t *testing.T) {
 		"GOPROXY=http://ambient-proxy",
 		"GOTOOLCHAIN=local",
 		"MY_TOKEN=secret",
-	}, scratch)
+	}, scratch, "/repository/tools/testbootstrap")
 
 	values := environmentMap(got)
 	for key, want := range map[string]string{
@@ -67,6 +67,36 @@ func TestBootstrapEnvironmentUsesStrictAllowlist(t *testing.T) {
 	}
 	if len(values) != len(got) {
 		t.Fatalf("bootstrap environment contains duplicate case-insensitive keys: %q", got)
+	}
+}
+
+func TestBootstrapEnvironmentResolvesRelativeCallerKwtHome(t *testing.T) {
+	workingDirectory := t.TempDir()
+	t.Chdir(workingDirectory)
+
+	values := environmentMap(bootstrapEnvironment(
+		[]string{"KWT_HOME=config/kwt"},
+		t.TempDir(),
+		workingDirectory,
+	))
+
+	want := filepath.Join(workingDirectory, "config", "kwt")
+	if got := values[callerKwtHomeEnvironment]; got != want {
+		t.Fatalf("%s = %q, want %q", callerKwtHomeEnvironment, got, want)
+	}
+}
+
+func TestBootstrapTestsDoNotReceiveAmbientCredentials(t *testing.T) {
+	for _, key := range []string{
+		"KWT_HOME",
+		"KWT_GITHUB_TOKEN",
+		"KWT_FLEET_TOKEN",
+		"MY_TOKEN",
+		"GOPRIVATE",
+	} {
+		if _, ok := os.LookupEnv(key); ok {
+			t.Errorf("%s reached the bootstrap test process", key)
+		}
 	}
 }
 

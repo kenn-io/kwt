@@ -52,25 +52,30 @@ make build
 Focused package tests are useful while iterating:
 
 ```sh
-go -C tools/testbootstrap run . -- ./internal/tui
-go -C tools/testbootstrap run . -- ./internal/config ./internal/cmd ./internal/tui
+make test TEST_PACKAGES=./internal/tui
+make test TEST_PACKAGES="./internal/config ./internal/cmd ./internal/tui"
 ```
 
-The dependency-free bootstrap starts before Go loads kwt's toolchain, modules,
-or test harness. It does not inherit ambient proxies, Git settings, Go
-authentication, private-module settings, kwt variables, or non-platform custom
-token variables. If `fleet.token_env` names a required platform variable such
-as `PATH`, `HOME`, or `LANG`, the runner stops before module preparation or
-tests. Root toolchain and module downloads use `proxy.golang.org` and
-`sum.golang.org`; private and regional module mirrors are intentionally not used
-by test commands.
+The supported Make and CI entrypoints start the dependency-free bootstrap from
+an explicit platform and toolchain environment. Bootstrap compilation and its
+own tests do not inherit ambient proxies, Git settings, Go authentication,
+private-module settings, `KWT_HOME`, or custom token variables. Root
+toolchain and module downloads use `proxy.golang.org` and `sum.golang.org`;
+private and regional module mirrors are intentionally not used by test
+commands.
+
+The bootstrap passes the caller's `KWT_HOME` only to the inner runner so it can
+identify the configured `fleet.token_env`. If that setting names a required
+platform variable such as `PATH`, `HOME`, or `LANG`, the runner stops before
+module preparation or tests. A relative `KWT_HOME` is resolved before the
+runner changes to the repository root.
 
 The inner test runner requires Git 2.32 or newer. After modules are available,
 it isolates kwt and Git state, restricts inherited Git commands to local file
 transport, and records requests from proxy-aware HTTP clients. Direct sockets,
 custom transports, and subprocesses that replace the guarded environment are
 outside this boundary; it is not an operating-system network sandbox. Use the
-bootstrap for focused runs as well as `make test`.
+documented Make entrypoints rather than invoking the Go bootstrap directly.
 
 ## OpenSSH projection maintenance
 
