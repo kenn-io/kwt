@@ -421,12 +421,10 @@ func writeAskpassFrame(writer io.Writer, value string) error {
 	if len(value) > service.MaxOperationResponseBytes {
 		return errors.New("askpass frame is too large")
 	}
-	header := make([]byte, 4)
-	binary.BigEndian.PutUint32(header, uint32(len(value)))
-	if _, err := writer.Write(header); err != nil {
-		return err
-	}
-	_, err := io.WriteString(writer, value)
+	frame := make([]byte, 4+len(value))
+	binary.BigEndian.PutUint32(frame, uint32(len(value)))
+	copy(frame[4:], value)
+	_, err := writer.Write(frame)
 	return err
 }
 

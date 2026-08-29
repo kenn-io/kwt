@@ -243,6 +243,35 @@ func TestAskpassHelperIgnoresOrdinaryKwtInvocation(t *testing.T) {
 	assert.Equal(t, 0, exitCode)
 }
 
+// A frame must reach the socket in one write. The server treats a zero-length
+// hint frame as complete after its header and may respond and close before a
+// separate empty payload write, which then fails with EPIPE and aborts the
+// helper after an already-successful exchange.
+func TestWriteAskpassFrameWritesEachFrameAtomically(t *testing.T) {
+	var writer countingFrameWriter
+
+	require.NoError(t, writeAskpassFrame(&writer, ""))
+	require.NoError(t, writeAskpassFrame(&writer, "Password:"))
+
+	assert.Equal(t, 2, writer.writes)
+	assert.Equal(
+		t,
+		append([]byte{0, 0, 0, 0, 0, 0, 0, 9}, []byte("Password:")...),
+		writer.data,
+	)
+}
+
+type countingFrameWriter struct {
+	writes int
+	data   []byte
+}
+
+func (w *countingFrameWriter) Write(p []byte) (int, error) {
+	w.writes++
+	w.data = append(w.data, p...)
+	return len(p), nil
+}
+
 func TestAskpassHelperSubprocessReturnsPromptResponse(t *testing.T) {
 	transport, err := NewAskpass(context.Background(), t.TempDir(), AskpassOptions{
 		Version:    supportedAskpassVersion(),
