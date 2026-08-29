@@ -59,7 +59,12 @@ func TestIsolatedEnvironmentReplacesGitKWTAndProxyState(t *testing.T) {
 		"no_proxy=old-host.example",
 	}
 
-	got := isolatedEnvironment(base, scratch, "127.0.0.1:43123")
+	got := isolatedEnvironment(
+		base,
+		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN"},
+		scratch,
+		"127.0.0.1:43123",
+	)
 
 	assertEnvironmentValue(t, got, "HOME", "/developer/home")
 	assertEnvironmentValue(t, got, "PATH", "/developer/bin")
@@ -87,7 +92,11 @@ func TestPreparationEnvironmentKeepsCallerProxyAndOmitsTransportLimit(t *testing
 		"GIT_WORK_TREE=/developer/repository",
 	}
 
-	got := preparationEnvironment(base, scratch)
+	got := preparationEnvironment(
+		base,
+		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN"},
+		scratch,
+	)
 
 	assertEnvironmentValue(t, got, "HOME", "/developer/home")
 	assertEnvironmentValue(t, got, "HTTP_PROXY", "http://module-proxy.example")
@@ -97,6 +106,27 @@ func TestPreparationEnvironmentKeepsCallerProxyAndOmitsTransportLimit(t *testing
 	assertEnvironmentValue(t, got, "GIT_TERMINAL_PROMPT", "0")
 	assertEnvironmentMissing(t, got, "GIT_ALLOW_PROTOCOL")
 	assertEnvironmentMissing(t, got, "GIT_WORK_TREE")
+}
+
+func TestProtectedEnvironmentNamesIncludeConfiguredFleetToken(t *testing.T) {
+	kwtHome := t.TempDir()
+	t.Setenv("KWT_HOME", kwtHome)
+	if err := os.WriteFile(
+		filepath.Join(kwtHome, "config.toml"),
+		[]byte("[fleet]\ntoken_env = 'CUSTOM_FLEET_TOKEN'\n"),
+		0o600,
+	); err != nil {
+		t.Fatalf("write global config: %v", err)
+	}
+
+	got, err := protectedEnvironmentNames()
+	if err != nil {
+		t.Fatalf("protectedEnvironmentNames: %v", err)
+	}
+	want := "KWT_GITHUB_TOKEN\nKWT_FLEET_TOKEN\nCUSTOM_FLEET_TOKEN"
+	if strings.Join(got, "\n") != want {
+		t.Fatalf("protected environment names = %q, want %q", got, want)
+	}
 }
 
 func TestDenyProxyRecordsAndRejectsHTTPAndConnect(t *testing.T) {
@@ -168,7 +198,15 @@ func TestRunRejectsGitOlderThan232BeforeGoCommands(t *testing.T) {
 	}
 	var stderr bytes.Buffer
 
-	exitCode := runWith(context.Background(), []string{"./..."}, io.Discard, &stderr, []string{"HOME=/developer/home"}, execute)
+	exitCode := runWith(
+		context.Background(),
+		[]string{"./..."},
+		io.Discard,
+		&stderr,
+		[]string{"HOME=/developer/home"},
+		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN"},
+		execute,
+	)
 
 	if exitCode == 0 {
 		t.Fatal("runWith exit code = 0, want failure")
@@ -178,6 +216,55 @@ func TestRunRejectsGitOlderThan232BeforeGoCommands(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "git 2.32 or newer is required") {
 		t.Fatalf("stderr = %q, want Git version requirement", stderr.String())
+	}
+}
+
+func TestRunDoesNotForwardProtectedEnvironment(t *testing.T) {
+	protectedNames := []string{
+		"KWT_GITHUB_TOKEN",
+		"KWT_FLEET_TOKEN",
+		"CUSTOM_FLEET_TOKEN",
+	}
+	var commands []string
+	execute := func(
+		_ context.Context,
+		environment []string,
+		_, _ io.Writer,
+		name string,
+		args ...string,
+	) (string, error) {
+		for _, protectedName := range protectedNames {
+			assertEnvironmentMissing(t, environment, protectedName)
+		}
+		command := strings.Join(append([]string{name}, args...), " ")
+		commands = append(commands, command)
+		if command == "git version" {
+			return "git version 2.55.0", nil
+		}
+		return "", nil
+	}
+	var stderr bytes.Buffer
+
+	exitCode := runWith(
+		context.Background(),
+		[]string{"./internal/example"},
+		io.Discard,
+		&stderr,
+		[]string{
+			"HOME=/developer/home",
+			"KWT_GITHUB_TOKEN=github-secret",
+			"kwt_fleet_token=fleet-secret",
+			"Custom_Fleet_Token=custom-secret",
+		},
+		protectedNames,
+		execute,
+	)
+
+	if exitCode != 0 {
+		t.Fatalf("runWith exit code = %d, stderr = %q", exitCode, stderr.String())
+	}
+	if got, want := strings.Join(commands, "\n"), "git version\ngo mod download\ngo test ./internal/example"; got != want {
+		t.Fatalf("commands = %q, want %q", got, want)
 	}
 }
 
@@ -222,6 +309,7 @@ func TestRunFailsAfterSuccessfulTestsAttemptOutboundHTTP(t *testing.T) {
 		io.Discard,
 		&stderr,
 		[]string{"HOME=/developer/home"},
+		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN"},
 		execute,
 	)
 
@@ -266,6 +354,7 @@ func TestRunFailsWhenTestsUseSharedHarnessKwtHome(t *testing.T) {
 		io.Discard,
 		&stderr,
 		[]string{"HOME=/developer/home"},
+		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN"},
 		execute,
 	)
 

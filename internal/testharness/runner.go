@@ -17,6 +17,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/credentials"
 )
 
 const minimumGitMinor = 32
@@ -91,7 +94,20 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:]
 	}
-	return runWith(ctx, args, stdout, stderr, os.Environ(), executeCommand)
+	protectedNames, err := protectedEnvironmentNames()
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "load kwt credential environment names: %v\n", err)
+		return 1
+	}
+	return runWith(ctx, args, stdout, stderr, os.Environ(), protectedNames, executeCommand)
+}
+
+func protectedEnvironmentNames() ([]string, error) {
+	snapshot, err := config.LoadGlobalSnapshot()
+	if err != nil {
+		return nil, err
+	}
+	return credentials.ProtectedNames(snapshot.Config), nil
 }
 
 func runWith(
@@ -100,6 +116,7 @@ func runWith(
 	stdout io.Writer,
 	stderr io.Writer,
 	environment []string,
+	protectedNames []string,
 	execute commandExecutor,
 ) int {
 	if len(args) == 0 {
@@ -129,7 +146,16 @@ func runWith(
 		return 1
 	}
 
-	exitCode := runPrepared(ctx, args, stdout, stderr, environment, scratch, execute)
+	exitCode := runPrepared(
+		ctx,
+		args,
+		stdout,
+		stderr,
+		environment,
+		protectedNames,
+		scratch,
+		execute,
+	)
 	if err = cleanup(); err != nil {
 		_, _ = fmt.Fprintf(stderr, "remove test scratch directory: %v\n", err)
 		return 1
@@ -143,10 +169,11 @@ func runPrepared(
 	stdout io.Writer,
 	stderr io.Writer,
 	environment []string,
+	protectedNames []string,
 	scratch string,
 	execute commandExecutor,
 ) int {
-	preparationEnv := preparationEnvironment(environment, scratch)
+	preparationEnv := preparationEnvironment(environment, protectedNames, scratch)
 	versionOutput, err := execute(ctx, preparationEnv, io.Discard, stderr, "git", "version")
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "determine Git version: %v\n", err)
@@ -166,7 +193,7 @@ func runPrepared(
 		_, _ = fmt.Fprintf(stderr, "start outbound deny proxy: %v\n", err)
 		return 1
 	}
-	testEnv := isolatedEnvironment(environment, scratch, proxy.Address())
+	testEnv := isolatedEnvironment(environment, protectedNames, scratch, proxy.Address())
 	_, testErr := execute(ctx, testEnv, stdout, stderr, "go", append([]string{"test"}, args...)...)
 	closeErr := proxy.Close()
 	requests := proxy.Requests()
@@ -257,9 +284,9 @@ func requireGitVersion(output string) error {
 	return nil
 }
 
-func preparationEnvironment(base []string, scratch string) []string {
+func preparationEnvironment(base, protectedNames []string, scratch string) []string {
 	return appendOwnedEnvironment(
-		withoutEnvironment(base, func(key string) bool {
+		withoutEnvironment(credentials.StripEnvironment(base, protectedNames), func(key string) bool {
 			return strings.HasPrefix(strings.ToUpper(key), "GIT_") ||
 				strings.EqualFold(key, "KWT_HOME") ||
 				strings.EqualFold(key, "KWT_TEST_HARNESS")
@@ -269,9 +296,9 @@ func preparationEnvironment(base []string, scratch string) []string {
 	)
 }
 
-func isolatedEnvironment(base []string, scratch, proxyAddress string) []string {
+func isolatedEnvironment(base, protectedNames []string, scratch, proxyAddress string) []string {
 	return appendOwnedEnvironment(
-		withoutEnvironment(base, func(key string) bool {
+		withoutEnvironment(credentials.StripEnvironment(base, protectedNames), func(key string) bool {
 			upper := strings.ToUpper(key)
 			return strings.HasPrefix(upper, "GIT_") ||
 				strings.EqualFold(key, "KWT_HOME") ||

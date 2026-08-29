@@ -2261,11 +2261,12 @@ func TestTUIBackendCreateWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	repoPath := newTUITestRepo(t)
+	fixtureRoot := newShortTUITestRoot(t)
+	repoPath := newTUITestRepoAt(t, filepath.Join(fixtureRoot, "repo"))
 	addLocalTUIOrigin(t, repoPath)
 	cfg := &models.Config{
 		Fleet:    models.FleetConfig{Enabled: true},
-		Worktree: models.WorktreeConfig{BaseDir: filepath.Join(t.TempDir(), "worktrees"), AutoMkdir: true},
+		Worktree: models.WorktreeConfig{BaseDir: filepath.Join(fixtureRoot, "worktrees"), AutoMkdir: true},
 	}
 	published := 0
 	newFleetManifestBuilder = func() fleet.ManifestBuildProvider {
@@ -2372,10 +2373,11 @@ func TestTUIBackendExistingLocalBranchRemainsUnreviewed(t *testing.T) {
 }
 
 func TestTUIBackendWorktreeCreationUsesSelectedRepositoryConfig(t *testing.T) {
-	repoPath := newTUITestRepo(t)
+	fixtureRoot := newShortTUITestRoot(t)
+	repoPath := newTUITestRepoAt(t, filepath.Join(fixtureRoot, "repo"))
 	addLocalTUIOrigin(t, repoPath)
-	globalBase := filepath.Join(t.TempDir(), "global-worktrees")
-	selectedBase := filepath.Join(t.TempDir(), "selected-worktrees")
+	globalBase := filepath.Join(fixtureRoot, "global-worktrees")
+	selectedBase := filepath.Join(fixtureRoot, "selected-worktrees")
 	globalCfg := &models.Config{
 		Worktree: models.WorktreeConfig{BaseDir: globalBase, AutoMkdir: true},
 	}
@@ -3749,11 +3751,26 @@ func TestDiscoverLaunchRepoWorktreesRejectsRelativeDotlessRemote(t *testing.T) {
 func newTUITestRepo(t *testing.T) string {
 	t.Helper()
 
-	repoPath := filepath.Join(t.TempDir(), "repo")
+	return newTUITestRepoAt(t, filepath.Join(t.TempDir(), "repo"))
+}
+
+func newShortTUITestRoot(t *testing.T) string {
+	t.Helper()
+
+	root, err := os.MkdirTemp("", "kwt-tui-")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, os.RemoveAll(root))
+	})
+	return root
+}
+
+func newTUITestRepoAt(t *testing.T, repoPath string) string {
+	t.Helper()
+
 	runTUITestGit(t, "", "init", "-b", "main", repoPath)
 	runTUITestGit(t, repoPath, "config", "user.name", "Test User")
 	runTUITestGit(t, repoPath, "config", "user.email", "test@example.com")
-	runTUITestGit(t, repoPath, "config", "core.longpaths", "true")
 
 	require.NoError(t, os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("# Test Repository\n"), 0644))
 	runTUITestGit(t, repoPath, "add", ".")

@@ -58,7 +58,9 @@ go run ./internal/testharness/cmd -- ./internal/config ./internal/cmd ./internal
 
 The test runner requires Git 2.32 or newer. It downloads modules before the
 test boundary, then isolates kwt and Git state and fails if a test attempts an
-external Git or HTTP transport. Use it for focused runs as well as `make test`.
+external Git or HTTP transport. It removes kwt's built-in credential variables
+and the variable named by global `fleet.token_env` from both module preparation
+and the test process. Use it for focused runs as well as `make test`.
 
 ## OpenSSH projection maintenance
 
