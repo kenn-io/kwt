@@ -17,7 +17,7 @@ endif
 INSTALL_DIR ?= $(GO_PATH_FIRST)/bin
 VERCEL_SCOPE ?= kenn-software
 VERCEL_PROJECT ?= kwt-docs
-GO_TEST_RUNNER := go run ./internal/testharness/cmd --
+GO_TEST_RUNNER := go -C tools/testbootstrap run . --
 
 .PHONY: all build clean test test-verbose test-coverage lint fmt vet install help docs-install docs-assets docs-assets-test docs-build docs-serve docs-check docs-deploy
 
@@ -57,6 +57,7 @@ clean:
 ## test: Run tests
 test:
 	@echo "Running tests..."
+	@go -C tools/testbootstrap test ./...
 	@$(GO_TEST_RUNNER) ./...
 
 ## test-verbose: Run tests with verbose output

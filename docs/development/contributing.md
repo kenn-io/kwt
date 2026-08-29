@@ -52,15 +52,20 @@ make build
 Focused package tests are useful while iterating:
 
 ```sh
-go run ./internal/testharness/cmd -- ./internal/tui
-go run ./internal/testharness/cmd -- ./internal/config ./internal/cmd ./internal/tui
+go -C tools/testbootstrap run . -- ./internal/tui
+go -C tools/testbootstrap run . -- ./internal/config ./internal/cmd ./internal/tui
 ```
 
-The test runner requires Git 2.32 or newer. It downloads modules before the
-test boundary, then isolates kwt and Git state and fails if a test attempts an
-external Git or HTTP transport. It removes kwt's built-in credential variables
-and the variable named by global `fleet.token_env` from both module preparation
-and the test process. Use it for focused runs as well as `make test`.
+The dependency-free bootstrap starts before Go loads kwt's toolchain, modules,
+or test harness. It does not inherit ambient proxies, Git settings, Go
+authentication, private-module settings, kwt variables, or other custom token
+variables. Root toolchain and module downloads use `proxy.golang.org` and
+`sum.golang.org`; private and regional module mirrors are intentionally not
+used by test commands.
+
+The inner test runner requires Git 2.32 or newer. After modules are available,
+it isolates kwt and Git state and fails if a test attempts an external Git or
+HTTP transport. Use the bootstrap for focused runs as well as `make test`.
 
 ## OpenSSH projection maintenance
 

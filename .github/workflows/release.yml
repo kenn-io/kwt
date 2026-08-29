@@ -29,8 +29,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Test bootstrap
+        run: go -C tools/testbootstrap test ./...
+
       - name: Test
-        run: go run ./internal/testharness/cmd -- ./...
+        run: go -C tools/testbootstrap run . -- ./...
 
       - name: Release
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
