@@ -360,17 +360,14 @@ func resolveProjectForRegistration(path string) (models.Project, error) {
 		absolutePath = resolved
 	}
 	repositoryGit := git.New(absolutePath)
-	var mainPath string
 	candidateGit := git.New(filepath.Join(absolutePath, "main"))
 	containerPath, containerErr := candidateGit.GetBareContainerPath()
 	if containerErr == nil &&
 		containerPath != "" &&
 		utils.PathKey(containerPath) == utils.PathKey(absolutePath) {
 		repositoryGit = candidateGit
-		mainPath, err = repositoryGit.GetMainRepositoryPath()
-	} else {
-		mainPath, err = repositoryGit.GetMainRepositoryPath()
 	}
+	mainPath, err := repositoryGit.GetMainRepositoryPath()
 	if err != nil {
 		return models.Project{}, fmt.Errorf(
 			"%s is not an accessible Git repository",
