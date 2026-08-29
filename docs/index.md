@@ -19,9 +19,10 @@ hide:
       <a class="md-button" href="get-started/quickstart/">Quickstart</a>
     </div>
     <p class="kwt-hero__proof">
-      kwt powers worktree management in
-      <a href="https://ghosthub.ai"><strong>Ghosthub</strong></a>, a native terminal
-      for local and SSH-hosted sessions.
+      kwt powers Git worktrees in
+      <a href="https://ghosthub.ai"><strong>Ghosthub</strong></a>, which brings
+      tmux, Herdr, and Zellij sessions from your Mac and SSH hosts into one
+      native terminal.
     </p>
   </div>
   <figure class="kwt-hero__preview">
