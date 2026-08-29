@@ -537,9 +537,11 @@ cross-process mutation lock. It also performs generation-safe registry cleanup.
 Immediately before removal, it rejects a worktree used as the current working
 directory of a visible live process, including a process whose working
 directory is nested inside the worktree. The conflict lists the process IDs to
-stop. If the operating system refuses working-directory inspection for a live
-process owned by the current user, removal also fails closed with that PID.
-`--force` bypasses both process checks and Git's dirty-worktree refusal.
+stop. A process whose working directory the operating system refuses to
+disclose does not block removal: systemd user sessions always contain such
+processes (`systemd --user`, `(sd-pam)`), so only a working directory verified
+to be inside the worktree counts.
+`--force` bypasses the process check and Git's dirty-worktree refusal.
 The CLI and TUI retain selection, output, fleet publication, and tmux-session
 cleanup; stale inventory alone never authorizes deletion.
 Automation that has confirmed terminal-session state can add

@@ -335,11 +335,6 @@ func classifyRemovalError(err error, result RemovalResult) error {
 		details["reason"] = "process_working_directory_live"
 		return service.NewError(service.Conflict, processCondition.Error(), true, details, err)
 	}
-	var processInspection *worktreeProcessInspectionError
-	if errors.As(err, &processInspection) {
-		details["reason"] = "process_working_directory_indeterminate"
-		return service.NewError(service.Conflict, processInspection.Error(), true, details, err)
-	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return service.NewError(service.Busy, "worktree removal canceled", true, details, err)
 	}
