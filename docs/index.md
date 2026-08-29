@@ -18,6 +18,11 @@ hide:
       <a class="md-button md-button--primary" href="get-started/install/">Install kwt</a>
       <a class="md-button" href="get-started/quickstart/">Quickstart</a>
     </div>
+    <p class="kwt-hero__proof">
+      kwt powers worktree management in
+      <a href="https://ghosthub.ai"><strong>Ghosthub</strong></a>, a native terminal
+      for local and SSH-hosted sessions.
+    </p>
   </div>
   <figure class="kwt-hero__preview">
     <img

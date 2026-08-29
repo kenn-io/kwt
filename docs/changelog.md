@@ -5,12 +5,6 @@ description: Release history for kwt
 
 # Changelog
 
-Notable user-facing changes to kwt, grouped by release.
-
-## Unreleased
-
-No changes yet.
-
 ## 0.5.0
 
 <small>2026-08-28</small>

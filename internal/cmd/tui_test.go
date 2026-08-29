@@ -3753,6 +3753,7 @@ func newTUITestRepo(t *testing.T) string {
 	runTUITestGit(t, "", "init", "-b", "main", repoPath)
 	runTUITestGit(t, repoPath, "config", "user.name", "Test User")
 	runTUITestGit(t, repoPath, "config", "user.email", "test@example.com")
+	runTUITestGit(t, repoPath, "config", "core.longpaths", "true")
 
 	require.NoError(t, os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("# Test Repository\n"), 0644))
 	runTUITestGit(t, repoPath, "add", ".")

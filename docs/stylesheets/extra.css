@@ -96,7 +96,7 @@ body {
 .kwt-hero__copy h1 {
   margin: 0.25rem 0 1rem;
   max-width: 22ch;
-  font-size: clamp(2rem, 4vw, 3.25rem);
+  font-size: clamp(1.75rem, 3vw, 2.6rem);
   line-height: 1.05;
 }
 
@@ -121,6 +121,12 @@ body {
   flex-wrap: wrap;
   gap: 0.7rem;
   margin-top: 1.7rem;
+}
+
+.kwt-hero__proof {
+  margin: 0.85rem 0 0;
+  color: var(--md-default-fg-color--lighter);
+  font-size: 0.76rem;
 }
 
 .kwt-hero__preview {
