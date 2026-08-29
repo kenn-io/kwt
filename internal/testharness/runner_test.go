@@ -48,7 +48,10 @@ func TestBootstrapEnvironmentContract(t *testing.T) {
 	if os.Getenv("KWT_TEST_BOOTSTRAP") != "1" {
 		t.Skip("requires the outer test bootstrap")
 	}
-	for _, key := range []string{"GOPRIVATE", "GONOPROXY", "GONOSUMDB", "MY_TOKEN"} {
+	for _, key := range []string{
+		"GOPRIVATE", "GONOPROXY", "GONOSUMDB", "MY_TOKEN",
+		callerKwtHomeEnvironment,
+	} {
 		if _, ok := os.LookupEnv(key); ok {
 			t.Fatalf("%s reached the test process", key)
 		}

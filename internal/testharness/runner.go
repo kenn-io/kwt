@@ -20,9 +20,11 @@ import (
 
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/credentials"
+	"go.kenn.io/kwt/internal/utils"
 )
 
 const minimumGitMinor = 32
+const callerKwtHomeEnvironment = "KWT_TEST_CALLER_KWT_HOME"
 
 var gitVersionPattern = regexp.MustCompile(`^git version ([0-9]+)\.([0-9]+)(?:\.([0-9]+))?`)
 
@@ -103,11 +105,52 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 func protectedEnvironmentNames() ([]string, error) {
-	snapshot, err := config.LoadGlobalSnapshot()
+	snapshot, err := callerGlobalSnapshot()
 	if err != nil {
 		return nil, err
 	}
+	if os.Getenv("KWT_TEST_BOOTSTRAP") == "1" && snapshot.Config != nil {
+		tokenName := strings.TrimSpace(snapshot.Config.Fleet.TokenEnv)
+		if tokenName != "" && environmentContains(os.Environ(), tokenName) {
+			return nil, fmt.Errorf(
+				"fleet.token_env %q conflicts with the test bootstrap environment; choose a dedicated token variable",
+				tokenName,
+			)
+		}
+	}
 	return credentials.ProtectedNames(snapshot.Config), nil
+}
+
+func callerGlobalSnapshot() (*config.GlobalSnapshot, error) {
+	callerHome, bootstrap := os.LookupEnv(callerKwtHomeEnvironment)
+	if os.Getenv("KWT_TEST_BOOTSTRAP") != "1" || !bootstrap {
+		return config.LoadGlobalSnapshot()
+	}
+	if callerHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			callerHome = filepath.Join(".", ".config", "kwt")
+		} else {
+			callerHome = filepath.Join(home, ".config", "kwt")
+		}
+	} else {
+		expanded, err := utils.ExpandPath(callerHome)
+		if err != nil {
+			return nil, fmt.Errorf("resolve caller KWT_HOME: %w", err)
+		}
+		callerHome = expanded
+	}
+	return config.LoadGlobalSnapshotAt(callerHome)
+}
+
+func environmentContains(environment []string, name string) bool {
+	for _, entry := range environment {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok && strings.EqualFold(key, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func runWith(
@@ -289,7 +332,8 @@ func preparationEnvironment(base, protectedNames []string, scratch string) []str
 		withoutEnvironment(credentials.StripEnvironment(base, protectedNames), func(key string) bool {
 			return strings.HasPrefix(strings.ToUpper(key), "GIT_") ||
 				strings.EqualFold(key, "KWT_HOME") ||
-				strings.EqualFold(key, "KWT_TEST_HARNESS")
+				strings.EqualFold(key, "KWT_TEST_HARNESS") ||
+				strings.EqualFold(key, callerKwtHomeEnvironment)
 		}),
 		scratch,
 		"",
@@ -303,6 +347,7 @@ func isolatedEnvironment(base, protectedNames []string, scratch, proxyAddress st
 			return strings.HasPrefix(upper, "GIT_") ||
 				strings.EqualFold(key, "KWT_HOME") ||
 				strings.EqualFold(key, "KWT_TEST_HARNESS") ||
+				strings.EqualFold(key, callerKwtHomeEnvironment) ||
 				upper == "HTTP_PROXY" || upper == "HTTPS_PROXY" ||
 				upper == "ALL_PROXY" || upper == "NO_PROXY"
 		}),

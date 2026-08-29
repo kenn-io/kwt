@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,20 +36,21 @@ func TestBootstrapEnvironmentUsesStrictAllowlist(t *testing.T) {
 
 	values := environmentMap(got)
 	for key, want := range map[string]string{
-		"PATH":                "/tools",
-		"TEMP":                "/tmp",
-		"SYSTEMROOT":          `C:\Windows`,
-		"GOAUTH":              "off",
-		"GOENV":               "off",
-		"GOPROXY":             "https://proxy.golang.org",
-		"GOSUMDB":             "sum.golang.org",
-		"GOTOOLCHAIN":         "auto",
-		"GOVCS":               "*:off",
-		"GIT_CONFIG_GLOBAL":   filepath.Join(scratch, "gitconfig"),
-		"GIT_CONFIG_NOSYSTEM": "1",
-		"GIT_TERMINAL_PROMPT": "0",
-		"KWT_HOME":            filepath.Join(scratch, "kwt"),
-		"KWT_TEST_BOOTSTRAP":  "1",
+		"PATH":                   "/tools",
+		"TEMP":                   "/tmp",
+		"SYSTEMROOT":             `C:\Windows`,
+		"GOAUTH":                 "off",
+		"GOENV":                  "off",
+		"GOPROXY":                "https://proxy.golang.org",
+		"GOSUMDB":                "sum.golang.org",
+		"GOTOOLCHAIN":            "auto",
+		"GOVCS":                  "*:off",
+		"GIT_CONFIG_GLOBAL":      filepath.Join(scratch, "gitconfig"),
+		"GIT_CONFIG_NOSYSTEM":    "1",
+		"GIT_TERMINAL_PROMPT":    "0",
+		"KWT_HOME":               filepath.Join(scratch, "kwt"),
+		"KWT_TEST_BOOTSTRAP":     "1",
+		callerKwtHomeEnvironment: "/ambient/kwt",
 	} {
 		if gotValue := values[key]; gotValue != want {
 			t.Errorf("%s = %q, want %q", key, gotValue, want)
@@ -88,6 +90,52 @@ func TestBootstrapRemovesAmbientVariablesEndToEnd(t *testing.T) {
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("bootstrap integration: %v\n%s", err, output)
+	}
+}
+
+func TestBootstrapRejectsConfiguredTokenCollisions(t *testing.T) {
+	tests := []struct {
+		name  string
+		value func(*testing.T) string
+	}{
+		{name: "LANG", value: func(*testing.T) string { return "fleet-secret" }},
+		{name: "PATH", value: func(*testing.T) string { return os.Getenv("PATH") }},
+		{name: "HOME", value: func(*testing.T) string { return os.Getenv("HOME") }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kwtHome := t.TempDir()
+			if err := os.WriteFile(
+				filepath.Join(kwtHome, "config.toml"),
+				[]byte(fmt.Sprintf("[fleet]\ntoken_env = %q\n", tt.name)),
+				0o600,
+			); err != nil {
+				t.Fatalf("write global config: %v", err)
+			}
+			command := exec.Command(
+				"go", "run", ".", "--",
+				"-run", "^TestBootstrapEnvironmentContract$",
+				"./internal/testharness",
+			)
+			command.Env = replaceEnvironment(os.Environ(), map[string]string{
+				"GOAUTH":      "off",
+				"GOENV":       "off",
+				"GOPROXY":     "off",
+				"GOSUMDB":     "off",
+				"GOTOOLCHAIN": "local",
+				"KWT_HOME":    kwtHome,
+				tt.name:       tt.value(t),
+			})
+			output, err := command.CombinedOutput()
+			if err == nil {
+				t.Fatalf("bootstrap accepted fleet.token_env collision %q:\n%s", tt.name, output)
+			}
+			want := fmt.Sprintf("fleet.token_env %q conflicts with the test bootstrap environment", tt.name)
+			if !strings.Contains(string(output), want) {
+				t.Fatalf("bootstrap output = %q, want %q", output, want)
+			}
+		})
 	}
 }
 

@@ -14,6 +14,8 @@ import (
 	"strings"
 )
 
+const callerKwtHomeEnvironment = "KWT_TEST_CALLER_KWT_HOME"
+
 var allowedEnvironment = map[string]struct{}{
 	"APPDATA":           {},
 	"CGO_ENABLED":       {},
@@ -115,12 +117,16 @@ func run(
 
 func bootstrapEnvironment(base []string, scratch string) []string {
 	values := make(map[string]string, len(allowedEnvironment))
+	callerKwtHome := ""
 	for _, entry := range base {
 		key, value, ok := strings.Cut(entry, "=")
 		if !ok {
 			continue
 		}
 		key = strings.ToUpper(key)
+		if key == "KWT_HOME" {
+			callerKwtHome = value
+		}
 		if _, allowed := allowedEnvironment[key]; allowed {
 			values[key] = value
 		}
@@ -131,7 +137,7 @@ func bootstrapEnvironment(base []string, scratch string) []string {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	result := make([]string, 0, len(keys)+11)
+	result := make([]string, 0, len(keys)+12)
 	for _, key := range keys {
 		result = append(result, key+"="+values[key])
 	}
@@ -147,5 +153,6 @@ func bootstrapEnvironment(base []string, scratch string) []string {
 		"GIT_TERMINAL_PROMPT=0",
 		"KWT_HOME="+filepath.Join(scratch, "kwt"),
 		"KWT_TEST_BOOTSTRAP=1",
+		callerKwtHomeEnvironment+"="+callerKwtHome,
 	)
 }

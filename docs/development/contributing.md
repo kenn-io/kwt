@@ -58,14 +58,19 @@ go -C tools/testbootstrap run . -- ./internal/config ./internal/cmd ./internal/t
 
 The dependency-free bootstrap starts before Go loads kwt's toolchain, modules,
 or test harness. It does not inherit ambient proxies, Git settings, Go
-authentication, private-module settings, kwt variables, or other custom token
-variables. Root toolchain and module downloads use `proxy.golang.org` and
-`sum.golang.org`; private and regional module mirrors are intentionally not
-used by test commands.
+authentication, private-module settings, kwt variables, or non-platform custom
+token variables. If `fleet.token_env` names a required platform variable such
+as `PATH`, `HOME`, or `LANG`, the runner stops before module preparation or
+tests. Root toolchain and module downloads use `proxy.golang.org` and
+`sum.golang.org`; private and regional module mirrors are intentionally not used
+by test commands.
 
 The inner test runner requires Git 2.32 or newer. After modules are available,
-it isolates kwt and Git state and fails if a test attempts an external Git or
-HTTP transport. Use the bootstrap for focused runs as well as `make test`.
+it isolates kwt and Git state, restricts inherited Git commands to local file
+transport, and records requests from proxy-aware HTTP clients. Direct sockets,
+custom transports, and subprocesses that replace the guarded environment are
+outside this boundary; it is not an operating-system network sandbox. Use the
+bootstrap for focused runs as well as `make test`.
 
 ## OpenSSH projection maintenance
 
