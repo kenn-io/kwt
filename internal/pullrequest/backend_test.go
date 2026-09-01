@@ -230,6 +230,10 @@ func TestGitBackendImportedWorktreePreservesMergeConflictContents(t *testing.T) 
 	merge := exec.Command("git", "merge", "--no-edit", mainSHA)
 	merge.Dir = workspace.Path
 	merge.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=Test User",
+		"GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=Test User",
+		"GIT_COMMITTER_EMAIL=test@example.com",
 		"GIT_CONFIG_NOSYSTEM=1",
 	)
 	mergeOutput, err := merge.CombinedOutput()
