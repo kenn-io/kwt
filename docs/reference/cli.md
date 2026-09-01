@@ -12,9 +12,11 @@ CLI, tmux, and SSH boundaries should start with
 [Embed and connect kwt](../integrations/embedding.md). Pull-request imports have
 their own [protected automation contract](pull-requests.md).
 
-Kwt requires Git 2.20 or newer. `kwt doctor` and the `kwt prune --expired` or
-`--merged` policies require Git 2.31 or newer: maintenance inventory relies on
-`git worktree list --expire`, and structural repair uses `git worktree repair`.
+Kwt requires Git 2.20 or newer. `kwt pr import` requires Git 2.42.0 or newer on
+macOS and Linux, or Git for Windows 2.53.0.windows.3 or newer. `kwt doctor` and
+the `kwt prune --expired` or `--merged` policies require Git 2.31 or newer:
+maintenance inventory relies on `git worktree list --expire`, and structural
+repair uses `git worktree repair`.
 Workspace attachment requires tmux 2.1 or newer. Kwt identifies the current
 client's server with tmux's `#{pid}` format; it does not run a separate version
 preflight. A non-numeric PID response blocks attachment with tmux 2.1 guidance.

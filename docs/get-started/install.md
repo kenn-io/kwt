@@ -4,6 +4,8 @@ Choose a Go install, a release archive, or a source build. kwt supports:
 
 - macOS 13 or newer, Linux, and Windows;
 - Git 2.20 or newer;
+- Git 2.42.0 or newer on macOS and Linux, or Git for Windows 2.53.0.windows.3
+  or newer, for `kwt pr import`;
 - Git 2.31 or newer for `kwt doctor`, `kwt prune --expired`, and
   `kwt prune --merged`;
 - tmux 2.1 or newer for workspace launch and `kwt tmux`; and

@@ -5,6 +5,11 @@
 [Install kwt](install.md), then confirm that `kwt`, Git, and tmux are available
 in your terminal. You do not need to edit configuration before the first run.
 
+Kwt commands require Git 2.20 or newer. `kwt pr import` additionally requires
+Git 2.42.0 or newer on macOS and Linux, or Git for Windows 2.53.0.windows.3 or
+newer. `kwt doctor` and the `kwt prune --expired` or `--merged` policies require
+Git 2.31 or newer.
+
 Start from a Git repository that you want kwt to manage:
 
 ```sh

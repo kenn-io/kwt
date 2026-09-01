@@ -256,9 +256,11 @@ files from disk.
 Kwt requires Git 2.20 or newer. PR import uses per-worktree Git configuration
 to make plain `git push` target the PR head without changing push behavior in
 the main checkout, and checks that capability before it fetches refs, adds
-remotes, or creates a worktree. The `kwt doctor` command and explicit
-`kwt prune` policies require Git 2.31 or newer for their worktree inventory and
-repair operations.
+remotes, or creates a worktree. PR import also requires Git 2.42.0 or newer on
+macOS and Linux, or Git for Windows 2.53.0.windows.3 or newer, for its safe
+merge-driver behavior. The `kwt doctor` command and explicit `kwt prune`
+policies require Git 2.31 or newer for their worktree inventory and repair
+operations.
 
 ## Listing contract
 

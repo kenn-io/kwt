@@ -53,8 +53,9 @@ instructions.
 
 Requirements:
 
-- Git 2.20 or newer. `kwt doctor`, `kwt prune --expired`, and
-  `kwt prune --merged` require Git 2.31 or newer.
+- Git 2.20 or newer. `kwt pr import` requires Git 2.42.0 or newer on macOS
+  and Linux, or Git for Windows 2.53.0.windows.3 or newer. `kwt doctor`,
+  `kwt prune --expired`, and `kwt prune --merged` require Git 2.31 or newer.
 - tmux 2.1 or newer for workspace launch and `kwt tmux`.
 - Go 1.27 or newer when installing or building from source.
 - macOS 13 or newer, Linux, or Windows.

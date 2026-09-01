@@ -101,8 +101,10 @@ var prListCmd = &cobra.Command{
 var prImportCmd = &cobra.Command{
 	Use:   "import <pull-request>",
 	Short: "Import a pull request as a configured kwt workspace",
-	Args:  prExactArgs(1),
-	RunE:  withGracefulSignals(runPRImport),
+	Long: "Pull-request import requires Git 2.42.0 or newer on macOS and Linux, " +
+		"or Git for Windows 2.53.0.windows.3 or newer.",
+	Args: prExactArgs(1),
+	RunE: withGracefulSignals(runPRImport),
 }
 
 var prAttachCmd = &cobra.Command{

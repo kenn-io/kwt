@@ -7,6 +7,10 @@ description: Release history for kwt
 
 ## Unreleased
 
+- Imported pull-request worktrees now preserve both sides and diff3 markers
+  when a later merge encounters a text conflict. PR import now requires Git
+  2.42.0 or newer on macOS and Linux, or Git for Windows 2.53.0.windows.3 or
+  newer.
 - Recognize bare-container repositories where a `.bare/` control directory
   manages a checked-out `main/` worktree and flat sibling worktrees.
   `kwt projects add` accepts the container or any of its worktrees, `.bare/`
