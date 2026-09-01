@@ -75,6 +75,7 @@ func TestGitBackendImportedWorktreePreservesMergeConflictContents(t *testing.T) 
 		0o644,
 	))
 	runGit(t, projectRepo, "commit", "-am", "main change")
+	mainSHA := runGit(t, projectRepo, "rev-parse", "main")
 
 	runGit(t, projectRepo, "remote", "set-url", "origin", projectRepo)
 	runGit(t, projectRepo, "remote", "set-url", "--push", "origin", canonicalURL)
@@ -91,13 +92,13 @@ func TestGitBackendImportedWorktreePreservesMergeConflictContents(t *testing.T) 
 		_ = backend.Rollback(t.Context(), workspace)
 	})
 
-	merge := exec.Command("git", "merge", "--no-edit", "main")
+	merge := exec.Command("git", "merge", "--no-edit", mainSHA)
 	merge.Dir = workspace.Path
 	merge.Env = append(os.Environ(),
 		"GIT_CONFIG_NOSYSTEM=1",
 	)
-	_, err = merge.CombinedOutput()
-	require.Error(t, err, "the merge must report the overlapping change")
+	mergeOutput, err := merge.CombinedOutput()
+	require.Error(t, err, "the merge must report the overlapping change: %s", mergeOutput)
 
 	assert.Equal(t, "UU conflict.txt",
 		runGit(t, workspace.Path, "status", "--short"))
