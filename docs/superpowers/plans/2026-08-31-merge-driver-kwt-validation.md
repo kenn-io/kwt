@@ -40,10 +40,7 @@ func TestGitBackendImportedWorktreePreservesMergeConflictContents(t *testing.T) 
 	featureContent := "feature change\n"
 	mainContent := "main change\n"
 
-	gitConfigDir := t.TempDir()
-	globalConfig := filepath.Join(gitConfigDir, "global.gitconfig")
-	require.NoError(t, os.WriteFile(globalConfig, nil, 0o600))
-	t.Setenv("GIT_CONFIG_GLOBAL", globalConfig)
+	t.Setenv("HOME", t.TempDir())
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	projectRepo, backend := newBackendRepo(t)
 
@@ -79,8 +76,8 @@ func TestGitBackendImportedWorktreePreservesMergeConflictContents(t *testing.T) 
 	))
 	runGit(t, projectRepo, "commit", "-am", "main change")
 
-	runGit(t, projectRepo, "config", "url."+projectRepo+".insteadOf",
-		canonicalURL)
+	runGit(t, projectRepo, "remote", "set-url", "origin", projectRepo)
+	runGit(t, projectRepo, "remote", "set-url", "--push", "origin", canonicalURL)
 
 	pr := testPR(17, false)
 	pr.HeadSHA = headSHA
@@ -97,7 +94,6 @@ func TestGitBackendImportedWorktreePreservesMergeConflictContents(t *testing.T) 
 	merge := exec.Command("git", "merge", "--no-edit", "main")
 	merge.Dir = workspace.Path
 	merge.Env = append(os.Environ(),
-		"GIT_CONFIG_GLOBAL="+globalConfig,
 		"GIT_CONFIG_NOSYSTEM=1",
 	)
 	_, err = merge.CombinedOutput()
@@ -116,7 +112,7 @@ func TestGitBackendImportedWorktreePreservesMergeConflictContents(t *testing.T) 
 }
 ~~~
 
-Keep Project.Identity and the pull-request metadata canonical as github.com/acme/widget. The repository-local URL rewrite redirects that canonical fetch to the temporary repository. This exercises kit's same-repository identity comparison and kwt's post-import push validation without GitHub access.
+Keep Project.Identity and the pull-request metadata canonical as github.com/acme/widget. Point the trusted project's fetch origin at the temporary local repository and set its pushurl to the canonical GitHub URL. This exercises kit's same-repository identity comparison and kwt's post-import push validation without GitHub access.
 
 - [ ] **Step 2: Run the focused test and verify RED.**
 

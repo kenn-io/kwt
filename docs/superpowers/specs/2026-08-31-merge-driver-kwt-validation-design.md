@@ -32,13 +32,14 @@ imported worktree and inspect the actual Git status and file contents.
 
 The fixture will keep the public GitHub identity used by `Project.Identity` and
 the pull-request metadata so kwt's post-import push validation still runs. Its
-trusted project's `origin` will retain the canonical GitHub-shaped URL, while
-a repository-local `url.<temporary-repository>.insteadOf` rule redirects Git's
-fetches to the temporary local repository. The pull-request head clone URL will
-use that same canonical URL, so kit's same-repository identity comparison and
-kwt's normal tracking setup are exercised without a network request. The
-complete `internal/pullrequest` package is exercised in Linux CI; Windows CI
-does not select it, so no platform-specific skip is needed for this test.
+trusted project's `origin` will point to the temporary local repository for the
+same-repository fetch, while an explicit canonical GitHub-shaped `pushurl`
+keeps kwt's push validation on the trusted identity. The pull-request head
+clone URL will use that canonical URL, so kit's same-repository identity
+comparison and kwt's normal tracking setup are exercised without a network
+request. The complete `internal/pullrequest` package is exercised in Linux CI;
+Windows CI does not select it, so no platform-specific skip is needed for this
+test.
 
 The test must observe all of the issue's important user-visible behavior:
 
