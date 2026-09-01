@@ -169,6 +169,83 @@ func TestGitBackendDelegatesPullRequestLifecycleToKit(t *testing.T) {
 	assert.NotEmpty(t, workspace.SessionName)
 }
 
+func TestGitBackendImportedWorktreePreservesMergeConflictContents(t *testing.T) {
+	canonicalURL := "https://github.com/acme/widget.git"
+	baseContent := "base\n"
+	featureContent := "feature change\n"
+	mainContent := "main change\n"
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	projectRepo, backend := newBackendRepo(t)
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(projectRepo, ".gitattributes"),
+		[]byte("conflict.txt merge=untrusted\n"),
+		0o644,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(projectRepo, "conflict.txt"),
+		[]byte(baseContent),
+		0o644,
+	))
+	runGit(t, projectRepo, "add", ".gitattributes", "conflict.txt")
+	runGit(t, projectRepo, "commit", "-m", "add merge-driver fixture")
+	runGit(t, projectRepo, "config", "merge.untrusted.driver",
+		"f() { return 1; }; f")
+
+	runGit(t, projectRepo, "checkout", "-q", "-b", "feature/widgets")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(projectRepo, "conflict.txt"),
+		[]byte(featureContent),
+		0o644,
+	))
+	runGit(t, projectRepo, "commit", "-am", "feature change")
+	headSHA := runGit(t, projectRepo, "rev-parse", "HEAD")
+
+	runGit(t, projectRepo, "checkout", "-q", "main")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(projectRepo, "conflict.txt"),
+		[]byte(mainContent),
+		0o644,
+	))
+	runGit(t, projectRepo, "commit", "-am", "main change")
+
+	runGit(t, projectRepo, "remote", "set-url", "origin", projectRepo)
+	runGit(t, projectRepo, "remote", "set-url", "--push", "origin", canonicalURL)
+
+	pr := testPR(17, false)
+	pr.HeadSHA = headSHA
+	pr.Source.Repository.CloneURL = canonicalURL
+
+	workspace, err := backend.ImportPullRequest(
+		t.Context(), pr, "pr-17-feature-widgets",
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = backend.Rollback(t.Context(), workspace)
+	})
+
+	merge := exec.Command("git", "merge", "--no-edit", "main")
+	merge.Dir = workspace.Path
+	merge.Env = append(os.Environ(),
+		"GIT_CONFIG_NOSYSTEM=1",
+	)
+	_, err = merge.CombinedOutput()
+	require.Error(t, err, "the merge must report the overlapping change")
+
+	assert.Equal(t, "UU conflict.txt",
+		runGit(t, workspace.Path, "status", "--short"))
+	contents, err := os.ReadFile(filepath.Join(workspace.Path, "conflict.txt"))
+	require.NoError(t, err)
+	assert.Contains(t, string(contents), "<<<<<<< current")
+	assert.Contains(t, string(contents), "||||||| base")
+	assert.Contains(t, string(contents), "=======")
+	assert.Contains(t, string(contents), ">>>>>>> other")
+	assert.Contains(t, string(contents), featureContent)
+	assert.Contains(t, string(contents), mainContent)
+}
+
 func TestGitBackendMakesCredentialHelpersAvailableToLifecycle(t *testing.T) {
 	configDir := t.TempDir()
 	helper := filepath.Join(configDir, "credential-helper")
