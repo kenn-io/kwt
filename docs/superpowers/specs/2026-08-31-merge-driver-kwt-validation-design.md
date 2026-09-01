@@ -15,14 +15,30 @@ merge-driver implementation will be added to kwt.
 
 ## Design
 
-Update `go.kenn.io/kit` to the pseudo-version for kit PR #77 tip
-`baf69924c6cb25d6235e59fe98e6c46780cd387d`. Add an integration regression test
-in the pull-request backend test package. The test will use temporary local Git
-repositories for the trusted project and pull-request source, configure a
-tracked file to select a custom merge driver that returns failure, and invoke
-`GitBackend.ImportPullRequest` with the real kit lifecycle function. It will
-then perform a conflicting merge in the imported worktree and inspect the
-actual Git status and file contents.
+Update `go.kenn.io/kit` temporarily to the pseudo-version for kit PR #77 tip
+`baf69924c6cb25d6235e59fe98e6c46780cd387d`:
+`v0.22.1-0.20260831205235-baf69924c6cb`. This pseudo-version is for pre-release
+validation only. Because the PR will likely be squash-merged, its tip may not
+remain reachable from kit's main history. After kit is merged and released as
+`v0.23.0`, replace the pseudo-version with that released tag before the kwt PR
+merges, and rerun the focused and full checks.
+
+Add an integration regression test in the pull-request backend test package.
+The test will use temporary local Git repositories for the trusted project and
+pull-request source, configure a tracked file to select a custom merge driver
+that returns failure, and invoke `GitBackend.ImportPullRequest` with the real
+kit lifecycle function. It will then perform a conflicting merge in the
+imported worktree and inspect the actual Git status and file contents.
+
+The fixture will keep the public GitHub identity used by `Project.Identity` and
+the pull-request metadata so kwt's post-import push validation still runs. Its
+trusted project's `origin` will retain the canonical GitHub-shaped URL, while
+a repository-local `url.<temporary-repository>.insteadOf` rule redirects Git's
+fetches to the temporary local repository. The pull-request head clone URL will
+use that same canonical URL, so kit's same-repository identity comparison and
+kwt's normal tracking setup are exercised without a network request. The
+complete `internal/pullrequest` package is exercised in Linux CI; Windows CI
+does not select it, so no platform-specific skip is needed for this test.
 
 The test must observe all of the issue's important user-visible behavior:
 
@@ -36,20 +52,34 @@ repositories. It will not contact GitHub or depend on the developer's global
 Git configuration. Existing test helpers and the repository test harness will
 remain the source of process and environment isolation.
 
-Update the user-facing requirements so the general Git 2.20 floor remains,
-Git 2.31 remains required for doctor and prune policies, and pull-request
-imports are called out separately as requiring Git 2.42.0 or newer on macOS and
-Linux. The Git for Windows floor from kit's contract will be documented with
-the pull-request import requirement. Add an Unreleased changelog entry that
-describes preserved conflict contents and the higher import floor.
+Update the user-facing requirements in exactly these files: `README.md`,
+`docs/get-started/install.md`, `docs/get-started/quickstart.md`,
+`docs/reference/cli.md`, `docs/reference/pull-requests.md`, and
+`docs/changelog.md`. Keep the general Git 2.20 floor and the Git 2.31 floor for
+doctor and prune policies, and add a third exception for pull-request imports:
+Git 2.42.0 or newer on macOS and Linux, or Git for Windows
+2.53.0.windows.3 or newer. The pull-request reference must state this beside
+the per-worktree configuration explanation, since that paragraph otherwise
+promises support for the affected feature on Git 2.20. Add the same import
+floor to the `kwt pr`/`kwt pr import` help text in `internal/cmd/pr.go`, and add
+an Unreleased changelog entry describing preserved conflict contents and the
+higher import floor.
+
+The regression test will use a conflicting `git merge`, rather than a rebase.
+Both operations invoke Git's configured merge driver for the conflicted path;
+the merge gives the test a direct, deterministic assertion of the same
+current-side-only failure that the issue reports during rebase.
 
 ## Verification
 
 Use the focused backend test during development, with the failing test run
-before implementation or dependency wiring is complete. Then run the full
-repository test suite through `make test`, the repository build, lint, and the
-documentation checks that cover the changed requirements. Review the final
-diff and staged contents before committing.
+against kit v0.22.0 before dependency wiring is complete. Then update to the
+kit PR pseudo-version and verify that the same test passes. Before the kwt PR
+merges, replace that pseudo-version with kit v0.23.0 and rerun the focused test,
+`make test`, the repository build, lint, and `make docs-check`. `make docs-check`
+only proves that the documentation site builds; manually review every named
+version statement to catch a missed or inaccurate requirement. Review the
+final diff and staged contents before committing.
 
 ## Non-goals
 
