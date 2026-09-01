@@ -10,8 +10,8 @@
 
 ## Global Constraints
 
-- Validate first with go.kenn.io/kit pseudo-version v0.22.1-0.20260831205235-baf69924c6cb, resolved from kit PR #77 tip baf69924c6cb25d6235e59fe98e6c46780cd387d.
-- Before the kwt PR merges, replace that pseudo-version with released kit tag v0.23.0 and rerun the focused and full checks.
+- Kit PR #77 was merged at 6bef84f5bf0b2400a04f37c8f1284a6eef12b2a8 and released as go.kenn.io/kit v0.23.0.
+- Keep kwt on the released kit tag and rerun the focused and full checks before the kwt PR merges.
 - Preserve kwt's general Git 2.20 floor and its Git 2.31 floor for kwt doctor and prune policies.
 - Document the separate pull-request import floor: Git 2.42.0 or newer on macOS/Linux, or Git for Windows 2.53.0.windows.3 or newer.
 - Do not duplicate kit's merge-driver implementation or add a compatibility path for older Git versions.
@@ -150,18 +150,18 @@ backend so the missing conflict contents fail before the kit repair is used.
 
 **Interfaces:**
 - Consumes: the failing integration test from Task 1.
-- Produces: kwt builds against kit pseudo-version v0.22.1-0.20260831205235-baf69924c6cb, with the same test passing through the real kit lifecycle.
+- Produces: kwt builds against released kit v0.23.0, with the same test passing through the real kit lifecycle.
 
 - [ ] **Step 1: Update the Go module using Go tooling.**
 
 Run:
 
 ~~~sh
-go get go.kenn.io/kit@baf69924c6cb25d6235e59fe98e6c46780cd387d
+go get go.kenn.io/kit@v0.23.0
 go mod verify
 ~~~
 
-Confirm go.mod records exactly go.kenn.io/kit v0.22.1-0.20260831205235-baf69924c6cb and go.sum contains the matching module checksums. Do not hand-edit either file or run a broad dependency upgrade.
+Confirm go.mod records exactly go.kenn.io/kit v0.23.0 and go.sum contains only the matching current module checksum. Do not hand-edit either file or run a broad dependency upgrade.
 
 - [ ] **Step 2: Run the focused test and verify GREEN.**
 
@@ -180,9 +180,9 @@ Review the module diff and staged checks, then commit go.mod and go.sum with thi
 ~~~text
 fix: validate imported merge conflicts with kit tip
 
-Use the unreleased kit merge-driver repair while kwt#112 is validated. The
-pull-request backend now exercises the behavior that preserves both sides of
-an imported worktree conflict before kit is released.
+Use released kit v0.23.0 after validating its merge-driver repair. The
+pull-request backend exercises the behavior that preserves both sides of an
+imported worktree conflict before kwt is released.
 ~~~
 
 ### Task 3: Publish the new pull-request import requirement
@@ -259,8 +259,8 @@ the requirement.
 - Static checks: make vet and make lint
 
 **Interfaces:**
-- Consumes: the three implementation commits and the current kit pseudo-version.
-- Produces: fresh evidence for the regression, full test suite, build, static checks, and docs site.
+- Consumes: the three implementation commits and released kit v0.23.0.
+- Produces: fresh evidence for the regression, full test suite, build, static checks, and docs site against released kit v0.23.0.
 
 - [ ] **Step 1: Run the focused regression once more.**
 
@@ -307,7 +307,7 @@ Run the public-artifact scrub over all changed tests, docs, module files, and co
 
 - [ ] **Step 6: Record the release handoff.**
 
-Leave the branch on the kit PR pseudo-version while kit PR #77 is unreleased. After kit is released as v0.23.0, run:
+Kit PR #77 is released as v0.23.0. Keep the branch on that tag and run:
 
 ~~~sh
 go get go.kenn.io/kit@v0.23.0
@@ -320,7 +320,7 @@ make lint
 make docs-check
 ~~~
 
-Review go.mod and go.sum to confirm the pseudo-version is gone before the kwt PR merges. Do not merge kit or publish either PR as part of this task.
+Review go.mod and go.sum to confirm the pseudo-version is gone before the kwt PR merges. Do not merge kwt or publish its release as part of this task.
 
 - [ ] **Step 7: Check commit state.**
 
