@@ -800,6 +800,9 @@ func TestRegistryCreationLockReleaseRemovesLockFile(t *testing.T) {
 }
 
 func TestCreationLockMatchesPathRejectsUnlinkedFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows may not permit removing an open lock file")
+	}
 	lockPath := filepath.Join(t.TempDir(), ".creation-lock")
 	lock := flock.New(lockPath, flock.SetPermissions(0o600))
 	locked, err := lock.TryLock()
