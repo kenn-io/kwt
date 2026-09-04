@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -770,6 +771,51 @@ func TestRegistryCreationLockDistinguishesActiveAndAbandonedClaims(
 	require.NoError(t, err)
 	require.True(t, acquired)
 	require.NoError(t, releaseSecond())
+}
+
+func TestRegistryCreationLockReleaseRemovesLockFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows may not permit removing an open lock file")
+	}
+	registryDir := t.TempDir()
+	r := &Registry{
+		entries: make(map[string]*WorktreeEntry),
+		path:    filepath.Join(registryDir, "registry.json"),
+	}
+	worktreePath := filepath.Join(t.TempDir(), "creating-worktree")
+
+	for range 2 {
+		release, acquired, err := r.AcquireCreation(worktreePath)
+		require.NoError(t, err)
+		require.True(t, acquired)
+		matches, err := filepath.Glob(filepath.Join(registryDir, ".creation-*.lock"))
+		require.NoError(t, err)
+		require.Len(t, matches, 1)
+
+		require.NoError(t, release())
+		matches, err = filepath.Glob(filepath.Join(registryDir, ".creation-*.lock"))
+		require.NoError(t, err)
+		assert.Empty(t, matches)
+	}
+}
+
+func TestCreationLockMatchesPathRejectsUnlinkedFile(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), ".creation-lock")
+	lock := flock.New(lockPath, flock.SetPermissions(0o600))
+	locked, err := lock.TryLock()
+	require.NoError(t, err)
+	require.True(t, locked)
+	t.Cleanup(func() { require.NoError(t, lock.Unlock()) })
+
+	matches, err := creationLockMatchesPath(lock, lockPath)
+	require.NoError(t, err)
+	assert.True(t, matches)
+
+	require.NoError(t, os.Remove(lockPath))
+	require.NoError(t, os.WriteFile(lockPath, nil, 0o600))
+	matches, err = creationLockMatchesPath(lock, lockPath)
+	require.NoError(t, err)
+	assert.False(t, matches)
 }
 
 func TestRegistryReportsWhetherCreationOwnerIsActive(t *testing.T) {

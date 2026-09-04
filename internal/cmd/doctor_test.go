@@ -8,8 +8,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
+	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -161,6 +164,49 @@ func TestDoctorReadOnlyReportsFixInstruction(t *testing.T) {
 	assert.Zero(t, fixCalls)
 	assert.Contains(t, stdout.String(), "kwt doctor --fix")
 	assert.Contains(t, stderr.String(), "kwt: inspect worktrees")
+}
+
+func TestDoctorFixRemovesOnlyInactiveCreationLocks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows may not permit removing an open lock file")
+	}
+	resetDoctorCommandDeps(t)
+	doctorFix = true
+	home := t.TempDir()
+	inactivePath := filepath.Join(
+		home,
+		".creation-"+strings.Repeat("a", 64)+".lock",
+	)
+	activePath := filepath.Join(
+		home,
+		".creation-"+strings.Repeat("b", 64)+".lock",
+	)
+	unrelatedPath := filepath.Join(home, ".creation-not-a-kwt-lock.lock")
+	require.NoError(t, os.WriteFile(inactivePath, nil, 0o600))
+	require.NoError(t, os.WriteFile(unrelatedPath, nil, 0o600))
+	active := flock.New(activePath, flock.SetPermissions(0o600))
+	locked, err := active.TryLock()
+	require.NoError(t, err)
+	require.True(t, locked)
+	t.Cleanup(func() { require.NoError(t, active.Unlock()) })
+	reg, err := registry.NewAt(home)
+	require.NoError(t, err)
+	openDoctorRegistry = func() (doctorRegistry, error) { return reg, nil }
+	doctorInspect = func(
+		context.Context,
+		*models.Config,
+		[]config.ProjectRegistration,
+		[]*registry.WorktreeEntry,
+		func(string) (bool, error),
+	) (maintenance.Report, error) {
+		return maintenance.Report{}, nil
+	}
+	cmd, _, _ := doctorTestCommand()
+
+	require.NoError(t, runDoctor(cmd, nil))
+	assert.NoFileExists(t, inactivePath)
+	assert.FileExists(t, activePath)
+	assert.FileExists(t, unrelatedPath)
 }
 
 func TestDoctorHelpDescribesMaintenanceContract(t *testing.T) {
@@ -659,3 +705,4 @@ func (*fakeDoctorRegistry) AcquireCreation(string) (func() error, bool, error) {
 	return func() error { return nil }, true, nil
 }
 func (*fakeDoctorRegistry) CreationActive(string) (bool, error) { return false, nil }
+func (*fakeDoctorRegistry) CleanupCreationLocks() error         { return nil }

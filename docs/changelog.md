@@ -7,6 +7,12 @@ description: Release history for kwt
 
 ## Unreleased
 
+- Remove inactive per-worktree-path creation lock files on macOS and Linux
+  after ownership is released. `kwt doctor --fix` also clears leftovers from
+  earlier releases or interrupted processes while preserving locks that are
+  still held. Restart kwt processes after upgrading before running the cleanup;
+  mixed old and new lock protocols are not supported. Windows retains the
+  existing persistent-file behavior.
 - Imported pull-request worktrees now preserve both sides and diff3 markers
   when a later merge encounters a text conflict. PR import now requires Git
   2.42.0 or newer on macOS and Linux, or Git for Windows 2.53.0.windows.3 or

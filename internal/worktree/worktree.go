@@ -242,11 +242,11 @@ func (m *Manager) addUnreviewedSource(
 		)
 	}
 	defer func() {
-		if err := release(); err != nil && resultErr == nil {
-			resultErr = fmt.Errorf(
+		if err := release(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf(
 				"release remote-source creation lock: %w",
 				err,
-			)
+			))
 		}
 	}()
 

@@ -3,10 +3,14 @@ package registry
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,6 +47,11 @@ type Registry struct {
 	entries map[string]*WorktreeEntry // key is path
 	path    string
 }
+
+const (
+	creationLockPrefix = ".creation-"
+	creationLockSuffix = ".lock"
+)
 
 // New creates a new registry instance.
 func New() (*Registry, error) {
@@ -407,17 +416,129 @@ func (r *Registry) AcquireCreation(
 	pathHash := sha256.Sum256([]byte(PathKey(path)))
 	lockPath := filepath.Join(
 		filepath.Dir(r.path),
-		fmt.Sprintf(".creation-%x.lock", pathHash),
+		fmt.Sprintf("%s%x%s", creationLockPrefix, pathHash, creationLockSuffix),
 	)
-	lock := flock.New(lockPath, flock.SetPermissions(0600))
-	acquired, err := lock.TryLock()
+	lock, acquired, err := acquireCreationLock(lockPath)
 	if err != nil {
 		return nil, false, fmt.Errorf("lock worktree creation: %w", err)
 	}
 	if !acquired {
 		return nil, false, nil
 	}
-	return lock.Unlock, true, nil
+	return func() error { return releaseCreationLock(lock, lockPath) }, true, nil
+}
+
+func acquireCreationLock(lockPath string) (*flock.Flock, bool, error) {
+	const maxAttempts = 8
+	for range maxAttempts {
+		lock := flock.New(lockPath, flock.SetPermissions(0o600))
+		acquired, err := lock.TryLock()
+		if err != nil {
+			return nil, false, err
+		}
+		if !acquired {
+			return nil, false, nil
+		}
+		matches, err := creationLockMatchesPath(lock, lockPath)
+		if err != nil {
+			return nil, false, errors.Join(err, lock.Unlock())
+		}
+		if matches {
+			return lock, true, nil
+		}
+		if err := lock.Unlock(); err != nil {
+			return nil, false, err
+		}
+	}
+	return nil, false, fmt.Errorf("lock file identity changed during %d attempts", maxAttempts)
+}
+
+func creationLockMatchesPath(lock *flock.Flock, lockPath string) (bool, error) {
+	held, err := lock.Stat()
+	if err != nil {
+		return false, fmt.Errorf("inspect held lock file: %w", err)
+	}
+	current, err := os.Stat(lockPath)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect lock file path: %w", err)
+	}
+	return os.SameFile(held, current), nil
+}
+
+func releaseCreationLock(lock *flock.Flock, lockPath string) error {
+	var removeErr error
+	if runtime.GOOS != "windows" {
+		removeErr = os.Remove(lockPath)
+		if os.IsNotExist(removeErr) {
+			removeErr = nil
+		} else if removeErr != nil {
+			removeErr = fmt.Errorf("remove worktree creation lock: %w", removeErr)
+		}
+	}
+	unlockErr := lock.Unlock()
+	if unlockErr != nil {
+		unlockErr = fmt.Errorf("unlock worktree creation: %w", unlockErr)
+	}
+	return errors.Join(removeErr, unlockErr)
+}
+
+// CleanupCreationLocks removes inactive creation locks left by older kwt
+// versions or processes that exited without releasing ownership.
+func (r *Registry) CleanupCreationLocks() error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	dir := filepath.Dir(r.path)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("list worktree creation locks: %w", err)
+	}
+	for _, entry := range entries {
+		if !creationLockName(entry.Name()) {
+			continue
+		}
+		info, err := entry.Info()
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect worktree creation lock %s: %w", entry.Name(), err)
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		lockPath := filepath.Join(dir, entry.Name())
+		lock, acquired, err := acquireCreationLock(lockPath)
+		if err != nil {
+			return fmt.Errorf("inspect worktree creation lock %s: %w", entry.Name(), err)
+		}
+		if !acquired {
+			continue
+		}
+		if err := releaseCreationLock(lock, lockPath); err != nil {
+			return fmt.Errorf("clean worktree creation lock %s: %w", entry.Name(), err)
+		}
+	}
+	return nil
+}
+
+func creationLockName(name string) bool {
+	if !strings.HasPrefix(name, creationLockPrefix) ||
+		!strings.HasSuffix(name, creationLockSuffix) {
+		return false
+	}
+	digest := strings.TrimSuffix(
+		strings.TrimPrefix(name, creationLockPrefix),
+		creationLockSuffix,
+	)
+	if len(digest) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(digest)
+	return err == nil
 }
 
 // CreationActive reports whether another process currently owns path's
