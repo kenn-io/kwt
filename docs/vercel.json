@@ -1,0 +1,222 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "trailingSlash": true,
+  "redirects": [
+    {
+      "source": "/get-started/install/",
+      "destination": "/docs/get-started/install/",
+      "permanent": true
+    },
+    {
+      "source": "/get-started/install.md",
+      "destination": "/docs/get-started/install.md",
+      "permanent": true
+    },
+    {
+      "source": "/get-started/quickstart/",
+      "destination": "/docs/get-started/quickstart/",
+      "permanent": true
+    },
+    {
+      "source": "/get-started/quickstart.md",
+      "destination": "/docs/get-started/quickstart.md",
+      "permanent": true
+    },
+    {
+      "source": "/changelog/",
+      "destination": "/docs/changelog/",
+      "permanent": true
+    },
+    {
+      "source": "/changelog.md",
+      "destination": "/docs/changelog.md",
+      "permanent": true
+    },
+    {
+      "source": "/workflows/worktree-maintenance/",
+      "destination": "/docs/workflows/worktree-maintenance/",
+      "permanent": true
+    },
+    {
+      "source": "/workflows/worktree-maintenance.md",
+      "destination": "/docs/workflows/worktree-maintenance.md",
+      "permanent": true
+    },
+    {
+      "source": "/workflows/agent-workspaces/",
+      "destination": "/docs/workflows/agent-workspaces/",
+      "permanent": true
+    },
+    {
+      "source": "/workflows/agent-workspaces.md",
+      "destination": "/docs/workflows/agent-workspaces.md",
+      "permanent": true
+    },
+    {
+      "source": "/workflows/directory-workspaces/",
+      "destination": "/docs/workflows/directory-workspaces/",
+      "permanent": true
+    },
+    {
+      "source": "/workflows/directory-workspaces.md",
+      "destination": "/docs/workflows/directory-workspaces.md",
+      "permanent": true
+    },
+    {
+      "source": "/multi-machine-sync/",
+      "destination": "/docs/multi-machine-sync/",
+      "permanent": true
+    },
+    {
+      "source": "/multi-machine-sync.md",
+      "destination": "/docs/multi-machine-sync.md",
+      "permanent": true
+    },
+    {
+      "source": "/integrations/embedding/",
+      "destination": "/docs/integrations/embedding/",
+      "permanent": true
+    },
+    {
+      "source": "/integrations/embedding.md",
+      "destination": "/docs/integrations/embedding.md",
+      "permanent": true
+    },
+    {
+      "source": "/reference/cli/",
+      "destination": "/docs/reference/cli/",
+      "permanent": true
+    },
+    {
+      "source": "/reference/cli.md",
+      "destination": "/docs/reference/cli.md",
+      "permanent": true
+    },
+    {
+      "source": "/reference/pull-requests/",
+      "destination": "/docs/reference/pull-requests/",
+      "permanent": true
+    },
+    {
+      "source": "/reference/pull-requests.md",
+      "destination": "/docs/reference/pull-requests.md",
+      "permanent": true
+    },
+    {
+      "source": "/reference/configuration/",
+      "destination": "/docs/reference/configuration/",
+      "permanent": true
+    },
+    {
+      "source": "/reference/configuration.md",
+      "destination": "/docs/reference/configuration.md",
+      "permanent": true
+    },
+    {
+      "source": "/releases/",
+      "destination": "/docs/releases/",
+      "permanent": true
+    },
+    {
+      "source": "/releases.md",
+      "destination": "/docs/releases.md",
+      "permanent": true
+    },
+    {
+      "source": "/development/contributing/",
+      "destination": "/docs/development/contributing/",
+      "permanent": true
+    },
+    {
+      "source": "/development/contributing.md",
+      "destination": "/docs/development/contributing.md",
+      "permanent": true
+    },
+    {
+      "source": "/development/threat-model/",
+      "destination": "/docs/development/threat-model/",
+      "permanent": true
+    },
+    {
+      "source": "/development/threat-model.md",
+      "destination": "/docs/development/threat-model.md",
+      "permanent": true
+    },
+    {
+      "source": "/development/releasing/",
+      "destination": "/docs/development/releasing/",
+      "permanent": true
+    },
+    {
+      "source": "/development/releasing.md",
+      "destination": "/docs/development/releasing.md",
+      "permanent": true
+    },
+    {
+      "source": "/design/",
+      "destination": "/docs/design/",
+      "permanent": true
+    },
+    {
+      "source": "/design/index.md",
+      "destination": "/docs/design/index.md",
+      "permanent": true
+    },
+    {
+      "source": "/design/daemon/",
+      "destination": "/docs/design/daemon/",
+      "permanent": true
+    },
+    {
+      "source": "/design/daemon.md",
+      "destination": "/docs/design/daemon.md",
+      "permanent": true
+    },
+    {
+      "source": "/design/tui-projects/",
+      "destination": "/docs/design/tui-projects/",
+      "permanent": true
+    },
+    {
+      "source": "/design/tui-projects.md",
+      "destination": "/docs/design/tui-projects.md",
+      "permanent": true
+    },
+    {
+      "source": "/design/multi-machine-sync/",
+      "destination": "/docs/design/multi-machine-sync/",
+      "permanent": true
+    },
+    {
+      "source": "/design/multi-machine-sync.md",
+      "destination": "/docs/design/multi-machine-sync.md",
+      "permanent": true
+    },
+    {
+      "source": "/design/worktree-maintenance/",
+      "destination": "/docs/design/worktree-maintenance/",
+      "permanent": true
+    },
+    {
+      "source": "/design/worktree-maintenance.md",
+      "destination": "/docs/design/worktree-maintenance.md",
+      "permanent": true
+    },
+    {
+      "source": "/design/worktree-changes/",
+      "destination": "/docs/design/worktree-changes/",
+      "permanent": true
+    },
+    {
+      "source": "/design/worktree-changes.md",
+      "destination": "/docs/design/worktree-changes.md",
+      "permanent": true
+    },
+    {
+      "source": "/assets/:path*",
+      "destination": "/docs/assets/:path*",
+      "permanent": true
+    }
+  ]
+}

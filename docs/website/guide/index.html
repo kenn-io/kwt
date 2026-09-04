@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>The kwt guide — nine stops from register to embed</title>
+    <meta name="description" content="The kwt loop in nine stops: register a project, branch into a worktree, lay out the workspace, work in it, inspect what changed, import a pull request, clean up, sync across machines, and embed kwt in your own tools.">
+    <link rel="canonical" href="https://kwt.sh/guide/">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="alternate" type="text/markdown" href="https://kwt.sh/guide.md">
+    <link rel="stylesheet" href="/styles/site.css">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="The kwt guide — nine stops from register to embed">
+    <meta property="og:description" content="Register, branch, lay out, work, inspect, import, clean, sync, extend. The loop people and coding agents run against isolated Git worktrees.">
+    <meta property="og:url" content="https://kwt.sh/guide/">
+    <meta property="og:site_name" content="kwt">
+    <meta property="og:image" content="https://kwt.sh/docs/assets/og.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="The kwt guide — nine stops from register to embed">
+    <meta name="twitter:description" content="Register, branch, lay out, work, inspect, import, clean, sync, extend. The loop people and coding agents run against isolated Git worktrees.">
+    <meta name="twitter:image" content="https://kwt.sh/docs/assets/og.png">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="wordmark" href="/">
+        <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
+          <rect width="32" height="32" rx="6" fill="#07141b"/>
+          <g fill="none" stroke="#43d6c5" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 5.5v21"/><path d="M9 12h6q4 0 4 4v0"/><path d="M9 19h6q4 0 4 4v0"/>
+          </g>
+          <rect x="19" y="13.5" width="7" height="5" rx="1.2" fill="#43d6c5"/>
+          <rect x="19" y="20.5" width="7" height="5" rx="1.2" fill="#ffbd66"/>
+        </svg>
+        kwt<span class="tld">.sh</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="/guide/" aria-current="page">Guide</a>
+        <a href="/docs/">Docs</a>
+        <a class="repo" href="https://github.com/kenn-io/kwt">
+          <span class="sr-only">kwt on GitHub:</span>
+          <svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38
+              0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13
+              -.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07
+              -.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2
+              -.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27
+              c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0
+              3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0
+              .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+          </svg>
+          <span class="repo-meta">
+            <span class="repo-name">kenn-io/kwt</span>
+          </span>
+        </a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero compact" aria-labelledby="guide-title">
+        <p class="eyebrow">The guide</p>
+        <h1 id="guide-title">Nine stops from a fresh clone to a fleet of checkouts.</h1>
+        <p class="lede">The loop people and coding agents run against isolated worktrees. Every stop links into the <a href="/docs/">documentation</a> for exact commands, JSON fields, and configuration.</p>
+        <ol class="guide-nav">
+          <li><a href="#register">01 Register</a></li>
+          <li><a href="#branch">02 Branch</a></li>
+          <li><a href="#layout">03 Lay out</a></li>
+          <li><a href="#work">04 Work</a></li>
+          <li><a href="#inspect">05 Inspect</a></li>
+          <li><a href="#import">06 Import</a></li>
+          <li><a href="#clean">07 Clean</a></li>
+          <li><a href="#sync">08 Sync</a></li>
+          <li><a href="#extend">09 Extend</a></li>
+        </ol>
+      </section>
+
+      <ol class="guide-stops">
+        <li class="guide-stop" id="register">
+          <div class="guide-copy">
+            <h2>Register a project by running kwt in it.</h2>
+            <p>There is no init step. Run <code>kwt</code> inside a repository and it becomes a registered project: the dashboard opens with its primary checkout and any linked worktrees beside the other projects you have registered. A plain directory works too, and becomes a directory workspace with a tmux session and no Git behavior.</p>
+            <p>Registration lives in <code>registry.json</code> under <code>KWT_HOME</code>, next to <code>config.toml</code> and pull-request records. Nothing is written into the repository.</p>
+            <p><a href="/docs/get-started/quickstart/">Quickstart</a> · <a href="/docs/get-started/install/">Install</a> · <a href="/docs/workflows/directory-workspaces/">Directory workspaces</a></p>
+          </div>
+          <div class="guide-media">
+            <figure class="term">
+              <figcaption class="term-title"><span>first run</span></figcaption>
+              <pre><code><span class="ps1">$</span> <span class="cmd">cd ~/code/widget</span>
+<span class="ps1">$</span> <span class="cmd">kwt</span>
+<span class="cm"># widget is now a registered project; the dashboard opens</span>
+<span class="cm"># with main [primary] selected and every other project listed</span>
+
+<span class="ps1">$</span> <span class="cmd">kwt projects</span>
+<span class="out">github.com/acme/widget    ~/code/widget</span>
+<span class="out">github.com/acme/gadget    ~/code/gadget</span></code></pre>
+            </figure>
+          </div>
+        </li>
+
+        <li class="guide-stop" id="branch">
+          <div class="guide-copy">
+            <h2>Branch into a worktree of its own.</h2>
+            <p>Press <kbd>n</kbd> in the dashboard, or run <code>kwt add -b</code>, to create a branch, its isolated checkout, and its tmux workspace in one move. Your worktrees follow a configured base directory and naming rule, so the checkout lands where you expect without you naming a path.</p>
+            <p>Press <kbd>b</kbd>, or use <code>kwt add --from</code>, to check out a branch that already exists locally or on a remote. Those worktrees start inert: no hooks, no setup commands, no copied files, no workspace, until you look at them and open them yourself.</p>
+            <p><a href="/docs/workflows/worktree-maintenance/#create-or-import-a-worktree">Create or import a worktree</a> · <a href="/docs/reference/configuration/">Configuration</a></p>
+          </div>
+          <div class="guide-media">
+            <figure class="term">
+              <figcaption class="term-title"><span>yours, and someone else's</span></figcaption>
+              <pre><code><span class="ps1">$</span> <span class="cmd">kwt add -b feature/new-ui</span>
+<span class="cm"># branch created, checkout at ~/worktrees/widget-feature-new-ui,</span>
+<span class="cm"># workspace started with the current layout</span>
+
+<span class="ps1">$</span> <span class="cmd">kwt add --from origin/contrib-fix contrib-fix</span>
+<span class="cm"># checkout created, nothing run, nothing launched:</span>
+<span class="cm"># review it before you open it</span>
+<span class="ps1">$</span> <span class="cmd">kwt changes "$(kwt get contrib-fix)"</span>
+<span class="ps1">$</span> <span class="cmd">kwt open "$(kwt get contrib-fix)"</span></code></pre>
+            </figure>
+          </div>
+        </li>
+
+        <li class="guide-stop" id="layout">
+          <div class="guide-copy">
+            <h2>Lay out the workspace once.</h2>
+            <p>Name your agent commands under <code>[agents]</code>, compose them into a preset under <code>[[layouts.presets]]</code>, and every workspace that selects the preset opens with those panes already running. An empty pane string is a plain shell.</p>
+            <p>Layouts are opt-in. Select one with <code>--layout</code>, the <kbd>L</kbd> key, or <code>layouts.default</code>; the reserved name <code>none</code> asks for a blank single pane. A repository's own <code>.kwt.toml</code> can set a local default, once you have trusted it.</p>
+            <p><a href="/docs/workflows/agent-workspaces/#configure-a-layout">Configure a layout</a> · <a href="/docs/reference/configuration/">Configuration</a></p>
+          </div>
+          <div class="guide-media">
+            <figure class="term">
+              <figcaption class="term-title"><span>~/.config/kwt/config.toml</span></figcaption>
+              <pre><code><span class="key">[agents]</span>
+codex   = <span class="str">"codex"</span>
+roborev = <span class="str">"roborev tui"</span>
+
+<span class="key">[[layouts.presets]]</span>
+name    = <span class="str">"review"</span>
+arrange = <span class="str">"even-horizontal"</span>
+panes   = [<span class="str">"agent:codex"</span>, <span class="str">"agent:roborev"</span>, <span class="str">""</span>]
+
+<span class="cm"># then:</span>
+<span class="ps1">$</span> <span class="cmd">kwt add -b fix/flaky-status --layout review</span>
+<span class="ps1">$</span> <span class="cmd">kwt config set layouts.default review</span></code></pre>
+            </figure>
+          </div>
+        </li>
+
+        <li class="guide-stop" id="work">
+          <div class="guide-copy">
+            <h2>Work in it, attached or not.</h2>
+            <p>A person presses <kbd>enter</kbd> or runs <code>kwt open</code> to attach. An agent does not need tmux at all: <code>kwt exec</code> runs a command with the worktree as its working directory, and <code>kwt get</code> resolves the path for anything else.</p>
+            <p>Workspaces run on kwt's dedicated tmux server, <code>tmux -L kwt</code>, away from your personal sessions. A terminal client that owns its own attachment asks kwt to establish the session first with <code>--start-session --json</code> and then attaches to the endpoint kwt reports.</p>
+            <p><a href="/docs/workflows/agent-workspaces/#run-and-inspect-work">Run and inspect work</a> · <a href="/docs/reference/cli/#kwt-open">kwt open</a></p>
+          </div>
+          <div class="guide-media">
+            <figure class="term">
+              <figcaption class="term-title"><span>three ways in</span></figcaption>
+              <pre><code><span class="ps1">$</span> <span class="cmd">kwt open fix/flaky-status</span>
+<span class="cm"># attaches; creates the session with the layout if needed</span>
+
+<span class="ps1">$</span> <span class="cmd">kwt exec fix/flaky-status -- go test ./internal/status</span>
+<span class="out">ok      go.kenn.io/kwt/internal/status  1.204s</span>
+
+<span class="ps1">$</span> <span class="cmd">kwt open "$(kwt get fix/flaky-status)" --start-session --json</span>
+<span class="out">{ "session_name": "kwt-wt-widget-fix-flaky-status-…",</span>
+<span class="out">  "tmux_socket_name": "kwt", "tmux_attach_mode": "direct" }</span></code></pre>
+            </figure>
+          </div>
+        </li>
+
+        <li class="guide-stop" id="inspect">
+          <div class="guide-copy">
+            <h2>Read back exactly what changed.</h2>
+            <p><code>kwt status</code> summarizes every worktree across projects: branch, dirty, ahead, behind, activity. <code>kwt changes</code> lists the exact changed files in one worktree, staged and working-tree sides separately, with untracked files, renames, deletions, and conflicts.</p>
+            <p>Both are read-only. With <code>--json</code>, the result carries the worktree's <code>generation</code>, and you can pass <code>--expected-generation</code> to make kwt fail closed if the checkout you reviewed has since been replaced. <code>kwt list --json</code> is the inventory the rest of your tooling reads.</p>
+            <p><a href="/docs/workflows/worktree-maintenance/#inspect-current-state">Inspect current state</a> · <a href="/docs/reference/cli/#kwt-changes">kwt changes</a> · <a href="/docs/reference/cli/#kwt-list">kwt list</a></p>
+          </div>
+          <div class="guide-media">
+            <figure class="term">
+              <figcaption class="term-title"><span>generation-bound inspection</span></figcaption>
+              <pre><code><span class="ps1">$</span> <span class="cmd">kwt changes "$(kwt get fix/flaky-status)" \
+    --expected-repository github.com/acme/widget \
+    --expected-generation 0123456789abcdef… --json</span>
+<span class="out">{
+  "worktree": { "repository": "github.com/acme/widget", "path": "…", "generation": "0123456789abcdef…" },
+  "changes": {
+    "state": "modified",
+    "summary": { "modified": 1, "added": 0, "deleted": 0, "untracked": 1, "staged": 0, "conflicts": 0 },
+    "files": [
+      { "path": "internal/status/poll.go", "worktree": "modified" },
+      { "path": "internal/status/poll_test.go", "worktree": "untracked" }
+    ]
+  },
+  "observed_at": "2026-09-04T14:02:11Z"
+}</span></code></pre>
+            </figure>
+          </div>
+        </li>
+
+        <li class="guide-stop" id="import">
+          <div class="guide-copy">
+            <h2>Import a pull request behind a protected boundary.</h2>
+            <p>List a project's pull requests, pass the selected ID back, and kwt creates an inert worktree for it. The contributor branch's exact push destination is preserved, so a fix you push goes where the pull request expects. Repository setup and agent commands stay stopped until you choose to run them.</p>
+            <p>Attach only through <code>kwt pr attach</code>. Direct <code>kwt open</code> and the dashboard refuse imported pull-request workspaces; the protected command rechecks the live worktree and its recorded project before it creates or repairs the isolated session on a workspace-specific tmux socket.</p>
+            <p><a href="/docs/reference/pull-requests/">Pull-request automation</a> · <a href="/docs/reference/cli/#kwt-pr">kwt pr</a></p>
+          </div>
+          <div class="guide-media">
+            <figure class="term">
+              <figcaption class="term-title"><span>discover, import, inspect, attach</span></figcaption>
+              <pre><code><span class="ps1">$</span> <span class="cmd">kwt pr list --project github.com/acme/widget --state open --json</span>
+<span class="ps1">$</span> <span class="cmd">kwt pr import github:github.com/acme/widget#17 \
+    --project github.com/acme/widget --json</span>
+<span class="out">{ "workspace": { "path": "~/worktrees/widget-pr-17", … }, … }</span>
+<span class="ps1">$</span> <span class="cmd">kwt changes ~/worktrees/widget-pr-17</span>
+<span class="ps1">$</span> <span class="cmd">kwt pr attach ~/worktrees/widget-pr-17</span>
+<span class="cm"># kwt open on this path is refused; pr attach is the only door</span></code></pre>
+            </figure>
+          </div>
+        </li>
+
+        <li class="guide-stop" id="clean">
+          <div class="guide-copy">
+            <h2>Clean up with previews and named stops.</h2>
+            <p><code>kwt remove -b</code> removes a worktree and its branch, and refuses when the checkout is dirty or a live process is inside it, naming the process IDs. <code>kwt prune</code> needs an explicit policy, <code>--expired</code> or <code>--merged</code>, and <code>--dry-run</code> shows the complete decision set first. Merged pruning requires a confirmed merged pull request and keeps the local branch.</p>
+            <p><code>kwt doctor</code> finds broken backlinks, stale metadata, and registry drift without changing anything. <code>--fix</code> repairs only findings with one provable answer, rescans, and reports what still needs a person.</p>
+            <p><a href="/docs/workflows/worktree-maintenance/">Worktree lifecycle and maintenance</a> · <a href="/docs/reference/cli/#kwt-doctor">kwt doctor</a> · <a href="/docs/reference/cli/#kwt-prune">kwt prune</a></p>
+          </div>
+          <div class="guide-media">
+            <figure class="term">
+              <figcaption class="term-title"><span>preview, then act</span></figcaption>
+              <pre><code><span class="ps1">$</span> <span class="cmd">kwt remove --dry-run feature/new-ui</span>
+<span class="ps1">$</span> <span class="cmd">kwt remove -b feature/new-ui</span>
+
+<span class="ps1">$</span> <span class="cmd">kwt prune --merged --dry-run</span>
+<span class="out">[<span class="ok">would_remove</span>] pull request #23 is merged; the local branch is preserved</span>
+<span class="out">  ~/worktrees/widget-feature-search</span>
+<span class="out">Candidates: 1, removed: 0, would remove: 1, skipped: 0</span>
+<span class="ps1">$</span> <span class="cmd">kwt prune --merged</span>
+
+<span class="ps1">$</span> <span class="cmd">kwt doctor</span>
+<span class="ps1">$</span> <span class="cmd">kwt doctor --fix</span></code></pre>
+            </figure>
+          </div>
+        </li>
+
+        <li class="guide-stop" id="sync">
+          <div class="guide-copy">
+            <h2>See your worktrees on every machine.</h2>
+            <p>Turn on <code>[fleet]</code>, point each machine at a hub you run, and every machine publishes its worktree manifest. The dashboard then marks rows that exist only on another machine, heads that differ between machines, and where dirty files were last seen. Select a remote-only row and press <kbd>s</kbd> to create the same branch here.</p>
+            <p>Sync is advisory by design. kwt never transfers files or commits, clones repositories, deletes remote worktrees, or locks a branch elsewhere. The hub listens on loopback only; put a private TLS endpoint in front of it and keep the bearer token in a file, not in <code>config.toml</code>.</p>
+            <p><a href="/docs/multi-machine-sync/">Multi-machine sync</a> · <a href="/docs/design/multi-machine-sync/">Sync architecture</a></p>
+          </div>
+          <div class="guide-media">
+            <figure class="term">
+              <figcaption class="term-title"><span>hub and clients</span></figcaption>
+              <pre><code><span class="key">[fleet]</span>
+enabled    = true
+host_id    = <span class="str">"laptop"</span>
+hub_url    = <span class="str">"https://desk.tail.example"</span>
+token_file = <span class="str">"~/.config/kwt/fleet.token"</span>
+
+<span class="cm"># on the hub machine:</span>
+<span class="ps1">$</span> <span class="cmd">kwt sync serve</span>
+<span class="cm"># on each client:</span>
+<span class="ps1">$</span> <span class="cmd">kwt sync publish</span>
+<span class="ps1">$</span> <span class="cmd">kwt sync status</span></code></pre>
+            </figure>
+          </div>
+        </li>
+
+        <li class="guide-stop" id="extend">
+          <div class="guide-copy">
+            <h2>Build your own tools on the same lifecycle.</h2>
+            <p>Start with the CLI and its JSON: it preserves kwt's behavior and exit codes without a client reimplementing daemon discovery. A Go application can construct the inventory, removal, inspection, and SSH services in process from <code>go.kenn.io/kwt</code>. A terminal client that owns its attachment uses the tmux session endpoint.</p>
+            <p>Ghosthub embeds these services to manage projects, worktrees, pull-request imports, and tmux workspaces across local and SSH-hosted machines. It is one consumer of interfaces available to any client.</p>
+            <p><a href="/docs/integrations/embedding/">Embed and connect kwt</a> · <a href="/docs/design/">Design notes</a> · <a href="https://pkg.go.dev/go.kenn.io/kwt">Go package docs</a></p>
+          </div>
+          <div class="guide-media">
+            <figure class="diagram">
+              <img src="/assets/interface-map.svg" alt="The dashboard, CLI, Go package, tmux session endpoint, SSH routes, and embedding applications such as Ghosthub all share one kwt daemon and its registry under KWT_HOME">
+            </figure>
+          </div>
+        </li>
+      </ol>
+
+      <section class="site-section" aria-labelledby="next-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">Next</p>
+            <h2 id="next-title">The exact contracts live in the docs.</h2>
+          </div>
+          <div>
+            <p>Commands, JSON fields, exit statuses, configuration keys, the threat model, and the design notes behind each boundary. Every page has a Markdown twin at the same path with <code>.md</code>, and <a href="/llms.txt">llms.txt</a> indexes them for agents.</p>
+            <div class="actions">
+              <a class="button primary" href="/docs/">Open the documentation</a>
+              <a class="button" href="/docs/reference/cli/">CLI reference</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>Copyright 2026 Kenn Software LLC. Open source under Apache-2.0.</p>
+      <nav class="footer-links" aria-label="Footer navigation">
+        <a href="/guide.md">Markdown</a>
+        <a href="/llms.txt">llms.txt</a>
+        <a href="https://discord.gg/fDnmxB8Wkq">Discord</a>
+        <a href="https://github.com/kenn-io/kwt/blob/main/LICENSE">License</a>
+      </nav>
+    </footer>
+
+    <dialog data-lightbox-dialog aria-labelledby="lightbox-title">
+      <div class="dialog-header">
+        <p id="lightbox-title" data-lightbox-title>Documentation capture</p>
+        <button class="dialog-close" type="button" data-lightbox-close aria-label="Close image">Close</button>
+      </div>
+      <img alt="Expanded documentation capture">
+    </dialog>
+    <script type="module" src="/scripts/site.js"></script>
+  </body>
+</html>

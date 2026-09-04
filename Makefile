@@ -60,7 +60,7 @@ TEST_CLEAN_ENV := env -i \
 GO_TEST_BOOTSTRAP := $(TEST_CLEAN_ENV) go -C tools/testbootstrap test ./...
 GO_TEST_RUNNER := $(TEST_CLEAN_ENV) KWT_HOME="$(KWT_HOME)" go -C tools/testbootstrap run . --
 
-.PHONY: all build clean test test-verbose test-coverage lint fmt vet install help docs-install docs-assets docs-assets-test docs-build docs-serve docs-check docs-deploy
+.PHONY: all build clean test test-verbose test-coverage lint fmt vet install help docs-install docs-assets docs-assets-test docs-build docs-serve docs-preview docs-check docs-deploy
 
 # Default target
 all: clean build
@@ -143,8 +143,15 @@ docs-build: docs-assets
 docs-serve: docs-assets
 	@cd docs && uv run bash ./zensical-docs.sh serve
 
-## docs-check: Verify docs build
+## docs-preview: Serve the assembled site (website tier plus docs) locally
+docs-preview:
+	@python3 -m http.server 8000 --directory docs/site
+
+## docs-check: Verify docs build, Markdown twins, redirects, and site links
 docs-check: docs-assets-test docs-build
+	@cd docs && uv run --frozen python scripts/check_vercel_redirects.py
+	@cd docs && uv run --frozen python scripts/check_public_markdown_sources.py
+	@cd docs && uv run --frozen python scripts/check_built_site.py
 
 ## docs-deploy: Build docs and deploy to Vercel
 docs-deploy: docs-build

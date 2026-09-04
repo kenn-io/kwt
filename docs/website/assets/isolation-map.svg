@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 400" font-family="JetBrains Mono, ui-monospace, Menlo, monospace" font-size="13">
+  <title>One repository fans out into isolated worktrees, each with its own branch, tmux session, and agent, and one dashboard lists them all</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#235061"/>
+    </marker>
+  </defs>
+  <rect width="960" height="400" fill="#0b1d26"/>
+
+  <!-- repository -->
+  <g>
+    <rect x="36" y="150" width="200" height="100" rx="4" fill="#07141b" stroke="#235061"/>
+    <text x="52" y="176" fill="#5f7a82" font-size="11" letter-spacing="1">REPOSITORY</text>
+    <text x="52" y="200" fill="#e6f0f2" font-weight="600">acme/widget</text>
+    <text x="52" y="222" fill="#9db3ba">main [primary]</text>
+    <text x="52" y="240" fill="#5f7a82" font-size="11">~/code/widget</text>
+  </g>
+
+  <!-- fan-out -->
+  <g fill="none" stroke="#235061" stroke-width="1.5" marker-end="url(#arrow)">
+    <path d="M236 200 C 300 200, 300 78, 344 78"/>
+    <path d="M236 200 C 300 200, 300 200, 344 200"/>
+    <path d="M236 200 C 300 200, 300 322, 344 322"/>
+  </g>
+  <text x="262" y="188" fill="#5f7a82" font-size="11">kwt add -b</text>
+
+  <!-- worktrees -->
+  <g>
+    <rect x="346" y="40" width="320" height="76" rx="4" fill="#07141b" stroke="#235061"/>
+    <text x="362" y="63" fill="#e6f0f2" font-weight="600">fix/flaky-status</text>
+    <text x="362" y="84" fill="#9db3ba" font-size="12">widget-fix-flaky-status/</text>
+    <rect x="362" y="94" width="8" height="8" rx="4" fill="#43d6c5"/>
+    <text x="378" y="102" fill="#43d6c5" font-size="11">tmux -L kwt · live</text>
+    <text x="560" y="102" fill="#9db3ba" font-size="11">agent: codex</text>
+  </g>
+  <g>
+    <rect x="346" y="162" width="320" height="76" rx="4" fill="#07141b" stroke="#235061"/>
+    <text x="362" y="185" fill="#e6f0f2" font-weight="600">feature/new-ui</text>
+    <text x="362" y="206" fill="#9db3ba" font-size="12">widget-feature-new-ui/</text>
+    <rect x="362" y="216" width="8" height="8" rx="4" fill="#43d6c5"/>
+    <text x="378" y="224" fill="#43d6c5" font-size="11">tmux -L kwt · live</text>
+    <text x="560" y="224" fill="#9db3ba" font-size="11">agent: claude</text>
+  </g>
+  <g>
+    <rect x="346" y="284" width="320" height="76" rx="4" fill="#07141b" stroke="#235061"/>
+    <text x="362" y="307" fill="#e6f0f2" font-weight="600">pr/17 contributor-fix</text>
+    <text x="362" y="328" fill="#9db3ba" font-size="12">widget-pr-17/</text>
+    <rect x="362" y="338" width="8" height="8" rx="4" fill="#ffbd66"/>
+    <text x="378" y="346" fill="#ffbd66" font-size="11">inert · protected attach</text>
+    <text x="560" y="346" fill="#9db3ba" font-size="11">after review</text>
+  </g>
+
+  <!-- collect -->
+  <g fill="none" stroke="#235061" stroke-width="1.5" marker-end="url(#arrow)">
+    <path d="M666 78 C 705 78, 705 200, 730 200"/>
+    <path d="M666 200 L 730 200"/>
+    <path d="M666 322 C 705 322, 705 200, 730 200"/>
+  </g>
+
+  <!-- dashboard -->
+  <g>
+    <rect x="732" y="118" width="196" height="164" rx="4" fill="#07141b" stroke="#43d6c5"/>
+    <text x="748" y="142" fill="#5f7a82" font-size="11" letter-spacing="1">DASHBOARD</text>
+    <text x="748" y="164" fill="#e6f0f2" font-weight="600">kwt</text>
+    <text x="748" y="190" fill="#9db3ba" font-size="12">fix/flaky-status</text>
+    <text x="880" y="190" fill="#43d6c5" font-size="11">live</text>
+    <text x="748" y="212" fill="#9db3ba" font-size="12">feature/new-ui</text>
+    <text x="880" y="212" fill="#43d6c5" font-size="11">live</text>
+    <text x="748" y="234" fill="#9db3ba" font-size="12">pr/17</text>
+    <text x="864" y="234" fill="#5f7a82" font-size="11">offline</text>
+    <text x="748" y="256" fill="#9db3ba" font-size="12">main [primary]</text>
+    <text x="864" y="256" fill="#5f7a82" font-size="11">offline</text>
+  </g>
+  <text x="732" y="304" fill="#5f7a82" font-size="11">every project, one screen</text>
+</svg>

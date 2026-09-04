@@ -43,7 +43,7 @@ inert imports and protected attachment, and the
 Install the current release with Go:
 
 ```sh
-go install go.kenn.io/kwt/cmd/kwt@v0.5.0
+go install go.kenn.io/kwt/cmd/kwt@v0.5.1
 ```
 
 Prebuilt macOS, Linux, and Windows archives and checksums are available from
@@ -110,7 +110,7 @@ optional multi-machine settings.
 
 ## Documentation and releases
 
-The maintained documentation lives at [kwt.sh](https://kwt.sh/). Start with:
+The maintained documentation lives at [kwt.sh/docs](https://kwt.sh/docs/). Start with:
 
 - [Quickstart](docs/get-started/quickstart.md)
 - [CLI reference](docs/reference/cli.md)

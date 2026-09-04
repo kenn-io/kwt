@@ -2,6 +2,13 @@
 
 {% block extrahead %}
   {{ super() }}
+  {% if page and page.canonical_url %}
+    {% if page.canonical_url == config.site_url %}
+      <link rel="alternate" type="text/markdown" href="{{ page.canonical_url }}index.md">
+    {% elif page.canonical_url[-1:] == "/" %}
+      <link rel="alternate" type="text/markdown" href="{{ page.canonical_url[:-1] }}.md">
+    {% endif %}
+  {% endif %}
   {% if page.meta and page.meta.title %}
     {% set social_title = page.meta.title ~ " · " ~ config.site_name %}
   {% elif page.title and not page.is_homepage %}

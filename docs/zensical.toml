@@ -1,7 +1,7 @@
 [project]
 site_name = "kwt"
-site_url = "https://kwt.sh/"
-site_description = "A Git worktree manager with a terminal dashboard for people and a scriptable CLI for agents and other tools."
+site_url = "https://kwt.sh/docs/"
+site_description = "Technical documentation for kwt, a Git worktree manager with a terminal dashboard for people and a scriptable CLI for agents and other tools."
 site_author = "Kenn Software LLC"
 copyright = 'Copyright &copy; 2026 <a href="https://kenn.io">Kenn Software LLC</a>'
 docs_dir = "docs"
@@ -44,6 +44,9 @@ nav = [
     ] },
   ] },
 ]
+
+[project.extra]
+homepage = "/"
 
 [project.theme]
 variant = "modern"

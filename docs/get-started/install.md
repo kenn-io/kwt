@@ -15,10 +15,10 @@ The worktree-oriented CLI can still be used without tmux.
 
 ## Install with Go
 
-Install v0.5.0 with:
+Install v0.5.1 with:
 
 ```sh
-go install go.kenn.io/kwt/cmd/kwt@v0.5.0
+go install go.kenn.io/kwt/cmd/kwt@v0.5.1
 ```
 
 Go places the binary in `$(go env GOPATH)/bin` by default. Make sure that
@@ -37,7 +37,7 @@ go install go.kenn.io/kwt/cmd/kwt@latest
 ## Download a release archive
 
 The [GitHub Releases](https://github.com/kenn-io/kwt/releases) page provides
-v0.5.0 archives for:
+v0.5.1 archives for:
 
 - macOS 13 or later on Apple silicon and Intel;
 - Linux on ARM64 and AMD64; and

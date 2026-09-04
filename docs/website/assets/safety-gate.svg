@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 260" font-family="JetBrains Mono, ui-monospace, Menlo, monospace" font-size="13">
+  <title>A worktree created from an existing branch or pull request starts inert with no hooks, setup, copied files, or tmux; a person reviews it with kwt changes; only an explicit open or protected attach starts the workspace</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#235061"/>
+    </marker>
+  </defs>
+  <rect width="960" height="260" fill="#0b1d26"/>
+
+  <!-- stage 1: source -->
+  <g>
+    <rect x="28" y="70" width="212" height="120" rx="4" fill="#07141b" stroke="#235061"/>
+    <text x="44" y="94" fill="#5f7a82" font-size="11" letter-spacing="1">UNTRUSTED INPUT</text>
+    <text x="44" y="120" fill="#e6f0f2" font-weight="600">origin/contrib-fix</text>
+    <text x="44" y="140" fill="#e6f0f2" font-weight="600">pull request #17</text>
+    <text x="44" y="166" fill="#9db3ba" font-size="12">kwt add --from · kwt pr import</text>
+  </g>
+
+  <path d="M240 130 L282 130" fill="none" stroke="#235061" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- stage 2: inert -->
+  <g>
+    <rect x="284" y="56" width="236" height="148" rx="4" fill="#07141b" stroke="#ffbd66"/>
+    <text x="300" y="80" fill="#ffbd66" font-size="11" letter-spacing="1">INERT CHECKOUT</text>
+    <text x="300" y="106" fill="#9db3ba" font-size="12">no repository hooks</text>
+    <text x="300" y="126" fill="#9db3ba" font-size="12">no setup_commands</text>
+    <text x="300" y="146" fill="#9db3ba" font-size="12">no copy_files</text>
+    <text x="300" y="166" fill="#9db3ba" font-size="12">no tmux, no agents</text>
+    <text x="300" y="190" fill="#e6f0f2" font-size="12">push routing preserved</text>
+  </g>
+
+  <path d="M520 130 L562 130" fill="none" stroke="#235061" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- stage 3: review gate -->
+  <g>
+    <rect x="564" y="84" width="150" height="92" rx="4" fill="#07141b" stroke="#235061"/>
+    <text x="580" y="108" fill="#5f7a82" font-size="11" letter-spacing="1">REVIEW</text>
+    <text x="580" y="134" fill="#e6f0f2" font-weight="600">kwt changes</text>
+    <text x="580" y="156" fill="#9db3ba" font-size="12">a person decides</text>
+  </g>
+
+  <!-- gate bars -->
+  <g stroke="#43d6c5" stroke-width="2" stroke-linecap="round">
+    <path d="M736 100 L736 160"/>
+    <path d="M748 100 L748 160"/>
+  </g>
+  <path d="M714 130 L730 130" fill="none" stroke="#235061" stroke-width="1.5"/>
+  <path d="M754 130 L772 130" fill="none" stroke="#235061" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- stage 4: live -->
+  <g>
+    <rect x="774" y="56" width="160" height="148" rx="4" fill="#07141b" stroke="#43d6c5"/>
+    <text x="790" y="80" fill="#43d6c5" font-size="11" letter-spacing="1">WORKSPACE LIVE</text>
+    <text x="790" y="106" fill="#e6f0f2" font-weight="600">kwt open</text>
+    <text x="790" y="126" fill="#e6f0f2" font-weight="600">kwt pr attach</text>
+    <text x="790" y="152" fill="#9db3ba" font-size="12">layout, agents,</text>
+    <text x="790" y="170" fill="#9db3ba" font-size="12">setup run now,</text>
+    <text x="790" y="188" fill="#9db3ba" font-size="12">on your say-so</text>
+  </g>
+
+  <text x="480" y="236" fill="#5f7a82" font-size="11" text-anchor="middle">a fresh branch from kwt add -b skips the gate: it is yours, and it launches at once</text>
+</svg>
