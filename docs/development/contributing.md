@@ -127,6 +127,12 @@ documentation history. The docs targets fetch and materialize the required
 asset set into the ignored `docs/assets` directory before Zensical runs. Update
 and push that branch before building or deploying a refreshed screenshot.
 
+The dashboard capture on the product page is generated, not drawn.
+`make docs-screenshot` builds kwt, creates disposable repositories and
+worktrees under a private `KWT_HOME` and `TMUX_TMPDIR`, runs the real dashboard
+in tmux, and renders the pane with `freeze` to `docs/website/assets/dashboard.svg`.
+Rerun it whenever the dashboard's columns or footer change.
+
 ## Releases
 
 Version tags publish platform archives and checksums through GoReleaser. See

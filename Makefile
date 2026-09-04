@@ -60,7 +60,7 @@ TEST_CLEAN_ENV := env -i \
 GO_TEST_BOOTSTRAP := $(TEST_CLEAN_ENV) go -C tools/testbootstrap test ./...
 GO_TEST_RUNNER := $(TEST_CLEAN_ENV) KWT_HOME="$(KWT_HOME)" go -C tools/testbootstrap run . --
 
-.PHONY: all build clean test test-verbose test-coverage lint fmt vet install help docs-install docs-assets docs-assets-test docs-build docs-serve docs-preview docs-check docs-deploy
+.PHONY: all build clean test test-verbose test-coverage lint fmt vet install help docs-install docs-assets docs-assets-test docs-build docs-serve docs-preview docs-screenshot docs-check docs-deploy
 
 # Default target
 all: clean build
@@ -146,6 +146,10 @@ docs-serve: docs-assets
 ## docs-preview: Serve the assembled site (website tier plus docs) locally
 docs-preview:
 	@python3 -m http.server 8000 --directory docs/site
+
+## docs-screenshot: Regenerate the product-page dashboard capture from synthetic repos
+docs-screenshot:
+	@bash docs/screenshots/generate-tui.sh
 
 ## docs-check: Verify docs build, Markdown twins, redirects, and site links
 docs-check: docs-assets-test docs-build

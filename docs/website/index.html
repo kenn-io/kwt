@@ -85,19 +85,7 @@
         <p class="lede">kwt is a Git worktree manager with a terminal dashboard for people and a scriptable CLI for coding agents and other tools. It creates isolated checkouts, opens their tmux workspaces, shows their current state, and cleans them up safely, <strong>across all your projects</strong>.</p>
         <figure class="dash">
           <figcaption class="term-title"><span>kwt · the dashboard</span><span>every registered project, one screen</span></figcaption>
-          <pre><code><span class="b">kwt</span> · 4 worktrees · 2 repos              <span class="h">P project:widget  p filter:all  / search  L layout:review  ? help</span>
-
-  <span class="h">REPO     BRANCH                  CHANGES    HEADS        ACTIVITY  WORKSPACE</span>
-  widget   fix/flaky-status        <span class="dirty">~3 ?1</span>      <span class="ahead">↑2</span>           2m        <span class="live">live</span>
-  widget   feature/new-ui          clean      local only   14m       <span class="live">live</span>
-  widget   pr/17 contributor-fix   clean      local only   1h        <span class="off">offline</span>
-<span class="sel">▸ widget   main [primary]          clean      local only   3d        <span class="off">offline</span></span>
-
-selected widget:main [primary] · layout review · workspace offline
-~/code/widget
-
-<span class="keys">↑↓ <b>move</b>  │ ↵ <b>attach</b>  │ c <b>shell</b>  │ P <b>project</b>  │ n <b>new</b>  │ b <b>branch</b>  │ L <b>layout</b>  │ d <b>delete</b>  │ K <b>kill</b>
-p <b>filter</b>  │ / <b>search</b>  │ r <b>refresh</b>  │ ? <b>help</b>  │ q <b>quit</b></span></code></pre>
+          <img src="/assets/dashboard.svg" width="849" height="265" alt="The kwt dashboard listing six worktrees across the widget and router repositories, with columns for repo, branch, changes, heads, activity, and workspace. fix/flaky-status has one modified and two untracked files and is one commit ahead; feature/new-ui has a live workspace; contrib/pr-17 is two commits behind.">
         </figure>
         <div class="install-matrix">
           <div class="install-row" data-install-command data-command="go install go.kenn.io/kwt/cmd/kwt@latest">

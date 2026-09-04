@@ -78,6 +78,8 @@ FORBIDDEN_SITE_DIRECTORIES = [
     "docs/website",
     "docs/overrides",
     "docs/scripts",
+    "screenshots",
+    "docs/screenshots",
 ]
 
 

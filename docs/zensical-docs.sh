@@ -86,6 +86,7 @@ tmp_config_base=""
     --exclude './website' \
     --exclude './overrides' \
     --exclude './scripts' \
+    --exclude './screenshots' \
     --exclude './llms.txt' \
     --exclude './vercel.json' \
     --exclude './pyproject.toml' \

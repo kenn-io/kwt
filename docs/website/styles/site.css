@@ -399,58 +399,13 @@ h3 {
   max-width: 62rem;
   border: 1px solid var(--rule-strong);
   background: var(--panel);
-  font-family: var(--mono);
-  font-size: 0.82rem;
-  line-height: 1.7;
   box-shadow: 0 2rem 4rem rgb(0 0 0 / 35%);
 }
 
-.dash pre {
-  overflow-x: auto;
-  margin: 0;
-  padding: 1.1rem 1.4rem 1.2rem;
-  color: var(--muted);
-}
-
-.dash .b {
-  color: var(--text);
-  font-weight: 700;
-}
-
-.dash .h {
-  color: var(--dim);
-  letter-spacing: 0.02em;
-}
-
-.dash .sel {
-  color: var(--text);
-  font-weight: 600;
-}
-
-.dash .live {
-  color: var(--carbon);
-}
-
-.dash .off {
-  color: var(--dim);
-}
-
-.dash .dirty,
-.dash .ahead {
-  color: var(--amber);
-}
-
-.dash .remote {
-  color: var(--carbon);
-}
-
-.dash .keys {
-  color: var(--dim);
-}
-
-.dash .keys b {
-  color: var(--muted);
-  font-weight: 400;
+.dash img {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
 /* --------------------------------------------------------- install row */
