@@ -221,13 +221,7 @@ kbd {
   font-family: var(--mono);
   font-size: 1.05rem;
   font-weight: 700;
-  letter-spacing: -0.03em;
   text-decoration: none;
-}
-
-.wordmark .tld {
-  color: var(--dim);
-  font-weight: 400;
 }
 
 main {
@@ -259,14 +253,7 @@ main {
   font-family: var(--mono);
   font-size: clamp(2.6rem, 6vw, 4.5rem);
   font-weight: 700;
-  letter-spacing: -0.05em;
   line-height: 1;
-}
-
-.hero-brand .tld {
-  color: var(--dim);
-  font-weight: 400;
-  letter-spacing: -0.02em;
 }
 
 h1,
