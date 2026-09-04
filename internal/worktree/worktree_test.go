@@ -40,8 +40,9 @@ type mockGit struct {
 }
 
 type mockRemoteSourceState struct {
-	entries        map[string]*registry.WorktreeEntry
-	creationActive bool
+	entries              map[string]*registry.WorktreeEntry
+	creationActive       bool
+	creationReleaseError error
 }
 
 type materializedAddError struct {
@@ -104,7 +105,7 @@ func (m *mockRemoteSourceState) AcquireCreation(
 	m.creationActive = true
 	return func() error {
 		m.creationActive = false
-		return nil
+		return m.creationReleaseError
 	}, true, nil
 }
 
@@ -623,6 +624,26 @@ func TestManagerAddTrackingRetainsMarkerWhenFailedCheckoutPathExists(t *testing.
 	require.True(t, ok, "a possibly materialized checkout must remain isolated")
 	assert.True(t, entry.UnreviewedRemoteSource)
 	assert.Empty(t, entry.CreationToken)
+}
+
+func TestManagerAddTrackingReportsOperationAndCreationReleaseErrors(t *testing.T) {
+	worktreePath := filepath.Join(t.TempDir(), "failed-worktree")
+	operationErr := errors.New("checkout failed")
+	releaseErr := errors.New("creation lock release failed")
+	state := &mockRemoteSourceState{creationReleaseError: releaseErr}
+	manager := New(&mockGit{addError: operationErr}, &models.Config{})
+	manager.openRemoteSourceState = func() (remoteSourceState, error) {
+		return state, nil
+	}
+
+	_, err := manager.AddTracking(
+		"feature/failure",
+		"refs/remotes/origin/feature/failure",
+		worktreePath,
+	)
+
+	require.ErrorIs(t, err, operationErr)
+	require.ErrorIs(t, err, releaseErr)
 }
 
 func TestManagerAddTrackingRejectsActiveCreationMarker(t *testing.T) {

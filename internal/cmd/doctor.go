@@ -25,6 +25,7 @@ type doctorRegistry interface {
 	maintenance.RegistryMutator
 	List() []*registry.WorktreeEntry
 	CreationActive(string) (bool, error)
+	CleanupCreationLocks() error
 }
 
 var (
@@ -195,6 +196,15 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 			cmd, "doctor", "inspection_failed",
 			fmt.Sprintf("open worktree registry: %v", err), 2, doctorJSON,
 		)
+	}
+	if doctorFix {
+		if err := reg.CleanupCreationLocks(); err != nil {
+			progress.Pause()
+			return writeMaintenanceError(
+				cmd, "doctor", "fix_failed",
+				fmt.Sprintf("clean worktree creation locks: %v", err), 2, doctorJSON,
+			)
+		}
 	}
 	entries := reg.List()
 	progress.Phase("inspect worktrees", 0)

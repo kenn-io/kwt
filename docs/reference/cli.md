@@ -634,6 +634,12 @@ Git or registry records. It can adopt a generation-less registry record with
 compare-and-swap after clearing inherited expiration metadata, including when
 the registry path is a symlink alias for the live Git worktree. A nonempty
 registry/Git generation mismatch is a possible replacement conflict and stays manual.
+On macOS and Linux, it also removes inactive `.creation-<hash>.lock` files left
+by earlier kwt releases or processes that exited while holding creation
+ownership. It leaves active locks and unrelated files unchanged. Restart kwt
+processes after upgrading before using this cleanup; mixed old and new lock
+protocols in one `KWT_HOME` are not supported. Windows retains creation lock
+files after release.
 Because Git can repair multiple backlinks in one operation, doctor
 skips backlink repair for a repository unless every repairable backlink is in
 the validated fix scope. Doctor repairs backlinks before native metadata

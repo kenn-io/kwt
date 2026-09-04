@@ -237,6 +237,24 @@ func TestFixerCleansAbandonedCreationUnderPathLock(t *testing.T) {
 	assert.Equal(t, []string{"lock", "remove", "unlock"}, calls)
 }
 
+func TestFixerReportsChangeAndCreationReleaseErrors(t *testing.T) {
+	changeErr := errors.New("registry change failed")
+	releaseErr := errors.New("creation lock release failed")
+	fixer := &Fixer{Registry: &fakeRegistryMutator{
+		acquireCreation: func(string) (func() error, bool, error) {
+			return func() error { return releaseErr }, true, nil
+		},
+	}}
+
+	err := fixer.withInactiveCreation(
+		&registry.WorktreeEntry{Path: "/worktrees/abandoned", CreationToken: "owner"},
+		func() error { return changeErr },
+	)
+
+	require.ErrorIs(t, err, changeErr)
+	require.ErrorIs(t, err, releaseErr)
+}
+
 func TestFixerPreservesNonemptyRegistryGenerationMismatch(t *testing.T) {
 	gitGeneration := "0123456789abcdef0123456789abcdef"
 	observed := &registry.WorktreeEntry{

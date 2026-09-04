@@ -302,13 +302,14 @@ func (f *Fixer) withInactiveCreation(
 	}
 	changeErr := change()
 	releaseErr := release()
-	if changeErr != nil {
-		return changeErr
-	}
 	if releaseErr != nil {
-		return fmt.Errorf("release registry creation ownership for %s: %w", entry.Path, releaseErr)
+		releaseErr = fmt.Errorf(
+			"release registry creation ownership for %s: %w",
+			entry.Path,
+			releaseErr,
+		)
 	}
-	return nil
+	return errors.Join(changeErr, releaseErr)
 }
 
 func (f *Fixer) setDefaults() {
