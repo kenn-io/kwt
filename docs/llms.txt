@@ -13,7 +13,7 @@ for machine readers.
 ## Product
 
 - [Product overview](https://kwt.sh/index.md): what kwt is; isolation,
-  dashboard, automation, layouts, safety, maintenance, interfaces, sync
+  automation, safety, interfaces
 - [The kwt guide](https://kwt.sh/guide.md): nine stops of register, branch,
   lay out, work, inspect, import, clean, sync, extend
 

@@ -31,16 +31,7 @@ all of them, across every registered repository, in one place.
 - **State: `$KWT_HOME`.** Config, the project registry, and pull-request
   records live together and isolate or back up as a unit.
 
-## 02 / Dashboard: every project, every worktree, one screen
-
-Each row is a worktree with its branch, dirty and ahead/behind state, last
-activity, and whether its workspace is live. `n` creates a branch and worktree,
-`b` checks out an existing branch inert, `enter` attaches, `c` opens a shell,
-`K` kills a session, `P` switches project, `p` filters, `/` searches, `d`
-confirms the exact checkout before removing it. A plain directory can be a
-workspace too.
-
-## 03 / Automation: the same lifecycle as plain commands and stable JSON
+## 02 / Automation: the same lifecycle as plain commands and stable JSON
 
 ```sh
 kwt add -b fix/flaky-status --no-launch
@@ -62,23 +53,7 @@ kwt remove -b fix/flaky-status
   workspace for another terminal client and reports `session_name`,
   `tmux_socket_name`, and `tmux_attach_mode`.
 
-## 04 / Layouts: workspaces that open with the agents already running
-
-```toml
-[agents]
-codex   = "codex"
-roborev = "roborev tui"
-
-[[layouts.presets]]
-name    = "review"
-arrange = "even-horizontal"
-panes   = ["agent:codex", "agent:roborev", ""]
-```
-
-Layouts are opt-in: `--layout`, the `L` key, or `layouts.default`. The
-reserved name `none` asks for a blank single pane.
-
-## 05 / Safety: inert until you look
+## 03 / Safety: inert until you look
 
 When kwt checks out an existing or remote branch, or imports a pull request, it
 does not run repository hooks, setup commands, or file copies, and it does not
@@ -89,46 +64,18 @@ starts the workspace.
   push destination. Attachment goes only through `kwt pr attach`.
 - **Removal.** `kwt remove` refuses a dirty worktree or one a live process is
   inside, and lists the process IDs. `--force` is a separate decision.
-- **Trust.** A repository's `.kwt.toml` applies only after you trust it.
-  Branch names and pull-request metadata are never interpolated into shell
-  commands.
-- **Freshness.** Guards bound to a `generation` fail closed when the workspace
-  changed underneath you.
 
-## 06 / Maintenance: read-only by default, previews before removal
-
-- `kwt status` summarizes every worktree across projects.
-- `kwt doctor` finds broken backlinks, stale metadata, and registry drift;
-  `--fix` repairs only findings with one provable answer.
-- `kwt prune --expired` or `--merged`, with `--dry-run` first. Merged pruning
-  needs a confirmed merged pull request and keeps the local branch.
-- Named outcomes: `doctor_required`, `cleanup_incomplete`,
-  `confirmation_required`.
-
-## 07 / Interfaces: one lifecycle across every surface
+## 04 / Interfaces: one lifecycle across every surface
 
 Dashboard (`kwt`, `kwt tui`), CLI with JSON, the `go.kenn.io/kwt` Go package,
 a local daemon that owns shared inventory, a tmux session endpoint for terminal
 clients, and reviewed SSH routes. [Ghosthub](https://ghosthub.ai) embeds these
 services; nothing in them is Ghosthub-specific.
 
-## 08 / Sync: know where a branch lives, on every machine
+## 05 / Start
 
-Multi-machine sync publishes each machine's worktree manifest to a hub you run.
-The dashboard shows where a branch exists, whether machines saw different
-heads, and where dirty files were last seen; `s` creates a remote-only branch
-locally. It is advisory: kwt never moves files or commits, clones anything, or
-deletes on another machine.
-
-## 09 / Boundary: not a git alias, not an agent runner
-
-`git worktree` is plumbing: it makes a checkout and stops. Agent frameworks run
-models and stop. kwt owns the lifecycle of the checkouts your agents work in,
-and reads back what they did. Bring the agents you already use.
-
-## 10 / Start
-
-- [The guide](https://kwt.sh/guide.md): nine stops from register to embed.
+- [The guide](https://kwt.sh/guide.md): nine stops from register to embed,
+  including layouts, maintenance, pull-request import, and multi-machine sync.
 - [Documentation](https://kwt.sh/docs/): commands, JSON, configuration, design.
 - [GitHub](https://github.com/kenn-io/kwt): source, issues, releases.
   Apache-2.0.

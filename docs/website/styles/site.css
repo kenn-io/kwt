@@ -48,18 +48,17 @@
 
 :root {
   color-scheme: dark;
-  --ink: #07141b;
-  --panel: #0b1d26;
-  --panel-raised: #102b36;
-  --rule: #17323d;
-  --rule-strong: #235061;
-  --text: #e6f0f2;
-  --muted: #9db3ba;
-  --dim: #5f7a82;
-  --cyan: #43d6c5;
-  --cyan-strong: #8cf0e4;
-  --cyan-soft: rgb(67 214 197 / 12%);
-  --amber: #ffbd66;
+  --ink: #0a0a0a;
+  --panel: #131313;
+  --panel-raised: #1b1b1b;
+  --rule: #282828;
+  --rule-strong: #3a3a3a;
+  --text: #f2f2f2;
+  --muted: #a3a3a3;
+  --dim: #6b6b6b;
+  --carbon: #e8e8e8;
+  --carbon-strong: #ffffff;
+  --amber: #d9a45b;
   --body: "Inter", system-ui, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   background: var(--ink);
@@ -79,9 +78,7 @@ html {
 
 body {
   margin: 0;
-  background:
-    linear-gradient(180deg, rgb(67 214 197 / 5%) 0, transparent 28rem),
-    var(--ink);
+  background: var(--ink);
 }
 
 body > header,
@@ -92,17 +89,17 @@ body > footer {
 }
 
 a {
-  color: var(--cyan);
+  color: var(--carbon);
   text-decoration-thickness: 1px;
   text-underline-offset: 0.2em;
 }
 
 a:hover {
-  color: var(--cyan-strong);
+  color: var(--carbon-strong);
 }
 
 :focus-visible {
-  outline: 2px solid var(--cyan);
+  outline: 2px solid var(--carbon);
   outline-offset: 4px;
 }
 
@@ -113,7 +110,7 @@ a:hover {
   left: 0.75rem;
   padding: 0.55rem 0.75rem;
   color: var(--ink);
-  background: var(--cyan);
+  background: var(--carbon);
   transform: translateY(-200%);
 }
 
@@ -219,18 +216,13 @@ kbd {
 
 .wordmark {
   display: inline-flex;
-  align-items: center;
-  gap: 0.6rem;
+  align-items: baseline;
   color: var(--text);
   font-family: var(--mono);
   font-size: 1.05rem;
   font-weight: 700;
   letter-spacing: -0.03em;
   text-decoration: none;
-}
-
-.wordmark svg {
-  flex: 0 0 auto;
 }
 
 .wordmark .tld {
@@ -251,36 +243,6 @@ main {
   overflow: hidden;
 }
 
-.hero::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  background-image:
-    linear-gradient(var(--rule) 1px, transparent 1px),
-    linear-gradient(90deg, var(--rule) 1px, transparent 1px);
-  background-size: 4rem 4rem;
-  mask-image: radial-gradient(ellipse 70% 60% at 85% 20%, #000 0, transparent 70%);
-  opacity: 0.55;
-  pointer-events: none;
-}
-
-.hero::after {
-  content: "kwt";
-  position: absolute;
-  right: -0.04em;
-  bottom: -0.3em;
-  z-index: 0;
-  color: rgb(67 214 197 / 4%);
-  font-family: var(--mono);
-  font-size: clamp(12rem, 30vw, 24rem);
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: -0.08em;
-  pointer-events: none;
-  user-select: none;
-}
-
 .hero > * {
   position: relative;
   z-index: 1;
@@ -290,26 +252,15 @@ main {
   padding-bottom: clamp(3rem, 7vw, 5rem);
 }
 
-.hero.compact::after {
-  content: none;
-}
-
 .hero-brand {
   display: flex;
-  align-items: center;
-  gap: clamp(0.8rem, 1.6vw, 1.2rem);
+  align-items: baseline;
   margin: 0 0 2rem;
   font-family: var(--mono);
   font-size: clamp(2.6rem, 6vw, 4.5rem);
   font-weight: 700;
   letter-spacing: -0.05em;
   line-height: 1;
-}
-
-.hero-brand svg {
-  width: 0.95em;
-  height: 0.95em;
-  flex: 0 0 auto;
 }
 
 .hero-brand .tld {
@@ -373,7 +324,7 @@ h3 {
 .proof-tag,
 .choice-label {
   margin: 0 0 1rem;
-  color: var(--cyan);
+  color: var(--muted);
   font-size: 0.76rem;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -434,7 +385,7 @@ h3 {
 
 .term .ok,
 .term .live {
-  color: var(--cyan);
+  color: var(--carbon);
   font-weight: 600;
 }
 
@@ -443,11 +394,11 @@ h3 {
 }
 
 .term .key {
-  color: var(--cyan);
+  color: var(--text);
 }
 
 .term .str {
-  color: var(--amber);
+  color: var(--muted);
 }
 
 .term .cm {
@@ -464,9 +415,7 @@ h3 {
   font-family: var(--mono);
   font-size: 0.82rem;
   line-height: 1.7;
-  box-shadow:
-    0 0 0 1px rgb(67 214 197 / 8%),
-    0 2rem 4rem rgb(0 0 0 / 35%);
+  box-shadow: 0 2rem 4rem rgb(0 0 0 / 35%);
 }
 
 .dash pre {
@@ -492,7 +441,7 @@ h3 {
 }
 
 .dash .live {
-  color: var(--cyan);
+  color: var(--carbon);
 }
 
 .dash .off {
@@ -505,8 +454,7 @@ h3 {
 }
 
 .dash .remote {
-  color: var(--cyan);
-  opacity: 0.8;
+  color: var(--carbon);
 }
 
 .dash .keys {
@@ -550,7 +498,7 @@ h3 {
 }
 
 .install-row code {
-  color: var(--cyan-strong);
+  color: var(--carbon-strong);
   font-size: 0.92rem;
   overflow-wrap: anywhere;
 }
@@ -592,21 +540,21 @@ button.button {
 
 .button:hover,
 button.button:hover {
-  border-color: var(--cyan);
+  border-color: var(--carbon);
   color: var(--text);
   background: var(--panel-raised);
 }
 
 .button.primary {
-  border-color: var(--cyan);
+  border-color: var(--carbon);
   color: var(--ink);
-  background: var(--cyan);
+  background: var(--carbon);
   font-weight: 600;
 }
 
 .button.primary:hover {
   color: var(--ink);
-  background: var(--cyan-strong);
+  background: var(--carbon-strong);
 }
 
 /* ------------------------------------------------------------ sections */
@@ -637,7 +585,7 @@ button.button:hover {
 .lede code,
 .install-hint code {
   font-size: 0.85em;
-  color: var(--cyan-strong);
+  color: var(--carbon-strong);
 }
 
 .ledger {
@@ -667,7 +615,7 @@ button.button:hover {
 
 .ledger strong {
   margin-bottom: 2rem;
-  color: var(--cyan);
+  color: var(--carbon);
   font-size: 0.76rem;
   text-transform: uppercase;
 }
@@ -729,7 +677,7 @@ button.button:hover {
 
 .boundary.is-kwt {
   background: var(--panel-raised);
-  box-shadow: inset 0 2px 0 var(--cyan);
+  box-shadow: inset 0 2px 0 var(--carbon);
 }
 
 .capture {
@@ -743,7 +691,7 @@ button.button:hover {
 }
 
 .capture > a:hover {
-  border-color: var(--cyan);
+  border-color: var(--carbon);
 }
 
 .capture img,
@@ -806,7 +754,7 @@ dialog img {
 .interface-list strong {
   font-family: var(--mono);
   font-size: 0.86rem;
-  color: var(--cyan-strong);
+  color: var(--carbon-strong);
 }
 
 .interface-list span {
@@ -861,7 +809,7 @@ dialog img {
 .guide-copy h2::before {
   display: block;
   margin-bottom: 1rem;
-  color: var(--cyan);
+  color: var(--dim);
   font-family: var(--mono);
   font-size: 0.76rem;
   font-weight: 600;
@@ -919,14 +867,14 @@ dialog {
   width: min(96vw, 90rem);
   max-height: 94vh;
   padding: 0;
-  border: 1px solid var(--cyan);
+  border: 1px solid var(--carbon);
   border-radius: 4px;
   color: var(--text);
   background: var(--ink);
 }
 
 dialog::backdrop {
-  background: rgb(3 10 14 / 88%);
+  background: rgb(5 5 5 / 88%);
 }
 
 .dialog-header {

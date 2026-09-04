@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 520" font-family="JetBrains Mono, ui-monospace, Menlo, monospace" font-size="13">
   <title>The dashboard, CLI, Go package, tmux session endpoint, SSH routes, and embedding applications such as Ghosthub all share one kwt daemon and its registry under KWT_HOME</title>
-  <rect width="640" height="520" fill="#0b1d26"/>
+  <rect width="640" height="520" fill="#131313"/>
 
   <!-- spokes -->
-  <g fill="none" stroke="#235061" stroke-width="1.5">
+  <g fill="none" stroke="#3a3a3a" stroke-width="1.5">
     <path d="M320 178 L320 118"/>
     <path d="M226 218 L118 156"/>
     <path d="M414 218 L522 156"/>
@@ -14,50 +14,50 @@
 
   <!-- hub -->
   <g>
-    <rect x="212" y="178" width="216" height="164" rx="6" fill="#07141b" stroke="#43d6c5" stroke-width="1.5"/>
-    <text x="320" y="210" fill="#5f7a82" font-size="11" letter-spacing="1" text-anchor="middle">LOCAL DAEMON</text>
-    <text x="320" y="238" fill="#e6f0f2" font-weight="600" font-size="16" text-anchor="middle">kwt</text>
-    <text x="320" y="266" fill="#9db3ba" font-size="12" text-anchor="middle">registry.json</text>
-    <text x="320" y="286" fill="#9db3ba" font-size="12" text-anchor="middle">pull-requests.json</text>
-    <text x="320" y="306" fill="#9db3ba" font-size="12" text-anchor="middle">config.toml</text>
-    <text x="320" y="328" fill="#5f7a82" font-size="11" text-anchor="middle">under $KWT_HOME</text>
+    <rect x="212" y="178" width="216" height="164" rx="6" fill="#0a0a0a" stroke="#e8e8e8" stroke-width="1.5"/>
+    <text x="320" y="210" fill="#6b6b6b" font-size="11" letter-spacing="1" text-anchor="middle">LOCAL DAEMON</text>
+    <text x="320" y="238" fill="#f2f2f2" font-weight="600" font-size="16" text-anchor="middle">kwt</text>
+    <text x="320" y="266" fill="#a3a3a3" font-size="12" text-anchor="middle">registry.json</text>
+    <text x="320" y="286" fill="#a3a3a3" font-size="12" text-anchor="middle">pull-requests.json</text>
+    <text x="320" y="306" fill="#a3a3a3" font-size="12" text-anchor="middle">config.toml</text>
+    <text x="320" y="328" fill="#6b6b6b" font-size="11" text-anchor="middle">under $KWT_HOME</text>
   </g>
 
   <!-- nodes -->
   <g>
-    <rect x="240" y="40" width="160" height="78" rx="4" fill="#07141b" stroke="#235061"/>
-    <text x="320" y="66" fill="#e6f0f2" font-weight="600" text-anchor="middle">Dashboard</text>
-    <text x="320" y="86" fill="#9db3ba" font-size="12" text-anchor="middle">kwt · kwt tui</text>
-    <text x="320" y="104" fill="#5f7a82" font-size="11" text-anchor="middle">people</text>
+    <rect x="240" y="40" width="160" height="78" rx="4" fill="#0a0a0a" stroke="#3a3a3a"/>
+    <text x="320" y="66" fill="#f2f2f2" font-weight="600" text-anchor="middle">Dashboard</text>
+    <text x="320" y="86" fill="#a3a3a3" font-size="12" text-anchor="middle">kwt · kwt tui</text>
+    <text x="320" y="104" fill="#6b6b6b" font-size="11" text-anchor="middle">people</text>
   </g>
   <g>
-    <rect x="24" y="96" width="160" height="78" rx="4" fill="#07141b" stroke="#235061"/>
-    <text x="104" y="122" fill="#e6f0f2" font-weight="600" text-anchor="middle">CLI + JSON</text>
-    <text x="104" y="142" fill="#9db3ba" font-size="12" text-anchor="middle">list · changes · exec</text>
-    <text x="104" y="160" fill="#5f7a82" font-size="11" text-anchor="middle">agents and scripts</text>
+    <rect x="24" y="96" width="160" height="78" rx="4" fill="#0a0a0a" stroke="#3a3a3a"/>
+    <text x="104" y="122" fill="#f2f2f2" font-weight="600" text-anchor="middle">CLI + JSON</text>
+    <text x="104" y="142" fill="#a3a3a3" font-size="12" text-anchor="middle">list · changes · exec</text>
+    <text x="104" y="160" fill="#6b6b6b" font-size="11" text-anchor="middle">agents and scripts</text>
   </g>
   <g>
-    <rect x="456" y="96" width="160" height="78" rx="4" fill="#07141b" stroke="#235061"/>
-    <text x="536" y="122" fill="#e6f0f2" font-weight="600" text-anchor="middle">Go package</text>
-    <text x="536" y="142" fill="#9db3ba" font-size="12" text-anchor="middle">go.kenn.io/kwt</text>
-    <text x="536" y="160" fill="#5f7a82" font-size="11" text-anchor="middle">in-process services</text>
+    <rect x="456" y="96" width="160" height="78" rx="4" fill="#0a0a0a" stroke="#3a3a3a"/>
+    <text x="536" y="122" fill="#f2f2f2" font-weight="600" text-anchor="middle">Go package</text>
+    <text x="536" y="142" fill="#a3a3a3" font-size="12" text-anchor="middle">go.kenn.io/kwt</text>
+    <text x="536" y="160" fill="#6b6b6b" font-size="11" text-anchor="middle">in-process services</text>
   </g>
   <g>
-    <rect x="24" y="346" width="160" height="78" rx="4" fill="#07141b" stroke="#235061"/>
-    <text x="104" y="372" fill="#e6f0f2" font-weight="600" text-anchor="middle">tmux endpoint</text>
-    <text x="104" y="392" fill="#9db3ba" font-size="12" text-anchor="middle">open --start-session</text>
-    <text x="104" y="410" fill="#5f7a82" font-size="11" text-anchor="middle">terminal clients</text>
+    <rect x="24" y="346" width="160" height="78" rx="4" fill="#0a0a0a" stroke="#3a3a3a"/>
+    <text x="104" y="372" fill="#f2f2f2" font-weight="600" text-anchor="middle">tmux endpoint</text>
+    <text x="104" y="392" fill="#a3a3a3" font-size="12" text-anchor="middle">open --start-session</text>
+    <text x="104" y="410" fill="#6b6b6b" font-size="11" text-anchor="middle">terminal clients</text>
   </g>
   <g>
-    <rect x="456" y="346" width="160" height="78" rx="4" fill="#07141b" stroke="#235061"/>
-    <text x="536" y="372" fill="#e6f0f2" font-weight="600" text-anchor="middle">SSH routes</text>
-    <text x="536" y="392" fill="#9db3ba" font-size="12" text-anchor="middle">kwt ssh · leases</text>
-    <text x="536" y="410" fill="#5f7a82" font-size="11" text-anchor="middle">reviewed OpenSSH</text>
+    <rect x="456" y="346" width="160" height="78" rx="4" fill="#0a0a0a" stroke="#3a3a3a"/>
+    <text x="536" y="372" fill="#f2f2f2" font-weight="600" text-anchor="middle">SSH routes</text>
+    <text x="536" y="392" fill="#a3a3a3" font-size="12" text-anchor="middle">kwt ssh · leases</text>
+    <text x="536" y="410" fill="#6b6b6b" font-size="11" text-anchor="middle">reviewed OpenSSH</text>
   </g>
   <g>
-    <rect x="240" y="402" width="160" height="78" rx="4" fill="#07141b" stroke="#235061"/>
-    <text x="320" y="428" fill="#e6f0f2" font-weight="600" text-anchor="middle">Embedders</text>
-    <text x="320" y="448" fill="#9db3ba" font-size="12" text-anchor="middle">Ghosthub and others</text>
-    <text x="320" y="466" fill="#5f7a82" font-size="11" text-anchor="middle">same lifecycle</text>
+    <rect x="240" y="402" width="160" height="78" rx="4" fill="#0a0a0a" stroke="#3a3a3a"/>
+    <text x="320" y="428" fill="#f2f2f2" font-weight="600" text-anchor="middle">Embedders</text>
+    <text x="320" y="448" fill="#a3a3a3" font-size="12" text-anchor="middle">Ghosthub and others</text>
+    <text x="320" y="466" fill="#6b6b6b" font-size="11" text-anchor="middle">same lifecycle</text>
   </g>
 </svg>
