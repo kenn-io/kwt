@@ -71,5 +71,5 @@
     <text x="748" y="256" fill="#a3a3a3" font-size="12">main [primary]</text>
     <text x="864" y="256" fill="#6b6b6b" font-size="11">offline</text>
   </g>
-  <text x="732" y="304" fill="#6b6b6b" font-size="11">every project, one screen</text>
+  <text x="732" y="304" fill="#6b6b6b" font-size="11">all registered projects</text>
 </svg>

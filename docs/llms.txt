@@ -1,21 +1,21 @@
 # kwt
 
-> kwt is a Git worktree manager with a terminal dashboard for people and a
-> scriptable CLI for coding agents and other tools. It creates isolated
-> checkouts, opens their tmux workspaces, shows their current state, and
-> cleans them up safely across all registered projects. One Go binary;
-> Apache-2.0.
+> kwt is a Git worktree manager for people and coding agents. It creates one
+> isolated checkout per branch, opens a tmux workspace in it, shows the state
+> of every worktree across registered projects, and removes worktrees safely.
+> The dashboard is for people; the CLI prints JSON for agents and scripts.
+> One Go binary; Apache-2.0.
 
-The product and guide pages have exact Markdown twins; documentation pages are
-served as HTML with Markdown twins alongside. Markdown versions are canonical
-for machine readers.
+Every page is served as HTML and as Markdown at the same path with a .md
+suffix. The Markdown versions are canonical for machine readers.
 
 ## Product
 
-- [Product overview](https://kwt.sh/index.md): what kwt is; isolation,
-  automation, safety, interfaces
-- [The kwt guide](https://kwt.sh/guide.md): nine stops of register, branch,
-  lay out, work, inspect, import, clean, sync, extend
+- [Product overview](https://kwt.sh/index.md): what kwt does; isolation,
+  JSON automation, inert checkouts, interfaces
+- [The kwt guide](https://kwt.sh/guide.md): register a project, create
+  worktrees, layouts, commands, inspection, pull requests, cleanup, sync,
+  embedding
 
 ## Docs
 

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 260" font-family="JetBrains Mono, ui-monospace, Menlo, monospace" font-size="13">
-  <title>A worktree created from an existing branch or pull request starts inert with no hooks, setup, copied files, or tmux; a person reviews it with kwt changes; only an explicit open or protected attach starts the workspace</title>
+  <title>A worktree created from an existing branch or pull request starts inert with no hooks, setup, copied files, or tmux; a person reviews it with kwt changes; only an explicit open or pr attach starts the workspace</title>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M0 0L10 5L0 10z" fill="#3a3a3a"/>
@@ -36,7 +36,7 @@
     <rect x="564" y="84" width="150" height="92" rx="4" fill="#0a0a0a" stroke="#3a3a3a"/>
     <text x="580" y="108" fill="#6b6b6b" font-size="11" letter-spacing="1">REVIEW</text>
     <text x="580" y="134" fill="#f2f2f2" font-weight="600">kwt changes</text>
-    <text x="580" y="156" fill="#a3a3a3" font-size="12">a person decides</text>
+    <text x="580" y="156" fill="#a3a3a3" font-size="12">you decide</text>
   </g>
 
   <!-- gate bars -->
@@ -53,10 +53,10 @@
     <text x="790" y="80" fill="#e8e8e8" font-size="11" letter-spacing="1">WORKSPACE LIVE</text>
     <text x="790" y="106" fill="#f2f2f2" font-weight="600">kwt open</text>
     <text x="790" y="126" fill="#f2f2f2" font-weight="600">kwt pr attach</text>
-    <text x="790" y="152" fill="#a3a3a3" font-size="12">layout, agents,</text>
-    <text x="790" y="170" fill="#a3a3a3" font-size="12">setup run now,</text>
-    <text x="790" y="188" fill="#a3a3a3" font-size="12">on your say-so</text>
+    <text x="790" y="152" fill="#a3a3a3" font-size="12">layout, agents, and</text>
+    <text x="790" y="170" fill="#a3a3a3" font-size="12">setup run when</text>
+    <text x="790" y="188" fill="#a3a3a3" font-size="12">you open it</text>
   </g>
 
-  <text x="480" y="236" fill="#6b6b6b" font-size="11" text-anchor="middle">a fresh branch from kwt add -b skips the gate: it is yours, and it launches at once</text>
+  <text x="480" y="236" fill="#6b6b6b" font-size="11" text-anchor="middle">a branch created with kwt add -b skips the review step and launches at once</text>
 </svg>

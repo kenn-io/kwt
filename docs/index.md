@@ -5,14 +5,13 @@ description: Technical documentation for kwt, a Git worktree manager with a term
 
 # kwt documentation
 
-kwt is a Git worktree manager with a terminal dashboard for people and a
-scriptable CLI for coding agents and other tools. It creates isolated
-checkouts, opens their tmux workspaces, shows their current state, and cleans
-them up safely across all registered projects.
+kwt is a Git worktree manager for people and coding agents. It creates one
+isolated checkout per branch, opens a tmux workspace in it, shows the state of
+every worktree across registered projects, and removes worktrees safely.
 
 This site documents the commands, JSON contracts, configuration, and design of
 kwt. The [product overview](https://kwt.sh/) and the
-[guide](https://kwt.sh/guide/) introduce it at a higher level.
+[guide](https://kwt.sh/guide/) are the shorter introductions.
 
 ## Requirements
 
@@ -67,8 +66,8 @@ given. Multi-machine sync is opt-in and reports advisory state only.
 
 ## For agents
 
-Every page on this site has a Markdown twin at the same path with a `.md`
-suffix, for example `https://kwt.sh/docs/reference/cli.md`, and each rendered
+Every page on this site is also served as Markdown at the same path with a
+`.md` suffix, for example `https://kwt.sh/docs/reference/cli.md`, and each rendered
 page advertises it with a `rel="alternate"` link. [`/llms.txt`](https://kwt.sh/llms.txt)
 indexes the product, guide, and documentation pages. Machine-readable command
 output is documented in the [CLI reference](reference/cli.md).

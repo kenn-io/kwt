@@ -204,9 +204,6 @@ a:hover {
 }
 
 .wordmark,
-.eyebrow,
-.section-index,
-.ledger strong,
 .proof-tag,
 .choice-label,
 code,
@@ -306,8 +303,6 @@ h3 {
   font-weight: 500;
 }
 
-.eyebrow,
-.section-index,
 .proof-tag,
 .choice-label {
   margin: 0 0 1rem;
@@ -523,61 +518,10 @@ button.button:hover {
 .choice p code,
 .boundary p code,
 .guide-copy p code,
-.ledger span code,
 .lede code,
 .install-hint code {
   font-size: 0.85em;
   color: var(--carbon-strong);
-}
-
-.ledger {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 1px;
-  margin: 0;
-  padding: 1px;
-  background: var(--rule);
-  list-style: none;
-}
-
-.ledger.four {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.ledger li {
-  min-height: 10rem;
-  padding: 1.25rem;
-  background: var(--panel);
-}
-
-.ledger strong,
-.ledger span {
-  display: block;
-}
-
-.ledger strong {
-  margin-bottom: 2rem;
-  color: var(--carbon);
-  font-size: 0.76rem;
-  text-transform: uppercase;
-}
-
-.ledger span {
-  color: var(--muted);
-}
-
-.stat {
-  font-family: var(--mono);
-  font-weight: 700;
-  font-size: clamp(1.6rem, 3vw, 2.4rem);
-  letter-spacing: -0.04em;
-  color: var(--text);
-}
-
-.stat small {
-  color: var(--dim);
-  font-size: 0.55em;
-  font-weight: 400;
 }
 
 .proof-grid,
@@ -756,7 +700,7 @@ dialog img {
   font-size: 0.76rem;
   font-weight: 600;
   letter-spacing: 0.08em;
-  content: "0" counter(guide) " / 09";
+  content: counter(guide);
 }
 
 .guide-copy p {
@@ -859,15 +803,6 @@ dialog img {
     grid-template-columns: 1fr;
   }
 
-  .ledger,
-  .ledger.four {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .ledger li:last-child {
-    grid-column: 1 / -1;
-  }
-
   .guide-nav {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -917,18 +852,12 @@ dialog img {
     font-size: clamp(1.6rem, 8vw, 2.4rem);
   }
 
-  .ledger,
-  .ledger.four,
   .proof-grid,
   .choice-grid,
   .boundary-grid,
   .interface-list,
   .guide-nav {
     grid-template-columns: 1fr;
-  }
-
-  .ledger li:last-child {
-    grid-column: auto;
   }
 
   .site-footer {
