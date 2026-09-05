@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Render docs/website/assets/dashboard.svg from a disposable kwt installation.
 #
-# Everything the dashboard shows comes from synthetic Git repositories, a
-# private KWT_HOME, and a private TMUX_TMPDIR, so the capture never touches
-# the operator's own projects, daemon, or tmux servers.
+# Everything the dashboard shows comes from synthetic Git repositories under a
+# private KWT_HOME, so the capture never touches the operator's own projects
+# or daemon. The one exception is the live workspace row: kwt pins its
+# workspace server to `tmux -L kwt` in the default socket directory and
+# ignores TMUX_TMPDIR, so that single session is created on the operator's kwt
+# server and removed by exact name on exit.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -24,6 +27,7 @@ umask 077
 # directory must stay short; macOS's per-user temp dir is already too long.
 WORK="$(mktemp -d /tmp/kwt-shot.XXXXXX)"
 CAPTURE_SOCKET="kwt-shot-$$"
+LIVE_SESSION=""
 
 # Strip inherited Git and tmux state so fixtures cannot reach the caller's repos.
 for name in $(env | sed -n 's/^\(GIT_[A-Z_]*\)=.*/\1/p'); do unset "$name"; done
@@ -39,7 +43,9 @@ cleanup() {
   if [[ -x "$WORK/kwt" ]]; then
     "$WORK/kwt" daemon stop >/dev/null 2>&1 || true
   fi
-  tmux -L kwt kill-server 2>/dev/null || true
+  if [[ -n "$LIVE_SESSION" ]]; then
+    env -u TMUX_TMPDIR tmux -L kwt kill-session -t "=$LIVE_SESSION" 2>/dev/null || true
+  fi
   if command -v trash >/dev/null; then
     trash "$WORK"
   else
@@ -153,8 +159,14 @@ stamp 70 "$CACHE" "$CACHE/internal/status/status.go" "$CACHE/README.md"
 stamp 190 "$PR17"
 stamp 2900 "$WIDGET" "$ROUTER"
 
-# One live workspace so the WORKSPACE column shows an attached session.
-"$KWT" open "$NEWUI" --start-session --layout none >/dev/null
+# One live workspace so the WORKSPACE column shows a session. This is the only
+# state created outside $WORK; cleanup kills exactly this session.
+LIVE_SESSION="$("$KWT" open "$NEWUI" --start-session --layout none --json |
+  python3 -c 'import json, sys; print(json.load(sys.stdin)["session_name"])')"
+[[ -n "$LIVE_SESSION" ]] || {
+  echo "kwt open did not report a session name" >&2
+  exit 1
+}
 
 # Launch from a directory kwt will not register: it adopts any other launch
 # directory as a project or workspace row and narrows the dashboard to it. The
