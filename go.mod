@@ -14,7 +14,7 @@ require (
 	github.com/gofrs/flock v0.13.1
 	github.com/google/go-github/v90 v90.0.0
 	github.com/ktr0731/go-fuzzyfinder v0.9.0
-	github.com/mattn/go-runewidth v0.0.28
+	github.com/mattn/go-runewidth v0.0.29
 	github.com/muesli/cancelreader v0.2.2
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/shirou/gopsutil/v4 v4.26.8
