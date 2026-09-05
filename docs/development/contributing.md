@@ -119,7 +119,8 @@ docs-serve` does not include.
 `make docs-check` runs the strict Zensical build, then verifies the Markdown
 twins, the legacy-route redirects in `docs/vercel.json`, and every local link
 in the assembled site. Pull requests run that check in CI. `make docs-deploy`
-deploys the generated `docs/site` output to the `kwt-docs` Vercel project.
+runs the same check and then deploys the verified `docs/site` output to the
+`kwt-docs` Vercel project.
 Override `VERCEL_SCOPE` or `VERCEL_PROJECT` when deploying a fork.
 
 Website binaries live on the orphan `website-assets` branch rather than in the

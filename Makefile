@@ -157,8 +157,8 @@ docs-check: docs-assets-test docs-build
 	@cd docs && uv run --frozen python scripts/check_public_markdown_sources.py
 	@cd docs && uv run --frozen python scripts/check_built_site.py
 
-## docs-deploy: Build docs and deploy to Vercel
-docs-deploy: docs-build
+## docs-deploy: Verify the assembled site, then deploy it to Vercel
+docs-deploy: docs-check
 	@vercel deploy --prod --yes --cwd docs/site --scope "$(VERCEL_SCOPE)" --project "$(VERCEL_PROJECT)"
 
 ## lint: Run golangci-lint
