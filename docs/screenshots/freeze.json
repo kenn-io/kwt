@@ -1,0 +1,16 @@
+{
+  "window": false,
+  "padding": [14, 18, 14, 18],
+  "margin": [0, 0, 0, 0],
+  "background": "#131313",
+  "font": {
+    "family": "JetBrains Mono, SF Mono, Menlo, Consolas, Liberation Mono, monospace",
+    "size": 13
+  },
+  "line_height": 1.25,
+  "shadow": {
+    "blur": 0,
+    "x": 0,
+    "y": 0
+  }
+}

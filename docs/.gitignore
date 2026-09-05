@@ -5,3 +5,4 @@ site/
 zensical-public-docs.*
 assets/*.png
 assets/.website-assets.synced
+__pycache__/

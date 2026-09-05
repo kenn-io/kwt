@@ -108,15 +108,31 @@ make docs-build
 make docs-serve
 ```
 
-`make docs-check` runs the same strict Zensical build used for docs
-verification. Pull requests run that check in CI. `make docs-deploy` deploys the
-generated `docs/site` output to the `kwt-docs` Vercel project. Override
-`VERCEL_SCOPE` or `VERCEL_PROJECT` when deploying a fork.
+The published site has two tiers. The hand-written product page, guide, and
+their Markdown twins live under `docs/website` and are copied to the site root.
+The Zensical documentation renders under `/docs/`, and the build copies each
+nav page's Markdown source beside its rendered page. `docs/llms.txt` indexes
+both tiers and must list every nav page. `make docs-preview` serves the
+assembled `docs/site` output, including the website tier, which `make
+docs-serve` does not include.
+
+`make docs-check` runs the strict Zensical build, then verifies the Markdown
+twins, the legacy-route redirects in `docs/vercel.json`, and every local link
+in the assembled site. Pull requests run that check in CI. `make docs-deploy`
+runs the same check and then deploys the verified `docs/site` output to the
+`kwt-docs` Vercel project.
+Override `VERCEL_SCOPE` or `VERCEL_PROJECT` when deploying a fork.
 
 Website binaries live on the orphan `website-assets` branch rather than in the
 documentation history. The docs targets fetch and materialize the required
 asset set into the ignored `docs/assets` directory before Zensical runs. Update
 and push that branch before building or deploying a refreshed screenshot.
+
+The dashboard capture on the product page is generated, not drawn.
+`make docs-screenshot` builds kwt, creates disposable repositories and
+worktrees under a private `KWT_HOME` and `TMUX_TMPDIR`, runs the real dashboard
+in tmux, and renders the pane with `freeze` to `docs/website/assets/dashboard.svg`.
+Rerun it whenever the dashboard's columns or footer change.
 
 ## Releases
 

@@ -1,0 +1,73 @@
+# kwt
+
+> kwt is a Git worktree manager for people and coding agents. It creates one
+> isolated checkout per branch, opens a tmux workspace in it, shows the state
+> of every worktree across registered projects, and removes worktrees safely.
+> The dashboard is for people; the CLI prints JSON for agents and scripts.
+> One Go binary; Apache-2.0.
+
+Every page is served as HTML and as Markdown at the same path with a .md
+suffix. The Markdown versions are canonical for machine readers.
+
+## Product
+
+- [Product overview](https://kwt.sh/index.md): what kwt does; isolation,
+  JSON automation, inert checkouts, interfaces
+- [The kwt guide](https://kwt.sh/guide.md): register a project, create
+  worktrees, layouts, commands, inspection, pull requests, cleanup, sync,
+  embedding
+
+## Docs
+
+- [Documentation index](https://kwt.sh/docs/index.md): what kwt does and where
+  each contract is documented
+- [Install](https://kwt.sh/docs/get-started/install.md): Go install, release
+  archives, source build, shell integration, requirements
+- [Quickstart](https://kwt.sh/docs/get-started/quickstart.md): first
+  interactive session and first automated worktree
+- [Worktree lifecycle and maintenance](https://kwt.sh/docs/workflows/worktree-maintenance.md):
+  create, inspect, doctor, prune, remove, and the named safety stops
+- [Agent workspaces](https://kwt.sh/docs/workflows/agent-workspaces.md):
+  layouts, isolated worktrees, exec, inspection, attachment, cleanup
+- [Directory workspaces](https://kwt.sh/docs/workflows/directory-workspaces.md):
+  tmux workspaces for directories that are not Git repositories
+- [Multi-machine sync](https://kwt.sh/docs/multi-machine-sync.md): advisory
+  worktree state across machines through a hub
+- [Embed and connect kwt](https://kwt.sh/docs/integrations/embedding.md):
+  choosing between CLI, Go services, the local daemon, and the tmux endpoint
+- [CLI reference](https://kwt.sh/docs/reference/cli.md): commands, JSON
+  fields, exit status, and guarded automation contracts
+- [Pull-request automation](https://kwt.sh/docs/reference/pull-requests.md):
+  discover, import, inspect, and attach through the protected boundary
+- [Configuration](https://kwt.sh/docs/reference/configuration.md):
+  config.toml, .kwt.toml trust, layouts, agents, setup, daemon, SSH, fleet
+- [Releases](https://kwt.sh/docs/releases.md): versioning and artifacts
+- [Changelog](https://kwt.sh/docs/changelog.md): release history
+- [Contributing](https://kwt.sh/docs/development/contributing.md): repository
+  layout and verification commands
+- [Threat model](https://kwt.sh/docs/development/threat-model.md): trusted
+  local state versus untrusted branch data
+- [Releasing kwt](https://kwt.sh/docs/development/releasing.md): maintainer
+  tagging checklist
+
+## Design notes
+
+- [Design notes overview](https://kwt.sh/docs/design/index.md): why each
+  contract has its current boundary
+- [Local service daemon](https://kwt.sh/docs/design/daemon.md): the
+  same-machine lifecycle owner and its client protocol
+- [TUI and project registry](https://kwt.sh/docs/design/tui-projects.md):
+  dashboard cache, concurrency, and stale-row rules
+- [Multi-machine sync architecture](https://kwt.sh/docs/design/multi-machine-sync.md):
+  hub, manifests, and freshness
+- [Worktree maintenance](https://kwt.sh/docs/design/worktree-maintenance.md):
+  doctor and prune internals
+- [Worktree change inspection](https://kwt.sh/docs/design/worktree-changes.md):
+  generation-bound change snapshots
+
+## Other
+
+- [GitHub repository](https://github.com/kenn-io/kwt): source, issues,
+  releases
+- [Go package documentation](https://pkg.go.dev/go.kenn.io/kwt): the public
+  embeddable API
