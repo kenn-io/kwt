@@ -11,6 +11,7 @@ no dotfile or credential-pattern file may enter the published output.
 from __future__ import annotations
 
 import fnmatch
+import json
 import pathlib
 import re
 import sys
@@ -238,10 +239,23 @@ def check_public_site_file_inventory(site: pathlib.Path = SITE) -> None:
                 fail(f"forbidden file in built site: {path.relative_to(site)}")
 
 
+def check_redirects_against_site() -> None:
+    """Reject redirects that shadow a built file or point at a missing one."""
+    data = json.loads((SITE / "vercel.json").read_text(encoding="utf-8"))
+    for item in data.get("redirects", []):
+        source = item["source"].removesuffix(":path*")
+        if (SITE / source.strip("/")).exists():
+            fail(f"redirect {item['source']} shadows a file the site serves")
+        destination = item["destination"]
+        if ":" not in destination and not route_to_file(destination).exists():
+            fail(f"redirect {item['source']} targets missing {destination}")
+
+
 def main() -> None:
     for entry in REQUIRED_ROOT_ENTRIES:
         if not (SITE / entry).is_file():
             fail(f"built site is missing {entry}")
+    check_redirects_against_site()
     check_handwritten_pages()
     check_docs_tier()
     check_markdown_twin_links()

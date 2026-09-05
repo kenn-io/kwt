@@ -20,8 +20,11 @@ VERCEL = ROOT / "vercel.json"
 sys.path.insert(0, str(ROOT / "scripts"))
 from public_markdown_sources import fail, public_markdown_sources  # noqa: E402
 
+# Only the social preview image ever had inbound links at the legacy asset
+# route. The website tier now owns /assets/, so a broader pattern would hijack
+# its own images.
 ASSET_REDIRECTS = {
-    "/assets/:path*": "/docs/assets/:path*",
+    "/assets/og.png": "/docs/assets/og.png",
 }
 
 

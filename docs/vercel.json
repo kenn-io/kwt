@@ -214,8 +214,8 @@
       "permanent": true
     },
     {
-      "source": "/assets/:path*",
-      "destination": "/docs/assets/:path*",
+      "source": "/assets/og.png",
+      "destination": "/docs/assets/og.png",
       "permanent": true
     }
   ]
