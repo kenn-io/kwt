@@ -125,14 +125,14 @@ stdout back to the waiting OpenSSH process; they are not placed in arguments,
 environment values, daemon events, logs, or persistent state. Deliberate empty
 responses remain distinct from rejection. Kwt creates no channel state unless
 the selected system OpenSSH satisfies the 8.4 forced-askpass floor.
-OpenSSH's own askpass confirmation hint distinguishes host-key confirmation
-from credential input before kwt parses the confirmation text into a reviewed
-host, algorithm, and fingerprint for native clients. Every unhinted prompt
-remains sensitive authentication input, even when its text matches OpenSSH's
-standard host-key question; server-controlled prose is not trusted provenance.
-Confirmation requests outside the complete unknown-host shape also remain
-sensitive authentication input, so they reach the client without claiming a
-host-key identity or enabling echoed input.
+OpenSSH's standard unknown-host question does not carry its askpass
+`confirm` hint. Kwt recognizes the complete structured question and extracts
+the host, algorithm, and fingerprint for native review, with or without that
+hint. This classification describes the prompt's shape, not proof of its
+origin: a server can also supply authentication text. Clients should offer
+trust or cancel for host-key review, not ask for a password in that view.
+Prompts outside the complete unknown-host shape remain sensitive
+authentication input without a claimed host-key identity.
 Published prompt details contain only that host-key review identity, the
 already reviewed route targets, and hop position; they contain no credentials
 or environment values.

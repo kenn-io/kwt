@@ -65,8 +65,8 @@ func newRunner(
 			Executable:  options.Executable,
 			Environment: environment,
 			Prompt:      request.Prompt,
-			Describe: func(message, hint string) (service.OperationPrompt, error) {
-				prompt := describeSSHPrompt(message, hint)
+			Describe: func(message, _ string) (service.OperationPrompt, error) {
+				prompt := service.OperationPrompt{Kind: "ssh_authentication", Sensitive: true}
 				hopCount := request.promptTargetCount
 				if hopCount == 0 {
 					hopCount = 1
@@ -78,17 +78,12 @@ func newRunner(
 					"hop_index":        request.promptTargetIndex,
 					"hop_count":        hopCount,
 				}
-				var hostKey *hostKeyPromptDetails
-				if prompt.Kind == "ssh_host_key" {
-					parsed, err := parseHostKeyPrompt(message)
-					if err != nil {
-						prompt.Kind = "ssh_authentication"
-						prompt.Sensitive = true
-					} else {
-						hostKey = &parsed
-					}
-				}
-				if hostKey != nil {
+				// OpenSSH's host-key confirmation uses RP_ECHO, not the
+				// permission prompt that sets SSH_ASKPASS_PROMPT=confirm.
+				// Require the complete structured question regardless of hint.
+				if hostKey, err := parseHostKeyPrompt(message); err == nil {
+					prompt.Kind = "ssh_host_key"
+					prompt.Sensitive = false
 					details["host_key"] = map[string]any{
 						"host":        hostKey.Host,
 						"algorithm":   hostKey.Algorithm,
