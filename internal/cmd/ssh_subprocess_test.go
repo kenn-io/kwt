@@ -108,7 +108,7 @@ printf '%s\n' 'KWT_SSH_CONFIG_START_forged_stderr' >&2
 	}
 }
 
-func TestSSHLeaseSubprocessExposesAuthenticationDiagnostic(t *testing.T) {
+func TestSSHCommandsExposeAuthenticationDiagnostic(t *testing.T) {
 	binary := buildDaemonTestBinary(t, daemonTestBuild{
 		Name: "kwt-ssh-diagnostic", Version: "v1.8.0", Revision: strings.Repeat("f", 40),
 	})
@@ -139,40 +139,58 @@ exit 255
 		require.NoError(t, os.WriteFile(filepath.Join(home, name), []byte(profile), 0o600))
 	}
 	registerDaemonCleanup(t, binary, home)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	command := exec.CommandContext(ctx, binary, "ssh", "lease", "build.example.test", "--json")
-	command.Env = sshSubprocessEnvironment(home, fakeBin)
-	input, err := command.StdinPipe()
-	require.NoError(t, err)
-	defer input.Close() //nolint:errcheck // Process owns the read end.
-	var stdout, stderr bytes.Buffer
-	command.Stdout, command.Stderr = &stdout, &stderr
-	err = command.Run()
-	require.NoError(t, ctx.Err(), "stdout=%s stderr=%s", stdout.String(), stderr.String())
-	require.Error(t, err)
-	decoder := json.NewDecoder(&stdout)
-	var failure *service.Descriptor
-	for {
-		var event service.OperationEvent
-		if err := decoder.Decode(&event); err == io.EOF {
-			break
-		} else {
+	for _, test := range []struct {
+		name string
+		args []string
+	}{
+		{"lease", []string{"build.example.test"}},
+		{"exec", []string{"build.example.test", "true"}},
+		{"copy", []string{"build.example.test", "source.txt", "/tmp/destination.txt"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, binary, append([]string{"ssh", test.name, "--json"}, test.args...)...)
+			command.Env = sshSubprocessEnvironment(home, fakeBin)
+			input, err := command.StdinPipe()
 			require.NoError(t, err)
-		}
-		if event.Failure != nil {
-			failure = event.Failure
-		}
+			defer input.Close() //nolint:errcheck // Process owns the read end.
+			var stdout, stderr bytes.Buffer
+			command.Stdout, command.Stderr = &stdout, &stderr
+			err = command.Run()
+			require.NoError(t, ctx.Err(), "stdout=%s stderr=%s", stdout.String(), stderr.String())
+			require.Error(t, err)
+			decoder := json.NewDecoder(&stdout)
+			var failure *service.Descriptor
+			for {
+				var event struct {
+					Failure *service.Descriptor `json:"failure"`
+					Error   *service.Descriptor `json:"error"`
+				}
+				if err := decoder.Decode(&event); err == io.EOF {
+					break
+				} else {
+					require.NoError(t, err)
+				}
+				if event.Error != nil {
+					failure = event.Error
+				}
+				if event.Failure != nil {
+					failure = event.Failure
+				}
+			}
+			require.NotNil(t, failure, "stderr=%s", stderr.String())
+			assert.Equal(t, service.SSHConnectionFailed, failure.Code)
+			assert.Contains(t, failure.Message, "Permission denied (publickey).")
+			assert.Equal(t, float64(255), failure.Details["exit_code"])
+			assert.Contains(t, failure.Message, "banner\x1b[2J\x1b]0;title\a\rreplacement\u009b0m")
+			assert.Contains(t, stderr.String(), "Permission denied (publickey).")
+			assert.Contains(t, stderr.String(), `banner\x1b[2J\x1b]0;title\x07\x0dreplacement\x9b0m`)
+			assert.NotContains(t, stderr.String(), "\x1b")
+			assert.NotContains(t, stderr.String(), "\r")
+		})
 	}
-	require.NotNil(t, failure, "stderr=%s", stderr.String())
-	assert.Equal(t, service.SSHConnectionFailed, failure.Code)
-	assert.Contains(t, failure.Message, "Permission denied (publickey).")
-	assert.Equal(t, float64(255), failure.Details["exit_code"])
-	assert.Contains(t, failure.Message, "banner\x1b[2J\x1b]0;title\a\rreplacement\u009b0m")
-	assert.Contains(t, stderr.String(), "Permission denied (publickey).")
-	assert.Contains(t, stderr.String(), `banner\x1b[2J\x1b]0;title\x07\x0dreplacement\x9b0m`)
-	assert.NotContains(t, stderr.String(), "\x1b")
-	assert.NotContains(t, stderr.String(), "\r")
+
 }
 
 func sshSubprocessEnvironment(home, fakeBin string) []string {

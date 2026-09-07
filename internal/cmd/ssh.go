@@ -522,12 +522,7 @@ func isSSHClientExit(err error) bool {
 }
 
 func writeSSHClientFailure(cmd *cobra.Command, prefix string, jsonRequested bool, err error) error {
-	typed := service.AsError(err)
-	exitCode := 1
-	if typed.Code == service.InvalidRequest || typed.Code == service.SSHInvalidTarget {
-		exitCode = 2
-	}
-	return writeCommandFailure(cmd, typed.Descriptor, exitCode, jsonRequested, prefix)
+	return writeSSHFailureRecord(cmd, prefix, err, jsonRequested)
 }
 
 func runSSHResolve(cmd *cobra.Command, args []string) error {
@@ -659,14 +654,14 @@ func runSSHLease(cmd *cobra.Command, args []string) (returnErr error) {
 			err = errors.Join(err, control.Release(releaseCtx, result.LeaseID))
 			cancel()
 		}
-		return writeSSHLeaseFailureRecord(cmd, err, sshLeaseJSON && !terminalEventWritten)
+		return writeSSHFailureRecord(cmd, "ssh lease", err, sshLeaseJSON && !terminalEventWritten)
 	}
 	defer func() {
 		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
 		returnErr = errors.Join(returnErr, control.Release(releaseCtx, result.LeaseID))
 		if returnErr != nil {
-			returnErr = writeSSHLeaseFailureRecord(cmd, returnErr, sshLeaseJSON)
+			returnErr = writeSSHFailureRecord(cmd, "ssh lease", returnErr, sshLeaseJSON)
 		}
 	}()
 	if !sshLeaseJSON {
@@ -730,10 +725,10 @@ func readSSHPrompt(ctx context.Context, read func() (string, error)) (string, er
 }
 
 func writeSSHLeaseFailure(cmd *cobra.Command, err error) error {
-	return writeSSHLeaseFailureRecord(cmd, err, sshLeaseJSON)
+	return writeSSHFailureRecord(cmd, "ssh lease", err, sshLeaseJSON)
 }
 
-func writeSSHLeaseFailureRecord(cmd *cobra.Command, err error, emitJSON bool) error {
+func writeSSHFailureRecord(cmd *cobra.Command, prefix string, err error, emitJSON bool) error {
 	typed := service.AsError(err)
 	exitCode := 1
 	if typed.Code == service.InvalidRequest || typed.Code == service.SSHInvalidTarget {
@@ -746,7 +741,8 @@ func writeSSHLeaseFailureRecord(cmd *cobra.Command, err error, emitJSON bool) er
 	}
 	_, _ = fmt.Fprintf(
 		cmd.ErrOrStderr(),
-		"kwt ssh lease: %s: %s\n",
+		"kwt %s: %s: %s\n",
+		prefix,
 		typed.Code,
 		sshDiagnosticForTerminal(typed.Message),
 	)

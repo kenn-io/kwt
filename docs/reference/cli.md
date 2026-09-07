@@ -247,8 +247,9 @@ Trusting the host does not authenticate your account. Clients should display
 the message as plain text and use the error code, not its wording, for logic.
 Diagnostics retain the last 8 KiB of stderr, with an omission notice for
 longer output. Successful commands do not turn stderr banners into errors.
-The CLI renders terminal control characters as visible `\xHH` escapes in its
-human-readable failure line, while keeping tabs and newlines for layout.
+The `ssh lease`, `ssh exec`, and `ssh copy` commands render terminal control
+characters as visible `\xHH` escapes in their human-readable failure lines,
+while keeping tabs and newlines for layout.
 JSON messages retain the diagnostic with JSON encoding; consumers must not
 print decoded messages directly to a terminal without escaping controls.
 
