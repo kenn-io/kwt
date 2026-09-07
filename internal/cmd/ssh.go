@@ -748,7 +748,22 @@ func writeSSHLeaseFailureRecord(cmd *cobra.Command, err error, emitJSON bool) er
 		cmd.ErrOrStderr(),
 		"kwt ssh lease: %s: %s\n",
 		typed.Code,
-		typed.Message,
+		sshDiagnosticForTerminal(typed.Message),
 	)
 	return errors.Join(&commandFailure{descriptor: typed.Descriptor, exitCode: exitCode}, err)
+}
+
+func sshDiagnosticForTerminal(message string) string {
+	var output strings.Builder
+	for _, character := range message {
+		switch {
+		case character == '\n' || character == '\t':
+			output.WriteRune(character)
+		case character < 0x20 || (character >= 0x7f && character <= 0x9f):
+			fmt.Fprintf(&output, "\\x%02x", character)
+		default:
+			output.WriteRune(character)
+		}
+	}
+	return output.String()
 }

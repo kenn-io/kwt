@@ -130,6 +130,7 @@ if [ "$resolve" = yes ]; then
   if [ -n "$identity_probe" ]; then printf 'identityfile %s\n' "$identity_probe"; fi
   exit 0
 fi
+printf 'banner\033[2J\033]0;title\007\rreplacement\302\2330m\n' >&2
 echo 'deploy@build.example.test: Permission denied (publickey).' >&2
 exit 255
 `), 0o700))
@@ -167,6 +168,11 @@ exit 255
 	assert.Equal(t, service.SSHConnectionFailed, failure.Code)
 	assert.Contains(t, failure.Message, "Permission denied (publickey).")
 	assert.Equal(t, float64(255), failure.Details["exit_code"])
+	assert.Contains(t, failure.Message, "banner\x1b[2J\x1b]0;title\a\rreplacement\u009b0m")
+	assert.Contains(t, stderr.String(), "Permission denied (publickey).")
+	assert.Contains(t, stderr.String(), `banner\x1b[2J\x1b]0;title\x07\x0dreplacement\x9b0m`)
+	assert.NotContains(t, stderr.String(), "\x1b")
+	assert.NotContains(t, stderr.String(), "\r")
 }
 
 func sshSubprocessEnvironment(home, fakeBin string) []string {
