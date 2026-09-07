@@ -152,6 +152,19 @@ command cannot survive daemon drain while retaining its output handles. Stdout
 and stderr are each capped at 1 MiB; exceeding either cap cancels that same
 owned process tree.
 
+Failed SSH connection commands expose the last 8 KiB of stderr to the owning
+client through the service error message. This is diagnostic text from OpenSSH
+and the account login shell, not trusted instructions. It can include hostnames,
+usernames, paths, or server banners; clients should render it as plain text and
+users should review it before sharing. Prompt responses are not appended to
+the diagnostic by kwt.
+The CLI escapes control characters in its human-readable SSH failure output,
+except tabs and newlines. OpenSSH escapes ANSI bytes in authentication banners
+but can retain carriage returns; those must not become cursor movement when
+kwt prints the diagnostic. Structured JSON retains the encoded diagnostic,
+so consumers own control-character handling if they display decoded messages
+in a terminal.
+
 The daemon retains the complete normalized `ssh -G` stream only as private
 route-identity input. Authenticated responses expose semantic targets and the
 reviewed execution projection, never arbitrary directives. Opaque

@@ -239,6 +239,20 @@ while stdin remains open, touches it every ten seconds, and releases it when
 stdin reaches EOF or the command is canceled. Progress and warnings are written
 as they occur rather than buffered.
 
+When an SSH connection command fails, its `ssh_connection_failed` error
+includes the exit status in `details.exit_code` and OpenSSH's diagnostic in
+the human-readable `message`. For example, accepting a new host key can be
+followed by `Permission denied (publickey)` if account authentication fails.
+Trusting the host does not authenticate your account. Clients should display
+the message as plain text and use the error code, not its wording, for logic.
+Diagnostics retain the last 8 KiB of stderr, with an omission notice for
+longer output. Successful commands do not turn stderr banners into errors.
+The `ssh lease`, `ssh exec`, and `ssh copy` commands render terminal control
+characters as visible `\xHH` escapes in their human-readable failure lines,
+while keeping tabs and newlines for layout.
+JSON messages retain the diagnostic with JSON encoding; consumers must not
+print decoded messages directly to a terminal without escaping controls.
+
 Multiplexed-client arguments reapply the final target's reviewed
 `ForwardAgent`, `SendEnv`, `SetEnv`, and `EscapeChar` settings. Private
 `SetEnv` values remain in daemon-owned ephemeral configuration rather than

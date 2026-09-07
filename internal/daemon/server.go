@@ -486,7 +486,8 @@ const (
 )
 
 var allowedProblemDetailTypes = map[service.Code]map[string]problemDetailType{
-	service.DaemonDraining: {"drain_deadline": detailRFC3339},
+	service.SSHConnectionFailed: {"exit_code": detailNumber},
+	service.DaemonDraining:      {"drain_deadline": detailRFC3339},
 	service.InteractionRequired: {
 		"kind": detailString, "path": detailString, "digest": detailString,
 		"size": detailNumber, "preview": detailString, "truncated": detailBool,
