@@ -7,25 +7,44 @@ description: Release history for kwt
 
 ## Unreleased
 
-- Remove inactive per-worktree-path creation lock files on macOS and Linux
-  after ownership is released. `kwt doctor --fix` also clears leftovers from
-  earlier releases or interrupted processes while preserving locks that are
-  still held. Restart kwt processes after upgrading before running the cleanup;
-  mixed old and new lock protocols are not supported. Windows retains the
-  existing persistent-file behavior.
-- Imported pull-request worktrees now preserve both sides and diff3 markers
-  when a later merge encounters a text conflict. PR import now requires Git
-  2.42.0 or newer on macOS and Linux, or Git for Windows 2.53.0.windows.3 or
-  newer.
-- Recognize bare-container repositories where a `.bare/` control directory
-  manages a checked-out `main/` worktree and flat sibling worktrees.
-  `kwt projects add` accepts the container or any of its worktrees, `.bare/`
-  stays out of worktree inventory, and generated worktrees preserve the flat
-  sibling layout using the sanitized branch name. An explicit destination path
-  still takes precedence.
-- Deliver each SSH askpass protocol frame in a single socket write, so a
-  helper answering a prompt with no hint text can no longer fail spuriously
-  when the responder closes the connection first.
+## 0.6.0
+
+<small>2026-09-07</small>
+
+Use repositories with a `.bare/` directory and sibling worktrees, keep both
+sides of imported merge conflicts, and review new SSH host keys in the right
+dialog. This release also cleans up leftover worktree-creation locks.
+
+### Added
+
+- Register a repository arranged as `.bare/`, `main/`, and sibling worktrees
+  with `kwt projects add`. You can pass the container directory or any of its
+  worktrees. New worktrees use the same flat layout and a sanitized branch
+  name; an explicit destination path still takes precedence. The `.bare/`
+  control directory stays out of the worktree list.
+
+### Fixed
+
+- New SSH hosts show a host-key trust review in native clients instead of a
+  password prompt. kwt recognizes OpenSSH's complete standard host-key question
+  even when it arrives without an askpass hint.
+- Answering an SSH prompt no longer fails intermittently when the other end
+  closes its connection immediately after receiving the response.
+- Imported pull-request worktrees keep both sides of a text conflict and the
+  common ancestor's text in diff3 markers when a later merge conflicts.
+- Worktree creation no longer leaves unused per-path lock files on macOS and
+  Linux. Use `kwt doctor --fix` to remove older leftovers; locks still held by
+  a running process are kept. Windows keeps its existing lock-file behavior.
+
+### Upgrade notes
+
+- Restart running kwt processes after upgrading, before using
+  `kwt doctor --fix` to clean up creation locks. Old and new kwt processes
+  cannot share this lock protocol.
+- Pull-request imports now require Git 2.42.0+ on macOS and Linux, or Git for
+  Windows 2.53.0.windows.3+. These requirements are specific to PR import.
+
+[Compare v0.5.1...v0.6.0](https://github.com/kenn-io/kwt/compare/v0.5.1...v0.6.0)
 
 ## 0.5.1
 
