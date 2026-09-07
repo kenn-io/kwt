@@ -57,12 +57,12 @@ func runSSHProcessWith(
 	shellArguments, standardInput := shellCommandInvocation(shell, sshCommandEnvironment)
 	shellEnvironment := credentials.StripEnvironment(environment, []string{sshCommandEnvironment})
 	shellEnvironment = append(shellEnvironment, sshCommandEnvironment+"="+command)
-	_, _, exitCode, err := run(
+	_, stderr, exitCode, err := run(
 		ctx,
 		shellArguments,
 		workingDirectory,
 		shellEnvironment,
 		standardInput,
 	)
-	return exitCode, err
+	return exitCode, sshProcessError(stderr, exitCode, err)
 }

@@ -7,6 +7,12 @@ description: Release history for kwt
 
 ## Unreleased
 
+### Fixed
+
+- See why an SSH connection failed in native clients, including OpenSSH's
+  public-key authentication error, instead of only “SSH connection failed.”
+  Failed SSH commands now include their exit status and diagnostic text.
+
 ## 0.6.0
 
 <small>2026-09-07</small>

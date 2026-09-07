@@ -3,7 +3,9 @@ package ssh
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"strings"
 
 	"go.kenn.io/kit/openssh"
 	"go.kenn.io/kit/safefileio"
@@ -105,8 +107,32 @@ func newRunner(
 			askpass.Environment(),
 		)
 		closeErr := askpass.Close()
-		return exitCode, errors.Join(runErr, askpass.Err(), closeErr, cleanup())
+		// Prompt failures carry a more specific category than the SSH exit.
+		return exitCode, errors.Join(askpass.Err(), runErr, closeErr, cleanup())
 	}, nil
+}
+
+func sshProcessError(stderr []byte, exitCode int, cause error) error {
+	if exitCode == 0 && cause == nil {
+		return nil
+	}
+	// Keep the final diagnostic within the operation message budget. SSH may
+	// print a banner before the reason it could not connect.
+	const diagnosticLimit = 8 << 10
+	truncated := len(stderr) > diagnosticLimit
+	if truncated {
+		stderr = stderr[len(stderr)-diagnosticLimit:]
+	}
+	diagnostic := strings.TrimSpace(strings.ToValidUTF8(string(stderr), "?"))
+	message := fmt.Sprintf("SSH command failed (exit status %d).", exitCode)
+	if diagnostic != "" {
+		if truncated {
+			diagnostic = "[earlier output omitted]\n" + diagnostic
+		}
+		message += "\n" + diagnostic
+	}
+	return service.NewError(service.SSHConnectionFailed, message, true,
+		map[string]any{"exit_code": exitCode}, cause)
 }
 
 func promptTargetDetails(target Target) map[string]any {

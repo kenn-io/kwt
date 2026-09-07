@@ -17,6 +17,20 @@ import (
 
 const runnerAskpassHelper = "KWT_TEST_RUNNER_ASKPASS"
 
+func TestSSHProcessErrorKeepsFailureWithinMessageBudget(t *testing.T) {
+	cause := errors.New("process exited")
+	diagnostic := strings.Repeat("banner\n", 4000) + "Permission denied (publickey).\n"
+	err := sshProcessError([]byte(diagnostic), 255, cause)
+	require.ErrorIs(t, err, cause)
+	failure := service.AsError(err)
+	assert.Contains(t, failure.Message, "[earlier output omitted]")
+	assert.Contains(t, failure.Message, "Permission denied (publickey).")
+	assert.Less(t, len(failure.Message), service.MaxOperationMessageBytes)
+
+	assert.NoError(t, sshProcessError([]byte("connection banner"), 0, nil))
+	assert.Contains(t, service.AsError(sshProcessError(nil, 255, cause)).Message, "255")
+}
+
 func TestRunnerAppliesProjectionAndPrivateConfigToEveryManagerCommand(t *testing.T) {
 	privateDirectory := filepath.Join(t.TempDir(), "private")
 	request := LeaseRequest{
