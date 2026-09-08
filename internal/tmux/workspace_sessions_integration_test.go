@@ -99,6 +99,47 @@ func TestWorkspaceSessionsCreateOnlyOnKWTServer(t *testing.T) {
 	assert.False(t, fixture.servers.defaultServer().HasSession(fixture.session))
 }
 
+func TestDirectoryWorkspaceColdStart(t *testing.T) {
+	fixture := newRealWorkspaceSessionsFixture(t)
+	fixture.session = DirWorkspaceSessionName("notes", fixture.workspace)
+	fixture.generation = ""
+	requests := []WorkspaceEndpointRequest{fixture.request()}
+
+	// Neither socket exists yet: inventory must report a stopped workspace
+	// without requiring a throwaway session to bootstrap the server.
+	before, err := fixture.sessions.ResolveAll(fixture.ctx, requests)
+	require.NoError(t, err)
+	require.Len(t, before, 1)
+	assert.False(t, before[0].Live)
+	for _, command := range []*TmuxCommand{
+		fixture.servers.kwtServer(), fixture.servers.defaultServer(),
+	} {
+		details, err := command.ListSessionsDetailed()
+		require.NoError(t, err)
+		assert.Empty(t, details)
+	}
+
+	endpoint, err := fixture.sessions.Establish(
+		fixture.ctx, fixture.session, fixture.workspace, BlankLayout(),
+	)
+	require.NoError(t, err)
+	after, err := fixture.sessions.ResolveAll(fixture.ctx, requests)
+	require.NoError(t, err)
+	require.Len(t, after, 1)
+	assert.True(t, after[0].Live)
+	assert.Equal(t, endpoint, after[0].Endpoint)
+
+	// Opening again reuses the established session.
+	again, err := fixture.sessions.Establish(
+		fixture.ctx, fixture.session, fixture.workspace, BlankLayout(),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, endpoint, again)
+	names, err := fixture.servers.kwtServer().ListSessions()
+	require.NoError(t, err)
+	assert.Equal(t, []string{fixture.session}, names)
+}
+
 func TestWorkspaceSessionsKillSucceedsWhenCapturedSessionAlreadyExited(t *testing.T) {
 	fixture := newRealWorkspaceSessionsFixture(t)
 	fixture.createMatching(t, fixture.servers.kwtServer())

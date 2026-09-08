@@ -57,6 +57,10 @@ JSON returns each workspace's `name`, canonical absolute `path`, effective
 `session_name`, `session_live`, `tmux_socket_name`, and `tmux_attach_mode`. An
 empty registry returns `[]`.
 
+You do not need to start tmux first. When no tmux server is running, workspace
+listing reports `session_live: false`, and `open --start-session` starts the
+server and creates the workspace session automatically.
+
 Another tmux client can ask kwt to establish the workspace without attaching:
 
 ```sh
