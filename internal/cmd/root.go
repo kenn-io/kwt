@@ -47,8 +47,9 @@ var rootCmd = &cobra.Command{
 Like how 'ghq' manages repository clones, kwt provides intuitive 
 operations for creating, switching, and deleting worktrees using 
 a fuzzy finder interface.`,
-	Version: getVersionString(),
-	Args:    cobra.NoArgs,
+	Version:      getVersionString(),
+	Args:         cobra.NoArgs,
+	SilenceUsage: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		if err := requireConfigInitialization(); err != nil {
 			return err

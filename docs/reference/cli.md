@@ -4,6 +4,9 @@ Use this page for stable command behavior, JSON fields, exit status, and guarded
 automation contracts. Run `kwt <command> --help` for the complete flags on the
 installed version.
 
+Command failures print the error without appending the full usage text. Use
+`kwt <command> --help` to see usage and flags.
+
 For task-first guidance, start with the [quickstart](../get-started/quickstart.md)
 or [worktree lifecycle](../workflows/worktree-maintenance.md). Agent and terminal
 clients should read [Agent workspaces](../workflows/agent-workspaces.md) before
