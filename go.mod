@@ -13,7 +13,6 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/gofrs/flock v0.13.1
 	github.com/google/go-github/v90 v90.0.0
-	github.com/google/go-github/v91 v91.0.0
 	github.com/ktr0731/go-fuzzyfinder v0.9.0
 	github.com/mattn/go-runewidth v0.0.29
 	github.com/muesli/cancelreader v0.2.2
@@ -24,7 +23,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	go.kenn.io/kit v0.23.0
 	golang.org/x/mod v0.40.0
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
 )
