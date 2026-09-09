@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-github/v90/github"
+	"github.com/google/go-github/v91/github"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -177,16 +177,16 @@ func testGitHubPRJSON(number int, headSHA string, mergedAt string) string {
 
 func testGitHubPullRequest(number int) *github.PullRequest {
 	return &github.PullRequest{
-		Number: github.Ptr(number), HTMLURL: github.Ptr(fmt.Sprintf("https://github.com/acme/widget/pull/%d", number)),
-		Title: github.Ptr("Topic"), User: &github.User{Login: github.Ptr("octocat")},
-		State: github.Ptr("closed"),
+		Number: new(number), HTMLURL: new(fmt.Sprintf("https://github.com/acme/widget/pull/%d", number)),
+		Title: new("Topic"), User: &github.User{Login: new("octocat")},
+		State: new("closed"),
 		Head: &github.PullRequestBranch{
-			Ref: github.Ptr("topic"), SHA: github.Ptr("0123456789abcdef0123456789abcdef01234567"),
-			Repo: &github.Repository{Name: github.Ptr("widget"), FullName: github.Ptr("octocat/widget"), CloneURL: github.Ptr("https://github.com/octocat/widget.git")},
+			Ref: new("topic"), SHA: new("0123456789abcdef0123456789abcdef01234567"),
+			Repo: &github.Repository{Name: new("widget"), FullName: new("octocat/widget"), CloneURL: new("https://github.com/octocat/widget.git")},
 		},
 		Base: &github.PullRequestBranch{
-			Ref:  github.Ptr("main"),
-			Repo: &github.Repository{Name: github.Ptr("widget"), FullName: github.Ptr("acme/widget"), CloneURL: github.Ptr("https://github.com/acme/widget.git")},
+			Ref:  new("main"),
+			Repo: &github.Repository{Name: new("widget"), FullName: new("acme/widget"), CloneURL: new("https://github.com/acme/widget.git")},
 		},
 	}
 }
@@ -264,8 +264,8 @@ func TestGitHubProviderMapsPullRequests(t *testing.T) {
 
 func TestGitHubProviderNormalizesRepositoryIdentityCase(t *testing.T) {
 	repository, err := mapGitHubRepository(&github.Repository{
-		FullName: github.Ptr("Acme/Widget"), Name: github.Ptr("Widget"),
-		CloneURL: github.Ptr("https://github.com/Acme/Widget.git"),
+		FullName: new("Acme/Widget"), Name: new("Widget"),
+		CloneURL: new("https://github.com/Acme/Widget.git"),
 	})
 
 	require.NoError(t, err)
@@ -389,26 +389,26 @@ func TestGitHubProviderRejectsMalformedSuccessfulResponse(t *testing.T) {
 func TestMapGitHubPullRequestRejectsInvalidImportFields(t *testing.T) {
 	valid := func() *github.PullRequest {
 		return &github.PullRequest{
-			Number:  github.Ptr(17),
-			HTMLURL: github.Ptr("https://github.com/acme/widget/pull/17"),
-			Title:   github.Ptr("Improve widgets"),
-			User:    &github.User{Login: github.Ptr("octocat")},
-			State:   github.Ptr("open"),
+			Number:  new(17),
+			HTMLURL: new("https://github.com/acme/widget/pull/17"),
+			Title:   new("Improve widgets"),
+			User:    &github.User{Login: new("octocat")},
+			State:   new("open"),
 			Head: &github.PullRequestBranch{
-				Ref: github.Ptr("feature/widgets"),
-				SHA: github.Ptr("0123456789abcdef0123456789abcdef01234567"),
+				Ref: new("feature/widgets"),
+				SHA: new("0123456789abcdef0123456789abcdef01234567"),
 				Repo: &github.Repository{
-					Name:     github.Ptr("widget"),
-					FullName: github.Ptr("octocat/widget"),
-					CloneURL: github.Ptr("https://github.com/octocat/widget.git"),
+					Name:     new("widget"),
+					FullName: new("octocat/widget"),
+					CloneURL: new("https://github.com/octocat/widget.git"),
 				},
 			},
 			Base: &github.PullRequestBranch{
-				Ref: github.Ptr("main"),
+				Ref: new("main"),
 				Repo: &github.Repository{
-					Name:     github.Ptr("widget"),
-					FullName: github.Ptr("acme/widget"),
-					CloneURL: github.Ptr("https://github.com/acme/widget.git"),
+					Name:     new("widget"),
+					FullName: new("acme/widget"),
+					CloneURL: new("https://github.com/acme/widget.git"),
 				},
 			},
 		}
@@ -418,19 +418,19 @@ func TestMapGitHubPullRequestRejectsInvalidImportFields(t *testing.T) {
 		mutate func(*github.PullRequest)
 	}{
 		{name: "nonpositive number", mutate: func(pr *github.PullRequest) {
-			pr.Number = github.Ptr(0)
+			pr.Number = new(0)
 		}},
 		{name: "empty head ref", mutate: func(pr *github.PullRequest) {
-			pr.Head.Ref = github.Ptr("")
+			pr.Head.Ref = new("")
 		}},
 		{name: "empty base ref", mutate: func(pr *github.PullRequest) {
-			pr.Base.Ref = github.Ptr("")
+			pr.Base.Ref = new("")
 		}},
 		{name: "invalid head OID", mutate: func(pr *github.PullRequest) {
-			pr.Head.SHA = github.Ptr("abc")
+			pr.Head.SHA = new("abc")
 		}},
 		{name: "empty clone URL", mutate: func(pr *github.PullRequest) {
-			pr.Head.Repo.CloneURL = github.Ptr("")
+			pr.Head.Repo.CloneURL = new("")
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
