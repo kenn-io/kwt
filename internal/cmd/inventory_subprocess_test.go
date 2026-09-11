@@ -233,3 +233,36 @@ func TestInventorySubprocessDaemonFailuresNeverUseSSHExit255(t *testing.T) {
 		})
 	}
 }
+
+func TestInventorySubprocessOutdatedClientDiagnostic(t *testing.T) {
+	binary := buildDaemonTestBinary(t, daemonTestBuild{
+		Name: "kwt-older", Version: "sha-client", Revision: strings.Repeat("a", 40),
+		RevisionTime: "2026-08-01T12:00:00Z",
+	})
+	fixture := buildDaemonFixture(t)
+	home := newDaemonTestHome(t, validDaemonConfig)
+	startDaemonFixture(t, fixture, home, "future_inventory")
+	directory := t.TempDir()
+	for _, jsonOutput := range []bool{false, true} {
+		args := []string{"list", "--global"}
+		if jsonOutput {
+			args = append(args, "--json")
+		}
+		stdout, stderr, err := runInventoryCommand(t, binary, home, directory, args...)
+		var exitErr *exec.ExitError
+		require.ErrorAs(t, err, &exitErr, "stderr=%s", stderr)
+		assert.Equal(t, 1, exitErr.ExitCode())
+		assert.Contains(t, string(stderr), "this kwt (sha-client, 2026-08-01T12:00:00Z) is older than the running daemon (sha-daemon, 2026-09-01T12:00:00Z)")
+		assert.Contains(t, string(stderr), "upgrade the CLI or run the daemon's own binary")
+		assert.NotContains(t, string(stderr), "Usage:")
+		if jsonOutput {
+			var envelope jsonErrorEnvelope
+			require.NoError(t, json.Unmarshal(stdout, &envelope))
+			assert.Equal(t, service.Code("client_outdated"), envelope.Error.Code)
+			assert.False(t, envelope.Error.Retryable)
+			assert.Contains(t, string(stderr), envelope.Error.Message)
+		} else {
+			assert.Empty(t, stdout)
+		}
+	}
+}

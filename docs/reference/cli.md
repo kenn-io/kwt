@@ -134,6 +134,15 @@ such as `registration_changed` retain the same envelope. Kwt does not
 normalize unrelated commands' exit behavior. Exit `255` remains unused so an
 SSH caller can distinguish a remote-shell transport failure.
 
+If the daemon lacks the inventory contract required by the CLI and build
+comparison identifies the CLI as older, inventory commands return
+non-retryable `client_outdated`. The message identifies both versions and
+their source revision times when available. Upgrade the CLI or run the
+daemon's own binary. Restarting with the older CLI refuses the downgrade.
+If the CLI is not known to be older, a missing inventory contract returns
+`daemon_incompatible`. A newer daemon that still provides the required
+contract remains usable.
+
 Daemon ownership must not buffer human-facing operation progress. Removal
 continues to print each selected worktree's result as soon as that target
 finishes. SSH lifecycle uses the bounded `operation.stream.v1` transport for

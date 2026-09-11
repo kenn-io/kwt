@@ -19,6 +19,7 @@ const (
 	DaemonStartFailed                    Code = "daemon_start_failed"
 	DaemonUnresponsive                   Code = "daemon_unresponsive"
 	DaemonIncompatible                   Code = "daemon_incompatible"
+	ClientOutdated                       Code = "client_outdated"
 	DaemonDowngradeRefused               Code = "daemon_downgrade_refused"
 	DaemonBuildOrderUnknown              Code = "daemon_build_order_unknown"
 	DaemonDraining                       Code = "daemon_draining"
