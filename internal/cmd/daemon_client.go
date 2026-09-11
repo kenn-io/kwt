@@ -388,9 +388,35 @@ func inventoryDrainDeadline(err error) (*time.Time, bool) {
 
 func requireInventoryCapability(observation kwtdaemon.Observation) error {
 	if observation.Client == nil || !slices.Contains(observation.Status.Capabilities, kwtdaemon.CapabilityInventory) {
+		build := currentBuildInfo()
+		invoking := kwtdaemon.Build{
+			Version: build.Version, Revision: build.Revision, RevisionTime: build.RevisionTime,
+		}
+		running := kwtdaemon.Build{
+			Version: observation.Status.Version, Revision: observation.Status.Revision,
+			RevisionTime: observation.Status.RevisionTime,
+		}
+		_, advertisedTime := observation.Record.Metadata["revision_time"]
+		if kwtdaemon.CompareBuilds(invoking, running, advertisedTime) == kwtdaemon.BuildOlder {
+			clientLabel, daemonLabel := invoking.Version, running.Version
+			if invoking.RevisionTime != "" {
+				clientLabel += ", " + invoking.RevisionTime
+			}
+			if running.RevisionTime != "" {
+				daemonLabel += ", " + running.RevisionTime
+			}
+			return service.NewError(
+				service.ClientOutdated,
+				fmt.Sprintf(
+					"this kwt (%s) is older than the running daemon (%s); upgrade the CLI or run the daemon's own binary",
+					clientLabel, daemonLabel,
+				),
+				false, nil, nil,
+			)
+		}
 		return service.NewError(
 			service.DaemonIncompatible,
-			"the running kwt daemon does not provide worktree inventory",
+			"the running kwt daemon does not provide the worktree inventory contract required by this CLI",
 			false,
 			nil,
 			nil,

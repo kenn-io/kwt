@@ -57,13 +57,23 @@ func main() {
 		log.Fatal(err)
 	}
 	build := kwtdaemon.Build{Version: "v1.0.0", Revision: strings.Repeat("a", 40)}
+	if *mode == "future_inventory" {
+		build = kwtdaemon.Build{
+			Version: "sha-daemon", Revision: strings.Repeat("b", 40),
+			RevisionTime: "2026-09-01T12:00:00Z",
+		}
+	}
 	record, token, err := kwtdaemon.NewRuntimeRecord(*home, build, endpoint)
 	if err != nil {
 		log.Fatal(err)
 	}
 	schemaMajor := kwtdaemon.APISchemaMajor
 	schemaVersion := kwtdaemon.APISchemaVersion
-	if *mode == "incompatible" {
+	if *mode == "future_inventory" {
+		record.Metadata["capabilities"] = strings.ReplaceAll(
+			record.Metadata["capabilities"], kwtdaemon.CapabilityInventory, "worktree.inventory.v3",
+		)
+	} else if *mode == "incompatible" {
 		schemaMajor = 2
 		schemaVersion = "2.0.0"
 		record.Metadata["schema_major"] = strconv.Itoa(schemaMajor)
@@ -113,7 +123,8 @@ func main() {
 		Service: kwtdaemon.ServiceName, State: kwtdaemon.StateReady,
 		Home: *home, Endpoint: listener.Addr().String(), PID: os.Getpid(),
 		Version: build.Version, Revision: build.Revision,
-		SchemaMajor: schemaMajor, SchemaVersion: schemaVersion,
+		RevisionTime: build.RevisionTime,
+		SchemaMajor:  schemaMajor, SchemaVersion: schemaVersion,
 		Capabilities: capabilities, StartedAt: started,
 	}
 	if *mode == "draining" {

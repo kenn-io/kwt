@@ -376,6 +376,7 @@ func TestDaemonSubprocessSHARevisionOrderingAndEqualTimeOverride(t *testing.T) {
 	_, stderr, err := runDaemonCommand(t, older, orderedHome, "daemon", "restart")
 	require.Error(t, err)
 	assert.Contains(t, string(stderr), "older kwt cannot replace")
+	assert.NotContains(t, string(stderr), "Usage:")
 	assert.Equal(t, newStatus.PID, daemonStatus(t, newer, orderedHome).PID)
 
 	equalHome := newDaemonTestHome(t, validDaemonConfig)

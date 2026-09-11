@@ -89,6 +89,7 @@ The daemon and inventory paths currently emit these stable codes:
 | `daemon_start_failed`                     | The daemon could not launch or become ready.                      |
 | `daemon_unresponsive`                     | A verified owner exists but cannot safely be reused or replaced.  |
 | `daemon_incompatible`                     | The owner lacks the required API major or capability.             |
+| `client_outdated`                         | Inventory contracts differ and the invoking CLI is older than the daemon. |
 | `daemon_downgrade_refused`                | An older client attempted replacement.                            |
 | `daemon_build_order_unknown`              | Replacement order cannot be proved.                               |
 | `daemon_draining`                         | The owner is draining; retry according to its deadline.           |

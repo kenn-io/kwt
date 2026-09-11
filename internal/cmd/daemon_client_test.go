@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"runtime/debug"
 	"testing"
 	"time"
 
@@ -282,4 +283,72 @@ func TestInventoryRejectsVersionOneDaemonBeforeRequest(t *testing.T) {
 
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.DaemonIncompatible))
+}
+
+func TestInventoryCapabilityMismatchReportsBuildOrder(t *testing.T) {
+	oldVersion, oldCommit, oldTime, oldRead := version, commit, revisionTime, readBuildInfo
+	t.Cleanup(func() {
+		version, commit, revisionTime, readBuildInfo = oldVersion, oldCommit, oldTime, oldRead
+	})
+	version, commit, revisionTime = "sha-client", "client-revision", "2026-08-01T12:00:00Z"
+	readBuildInfo = func() (*debug.BuildInfo, bool) { return nil, false }
+
+	for _, test := range []struct {
+		name         string
+		daemonTime   string
+		capabilities []string
+		code         service.Code
+		message      string
+	}{
+		{
+			name: "newer daemon", daemonTime: "2026-09-01T12:00:00Z",
+			capabilities: []string{"worktree.inventory.v3"},
+			code:         service.ClientOutdated, message: "upgrade the CLI or run the daemon's own binary",
+		},
+		{
+			name: "older daemon", daemonTime: "2026-07-01T12:00:00Z",
+			code:    service.DaemonIncompatible,
+			message: "does not provide the worktree inventory contract required by this CLI",
+		},
+		{
+			name: "unknown order", daemonTime: "",
+			code:    service.DaemonIncompatible,
+			message: "does not provide the worktree inventory contract required by this CLI",
+		},
+		{
+			name: "equal time", daemonTime: revisionTime,
+			code:    service.DaemonIncompatible,
+			message: "does not provide the worktree inventory contract required by this CLI",
+		},
+		{
+			name: "compatible newer daemon", daemonTime: "2026-09-01T12:00:00Z",
+			capabilities: []string{kwtdaemon.CapabilityInventory},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			observation := kwtdaemon.Observation{
+				Client: &kwtdaemon.Client{},
+				Status: kwtdaemon.Status{
+					Version: "sha-daemon", Revision: "daemon-revision",
+					RevisionTime: test.daemonTime, Capabilities: test.capabilities,
+				},
+			}
+			observation.Record.Metadata = map[string]string{"revision_time": test.daemonTime}
+			err := requireInventoryCapability(observation)
+			if test.code == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.True(t, service.IsCode(err, test.code), "%v", err)
+			assert.Contains(t, err.Error(), test.message)
+			assert.False(t, service.AsError(err).Retryable)
+			if test.code == service.ClientOutdated {
+				assert.Contains(t, err.Error(), version)
+				assert.Contains(t, err.Error(), revisionTime)
+				assert.Contains(t, err.Error(), "sha-daemon")
+				assert.Contains(t, err.Error(), test.daemonTime)
+			}
+		})
+	}
 }
