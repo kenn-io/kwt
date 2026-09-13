@@ -35,7 +35,7 @@ func newProjectsRecoverCommand() *cobra.Command {
 			"Use --to to choose its new checkout. Unmatched and ambiguous projects remain registered. " +
 			"JSON callers must supply the observed repository identity and registration fingerprint.",
 		Args: projectsExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withGracefulSignals(func(cmd *cobra.Command, args []string) error {
 			result, err := recoverProject(cmd.Context(), args[0], destination, repository, fingerprint, jsonOutput)
 			if err != nil {
 				return writeProjectServiceError(cmd, service.AsError(err), jsonOutput)
@@ -45,7 +45,7 @@ func newProjectsRecoverCommand() *cobra.Command {
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s at %s\n", result.Status, result.Project.Name, result.Project.Path)
 			return err
-		},
+		}),
 	}
 	command.Flags().StringVar(&destination, "to", "", "New main checkout path")
 	command.Flags().StringVar(&repository, "expected-repository", "", "Observed repository identity")
@@ -58,6 +58,9 @@ func recoverProject(
 	ctx context.Context, path, destination, identity, fingerprint string, requireExpectation bool,
 ) (projectRecoveryResult, error) {
 	var result projectRecoveryResult
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
 	if (identity == "") != (fingerprint == "") ||
 		(requireExpectation && identity == "") ||
 		(fingerprint != "" && !config.ValidProjectRegistrationFingerprint(fingerprint)) {

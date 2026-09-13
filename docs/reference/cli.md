@@ -861,7 +861,9 @@ cannot read the worktree registry or traverse the configured worktree tree.
 Invalid requests, including malformed expected identities or an invalid chosen
 destination, and missing registrations exit `2`. Changed registrations,
 malformed configuration or registry data, and other operational failures return a structured error and
-exit `1`; cancellation also remains an error. The existing guarded
+exit `1`; cancellation also remains an error, even when no relocation is
+needed. `SIGINT` and `SIGTERM` cancel recovery and exit `130` and `143`,
+respectively. The existing guarded
 registration transaction rechecks the complete entry before replacing it.
 Recovery reports `recovered` only when that replacement succeeds and the
 refreshed registration matches the exact intended record. A concurrent

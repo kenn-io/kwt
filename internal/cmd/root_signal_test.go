@@ -3,6 +3,8 @@
 package cmd
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,24 +14,29 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kwt/internal/config"
 )
 
-func TestExecuteCancelsCommandContextOnInterrupt(t *testing.T) {
+func TestExecuteCancelsProjectRecoveryOnInterrupt(t *testing.T) {
 	if os.Getenv("KWT_TEST_SIGNAL_CONTEXT") == "1" {
 		readyPath := os.Getenv("KWT_TEST_SIGNAL_READY")
 		canceledPath := os.Getenv("KWT_TEST_SIGNAL_CANCELED")
-		waitCmd := &cobra.Command{
-			Use: "wait-for-test-signal",
-			RunE: withGracefulSignals(func(cmd *cobra.Command, _ []string) error {
-				if err := os.WriteFile(readyPath, []byte("ready"), 0o600); err != nil {
-					return err
-				}
-				<-cmd.Context().Done()
-				return os.WriteFile(canceledPath, []byte("canceled"), 0o600)
-			}),
+		home := os.Getenv("KWT_HOME")
+		projectPath := filepath.Join(home, "missing")
+		require.NoError(t, os.MkdirAll(home, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"),
+			fmt.Appendf(nil, "[[projects]]\nrepository = 'github.com/acme/widget'\npath = %q\n", projectPath), 0o600))
+		resolveDoctorProjectIdentity = func(ctx context.Context, _ config.ProjectRegistration) (string, error) {
+			if err := os.WriteFile(readyPath, []byte("ready"), 0o600); err != nil {
+				return "", err
+			}
+			<-ctx.Done()
+			if err := os.WriteFile(canceledPath, []byte("canceled"), 0o600); err != nil {
+				return "", err
+			}
+			return "", ctx.Err()
 		}
-		rootCmd.AddCommand(waitCmd)
-		rootCmd.SetArgs([]string{waitCmd.Use})
+		rootCmd.SetArgs([]string{"projects", "recover", projectPath})
 		Execute()
 		return
 	}
@@ -37,7 +44,7 @@ func TestExecuteCancelsCommandContextOnInterrupt(t *testing.T) {
 	tmp := t.TempDir()
 	readyPath := filepath.Join(tmp, "ready")
 	canceledPath := filepath.Join(tmp, "canceled")
-	command := exec.Command(os.Args[0], "-test.run=^TestExecuteCancelsCommandContextOnInterrupt$")
+	command := exec.Command(os.Args[0], "-test.run=^TestExecuteCancelsProjectRecoveryOnInterrupt$")
 	command.Env = append(os.Environ(),
 		"KWT_TEST_SIGNAL_CONTEXT=1",
 		"KWT_TEST_SIGNAL_READY="+readyPath,

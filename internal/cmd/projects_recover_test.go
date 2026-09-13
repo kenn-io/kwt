@@ -24,9 +24,12 @@ func TestProjectsRecoverRenamedRepository(t *testing.T) {
 		status   string
 		code     service.Code
 		exitCode int
+		canceled bool
 	}{
 		{name: "automatic", status: "recovered"},
 		{name: "chosen", status: "recovered"},
+		{name: "available", status: "available"},
+		{name: "unavailable", status: "unresolved"},
 		{name: "missing", status: "unresolved"},
 		{name: "ambiguous", status: "unresolved"},
 		{name: "wrong repository", code: service.InvalidRequest, exitCode: 2},
@@ -42,7 +45,9 @@ func TestProjectsRecoverRenamedRepository(t *testing.T) {
 		{name: "inaccessible inventory", status: "unresolved"},
 		{name: "invalid registry", code: service.Internal, exitCode: 1},
 		{name: "invalid config", code: service.Internal, exitCode: 1},
-		{name: "cancelled", code: service.Internal, exitCode: 1},
+		{name: "cancelled", code: service.Internal, exitCode: 1, canceled: true},
+		{name: "cancelled available", code: service.Internal, exitCode: 1, canceled: true},
+		{name: "cancelled unavailable", code: service.Internal, exitCode: 1, canceled: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			scenario := test.name
@@ -57,6 +62,12 @@ func TestProjectsRecoverRenamedRepository(t *testing.T) {
 			newPath := filepath.Join(base, "widget")
 			require.NoError(t, os.MkdirAll(base, 0o700))
 			require.NoError(t, os.Rename(oldPath, newPath))
+			switch scenario {
+			case "available", "cancelled available":
+				require.NoError(t, os.Rename(newPath, oldPath))
+			case "unavailable", "cancelled unavailable":
+				require.NoError(t, os.WriteFile(oldPath, []byte("not a directory"), 0o600))
+			}
 			if scenario == "chosen" {
 				newPath = filepath.Join(root, "elsewhere")
 				require.NoError(t, os.Rename(filepath.Join(base, "widget"), newPath))
@@ -140,7 +151,7 @@ func TestProjectsRecoverRenamedRepository(t *testing.T) {
 			}
 			command := newProjectsRecoverCommand()
 			command.SetContext(t.Context())
-			if scenario == "cancelled" {
+			if test.canceled {
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
 				command.SetContext(ctx)
