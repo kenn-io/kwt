@@ -104,7 +104,9 @@ func stableProjectIdentity(registration config.ProjectRegistration) (string, err
 	return info.FullPath, nil
 }
 
-func validateStableProjectIdentity(identity string) (string, error) {
+// ValidateProjectIdentity accepts exact stable identities published by project
+// inventory, including local identities whose paths contain whitespace.
+func ValidateProjectIdentity(identity string) (string, error) {
 	if identity == "" {
 		return "", fmt.Errorf("expected repository identity is invalid")
 	}
@@ -133,7 +135,7 @@ func EqualProjectIdentity(left, right string) bool {
 }
 
 func foldProjectIdentity(identity string) (string, error) {
-	identity, err := validateStableProjectIdentity(identity)
+	identity, err := ValidateProjectIdentity(identity)
 	if err != nil {
 		return "", err
 	}

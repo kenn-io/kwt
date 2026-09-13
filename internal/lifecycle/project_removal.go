@@ -91,7 +91,7 @@ func (s *projectRemovalService) RemoveProject(
 	ctx context.Context,
 	request ProjectRemovalRequest,
 ) (result ProjectRemovalResult, resultErr error) {
-	identity, err := validateStableProjectIdentity(request.ExpectedRepository)
+	identity, err := ValidateProjectIdentity(request.ExpectedRepository)
 	if err != nil || request.Path == "" ||
 		!config.ValidProjectRegistrationFingerprint(request.ExpectedRegistration) {
 		return result, projectRemovalError(
@@ -333,7 +333,7 @@ func (s *projectRemovalService) loadProtectedEndpoints(
 			}
 			continue
 		}
-		recordIdentity, identityErr := validateStableProjectIdentity(record.Project.Identity)
+		recordIdentity, identityErr := ValidateProjectIdentity(record.Project.Identity)
 		if identityErr != nil ||
 			!pullrequest.ProvenanceHasRepositoryIdentity(record, recordIdentity) {
 			return nil, incompleteProtectedAuthority(

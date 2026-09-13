@@ -832,9 +832,42 @@ Entries whose configured paths are missing, inaccessible, or no longer Git
 repositories remain visible. Their `path` is the exact persisted value and
 their `repository` is a stable credential-free identity, allowing automation
 to authorize metadata removal without inspecting the checkout. Pathless
-entries are omitted. Kwt does not scan for moved checkouts; running kwt in the
+entries are omitted. An absent folder has `path_issue: "missing"`; a path that
+cannot be inspected or is not a directory has `path_issue: "unavailable"`.
+Accessible directories omit `path_issue`; worktree inventory still verifies
+their Git contents. Listing does not relocate projects. Running kwt in the
 checkout's new location, or using `kwt projects add <new-path>`, updates the
 existing record by repository identity.
+
+`kwt projects recover <exact-registered-path>` looks for a moved checkout in
+the repositories already known to kwt, using the same inspection as doctor.
+It relocates one unambiguous match. With no match, inaccessible inventory, or
+multiple matching clones, it leaves the registration in place. It never
+removes registrations, prunes worktrees, repairs Git metadata, or changes
+terminal sessions.
+
+Use `--to /new/checkout` to select the new main checkout explicitly. Kwt
+verifies its repository identity and preserves the project's name, last
+touched time, and other registration settings. The old path must still be
+missing; an inaccessible or restored path is left unchanged.
+
+Machine callers pass `--json --expected-repository <identity>
+--expected-registration <fingerprint>` from the observed project. Success
+returns `{status, project}` with the current inventory record. Status is
+`recovered` after relocation, `available` if the original folder has returned,
+or `unresolved` when the registration needs attention. Unresolved results exit
+zero without changing the registration, including when automatic recovery
+cannot read the worktree registry or traverse the configured worktree tree.
+Invalid requests, including malformed expected identities or an invalid chosen
+destination, and missing registrations exit `2`. Changed registrations,
+malformed configuration or registry data, and other operational failures return a structured error and
+exit `1`; cancellation also remains an error, even when no relocation is
+needed. `SIGINT` and `SIGTERM` cancel recovery and exit `130` and `143`,
+respectively. The existing guarded
+registration transaction rechecks the complete entry before replacing it.
+Recovery reports `recovered` only when that replacement succeeds and the
+refreshed registration matches the exact intended record. A concurrent
+replacement or edit returns `registration_changed` so callers can refresh.
 
 `kwt projects add <path>` registers an existing Git checkout without opening
 the dashboard. A linked-worktree path resolves to its main repository before
