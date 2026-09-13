@@ -858,11 +858,14 @@ returns `{status, project}` with the current inventory record. Status is
 or `unresolved` when the registration needs attention. Unresolved results exit
 zero without changing the registration, including when automatic recovery
 cannot read the worktree registry or traverse the configured worktree tree.
-Invalid requests, including an invalid chosen destination, and missing
-registrations exit `2`. Changed registrations, malformed configuration or
-registry data, and other operational failures return a structured error and
+Invalid requests, including malformed expected identities or an invalid chosen
+destination, and missing registrations exit `2`. Changed registrations,
+malformed configuration or registry data, and other operational failures return a structured error and
 exit `1`; cancellation also remains an error. The existing guarded
 registration transaction rechecks the complete entry before replacing it.
+Recovery reports `recovered` only when that replacement succeeds and the
+refreshed registration matches the exact intended record. A concurrent
+replacement or edit returns `registration_changed` so callers can refresh.
 
 `kwt projects add <path>` registers an existing Git checkout without opening
 the dashboard. A linked-worktree path resolves to its main repository before

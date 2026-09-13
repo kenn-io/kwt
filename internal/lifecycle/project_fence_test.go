@@ -49,12 +49,12 @@ func TestLocalProjectIdentityPreservesTrailingWhitespace(t *testing.T) {
 		filepath.Join(t.TempDir(), "repo "),
 	)
 
-	validated, err := validateStableProjectIdentity(identity)
+	validated, err := ValidateProjectIdentity(identity)
 
 	require.NoError(t, err)
 	assert.Equal(t, identity, validated)
 	assert.False(t, EqualProjectIdentity(identity, strings.TrimSuffix(identity, " ")))
-	_, err = validateStableProjectIdentity("github.com/acme/widget ")
+	_, err = ValidateProjectIdentity("github.com/acme/widget ")
 	assert.Error(t, err)
 }
 

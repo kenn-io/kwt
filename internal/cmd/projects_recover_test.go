@@ -12,7 +12,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
 
@@ -31,6 +33,11 @@ func TestProjectsRecoverRenamedRepository(t *testing.T) {
 		{name: "changed registration", code: service.RegistrationChanged, exitCode: 1},
 		{name: "not registered", code: service.ProjectNotFound, exitCode: 2},
 		{name: "missing expectations", code: service.InvalidRequest, exitCode: 2},
+		{name: "invalid identity", code: service.InvalidRequest, exitCode: 2},
+		{name: "different identity", code: service.RegistrationChanged, exitCode: 1},
+		{name: "concurrent relocation", code: service.RegistrationChanged, exitCode: 1},
+		{name: "concurrent rewrite", code: service.RegistrationChanged, exitCode: 1},
+		{name: "edited after relocation", code: service.RegistrationChanged, exitCode: 1},
 		{name: "inaccessible registry", status: "unresolved"},
 		{name: "inaccessible inventory", status: "unresolved"},
 		{name: "invalid registry", code: service.Internal, exitCode: 1},
@@ -65,7 +72,7 @@ func TestProjectsRecoverRenamedRepository(t *testing.T) {
 				runTUITestGit(t, newPath, "remote", "set-url", "origin", "https://github.com/acme/another.git")
 			}
 			configPath := filepath.Join(home, "config.toml")
-			original := []byte(fmt.Sprintf("[worktree]\nbasedir = %q\n[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'My Project'\npath = %q\nlast_touched = 'before'\n", base, oldPath))
+			original := []byte(fmt.Sprintf("[worktree]\nbasedir = %q\n[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'My Project'\npath = %q\nlast_touched = 'before'\ncustom = 'custom-before'\n", base, oldPath))
 			require.NoError(t, os.WriteFile(configPath, original, 0o600))
 			snapshot, err := config.LoadGlobalSnapshotAt(home)
 			require.NoError(t, err)
@@ -74,6 +81,40 @@ func TestProjectsRecoverRenamedRepository(t *testing.T) {
 			if scenario == "changed registration" {
 				original = bytes.ReplaceAll(original, []byte("My Project"), []byte("Changed Project"))
 				require.NoError(t, os.WriteFile(configPath, original, 0o600))
+			}
+			if scenario == "concurrent relocation" || scenario == "concurrent rewrite" || scenario == "edited after relocation" {
+				transition := transitionDoctorProjectRegistration
+				t.Cleanup(func() { transitionDoctorProjectRegistration = transition })
+				transitionDoctorProjectRegistration = func(
+					ctx context.Context, home string, expansion kwt.ExpansionContext,
+					replacement models.Project, mutation func() error,
+				) error {
+					if scenario == "edited after relocation" {
+						err := transition(ctx, home, expansion, replacement, mutation)
+						require.NoError(t, err)
+						current, readErr := os.ReadFile(configPath)
+						require.NoError(t, readErr)
+						original = bytes.ReplaceAll(current, []byte("custom-before"), []byte("custom-after"))
+						require.NotEqual(t, current, original)
+						require.NoError(t, os.WriteFile(configPath, original, 0o600))
+						return nil
+					}
+					concurrent := replacement
+					if scenario == "concurrent rewrite" {
+						concurrent.Name = "Another registration"
+					}
+					// Another writer completes its guarded transition before
+					// recovery acquires the transition fence.
+					require.NoError(t, transition(ctx, home, expansion, concurrent, func() error {
+						changed, swapErr := config.CompareAndSwapProjectAt(home, snapshot.Projects[0], &concurrent)
+						require.NoError(t, swapErr)
+						require.True(t, changed)
+						return nil
+					}))
+					original, err = os.ReadFile(configPath)
+					require.NoError(t, err)
+					return transition(ctx, home, expansion, replacement, mutation)
+				}
 			}
 			if scenario == "inaccessible registry" || scenario == "inaccessible inventory" || scenario == "cancelled" {
 				blocked := filepath.Join(home, "registry.json")
@@ -114,6 +155,12 @@ func TestProjectsRecoverRenamedRepository(t *testing.T) {
 			if scenario == "missing expectations" {
 				args = []string{oldPath, "--json"}
 			}
+			if scenario == "invalid identity" {
+				args[3] = "not-an-identity"
+			}
+			if scenario == "different identity" {
+				args[3] = "github.com/acme/another"
+			}
 			if scenario == "chosen" || scenario == "wrong repository" {
 				args = append(args, "--to", newPath)
 			}
@@ -126,6 +173,7 @@ func TestProjectsRecoverRenamedRepository(t *testing.T) {
 				var response jsonErrorEnvelope
 				require.NoError(t, json.Unmarshal(output.Bytes(), &response))
 				assert.Equal(t, test.code, response.Error.Code)
+				assert.Equal(t, test.code == service.RegistrationChanged, response.Error.Retryable)
 			} else {
 				require.NoError(t, err, output.String())
 				var result projectRecoveryResult

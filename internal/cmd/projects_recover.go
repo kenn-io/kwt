@@ -64,6 +64,12 @@ func recoverProject(
 		return result, service.NewError(service.InvalidRequest,
 			"expected repository and registration fingerprint are required together", false, nil, nil)
 	}
+	if identity != "" {
+		if _, err := lifecycle.ValidateProjectIdentity(identity); err != nil {
+			return result, service.NewError(service.InvalidRequest,
+				"expected repository identity is invalid", false, nil, err)
+		}
+	}
 	snapshot, err := config.LoadGlobalSnapshot()
 	if err != nil {
 		return result, err
@@ -137,13 +143,22 @@ func recoverProject(
 	if finding.ProjectRepair == nil {
 		return result, nil
 	}
-	// Only this relocation enters the fixer. Other doctor findings, including
-	// stale registrations and missing worktrees, are outside this command.
-	err = (&maintenance.Fixer{Projects: doctorProjectMutator{}}).Fix(ctx, maintenance.Report{
-		Repositories: []maintenance.RepositoryReport{{Findings: []maintenance.Finding{finding}}},
-	})
+	replacement := expected.Persisted
+	replacement.Path = finding.ProjectRepair.TargetRoot
+	replacement.Repository = finding.ProjectRepair.TargetRepository
+	replacementFingerprint, err := expected.ReplacementFingerprint(replacement)
 	if err != nil {
 		return result, err
+	}
+	// Only this relocation enters the fixer. Other doctor findings, including
+	// stale registrations and missing worktrees, are outside this command.
+	changed, err := (&maintenance.Fixer{Projects: doctorProjectMutator{}}).FixProject(ctx, finding)
+	if err != nil {
+		return result, err
+	}
+	if !changed {
+		return result, service.NewError(service.RegistrationChanged,
+			"the project or its destination changed; refresh before locating it", true, nil, nil)
 	}
 	current, err := config.LoadGlobalSnapshot()
 	if err != nil {
@@ -161,7 +176,8 @@ func recoverProject(
 			if recordErr != nil {
 				return result, recordErr
 			}
-			if updated.PathIssue == "" && lifecycle.EqualProjectIdentity(updated.Repository, project.Repository) {
+			if updated.PathIssue == "" && updated.RegistrationFingerprint == replacementFingerprint &&
+				lifecycle.EqualProjectIdentity(updated.Repository, project.Repository) {
 				return projectRecoveryResult{Status: "recovered", Project: updated}, nil
 			}
 		}

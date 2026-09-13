@@ -782,6 +782,12 @@ func (p ProjectRegistration) SamePersistedEntry(other ProjectRegistration) bool 
 	return sameProjectRegistrationRaw(p.raw, other.raw)
 }
 
+// ReplacementFingerprint identifies the intended replacement, including all
+// unknown settings retained by the guarded registration update.
+func (p ProjectRegistration) ReplacementFingerprint(replacement models.Project) (string, error) {
+	return (ProjectRegistration{raw: updateRawProject(p.raw, replacement)}).Fingerprint()
+}
+
 // GlobalSnapshot is a fresh global-only configuration view. Projects are
 // paired by their stable order in the single TOML snapshot.
 type GlobalSnapshot struct {
@@ -926,12 +932,7 @@ func compareAndSwapProjectAt(
 						return false, nil
 					}
 				}
-				updated := cloneStringMap(projects[match])
-				updated["repository"] = copiedReplacement.Repository
-				updated["name"] = copiedReplacement.Name
-				updated["path"] = copiedReplacement.Path
-				updated["last_touched"] = copiedReplacement.LastTouched
-				projects[match] = updated
+				projects[match] = updateRawProject(projects[match], *copiedReplacement)
 			}
 			globalViper.Set("projects", projects)
 			return true, nil

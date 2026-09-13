@@ -243,47 +243,61 @@ func (f *Fixer) Fix(ctx context.Context, report Report) error {
 	}
 	for _, repositoryReport := range report.Repositories {
 		for _, finding := range repositoryReport.Findings {
-			if err := ctx.Err(); err != nil {
+			if _, err := f.FixProject(ctx, finding); err != nil {
 				return err
-			}
-			condition := finding.ProjectRepair
-			if !finding.Fixable || condition == nil {
-				continue
-			}
-			exists, err := f.PathExists(finding.Path)
-			if err != nil {
-				return fmt.Errorf("recheck configured project path %s: %w", finding.Path, err)
-			}
-			if exists {
-				continue
-			}
-
-			switch condition.Action {
-			case RemoveProject:
-				if _, err := f.Projects.RemoveProject(ctx, condition.Expected); err != nil {
-					return fmt.Errorf("remove stale project registration %s: %w", finding.Path, err)
-				}
-			case RelocateProject:
-				target, err := f.InspectRepository(condition.TargetRoot)
-				if err != nil {
-					return fmt.Errorf("recheck project relocation target %s: %w", condition.TargetRoot, err)
-				}
-				targetIdentity, identityOK := repairableProjectIdentity(target.RepositoryIdentity)
-				if pathKey(target.Root) != pathKey(condition.TargetRoot) ||
-					pathKey(target.CommonDir) != pathKey(condition.TargetCommonDir) ||
-					!identityOK || !repositoryIdentityMatchesAny(targetIdentity, condition.TargetRepository) {
-					continue
-				}
-				replacement := condition.Expected.Persisted
-				replacement.Path = condition.TargetRoot
-				replacement.Repository = condition.TargetRepository
-				if _, err := f.Projects.RelocateProject(ctx, condition.Expected, replacement); err != nil {
-					return fmt.Errorf("relocate project registration %s: %w", finding.Path, err)
-				}
 			}
 		}
 	}
 	return nil
+}
+
+// FixProject rechecks one project finding and reports whether its guarded
+// registration replacement or removal actually changed the persisted entry.
+func (f *Fixer) FixProject(ctx context.Context, finding Finding) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	condition := finding.ProjectRepair
+	if f.Projects == nil || !finding.Fixable || condition == nil {
+		return false, nil
+	}
+	f.setDefaults()
+	exists, err := f.PathExists(finding.Path)
+	if err != nil {
+		return false, fmt.Errorf("recheck configured project path %s: %w", finding.Path, err)
+	}
+	if exists {
+		return false, nil
+	}
+
+	switch condition.Action {
+	case RemoveProject:
+		changed, err := f.Projects.RemoveProject(ctx, condition.Expected)
+		if err != nil {
+			return false, fmt.Errorf("remove stale project registration %s: %w", finding.Path, err)
+		}
+		return changed, nil
+	case RelocateProject:
+		target, err := f.InspectRepository(condition.TargetRoot)
+		if err != nil {
+			return false, fmt.Errorf("recheck project relocation target %s: %w", condition.TargetRoot, err)
+		}
+		targetIdentity, identityOK := repairableProjectIdentity(target.RepositoryIdentity)
+		if pathKey(target.Root) != pathKey(condition.TargetRoot) ||
+			pathKey(target.CommonDir) != pathKey(condition.TargetCommonDir) ||
+			!identityOK || !repositoryIdentityMatchesAny(targetIdentity, condition.TargetRepository) {
+			return false, nil
+		}
+		replacement := condition.Expected.Persisted
+		replacement.Path = condition.TargetRoot
+		replacement.Repository = condition.TargetRepository
+		changed, err := f.Projects.RelocateProject(ctx, condition.Expected, replacement)
+		if err != nil {
+			return false, fmt.Errorf("relocate project registration %s: %w", finding.Path, err)
+		}
+		return changed, nil
+	}
+	return false, nil
 }
 
 func (f *Fixer) withInactiveCreation(
