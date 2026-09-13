@@ -856,8 +856,12 @@ Machine callers pass `--json --expected-repository <identity>
 returns `{status, project}` with the current inventory record. Status is
 `recovered` after relocation, `available` if the original folder has returned,
 or `unresolved` when the registration needs attention. Unresolved results exit
-zero without changing the registration. A changed registration or invalid
-chosen destination returns a structured error. The existing guarded
+zero without changing the registration, including when automatic recovery
+cannot read the worktree registry or traverse the configured worktree tree.
+Invalid requests, including an invalid chosen destination, and missing
+registrations exit `2`. Changed registrations, malformed configuration or
+registry data, and other operational failures return a structured error and
+exit `1`; cancellation also remains an error. The existing guarded
 registration transaction rechecks the complete entry before replacing it.
 
 `kwt projects add <path>` registers an existing Git checkout without opening

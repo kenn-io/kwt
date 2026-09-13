@@ -3,7 +3,9 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 
 	"github.com/spf13/cobra"
 	kwt "go.kenn.io/kwt"
@@ -36,7 +38,7 @@ func newProjectsRecoverCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			result, err := recoverProject(cmd.Context(), args[0], destination, repository, fingerprint, jsonOutput)
 			if err != nil {
-				return writeCommandFailure(cmd, service.AsError(err).Descriptor, 1, jsonOutput, "projects")
+				return writeProjectServiceError(cmd, service.AsError(err), jsonOutput)
 			}
 			if jsonOutput {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
@@ -114,13 +116,13 @@ func recoverProject(
 	} else {
 		reg, openErr := openDoctorRegistry()
 		if openErr != nil {
-			return result, openErr
+			return result, recoveryInventoryError(ctx, openErr)
 		}
 		inspector.RegistryEntries = reg.List()
 		inspector.CreationActive = reg.CreationActive
 		report, inspectErr := inspector.Inspect(ctx)
 		if inspectErr != nil {
-			return result, inspectErr
+			return result, recoveryInventoryError(ctx, inspectErr)
 		}
 		for _, repository := range report.Repositories {
 			for _, candidate := range repository.Findings {
@@ -166,6 +168,19 @@ func recoverProject(
 	}
 	return result, service.NewError(service.RegistrationChanged,
 		"the project or its destination changed; refresh before locating it", true, nil, nil)
+}
+
+// Automatic recovery needs a complete inventory before relocating anything.
+// Filesystem access failures leave the project unresolved; malformed data and
+// command failures still need an error, and cancellation must not become success.
+func recoveryInventoryError(ctx context.Context, err error) error {
+	if contextErr := ctx.Err(); contextErr != nil {
+		return contextErr
+	}
+	if _, ok := errors.AsType[*fs.PathError](err); ok {
+		return nil
+	}
+	return err
 }
 
 func recoveryProjectRecord(ctx context.Context, registration config.ProjectRegistration) (kwt.Project, error) {

@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,11 +13,32 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/service"
 )
 
 func TestProjectsRecoverRenamedRepository(t *testing.T) {
-	for _, scenario := range []string{"automatic", "chosen", "missing", "ambiguous", "wrong repository", "changed registration"} {
-		t.Run(scenario, func(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		status   string
+		code     service.Code
+		exitCode int
+	}{
+		{name: "automatic", status: "recovered"},
+		{name: "chosen", status: "recovered"},
+		{name: "missing", status: "unresolved"},
+		{name: "ambiguous", status: "unresolved"},
+		{name: "wrong repository", code: service.InvalidRequest, exitCode: 2},
+		{name: "changed registration", code: service.RegistrationChanged, exitCode: 1},
+		{name: "not registered", code: service.ProjectNotFound, exitCode: 2},
+		{name: "missing expectations", code: service.InvalidRequest, exitCode: 2},
+		{name: "inaccessible registry", status: "unresolved"},
+		{name: "inaccessible inventory", status: "unresolved"},
+		{name: "invalid registry", code: service.Internal, exitCode: 1},
+		{name: "invalid config", code: service.Internal, exitCode: 1},
+		{name: "cancelled", code: service.Internal, exitCode: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scenario := test.name
 			home, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
 			t.Setenv("KWT_HOME", home)
@@ -52,26 +75,71 @@ func TestProjectsRecoverRenamedRepository(t *testing.T) {
 				original = bytes.ReplaceAll(original, []byte("My Project"), []byte("Changed Project"))
 				require.NoError(t, os.WriteFile(configPath, original, 0o600))
 			}
+			if scenario == "inaccessible registry" || scenario == "inaccessible inventory" || scenario == "cancelled" {
+				blocked := filepath.Join(home, "registry.json")
+				require.NoError(t, os.WriteFile(blocked, []byte("[]"), 0o600))
+				if scenario == "inaccessible inventory" {
+					blocked = base
+				}
+				require.NoError(t, os.Chmod(blocked, 0))
+				t.Cleanup(func() { assert.NoError(t, os.Chmod(blocked, 0o700)) })
+				file, openErr := os.Open(blocked)
+				if openErr == nil {
+					require.NoError(t, file.Close())
+					t.Skip("filesystem permits reading a path with mode 000")
+				}
+				require.ErrorIs(t, openErr, fs.ErrPermission)
+			}
+			if scenario == "invalid registry" {
+				require.NoError(t, os.WriteFile(filepath.Join(home, "registry.json"), []byte("{invalid"), 0o600))
+			}
+			if scenario == "invalid config" {
+				original = []byte("[invalid")
+				require.NoError(t, os.WriteFile(configPath, original, 0o600))
+			}
 			command := newProjectsRecoverCommand()
 			command.SetContext(t.Context())
+			if scenario == "cancelled" {
+				ctx, cancel := context.WithCancel(t.Context())
+				cancel()
+				command.SetContext(ctx)
+			}
 			output := new(bytes.Buffer)
 			command.SetOut(output)
-			command.SetErr(output)
+			command.SetErr(new(bytes.Buffer))
 			args := []string{oldPath, "--json", "--expected-repository", "github.com/acme/widget", "--expected-registration", fingerprint}
+			if scenario == "not registered" {
+				args[0] = filepath.Join(root, "not-registered")
+			}
+			if scenario == "missing expectations" {
+				args = []string{oldPath, "--json"}
+			}
 			if scenario == "chosen" || scenario == "wrong repository" {
 				args = append(args, "--to", newPath)
 			}
 			require.NoError(t, command.ParseFlags(args))
 			err = command.RunE(command, command.Flags().Args())
-			if scenario == "wrong repository" || scenario == "changed registration" {
-				require.Error(t, err)
+			if test.code != "" {
+				var exitErr interface{ ExitCode() int }
+				require.ErrorAs(t, err, &exitErr)
+				assert.Equal(t, test.exitCode, exitErr.ExitCode())
+				var response jsonErrorEnvelope
+				require.NoError(t, json.Unmarshal(output.Bytes(), &response))
+				assert.Equal(t, test.code, response.Error.Code)
 			} else {
 				require.NoError(t, err, output.String())
+				var result projectRecoveryResult
+				require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+				assert.Equal(t, test.status, result.Status)
+				if test.status == "unresolved" {
+					assert.Equal(t, oldPath, result.Project.Path)
+					assert.Equal(t, fingerprint, result.Project.RegistrationFingerprint)
+				}
 			}
-			current, err := config.LoadGlobalSnapshotAt(home)
-			require.NoError(t, err)
-			require.Len(t, current.Projects, 1)
 			if scenario == "automatic" || scenario == "chosen" {
+				current, err := config.LoadGlobalSnapshotAt(home)
+				require.NoError(t, err)
+				require.Len(t, current.Projects, 1)
 				assert.Equal(t, newPath, current.Projects[0].Persisted.Path)
 				assert.Equal(t, "My Project", current.Projects[0].Persisted.Name)
 				assert.Equal(t, "before", current.Projects[0].Persisted.LastTouched)

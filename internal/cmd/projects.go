@@ -241,7 +241,7 @@ func runProjectsRemove(cmd *cobra.Command, args []string) error {
 			service.InvalidRequest,
 			"expected repository identity and registration fingerprint are required together",
 			false, nil, nil,
-		))
+		), projectCommandJSONRequested())
 	}
 	if !hasRepository {
 		var err error
@@ -249,7 +249,7 @@ func runProjectsRemove(cmd *cobra.Command, args []string) error {
 			cmd, args[0],
 		)
 		if err != nil {
-			return writeProjectServiceError(cmd, service.AsError(err))
+			return writeProjectServiceError(cmd, service.AsError(err), projectCommandJSONRequested())
 		}
 	}
 	expansion, err := kwt.CaptureExpansionContext()
@@ -258,14 +258,14 @@ func runProjectsRemove(cmd *cobra.Command, args []string) error {
 			service.UnregistrationFailed,
 			"failed to capture project removal context",
 			false, nil, err,
-		))
+		), projectCommandJSONRequested())
 	}
 	result, err := removeProjectThroughDaemon(cmd.Context(), kwt.ProjectRemovalRequest{
 		Path: args[0], ExpectedRepository: expectedRepository,
 		ExpectedRegistration: expectedRegistration, Expansion: expansion,
 	})
 	if err != nil {
-		return writeProjectServiceError(cmd, service.AsError(err))
+		return writeProjectServiceError(cmd, service.AsError(err), projectCommandJSONRequested())
 	}
 	project := result.Project
 	if projectsRemoveJSON {
@@ -329,7 +329,7 @@ func currentProjectRemovalExpectation(
 	}
 }
 
-func writeProjectServiceError(cmd *cobra.Command, typed *service.Error) error {
+func writeProjectServiceError(cmd *cobra.Command, typed *service.Error, jsonOutput bool) error {
 	exitCode := 1
 	if typed.Code == service.InvalidRequest || typed.Code == service.ProjectNotFound {
 		exitCode = 2
@@ -338,7 +338,7 @@ func writeProjectServiceError(cmd *cobra.Command, typed *service.Error) error {
 		cmd,
 		typed.Descriptor,
 		exitCode,
-		projectCommandJSONRequested(),
+		jsonOutput,
 		"projects",
 	)
 }
