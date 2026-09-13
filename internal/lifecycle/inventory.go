@@ -214,6 +214,7 @@ type InventoryProject struct {
 	Path                    string `json:"path"`
 	LastTouched             string `json:"last_touched"`
 	RegistrationFingerprint string `json:"registration_fingerprint"`
+	PathIssue               string `json:"path_issue,omitempty"`
 }
 
 type Snapshot struct {

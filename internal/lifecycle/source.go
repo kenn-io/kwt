@@ -557,9 +557,23 @@ func publishedProjectRegistrations(
 			Path:                    registration.Persisted.Path,
 			LastTouched:             registration.Persisted.LastTouched,
 			RegistrationFingerprint: fingerprint,
+			PathIssue:               ProjectPathIssue(registration.Effective.Path),
 		})
 	}
 	return result, ctx.Err()
+}
+
+// ProjectPathIssue distinguishes an absent checkout from an inaccessible path
+// without discarding the registration or running Git during registry listing.
+func ProjectPathIssue(path string) string {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "missing"
+	}
+	if err != nil || !info.IsDir() {
+		return "unavailable"
+	}
+	return ""
 }
 
 func mergeEntries(existing, incoming []Entry) []Entry {
