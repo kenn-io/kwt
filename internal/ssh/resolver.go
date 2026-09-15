@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -169,6 +170,17 @@ func runOutput(
 	environment []string,
 	standardInput []byte,
 ) ([]byte, []byte, int, error) {
+	return runOutputWithStderr(ctx, argv, workingDirectory, environment, standardInput, nil)
+}
+
+func runOutputWithStderr(
+	ctx context.Context,
+	argv []string,
+	workingDirectory string,
+	environment []string,
+	standardInput []byte,
+	observer io.Writer,
+) ([]byte, []byte, int, error) {
 	if len(argv) == 0 {
 		return nil, nil, -1, errors.New("empty process arguments")
 	}
@@ -188,6 +200,9 @@ func runOutput(
 	}
 	command.Stderr = byteSliceWriter{
 		target: &stderr, limit: resolverOutputLimit, cancel: cancelProcess,
+	}
+	if observer != nil {
+		command.Stderr = io.MultiWriter(command.Stderr, observer)
 	}
 	err = runResolverCommand(command)
 	if ctxErr := ctx.Err(); ctxErr != nil {

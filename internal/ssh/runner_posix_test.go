@@ -8,12 +8,51 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/openssh"
 	"go.kenn.io/kwt/service"
 )
+
+func TestRunnerPresentsBrowserAuthenticationBeforeSSHExits(t *testing.T) {
+	directory := t.TempDir()
+	approved := filepath.Join(directory, "approved")
+	require.NoError(t, os.WriteFile(filepath.Join(directory, "ssh"), []byte(
+		"#!/bin/sh\nprintf '%s\\n' '# Tailscale SSH requires an additional check.' '# To authenticate, visit: https://login.tailscale.com/a/example' >&2\n"+
+			"while [ ! -f "+shellQuote(approved)+" ]; do /bin/sleep 0.01; done\n",
+	), 0o700))
+	var received service.OperationPrompt
+	request := LeaseRequest{
+		WorkingDirectory: directory,
+		Environment:      []string{"PATH=" + directory + ":/usr/bin:/bin"},
+		Prompt: func(_ context.Context, prompt service.OperationPrompt) (string, error) {
+			received = prompt
+			return "", os.WriteFile(approved, nil, 0o600)
+		},
+	}
+	target := ResolvedTarget{
+		LogicalTarget:   Target{Hostname: "build.example.test"},
+		EffectiveTarget: Target{Hostname: "build.example.test"},
+		DisplayTarget:   "build.example.test",
+		Projection:      ExecutionProjection{Arguments: []string{"-F", os.DevNull}},
+	}
+	runner, err := newRunner(filepath.Join(directory, "private"), request, target,
+		runnerOptions{Version: supportedAskpassVersion()})
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	status, err := runner(ctx, []string{"--", "build.example.test"})
+	require.NoError(t, err)
+	require.Equal(t, 0, status)
+	assert.Equal(t, "ssh_browser_authentication", received.Kind)
+	assert.Equal(t, "https://login.tailscale.com/a/example", received.Details["authentication_url"])
+	assert.Equal(t, "browser", received.Details["method"])
+	assert.Equal(t, "build.example.test", received.Details["display_target"])
+	assert.NotNil(t, received.Deadline)
+	assert.False(t, received.Sensitive)
+}
 
 func TestSSHRunnerUsesAccountLoginShellAndInvocationDirectory(t *testing.T) {
 	workingDirectory := t.TempDir()

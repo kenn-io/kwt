@@ -47,10 +47,6 @@ func newRunner(
 		"DISPLAY",
 		askpassHandleEnvironment,
 	})
-	run := options.Run
-	if run == nil {
-		run = runSSHProcess
-	}
 	version := options.Version
 	if version == nil {
 		version = NewVersionPolicy(func(ctx context.Context) (string, error) {
@@ -58,6 +54,19 @@ func newRunner(
 		})
 	}
 	return func(ctx context.Context, managerArguments []string) (int, error) {
+		ctx, cancel := context.WithCancelCause(ctx)
+		defer cancel(nil)
+		browser := newBrowserAuthenticationWriter(ctx, request, target, cancel)
+		defer browser.close()
+		run := options.Run
+		if run == nil {
+			run = func(ctx context.Context, arguments []string, directory string, environment []string) (int, error) {
+				return runSSHProcess(ctx, arguments, directory, environment,
+					func(ctx context.Context, argv []string, directory string, environment []string, input []byte) ([]byte, []byte, int, error) {
+						return runOutputWithStderr(ctx, argv, directory, environment, input, browser)
+					})
+			}
+		}
 		arguments, cleanup, err := materializeProjection(privateDirectory, projection)
 		if err != nil {
 			return -1, err
@@ -108,7 +117,7 @@ func newRunner(
 		)
 		closeErr := askpass.Close()
 		// Prompt failures carry a more specific category than the SSH exit.
-		return exitCode, errors.Join(askpass.Err(), runErr, closeErr, cleanup())
+		return exitCode, errors.Join(askpass.Err(), context.Cause(ctx), runErr, closeErr, cleanup())
 	}, nil
 }
 

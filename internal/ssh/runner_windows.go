@@ -9,8 +9,9 @@ func runSSHProcess(
 	arguments []string,
 	workingDirectory string,
 	environment []string,
+	run OutputRunner,
 ) (int, error) {
-	_, stderr, exitCode, err := runOutput(
+	_, stderr, exitCode, err := run(
 		ctx,
 		append([]string{"ssh"}, arguments...),
 		workingDirectory,
