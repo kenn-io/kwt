@@ -23,6 +23,7 @@ import (
 )
 
 var (
+	sshOpenBrowser           bool
 	sshResolveJSON           bool
 	sshResolveUser           string
 	sshResolvePort           int
@@ -133,6 +134,7 @@ func init() {
 	sshCmd.AddCommand(sshLeaseCmd)
 	sshCmd.AddCommand(sshExecCmd)
 	sshCmd.AddCommand(sshCopyCmd)
+	sshCmd.PersistentFlags().BoolVar(&sshOpenBrowser, "open-browser", false, "Open SSH authentication links in a desktop browser; otherwise defer to the caller")
 	sshResolveCmd.Flags().StringVar(&sshResolveUser, "user", "", "Override the SSH user")
 	sshResolveCmd.Flags().IntVar(&sshResolvePort, "port", 0, "Override the SSH port")
 	sshResolveCmd.Flags().BoolVar(&sshResolveJSON, "json", false, "Output a machine-readable route snapshot")
@@ -326,24 +328,30 @@ func acquireShortSSHLease(
 		return err
 	}}
 	input := cmd.InOrStdin()
-	if file, ok := input.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
-		reader := bufio.NewReader(input)
-		callbacks.Prompt = func(ctx context.Context, prompt service.OperationPrompt) (string, error) {
-			if _, err := fmt.Fprint(
-				cmd.ErrOrStderr(), terminalSafeSSHPrompt(prompt.Message)+" ",
-			); err != nil {
-				return "", err
-			}
-			if prompt.Sensitive {
-				value, err := readTerminalPassword(ctx, file)
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr())
-				return value, err
-			}
-			value, err := readSSHPrompt(ctx, func() (string, error) {
-				return reader.ReadString('\n')
-			})
-			return strings.TrimSuffix(strings.TrimSuffix(value, "\n"), "\r"), err
+	file, isFile := input.(*os.File)
+	interactive := isFile && term.IsTerminal(int(file.Fd()))
+	reader := bufio.NewReader(input)
+	callbacks.Prompt = func(ctx context.Context, prompt service.OperationPrompt) (string, error) {
+		if prompt.Kind == "ssh_browser_authentication" {
+			return "", presentSSHBrowserPrompt(ctx, cmd, prompt)
 		}
+		if !interactive {
+			return "", service.NewError(service.SSHInteractionRequired, "SSH authentication requires a terminal", false, prompt.Details, nil)
+		}
+		if _, err := fmt.Fprint(
+			cmd.ErrOrStderr(), terminalSafeSSHPrompt(prompt.Message)+" ",
+		); err != nil {
+			return "", err
+		}
+		if prompt.Sensitive {
+			value, err := readTerminalPassword(ctx, file)
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr())
+			return value, err
+		}
+		value, err := readSSHPrompt(ctx, func() (string, error) {
+			return reader.ReadString('\n')
+		})
+		return strings.TrimSuffix(strings.TrimSuffix(value, "\n"), "\r"), err
 	}
 	result, control, err := acquireSSHLeaseThroughDaemon(ctx, kwt.SSHLeaseRequest{
 		Snapshot: snapshot, HostKeyPolicy: policy,
@@ -607,6 +615,14 @@ func runSSHLease(cmd *cobra.Command, args []string) (returnErr error) {
 		Prompt: func(ctx context.Context, prompt service.OperationPrompt) (string, error) {
 			if err := ctx.Err(); err != nil {
 				return "", err
+			}
+			if prompt.Kind == "ssh_browser_authentication" && !sshLeaseJSON {
+				return "", presentSSHBrowserPrompt(ctx, cmd, prompt)
+			}
+			if prompt.Kind == "ssh_browser_authentication" && sshOpenBrowser {
+				if err := openSSHBrowserPrompt(ctx, cmd, prompt); err != nil {
+					return "", err
+				}
 			}
 			if sshLeaseJSON {
 				var response service.OperationResponse
