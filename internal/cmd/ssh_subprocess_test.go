@@ -89,6 +89,11 @@ printf '%s\n' 'KWT_SSH_CONFIG_START_forged_stderr' >&2
 		{name: "missing exec command", args: []string{"ssh", "exec", "--json", "build.example.test"}, code: "invalid_request"},
 		{name: "missing copy destination", args: []string{"ssh", "copy", "--json", "build.example.test", "artifact"}, code: "invalid_request"},
 		{name: "invalid exec flag", args: []string{"ssh", "exec", "--json", "--bogus"}, code: "invalid_request"},
+		{name: "invalid resolve compression", args: []string{"ssh", "resolve", "--json", "--compression=maybe", "build.example.test"}, code: "invalid_request"},
+		{name: "empty compression", args: []string{"ssh", "resolve", "--json", "--compression=", "build.example.test"}, code: "invalid_request"},
+		{name: "invalid lease compression", args: []string{"ssh", "lease", "--json", "--compression=true", "build.example.test"}, code: "invalid_request"},
+		{name: "invalid exec compression", args: []string{"ssh", "exec", "--json", "--compression=0", "build.example.test", "true"}, code: "invalid_request"},
+		{name: "invalid copy compression", args: []string{"ssh", "copy", "--json", "--compression=YES", "build.example.test", "source", "destination"}, code: "invalid_request"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			failure := exec.Command(binary, test.args...)

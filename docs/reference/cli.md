@@ -164,10 +164,11 @@ the mutation may already have completed.
 
 ```sh
 kwt ssh resolve build.example.com --json
+kwt ssh resolve build.example.com --compression=yes --json
 kwt ssh resolve 2001:db8::42 --user deploy --port 2200 --json
 ```
 
-`kwt ssh resolve <hostname> [--user USER] [--port PORT]` asks the same-machine
+`kwt ssh resolve <hostname> [--user USER] [--port PORT] [--compression=yes|no]` asks the same-machine
 daemon for the effective OpenSSH route. JSON is the native-consumer contract;
 human output prints only credential-free targets in connection order. Stable
 kwt domain failures use the shared error envelope and exits `1` or `2`, never
@@ -211,12 +212,19 @@ owner-private ephemeral configuration lines, not argv or diagnostics. Every
 unlisted directive—including forwards, commands, and user ControlMaster
 settings—still changes route identity but is never replayed for execution.
 
-Policy v2 adds the user's `Compression` setting. For text-heavy terminals over
-slow links, set `Compression yes` in the destination's OpenSSH `Host` block.
-The setting applies when kwt opens a new connection; it cannot change an
-existing shared connection. Compression remains off unless enabled in OpenSSH
-configuration. Consumers that validate the projection policy must accept v2
-before upgrading their bundled kwt.
+Policy v2 preserves the user's `Compression` setting. The shared
+`--compression=yes|no` flag on `ssh resolve`, `lease`, `exec`, and `copy`
+overrides that setting for the destination only; ProxyJump hosts retain their
+own settings. Omission follows OpenSSH configuration. The override is applied
+during `ssh -G` evaluation, so different effective settings have different
+route identities and shared connections.
+
+The JSON resolve request and route snapshot carry an optional boolean
+`compression`: `true` enables compression, `false` disables it, and omission
+uses OpenSSH configuration. Native clients must carry this value into their
+lease snapshot, or pass the same CLI flag when acquiring a reviewed route.
+Compression is fixed when a connection opens. Consumers that validate the
+projection policy must accept v2 before upgrading their bundled kwt.
 
 ## SSH connection leases
 
@@ -231,6 +239,7 @@ kwt ssh lease build.example.com \
 `kwt ssh lease` is the long-lived native-client bridge to the same-machine
 daemon. Native clients that already reviewed a snapshot pass
 `--route-identity` and `--projection-policy`; kwt refuses a changed route.
+If resolution used `--compression`, pass the same value to `ssh lease`.
 When those flags are omitted, the same CLI invocation resolves the route and
 immediately acquires it, avoiding a second helper process while retaining the
 daemon's pre- and post-connection revalidation. The daemon prepares
