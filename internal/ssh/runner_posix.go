@@ -17,13 +17,14 @@ func runSSHProcess(
 	arguments []string,
 	workingDirectory string,
 	environment []string,
+	run OutputRunner,
 ) (int, error) {
 	return runSSHProcessWith(
 		ctx,
 		arguments,
 		workingDirectory,
 		environment,
-		runOutput,
+		run,
 		accountLoginShell,
 	)
 }
