@@ -149,7 +149,9 @@ func (s *PublicService) Acquire(
 	}
 	request.WorkingDirectory = requestContext.workingDirectory
 	request.Environment = requestContext.environment
-	resolveRequest := ResolveRequest{Target: request.Snapshot.LogicalTarget}
+	resolveRequest := ResolveRequest{
+		Target: request.Snapshot.LogicalTarget, Compression: request.Snapshot.Compression,
+	}
 	resolve := func(ctx context.Context) (RouteSnapshot, error) {
 		return requestContext.resolver.Resolve(ctx, resolveRequest)
 	}
