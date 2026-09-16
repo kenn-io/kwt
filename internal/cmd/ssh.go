@@ -336,7 +336,7 @@ func acquireShortSSHLease(
 			return "", presentSSHBrowserPrompt(ctx, cmd, prompt)
 		}
 		if !interactive {
-			return "", service.NewError(service.SSHInteractionRequired, "SSH authentication requires a terminal", false, prompt.Details, nil)
+			return "", kwtdaemon.ErrSSHPromptHandlerUnavailable
 		}
 		if _, err := fmt.Fprint(
 			cmd.ErrOrStderr(), terminalSafeSSHPrompt(prompt.Message)+" ",

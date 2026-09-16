@@ -74,6 +74,27 @@ func TestSSHBrowserPrompt(t *testing.T) {
 	}
 }
 
+func TestShortSSHLeaseDeclinesPromptsWithoutTerminal(t *testing.T) {
+	oldAcquire, oldResolve := acquireSSHLeaseThroughDaemon, resolveSSHThroughDaemon
+	t.Cleanup(func() { acquireSSHLeaseThroughDaemon, resolveSSHThroughDaemon = oldAcquire, oldResolve })
+	resolveSSHThroughDaemon = func(context.Context, kwt.SSHResolveRequest) (kwt.SSHRouteSnapshot, error) {
+		return kwt.SSHRouteSnapshot{}, nil
+	}
+	acquireSSHLeaseThroughDaemon = func(ctx context.Context, _ kwt.SSHLeaseRequest, callbacks kwtdaemon.OperationCallbacks) (kwtdaemon.SSHLeaseResult, sshLeaseControl, error) {
+		browser := service.OperationPrompt{Kind: "ssh_browser_authentication", Message: "To authenticate, visit: https://login.tailscale.com/a/example", Details: map[string]any{"authentication_url": "https://login.tailscale.com/a/example"}}
+		_, err := callbacks.Prompt(ctx, browser)
+		require.NoError(t, err)
+		_, err = callbacks.Prompt(ctx, service.OperationPrompt{Kind: "ssh_authentication", Message: "Password:", Sensitive: true})
+		return kwtdaemon.SSHLeaseResult{}, nil, err
+	}
+	command, _, stderr := sshResolveTestCommand()
+	command.SetIn(strings.NewReader(""))
+	_, _, _, err := acquireShortSSHLease(command, kwt.SSHTarget{Hostname: "build.example.test"}, kwt.SSHHostKeyPolicy("review"), "", false)
+	assert.ErrorIs(t, err, kwtdaemon.ErrSSHPromptHandlerUnavailable)
+	assert.Contains(t, stderr.String(), "https://login.tailscale.com/a/example")
+	assert.NotContains(t, stderr.String(), "Password:")
+}
+
 func TestSSHBrowserDesktopSelection(t *testing.T) {
 	for _, tc := range []struct {
 		name, platform string
