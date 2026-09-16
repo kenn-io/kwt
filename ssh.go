@@ -28,7 +28,7 @@ const (
 )
 
 const (
-	SSHProjectionPolicyV1     = internalssh.ProjectionPolicyV1
+	SSHProjectionPolicyV2     = internalssh.ProjectionPolicyV2
 	SSHLeaseModeMultiplexed   = internalssh.LeaseModeMultiplexed
 	SSHLeaseModeMasterless    = internalssh.LeaseModeMasterless
 	SSHEventStateConnected    = internalssh.EventStateConnected

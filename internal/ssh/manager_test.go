@@ -187,7 +187,7 @@ func directSnapshot(identity string) RouteSnapshot {
 	return RouteSnapshot{
 		LogicalTarget:    Target{Hostname: "build.example.test"},
 		RouteIdentity:    identity,
-		ProjectionPolicy: ProjectionPolicyV1,
+		ProjectionPolicy: ProjectionPolicyV2,
 		Targets: []ResolvedTarget{{
 			LogicalTarget:   Target{Hostname: "build.example.test"},
 			EffectiveTarget: Target{User: "deploy", Hostname: "build.internal", Port: 22},

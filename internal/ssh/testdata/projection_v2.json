@@ -16,6 +16,7 @@
         { "name": "identityfile", "value": "~/.ssh/id_two" },
         { "name": "sendenv", "value": "LC_*" },
         { "name": "ciphers", "value": "aes256-gcm@openssh.com" },
+        { "name": "compression", "value": "yes" },
         { "name": "kexalgorithms", "value": "curve25519-sha256" },
         { "name": "macs", "value": "hmac-sha2-512-etm@openssh.com" },
         { "name": "requiredrsasize", "value": "4096" },
@@ -40,6 +41,7 @@
       "-o", "Ciphers=aes256-gcm@openssh.com",
       "-o", "MACs=hmac-sha2-512-etm@openssh.com",
       "-o", "RequiredRSASize=4096",
+      "-o", "Compression=yes",
       "-o", "SendEnv=LANG",
       "-o", "SendEnv=LC_*"
     ],

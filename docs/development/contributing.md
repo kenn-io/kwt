@@ -81,12 +81,12 @@ documented Make entrypoints rather than invoking the Go bootstrap directly.
 
 Kwt's route identity retains every normalized `ssh -G` directive, but
 execution replays only the positive policy documented as
-`kwt.openssh.projection.v1`. Total replay is not valid: supported OpenSSH
+`kwt.openssh.projection.v2`. Total replay is not valid: supported OpenSSH
 versions emit entries such as `Host` that are not accepted as command-line
 options.
 
 Whenever CI's supported OpenSSH version changes, review new and changed
-`ssh -G` directives against `internal/ssh/testdata/projection_v1.json` and the
+`ssh -G` directives against `internal/ssh/testdata/projection_v2.json` and the
 pinned Ghosthub parity matrix. A directive absent from the positive set remains
 identity-only. Before a projection policy ships, correct that policy and its
 parity evidence in place. After release, adding, removing, or changing

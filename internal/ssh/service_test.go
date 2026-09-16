@@ -92,7 +92,7 @@ func TestServiceBuildsSnapshotFromCompletePrivateObservation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, resolver.calls)
 	assert.Equal(t, observedAt.UTC(), snapshot.ObservedAt)
-	assert.Equal(t, projectionPolicyV1, snapshot.ProjectionPolicy)
+	assert.Equal(t, projectionPolicyV2, snapshot.ProjectionPolicy)
 	assert.Len(t, snapshot.RouteIdentity, 64)
 	require.Len(t, snapshot.Targets, 2)
 	assert.Equal(t, "jump@relay.internal:2222", snapshot.Targets[0].DisplayTarget)

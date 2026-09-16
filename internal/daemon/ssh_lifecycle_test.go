@@ -98,7 +98,7 @@ func (s *hostDaemonSSHLifecycle) Resolve(
 ) (kwt.SSHRouteSnapshot, error) {
 	return kwt.SSHRouteSnapshot{
 		LogicalTarget: request.Target, RouteIdentity: "route-one",
-		ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+		ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 	}, nil
 }
 
@@ -168,7 +168,7 @@ func TestServerAcquiresTouchesAndReleasesSSHLease(t *testing.T) {
 		Lease: kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{
 			LogicalTarget:    kwt.SSHTarget{Hostname: "build.example.test"},
 			RouteIdentity:    "route-one",
-			ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+			ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 			Targets: []kwt.SSHResolvedTarget{{
 				LogicalTarget:   kwt.SSHTarget{Hostname: "build.example.test"},
 				EffectiveTarget: kwt.SSHTarget{Hostname: "build.example.test"},
@@ -237,7 +237,7 @@ func TestServerRejectsMasterlessSSHLease(t *testing.T) {
 		Lease: kwt.SSHLeaseRequest{
 			Snapshot: kwt.SSHRouteSnapshot{
 				LogicalTarget: kwt.SSHTarget{Hostname: "build.example.test"},
-				RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+				RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 			},
 			WorkingDirectory: "/workspace", Environment: []string{"PATH=/usr/bin"},
 		},
@@ -276,7 +276,7 @@ func TestClientFollowsSSHLeaseOperationAndReleasesLease(t *testing.T) {
 		context.Background(),
 		kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{
 			LogicalTarget: kwt.SSHTarget{Hostname: "build.example.test"},
-			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 		}},
 		OperationCallbacks{Event: func(event service.OperationEvent) error {
 			events = append(events, event.Kind)
@@ -361,7 +361,7 @@ func TestClientPrefersTerminalSSHFailureAfterLostStartResponse(t *testing.T) {
 		context.Background(),
 		kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{
 			LogicalTarget: kwt.SSHTarget{Hostname: "build.example.test"},
-			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 		}},
 		OperationCallbacks{},
 	)
@@ -382,7 +382,7 @@ func TestClientReturnsSSHLeaseResultWithTerminalCallbackFailure(t *testing.T) {
 		context.Background(),
 		kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{
 			LogicalTarget: kwt.SSHTarget{Hostname: "build.example.test"},
-			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 		}},
 		OperationCallbacks{Event: func(event service.OperationEvent) error {
 			if event.Kind == service.OperationEventComplete {
@@ -406,7 +406,7 @@ func TestClientRoundTripsSSHLeaseControlErrors(t *testing.T) {
 		context.Background(),
 		kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{
 			LogicalTarget: kwt.SSHTarget{Hostname: "build.example.test"},
-			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 		}},
 		OperationCallbacks{},
 	)
@@ -444,7 +444,7 @@ func TestClientCarriesMultipleBoundSSHPromptRounds(t *testing.T) {
 		context.Background(),
 		kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{
 			LogicalTarget: kwt.SSHTarget{Hostname: "build.example.test"},
-			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 		}},
 		OperationCallbacks{Prompt: func(
 			_ context.Context,
@@ -471,7 +471,7 @@ func TestClientCancelsSSHOperationWithoutPromptHandler(t *testing.T) {
 		context.Background(),
 		kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{
 			LogicalTarget: kwt.SSHTarget{Hostname: "build.example.test"},
-			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 		}},
 		OperationCallbacks{},
 	)
@@ -501,7 +501,7 @@ func TestServerExpiresSSHLeaseWhenClientStopsTouching(t *testing.T) {
 		Lease: kwt.SSHLeaseRequest{
 			Snapshot: kwt.SSHRouteSnapshot{
 				LogicalTarget: kwt.SSHTarget{Hostname: "build.example.test"},
-				RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+				RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 			},
 			WorkingDirectory: "/workspace", Environment: []string{"PATH=/usr/bin"},
 		},
@@ -622,7 +622,7 @@ func TestServeDrainsActiveSSHLeaseThenClosesLifecycleOwner(t *testing.T) {
 		context.Background(),
 		kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{
 			LogicalTarget: kwt.SSHTarget{Hostname: "build.example.test"},
-			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 		}},
 		OperationCallbacks{},
 	)

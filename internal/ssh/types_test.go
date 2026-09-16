@@ -24,7 +24,7 @@ func TestRouteSnapshotJSONOmitsCanonicalConfiguration(t *testing.T) {
 	snapshot := RouteSnapshot{
 		LogicalTarget:    Target{User: "deploy", Hostname: "build.example.test"},
 		RouteIdentity:    strings.Repeat("a", 64),
-		ProjectionPolicy: projectionPolicyV1,
+		ProjectionPolicy: projectionPolicyV2,
 		ObservedAt:       time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC),
 		Targets: []ResolvedTarget{{
 			LogicalTarget: Target{Hostname: "build.example.test"},
