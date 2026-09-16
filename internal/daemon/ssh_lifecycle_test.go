@@ -461,26 +461,35 @@ func TestClientCarriesMultipleBoundSSHPromptRounds(t *testing.T) {
 }
 
 func TestClientCancelsSSHOperationWithoutPromptHandler(t *testing.T) {
-	lifecycle := &promptingDaemonSSHLifecycle{
-		lease: &fakeDaemonSSHLease{}, done: make(chan error, 1),
-	}
-	client, closeServer := newSSHLifecycleTestClient(t, lifecycle)
-	defer closeServer()
-
-	_, err := client.AcquireSSH(
-		context.Background(),
-		kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{
-			LogicalTarget: kwt.SSHTarget{Hostname: "build.example.test"},
-			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+	for name, callbacks := range map[string]OperationCallbacks{
+		"no handler": {},
+		"handler declines": {Prompt: func(context.Context, service.OperationPrompt) (string, error) {
+			return "", ErrSSHPromptHandlerUnavailable
 		}},
-		OperationCallbacks{},
-	)
-	assert.True(t, service.IsCode(err, service.SSHInteractionRequired), err)
-	select {
-	case operationErr := <-lifecycle.done:
-		assert.ErrorIs(t, operationErr, context.Canceled)
-	case <-time.After(100 * time.Millisecond):
-		require.Fail(t, "SSH operation was not canceled")
+	} {
+		t.Run(name, func(t *testing.T) {
+			lifecycle := &promptingDaemonSSHLifecycle{
+				lease: &fakeDaemonSSHLease{}, done: make(chan error, 1),
+			}
+			client, closeServer := newSSHLifecycleTestClient(t, lifecycle)
+			defer closeServer()
+
+			_, err := client.AcquireSSH(
+				context.Background(),
+				kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{
+					LogicalTarget: kwt.SSHTarget{Hostname: "build.example.test"},
+					RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+				}},
+				callbacks,
+			)
+			assert.True(t, service.IsCode(err, service.SSHInteractionRequired), err)
+			select {
+			case operationErr := <-lifecycle.done:
+				assert.ErrorIs(t, operationErr, context.Canceled)
+			case <-time.After(100 * time.Millisecond):
+				require.Fail(t, "SSH operation was not canceled")
+			}
+		})
 	}
 }
 

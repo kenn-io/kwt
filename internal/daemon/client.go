@@ -87,6 +87,10 @@ func RequiresRefresh(err error) bool {
 
 var ErrResponseTooLarge = errors.New("kwt daemon response is too large")
 
+// ErrSSHPromptHandlerUnavailable is returned by a prompt callback that cannot
+// answer an SSH prompt. AcquireSSH reports it as SSHInteractionRequired.
+var ErrSSHPromptHandlerUnavailable = errors.New("SSH prompt handler is unavailable")
+
 const (
 	controlRequestTimeout              = 2 * time.Second
 	inventoryResponseHeadroom          = 5 * time.Second
@@ -252,10 +256,9 @@ func (c *Client) AcquireSSH(
 	request kwt.SSHLeaseRequest,
 	callbacks OperationCallbacks,
 ) (SSHLeaseResult, error) {
-	missingPromptHandler := errors.New("SSH prompt handler is unavailable")
 	if callbacks.Prompt == nil {
 		callbacks.Prompt = func(context.Context, service.OperationPrompt) (string, error) {
-			return "", missingPromptHandler
+			return "", ErrSSHPromptHandlerUnavailable
 		}
 	}
 	snapshot, err := config.LoadGlobalSnapshot()
@@ -305,7 +308,7 @@ func (c *Client) AcquireSSH(
 			))
 		}
 	}
-	if errors.Is(followErr, missingPromptHandler) {
+	if errors.Is(followErr, ErrSSHPromptHandlerUnavailable) {
 		return result, service.NewError(
 			service.SSHInteractionRequired,
 			"SSH interaction is required",
