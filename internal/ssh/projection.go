@@ -13,9 +13,9 @@ import (
 	"go.kenn.io/kit/openssh"
 )
 
-const projectionPolicyV1 = "kwt.openssh.projection.v1"
+const projectionPolicyV2 = "kwt.openssh.projection.v2"
 
-const ProjectionPolicyV1 = projectionPolicyV1
+const ProjectionPolicyV2 = projectionPolicyV2
 
 type projection struct {
 	PolicyVersion string
@@ -31,7 +31,7 @@ type projectionOption struct {
 	session bool
 }
 
-var projectionOptionsV1 = []projectionOption{
+var projectionOptionsV2 = []projectionOption{
 	{name: "userknownhostsfile", openSSH: "UserKnownHostsFile"},
 	{name: "globalknownhostsfile", openSSH: "GlobalKnownHostsFile"},
 	{name: "knownhostscommand", openSSH: "KnownHostsCommand"},
@@ -50,6 +50,7 @@ var projectionOptionsV1 = []projectionOption{
 	{name: "addressfamily", openSSH: "AddressFamily"},
 	{name: "bindaddress", openSSH: "BindAddress"},
 	{name: "bindinterface", openSSH: "BindInterface"},
+	{name: "compression", openSSH: "Compression"},
 	{name: "addkeystoagent", openSSH: "AddKeysToAgent"},
 	{name: "certificatefile", openSSH: "CertificateFile", private: true},
 	{name: "enablesshkeysign", openSSH: "EnableSSHKeysign"},
@@ -98,7 +99,7 @@ func multiplexedSessionProjection(projected ExecutionProjection) ExecutionProjec
 }
 
 func isSessionProjectionOption(name string) bool {
-	for _, option := range projectionOptionsV1 {
+	for _, option := range projectionOptionsV2 {
 		if option.session && strings.EqualFold(option.openSSH, name) {
 			return true
 		}
@@ -111,7 +112,7 @@ func projectConfig(
 	configuredIdentities []string,
 ) (projection, error) {
 	result := projection{
-		PolicyVersion: projectionPolicyV1,
+		PolicyVersion: projectionPolicyV2,
 		Arguments: []string{
 			"-F", os.DevNull,
 			"-o", "CanonicalizeHostname=no",
@@ -138,7 +139,7 @@ func projectConfig(
 	if configuredIdentities != nil {
 		values["identityfile"] = configuredIdentities
 	}
-	for _, option := range projectionOptionsV1 {
+	for _, option := range projectionOptionsV2 {
 		for _, value := range values[option.name] {
 			if option.name == "forwardagent" && !strings.EqualFold(value, "no") {
 				result.ForwardAgent = true

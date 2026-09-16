@@ -27,8 +27,13 @@ const (
 	SSHHostKeyPolicyStrict = internalssh.HostKeyPolicyStrict
 )
 
+// SSHProjectionPolicyV1 identifies the original SSH execution policy.
+//
+// Deprecated: Newly resolved routes use SSHProjectionPolicyV2.
+const SSHProjectionPolicyV1 = "kwt.openssh.projection.v1"
+
 const (
-	SSHProjectionPolicyV1     = internalssh.ProjectionPolicyV1
+	SSHProjectionPolicyV2     = internalssh.ProjectionPolicyV2
 	SSHLeaseModeMultiplexed   = internalssh.LeaseModeMultiplexed
 	SSHLeaseModeMasterless    = internalssh.LeaseModeMasterless
 	SSHEventStateConnected    = internalssh.EventStateConnected

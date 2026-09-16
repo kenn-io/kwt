@@ -26,8 +26,8 @@ type projectionFixture struct {
 	Excluded             []string `json:"excluded"`
 }
 
-func TestProjectionV1MatchesGhosthubSelectiveReplay(t *testing.T) {
-	data, err := os.ReadFile("testdata/projection_v1.json")
+func TestProjectionV2MatchesGhosthubSelectiveReplay(t *testing.T) {
+	data, err := os.ReadFile("testdata/projection_v2.json")
 	require.NoError(t, err)
 	var fixtures []projectionFixture
 	require.NoError(t, json.Unmarshal(data, &fixtures))
@@ -42,7 +42,7 @@ func TestProjectionV1MatchesGhosthubSelectiveReplay(t *testing.T) {
 				Options:      fixture.Config.Options,
 			}, fixture.ConfiguredIdentities)
 			require.NoError(t, err)
-			assert.Equal(t, projectionPolicyV1, projected.PolicyVersion)
+			assert.Equal(t, projectionPolicyV2, projected.PolicyVersion)
 			assert.Equal(t, fixture.Arguments, projected.Arguments)
 			assert.Equal(t, fixture.PrivateConfig, projected.PrivateConfig)
 
@@ -57,7 +57,7 @@ func TestProjectionV1MatchesGhosthubSelectiveReplay(t *testing.T) {
 	}
 }
 
-func TestProjectionV1SafelyQuotesPrivateValues(t *testing.T) {
+func TestProjectionV2SafelyQuotesPrivateValues(t *testing.T) {
 	projected, err := projectConfig(openssh.EffectiveConfig{Options: []openssh.Option{
 		{Name: "identityfile", Value: `/credentials/id "quoted"\key`},
 		{Name: "setenv", Value: `CHANNEL=value with spaces`},
@@ -69,7 +69,7 @@ func TestProjectionV1SafelyQuotesPrivateValues(t *testing.T) {
 	}, projected.PrivateConfig)
 }
 
-func TestProjectionV1LeavesImplicitIdentityDefaultsToOpenSSH(t *testing.T) {
+func TestProjectionV2LeavesImplicitIdentityDefaultsToOpenSSH(t *testing.T) {
 	projected, err := projectConfig(openssh.EffectiveConfig{Options: []openssh.Option{
 		{Name: "identityfile", Value: "~/.ssh/id_rsa"},
 		{Name: "identityfile", Value: "~/.ssh/id_ecdsa"},
@@ -79,14 +79,14 @@ func TestProjectionV1LeavesImplicitIdentityDefaultsToOpenSSH(t *testing.T) {
 	assert.Empty(t, projected.PrivateConfig)
 }
 
-func TestProjectionV1RejectsMultilinePrivateValues(t *testing.T) {
+func TestProjectionV2RejectsMultilinePrivateValues(t *testing.T) {
 	_, err := projectConfig(openssh.EffectiveConfig{Options: []openssh.Option{
 		{Name: "setenv", Value: "SAFE=value\nInclude /tmp/hostile"},
 	}}, nil)
 	require.Error(t, err)
 }
 
-func TestProjectionV1IdentityIncludesFullConfigAndPolicy(t *testing.T) {
+func TestProjectionV2IdentityIncludesFullConfigAndPolicy(t *testing.T) {
 	route := openssh.Route{{
 		Target: openssh.Target{User: "deploy", Hostname: "build.example.test", Port: 22},
 		Config: openssh.EffectiveConfig{
@@ -95,11 +95,11 @@ func TestProjectionV1IdentityIncludesFullConfigAndPolicy(t *testing.T) {
 		},
 	}}
 
-	identity := routeIdentity(projectionPolicyV1, route, nil)
+	identity := routeIdentity(projectionPolicyV2, route, nil)
 	changedConfig := append(openssh.Route(nil), route...)
 	changedConfig[0].Config.Options = []openssh.Option{{
 		Name: "localforward", Value: "8081 localhost:80",
 	}}
-	assert.NotEqual(t, identity, routeIdentity(projectionPolicyV1, changedConfig, nil))
-	assert.NotEqual(t, identity, routeIdentity("kwt.openssh.projection.v2", route, nil))
+	assert.NotEqual(t, identity, routeIdentity(projectionPolicyV2, changedConfig, nil))
+	assert.NotEqual(t, identity, routeIdentity("kwt.openssh.projection.v1", route, nil))
 }

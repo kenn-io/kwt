@@ -181,7 +181,7 @@ another proxy route return `ssh_route_unreviewable`. The command only observes
 configuration: it does not connect, approve trust, prompt for credentials, or
 create a ControlMaster.
 
-Execution policy `kwt.openssh.projection.v1` emits
+Execution policy `kwt.openssh.projection.v2` emits
 `CanonicalizeHostname=no` and resolved `HostName`, `User`, `Port`,
 and `HostKeyAlias` in fixed order for each route target. Snapshot targets are
 ordered in connection order. A downstream projection is not a standalone
@@ -195,6 +195,7 @@ positive directive set is:
   `CASignatureAlgorithms`, `CheckHostIP`, `HashKnownHosts`,
   `VerifyHostKeyDNS`, `VisualHostKey`, and `FingerprintHash`;
 - network selection: `AddressFamily`, `BindAddress`, and `BindInterface`;
+- transport compression: `Compression`;
 - authentication: `AddKeysToAgent`, `CertificateFile`, `EnableSSHKeysign`,
   `ForwardAgent`, `GSSAPIAuthentication`, `GSSAPIDelegateCredentials`,
   `HostbasedAcceptedAlgorithms`, `HostbasedAuthentication`, `IdentitiesOnly`,
@@ -210,12 +211,19 @@ owner-private ephemeral configuration lines, not argv or diagnostics. Every
 unlisted directive—including forwards, commands, and user ControlMaster
 settings—still changes route identity but is never replayed for execution.
 
+Policy v2 adds the user's `Compression` setting. For text-heavy terminals over
+slow links, set `Compression yes` in the destination's OpenSSH `Host` block.
+The setting applies when kwt opens a new connection; it cannot change an
+existing shared connection. Compression remains off unless enabled in OpenSSH
+configuration. Consumers that validate the projection policy must accept v2
+before upgrading their bundled kwt.
+
 ## SSH connection leases
 
 ```sh
 kwt ssh lease build.example.com \
   --route-identity <identity-from-ssh-resolve> \
-  --projection-policy kwt.openssh.projection.v1 \
+  --projection-policy kwt.openssh.projection.v2 \
   --host-key-policy review \
   --json
 ```

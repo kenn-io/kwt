@@ -119,6 +119,10 @@ credential-free route snapshot and can acquire a generation-bound lease for
 that route. It preserves direct and ProxyJump order and stops when a route
 cannot be reviewed safely.
 
+New route snapshots use `SSHProjectionPolicyV2`. The deprecated
+`SSHProjectionPolicyV1` constant retains its original value for Go source
+compatibility; it does not enable v1 execution.
+
 Choose host-key policy explicitly:
 
 - `review` allows a prompt-capable client to present the reviewed host,

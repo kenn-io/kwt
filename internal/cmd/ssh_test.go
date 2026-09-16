@@ -34,7 +34,7 @@ func TestSSHResolveCommandPassesStructuredTargetAndPrintsJSON(t *testing.T) {
 		got = request
 		return kwt.SSHRouteSnapshot{
 			LogicalTarget: request.Target, RouteIdentity: "route-identity",
-			ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+			ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 			ObservedAt:       time.Date(2026, 8, 11, 20, 0, 0, 0, time.UTC),
 		}, nil
 	}
@@ -160,7 +160,7 @@ func stubShortSSHLease(t *testing.T, control sshLeaseControl) {
 		return kwt.SSHRouteSnapshot{
 			LogicalTarget: request.Target,
 			Targets:       []kwt.SSHResolvedTarget{{EffectiveTarget: request.Target}},
-			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 		}, nil
 	}
 	acquireSSHLeaseThroughDaemon = func(
@@ -245,7 +245,7 @@ func TestSSHLeaseResolvesRouteWhenIdentityIsOmitted(t *testing.T) {
 	})
 	sshLeaseJSON = true
 	sshLeaseRouteIdentity = ""
-	sshLeaseProjectionPolicy = kwt.SSHProjectionPolicyV1
+	sshLeaseProjectionPolicy = kwt.SSHProjectionPolicyV2
 	resolveSSHThroughDaemon = func(
 		_ context.Context,
 		request kwt.SSHResolveRequest,
@@ -254,7 +254,7 @@ func TestSSHLeaseResolvesRouteWhenIdentityIsOmitted(t *testing.T) {
 		return kwt.SSHRouteSnapshot{
 			LogicalTarget:    request.Target,
 			RouteIdentity:    "resolved-route",
-			ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+			ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 		}, nil
 	}
 	control := &fakeSSHLeaseControl{}
@@ -299,7 +299,7 @@ func TestSSHExecResolvesAcquiresAndRunsThroughLease(t *testing.T) {
 			Targets: []kwt.SSHResolvedTarget{{
 				EffectiveTarget: kwt.SSHTarget{Hostname: "10.0.0.8", User: "runner", Port: 2222},
 			}},
-			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 		}, nil
 	}
 	control := &fakeSSHLeaseControl{}
@@ -473,7 +473,7 @@ func TestSSHCopyUsesStructuredSFTPBatch(t *testing.T) {
 			Targets: []kwt.SSHResolvedTarget{{
 				EffectiveTarget: kwt.SSHTarget{Hostname: "2001:db8::8", User: "runner", Port: 2222},
 			}},
-			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 		}, nil
 	}
 	control := &fakeSSHLeaseControl{}

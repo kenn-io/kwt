@@ -149,7 +149,7 @@ func init() {
 		&sshLeaseRouteIdentity, "route-identity", "", "Require this resolved SSH route identity",
 	)
 	sshLeaseCmd.Flags().StringVar(
-		&sshLeaseProjectionPolicy, "projection-policy", kwt.SSHProjectionPolicyV1,
+		&sshLeaseProjectionPolicy, "projection-policy", kwt.SSHProjectionPolicyV2,
 		"Require this SSH execution projection policy",
 	)
 	sshLeaseCmd.Flags().StringVar(

@@ -56,7 +56,7 @@ func TestSSHResolveRouteRoundTripsSnapshotAndReusesService(t *testing.T) {
 	resolver := &fakeSSHResolver{result: kwt.SSHRouteSnapshot{
 		LogicalTarget:    kwt.SSHTarget{User: "deploy", Hostname: "build.example.test"},
 		RouteIdentity:    strings.Repeat("a", 64),
-		ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+		ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 		ObservedAt:       time.Date(2026, 8, 11, 20, 0, 0, 0, time.UTC),
 		Targets: []kwt.SSHResolvedTarget{{
 			LogicalTarget:   kwt.SSHTarget{Hostname: "build.example.test"},
@@ -92,7 +92,7 @@ func TestSSHResolveRouteAcceptsSnapshotAboveControlResponseLimit(t *testing.T) {
 	argument := strings.Repeat("x", int(controlResponseLimit)+1)
 	resolver := &fakeSSHResolver{result: kwt.SSHRouteSnapshot{
 		RouteIdentity:    strings.Repeat("a", 64),
-		ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+		ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 		Targets: []kwt.SSHResolvedTarget{{
 			Projection: kwt.SSHExecutionProjection{Arguments: []string{argument}},
 		}},
@@ -111,7 +111,7 @@ func TestSSHResolveRouteAcceptsSnapshotAboveControlResponseLimit(t *testing.T) {
 func TestSSHResolveRouteRejectsSnapshotAboveEndpointLimit(t *testing.T) {
 	resolver := &fakeSSHResolver{result: kwt.SSHRouteSnapshot{
 		RouteIdentity:    strings.Repeat("a", 64),
-		ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+		ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 		Targets: []kwt.SSHResolvedTarget{{
 			Projection: kwt.SSHExecutionProjection{
 				Arguments: []string{strings.Repeat("x", int(sshSnapshotLimit)+1)},
@@ -222,7 +222,7 @@ func TestSSHResolveCapabilityAndSchemaAreAdvertised(t *testing.T) {
 
 func TestSSHResolveResponseDoesNotPublishCanonicalOptions(t *testing.T) {
 	resolver := &fakeSSHResolver{result: kwt.SSHRouteSnapshot{
-		RouteIdentity: strings.Repeat("b", 64), ProjectionPolicy: kwt.SSHProjectionPolicyV1,
+		RouteIdentity: strings.Repeat("b", 64), ProjectionPolicy: kwt.SSHProjectionPolicyV2,
 	}}
 	provider := &testStatusProvider{status: Status{State: StateReady}}
 	handler := NewServer(ServerOptions{

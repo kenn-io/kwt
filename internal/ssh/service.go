@@ -100,11 +100,11 @@ func (s *Service) Resolve(
 		LogicalTarget: request.Target,
 		Targets:       targets,
 		RouteIdentity: routeIdentity(
-			projectionPolicyV1,
+			projectionPolicyV2,
 			observation.route,
 			observation.identityFiles,
 		),
-		ProjectionPolicy: projectionPolicyV1,
+		ProjectionPolicy: projectionPolicyV2,
 		ObservedAt:       s.now().UTC(),
 	}, nil
 }

@@ -54,7 +54,10 @@ func TestRootPackageExposesSSHResolutionService(t *testing.T) {
 		Resolve(context.Context, kwt.SSHResolveRequest) (kwt.SSHRouteSnapshot, error)
 		Acquire(context.Context, kwt.SSHLeaseRequest) (kwt.SSHLease, error)
 	} = service
-	if kwt.SSHProjectionPolicyV1 == "" {
+	if kwt.SSHProjectionPolicyV1 != "kwt.openssh.projection.v1" {
+		t.Fatal("deprecated SSH projection policy changed its public value")
+	}
+	if kwt.SSHProjectionPolicyV2 == "" {
 		t.Fatal("SSH projection policy is unavailable from the root package")
 	}
 	requireLeaseMode := func(kwt.SSHLeaseMode) {}
