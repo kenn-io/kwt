@@ -252,8 +252,9 @@ stdin reaches EOF or the command is canceled. Progress and warnings are written
 as they occur rather than buffered.
 
 Tailscale SSH browser checks use a non-sensitive `ssh_browser_authentication`
-prompt. Its `details` includes `method: "browser"` and `authentication_url`,
-alongside the target and hop fields above. This prompt arrives while SSH is
+prompt on the `kwt ssh lease --json` stream. Its `details` includes
+`method: "browser"` and `authentication_url`, alongside the target and hop
+fields above. This prompt arrives while SSH is
 still waiting for approval, not after a connection timeout. A graphical client
 should display the URL and immediately acknowledge with an empty `value`.
 Acknowledgement confirms presentation only; it does not approve access. Keep
@@ -264,14 +265,17 @@ minutes from the prompt, including time after acknowledgement. Expiry reports
 
 Browser opening is controlled by the client-side `--open-browser` option on
 `kwt ssh lease`, `exec`, and `copy`. The default is false: text output shows the
-URL, while JSON clients receive the prompt and handle the link themselves.
-Ghosthub uses this deferred behavior. With `--open-browser`, kwt also opens the
-URL in the local desktop browser. SSH sessions, Linux sessions without an X11
+URL, while `kwt ssh lease --json` clients receive the prompt and handle the
+link themselves. Ghosthub uses this deferred behavior. With `--open-browser`,
+kwt also opens the URL in the local desktop browser. SSH sessions, Linux sessions without an X11
 or Wayland display, and Windows service sessions only show the URL. If the
 browser launcher fails, kwt leaves the link visible and continues waiting for
 approval. Text clients acknowledge display automatically; no Enter is required.
-JSON clients still send their matching prompt response, even when they request
-browser opening.
+`kwt ssh lease --json` clients still send their matching prompt response, even
+when they request browser opening. `kwt ssh exec` and `kwt ssh copy` carry no
+prompt channel—their `--json` flag only formats kwt failures—so they always
+print the URL to stderr and acknowledge it themselves, with or without
+`--open-browser`.
 
 When an SSH connection command fails, its `ssh_connection_failed` error
 includes the exit status in `details.exit_code` and OpenSSH's diagnostic in
