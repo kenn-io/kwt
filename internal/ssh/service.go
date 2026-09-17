@@ -46,7 +46,9 @@ func NewService(options ServiceOptions) *Service {
 
 func (s *Service) Acquire(ctx context.Context, request LeaseRequest) (Lease, error) {
 	resolve := func(ctx context.Context) (RouteSnapshot, error) {
-		return s.Resolve(ctx, ResolveRequest{Target: request.Snapshot.LogicalTarget})
+		return s.Resolve(ctx, ResolveRequest{
+			Target: request.Snapshot.LogicalTarget, Compression: request.Snapshot.Compression,
+		})
 	}
 	current, err := resolve(ctx)
 	if err != nil {
@@ -98,6 +100,7 @@ func (s *Service) Resolve(
 	}
 	return RouteSnapshot{
 		LogicalTarget: request.Target,
+		Compression:   request.Compression,
 		Targets:       targets,
 		RouteIdentity: routeIdentity(
 			projectionPolicyV2,

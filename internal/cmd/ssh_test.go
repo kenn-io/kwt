@@ -21,6 +21,57 @@ import (
 	"go.kenn.io/kwt/service"
 )
 
+func TestSSHCommandsPassCompressionOverride(t *testing.T) {
+	for _, compression := range []string{"", "yes", "no"} {
+		for _, invocation := range []struct {
+			name     string
+			run      func(*cobra.Command, []string) error
+			identity string
+			args     []string
+		}{
+			{name: "resolve", run: runSSHResolve},
+			{name: "lease", run: runSSHLease},
+			{name: "reviewed lease", run: runSSHLease, identity: "route-one"},
+			{name: "exec", run: runSSHExec, args: []string{"true"}},
+			{name: "copy", run: runSSHCopy, args: []string{"source", "destination"}},
+		} {
+			t.Run(invocation.name+"/"+compression, func(t *testing.T) {
+				oldCompression, oldIdentity := sshCompression, sshLeaseRouteIdentity
+				compressionFlag := sshCmd.PersistentFlags().Lookup("compression")
+				oldChanged := compressionFlag.Changed
+				oldRun := runSSHClientProcess
+				t.Cleanup(func() {
+					sshCompression, sshLeaseRouteIdentity = oldCompression, oldIdentity
+					compressionFlag.Changed = oldChanged
+					runSSHClientProcess = oldRun
+				})
+				stubShortSSHLease(t, &fakeSSHLeaseControl{})
+				require.NoError(t, sshCmd.PersistentFlags().Set("compression", compression))
+				compressionFlag.Changed = compression != ""
+				sshLeaseRouteIdentity = invocation.identity
+				var expected *bool
+				if compression != "" {
+					expected = new(compression == "yes")
+				}
+				resolveSSHThroughDaemon = func(_ context.Context, request kwt.SSHResolveRequest) (kwt.SSHRouteSnapshot, error) {
+					assert.Equal(t, expected, request.Compression)
+					return kwt.SSHRouteSnapshot{LogicalTarget: request.Target, Compression: request.Compression}, nil
+				}
+				acquireSSHLeaseThroughDaemon = func(_ context.Context, request kwt.SSHLeaseRequest, _ kwtdaemon.OperationCallbacks) (kwtdaemon.SSHLeaseResult, sshLeaseControl, error) {
+					assert.Equal(t, expected, request.Snapshot.Compression)
+					return kwtdaemon.SSHLeaseResult{LeaseID: "lease-one"}, &fakeSSHLeaseControl{}, nil
+				}
+				runSSHClientProcess = func(context.Context, string, []string, string, []string, io.Reader, io.Writer, io.Writer) (int, bool, error) {
+					return 0, true, nil
+				}
+				command, _, _ := sshResolveTestCommand()
+				command.SetIn(strings.NewReader(""))
+				require.NoError(t, invocation.run(command, append([]string{"build.example.test"}, invocation.args...)))
+			})
+		}
+	}
+}
+
 func TestSSHResolveCommandPassesStructuredTargetAndPrintsJSON(t *testing.T) {
 	oldResolve := resolveSSHThroughDaemon
 	oldJSON, oldUser, oldPort := sshResolveJSON, sshResolveUser, sshResolvePort

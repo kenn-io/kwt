@@ -90,7 +90,15 @@ func (r *Resolver) Resolve(ctx context.Context, request ResolveRequest) (routeOb
 		ctx,
 		endpoint,
 		func(ctx context.Context, target openssh.Target) (openssh.EffectiveConfig, error) {
-			config, err := r.resolveConfig(ctx, target, nil)
+			var arguments []string
+			if target == endpoint && request.Compression != nil {
+				compression := "no"
+				if *request.Compression {
+					compression = "yes"
+				}
+				arguments = []string{"-o", "Compression=" + compression}
+			}
+			config, err := r.resolveConfig(ctx, target, arguments)
 			if err != nil {
 				return openssh.EffectiveConfig{}, err
 			}
@@ -101,7 +109,7 @@ func (r *Resolver) Resolve(ctx context.Context, request ResolveRequest) (routeOb
 			identityConfig, err := r.resolveConfig(
 				ctx,
 				target,
-				[]string{"-o", "IdentityFile=" + sentinel},
+				append(arguments, "-o", "IdentityFile="+sentinel),
 			)
 			if err != nil {
 				return openssh.EffectiveConfig{}, err

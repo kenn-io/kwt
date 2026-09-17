@@ -32,6 +32,7 @@ func targetFromOpenSSH(target openssh.Target) Target {
 
 type ResolveRequest struct {
 	Target           Target   `json:"target"`
+	Compression      *bool    `json:"compression,omitempty"`
 	WorkingDirectory string   `json:"working_directory"`
 	Environment      []string `json:"environment"`
 }
@@ -53,6 +54,8 @@ type ResolvedTarget struct {
 
 type RouteSnapshot struct {
 	LogicalTarget Target `json:"logical_target"`
+	// Compression overrides only the destination; nil preserves OpenSSH configuration.
+	Compression *bool `json:"compression,omitempty"`
 	// Targets are ordered in connection order. A downstream projection is
 	// target-local and requires proxy transport through the preceding target.
 	Targets          []ResolvedTarget `json:"targets"`
