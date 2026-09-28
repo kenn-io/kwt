@@ -15,7 +15,7 @@ concurrency:
 jobs:
   release:
     name: GoReleaser
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-linux-8cpu
 
     steps:
       - name: Checkout

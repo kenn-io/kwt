@@ -11,14 +11,16 @@ permissions:
 jobs:
   test:
     name: Go (${{ matrix.os }})
-    runs-on: ${{ contains(fromJSON('["ubuntu-latest","ubuntu-24.04","ubuntu-22.04"]'), matrix.os) && github.repository == 'kenn-io/kwt' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || matrix.os }}
+    runs-on: ${{ github.repository == 'kenn-io/kwt' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && matrix.runner || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
+            runner: namespace-profile-linux-8cpu
             packages: ./...
           - os: windows-latest
+            runner: namespace-profile-windows-4cpu
             packages: >-
               ./cmd/kwt
               ./internal/cmd
@@ -151,7 +153,7 @@ jobs:
 
   docs:
     name: Docs
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-linux-4cpu
 
     steps:
       - name: Checkout
