@@ -14,6 +14,13 @@
 - Keep changes focused. Do not refactor unrelated code or rewrite user changes while completing a task.
 - Prefer the repo's commands for verification: `make test`, `make build`, and focused `go test ./path` runs while iterating.
 
+## CI runners
+
+Public CI profiles use Namespace's
+[Restricted access level](https://namespace.so/docs/solutions/github-actions/runner-controls/access-levels),
+which disables workload access to Namespace features and APIs. GitHub fork
+approvals, token permissions, and secrets are separate controls.
+
 <!-- BEGIN KATA (managed by `kata init --with-agents`) -->
 
 ## kata issue tracker

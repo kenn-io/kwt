@@ -1,5 +1,7 @@
 # Agent Guidelines
 
+@AGENTS.md
+
 ## Core Principles
 
 - **Do NOT maintain backward compatibility** unless explicitly requested. Break things boldly.
