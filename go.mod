@@ -8,6 +8,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/bmatcuk/doublestar/v4 v4.10.2
+	github.com/cenkalti/backoff/v7 v7.0.1
 	github.com/creack/pty v1.1.24
 	github.com/danielgtaylor/huma/v2 v2.39.1
 	github.com/go-viper/mapstructure/v2 v2.5.0

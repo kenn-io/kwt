@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
+
 	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
 	kwtdaemon "go.kenn.io/kwt/internal/daemon"
@@ -41,23 +43,32 @@ func resolveSSHViaDaemon(
 	if err != nil {
 		return kwt.SSHRouteSnapshot{}, err
 	}
-	for {
+	result, err := backoff.Retry(ctx, func() (kwt.SSHRouteSnapshot, error) {
 		observation, err := controller.Start(ctx)
 		if err != nil {
-			return kwt.SSHRouteSnapshot{}, err
+			return kwt.SSHRouteSnapshot{}, backoff.Permanent(err)
 		}
 		if err := requireSSHResolveCapability(observation); err != nil {
-			return kwt.SSHRouteSnapshot{}, err
+			return kwt.SSHRouteSnapshot{}, backoff.Permanent(err)
 		}
 		result, err := observation.Client.ResolveSSH(ctx, request)
 		deadline, draining := inventoryDrainDeadline(err)
 		if !draining {
-			return result, err
+			if err != nil {
+				return result, backoff.Permanent(err)
+			}
+			return result, nil
 		}
-		if err := waitInventoryRetry(ctx, deadline); err != nil {
-			return kwt.SSHRouteSnapshot{}, err
+		return kwt.SSHRouteSnapshot{}, waitInventoryRetry(ctx, deadline)
+	}, backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+	if err != nil {
+		retryErr := backoff.AsRetryError(err)
+		if errors.Is(retryErr.Cause, backoff.ErrPermanent) {
+			return result, retryErr.LastErr
 		}
+		return kwt.SSHRouteSnapshot{}, ctx.Err()
 	}
+	return result, nil
 }
 
 func requireSSHResolveCapability(observation kwtdaemon.Observation) error {
@@ -124,13 +135,14 @@ func acquireSSHLeaseViaDaemon(
 	if err != nil {
 		return kwtdaemon.SSHLeaseResult{}, nil, err
 	}
-	for {
+	var control sshLeaseControl
+	result, err := backoff.Retry(ctx, func() (kwtdaemon.SSHLeaseResult, error) {
 		observation, err := controller.Start(ctx)
 		if err != nil {
-			return kwtdaemon.SSHLeaseResult{}, nil, err
+			return kwtdaemon.SSHLeaseResult{}, backoff.Permanent(err)
 		}
 		if err := requireSSHLifecycleCapabilities(observation); err != nil {
-			return kwtdaemon.SSHLeaseResult{}, nil, err
+			return kwtdaemon.SSHLeaseResult{}, backoff.Permanent(err)
 		}
 		var exposed atomic.Bool
 		trackedCallbacks := kwtdaemon.OperationCallbacks{
@@ -158,22 +170,31 @@ func acquireSSHLeaseViaDaemon(
 		if !draining {
 			if acquireErr != nil {
 				if result.LeaseID == "" {
-					return result, nil, acquireErr
+					return result, backoff.Permanent(acquireErr)
 				}
-				return result, daemonSSHLeaseControl{client: observation.Client}, acquireErr
+				control = daemonSSHLeaseControl{client: observation.Client}
+				return result, backoff.Permanent(acquireErr)
 			}
-			return result, daemonSSHLeaseControl{client: observation.Client}, nil
+			control = daemonSSHLeaseControl{client: observation.Client}
+			return result, nil
 		}
 		if exposed.Load() {
 			if result.LeaseID == "" {
-				return result, nil, acquireErr
+				return result, backoff.Permanent(acquireErr)
 			}
-			return result, daemonSSHLeaseControl{client: observation.Client}, acquireErr
+			control = daemonSSHLeaseControl{client: observation.Client}
+			return result, backoff.Permanent(acquireErr)
 		}
-		if err := waitInventoryRetry(ctx, deadline); err != nil {
-			return kwtdaemon.SSHLeaseResult{}, nil, err
+		return kwtdaemon.SSHLeaseResult{}, waitInventoryRetry(ctx, deadline)
+	}, backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+	if err != nil {
+		retryErr := backoff.AsRetryError(err)
+		if errors.Is(retryErr.Cause, backoff.ErrPermanent) {
+			return result, control, retryErr.LastErr
 		}
+		return kwtdaemon.SSHLeaseResult{}, nil, ctx.Err()
 	}
+	return result, control, nil
 }
 
 func removeProjectViaDaemon(
@@ -184,30 +205,39 @@ func removeProjectViaDaemon(
 	if err != nil {
 		return kwt.ProjectRemovalResult{}, err
 	}
-	for {
+	result, err := backoff.Retry(ctx, func() (kwt.ProjectRemovalResult, error) {
 		observation, err := controller.Start(ctx)
 		if err != nil {
-			return kwt.ProjectRemovalResult{}, err
+			return kwt.ProjectRemovalResult{}, backoff.Permanent(err)
 		}
 		if observation.Client == nil || !slices.Contains(
 			observation.Status.Capabilities,
 			kwtdaemon.CapabilityProjectRemoval,
 		) {
-			return kwt.ProjectRemovalResult{}, service.NewError(
+			return kwt.ProjectRemovalResult{}, backoff.Permanent(service.NewError(
 				service.DaemonIncompatible,
 				"the running kwt daemon does not provide project removal",
 				false, nil, nil,
-			)
+			))
 		}
 		result, err := observation.Client.RemoveProject(ctx, request)
 		deadline, draining := inventoryDrainDeadline(err)
 		if !draining {
-			return result, err
+			if err != nil {
+				return result, backoff.Permanent(err)
+			}
+			return result, nil
 		}
-		if err := waitInventoryRetry(ctx, deadline); err != nil {
-			return kwt.ProjectRemovalResult{}, err
+		return kwt.ProjectRemovalResult{}, waitInventoryRetry(ctx, deadline)
+	}, backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+	if err != nil {
+		retryErr := backoff.AsRetryError(err)
+		if errors.Is(retryErr.Cause, backoff.ErrPermanent) {
+			return result, retryErr.LastErr
 		}
+		return kwt.ProjectRemovalResult{}, ctx.Err()
 	}
+	return result, nil
 }
 
 func daemonMutationRequiresRefresh(err error) bool {
@@ -222,10 +252,10 @@ func removeWorktreeThroughDaemon(
 	if err != nil {
 		return kwt.RemovalResult{}, err
 	}
-	for {
+	result, err := backoff.Retry(ctx, func() (kwt.RemovalResult, error) {
 		observation, err := controller.Start(ctx)
 		if err != nil {
-			return kwt.RemovalResult{}, err
+			return kwt.RemovalResult{}, backoff.Permanent(err)
 		}
 		requiredCapability := kwtdaemon.CapabilityRemoval
 		if request.Session != nil || request.ExpectedBranch != "" || request.ExpectedHead != "" {
@@ -233,23 +263,32 @@ func removeWorktreeThroughDaemon(
 		}
 		if observation.Client == nil ||
 			!slices.Contains(observation.Status.Capabilities, requiredCapability) {
-			return kwt.RemovalResult{}, service.NewError(
+			return kwt.RemovalResult{}, backoff.Permanent(service.NewError(
 				service.DaemonIncompatible,
 				"the running kwt daemon does not provide the required worktree removal contract",
 				false,
 				nil,
 				nil,
-			)
+			))
 		}
 		result, err := removeWorktreeWithDaemonClient(ctx, observation.Client, request)
 		deadline, draining := inventoryDrainDeadline(err)
 		if !draining {
-			return result, err
+			if err != nil {
+				return result, backoff.Permanent(err)
+			}
+			return result, nil
 		}
-		if err := waitInventoryRetry(ctx, deadline); err != nil {
-			return kwt.RemovalResult{}, err
+		return kwt.RemovalResult{}, waitInventoryRetry(ctx, deadline)
+	}, backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+	if err != nil {
+		retryErr := backoff.AsRetryError(err)
+		if errors.Is(retryErr.Cause, backoff.ErrPermanent) {
+			return result, retryErr.LastErr
 		}
+		return kwt.RemovalResult{}, ctx.Err()
 	}
+	return result, nil
 }
 
 func queryInventoryForCLI(
@@ -348,23 +387,32 @@ func queryDaemonInventory(
 	request kwt.Request,
 	requireCapability func(kwtdaemon.Observation) error,
 ) (kwt.Result, error) {
-	for {
+	result, err := backoff.Retry(ctx, func() (kwt.Result, error) {
 		observation, err := controller.Start(ctx)
 		if err != nil {
-			return kwt.Result{}, err
+			return kwt.Result{}, backoff.Permanent(err)
 		}
 		if err := requireCapability(observation); err != nil {
-			return kwt.Result{}, err
+			return kwt.Result{}, backoff.Permanent(err)
 		}
 		result, err := observation.Client.Inventory(ctx, request)
 		deadline, draining := inventoryDrainDeadline(err)
 		if !draining {
-			return result, err
+			if err != nil {
+				return result, backoff.Permanent(err)
+			}
+			return result, nil
 		}
-		if err := waitInventoryRetry(ctx, deadline); err != nil {
-			return kwt.Result{}, err
+		return kwt.Result{}, waitInventoryRetry(ctx, deadline)
+	}, backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+	if err != nil {
+		retryErr := backoff.AsRetryError(err)
+		if errors.Is(retryErr.Cause, backoff.ErrPermanent) {
+			return result, retryErr.LastErr
 		}
+		return kwt.Result{}, ctx.Err()
 	}
+	return result, nil
 }
 
 func inventoryDrainDeadline(err error) (*time.Time, bool) {
@@ -446,31 +494,28 @@ func requireInspectionInventoryCapability(
 	return nil
 }
 
+// waitInventoryRetry describes the next drain wait to the enclosing Retry call.
 func waitInventoryRetry(ctx context.Context, deadline *time.Time) error {
 	delay := 50 * time.Millisecond
 	if deadline != nil {
 		remaining := time.Until(*deadline)
 		if remaining <= 0 {
-			return service.NewError(
+			return backoff.Permanent(service.NewError(
 				service.DaemonDraining,
 				"the kwt daemon is still draining",
 				true,
 				map[string]any{"drain_deadline": deadline.Format(time.RFC3339Nano)},
 				nil,
-			)
+			))
 		}
 		if remaining < delay {
 			delay = remaining
 		}
 	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
+	if err := ctx.Err(); err != nil {
+		return backoff.Permanent(err)
 	}
+	return backoff.RetryAfter(delay, nil)
 }
 
 func trustRequirement(err error) (config.TrustRequiredError, error) {
