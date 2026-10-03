@@ -1,3 +1,8 @@
+---
+title: "Install kwt"
+description: "Requirements and instructions for installing kwt through Go, release archives, or a source build."
+last_edited: "2026-09-05"
+---
 # Install kwt
 
 Choose a Go install, a release archive, or a source build. kwt supports:

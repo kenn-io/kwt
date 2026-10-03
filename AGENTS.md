@@ -2,6 +2,11 @@
 
 ## Agent rules
 
+Every new Markdown file, except root `README.md` and `AGENTS.md`, must have YAML
+frontmatter with `title`, `description`, and `last_edited`, in that order.
+Update `last_edited` to the body-edit date whenever you change the body of any
+nonexempt Markdown file; preserve it for metadata-only edits.
+
 - Always Commit: Do not leave accepted repository changes uncommitted at the end of a task. Commit the completed work, or explicitly say why no commit was made.
 - Never Squash or Amend: Do not squash commits, amend commits, or otherwise rewrite git history unless the user explicitly asks for that history rewrite.
 - Do not commit rejected experiments. Revert them or ask before preserving them.

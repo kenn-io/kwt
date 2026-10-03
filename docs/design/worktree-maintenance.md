@@ -1,3 +1,8 @@
+---
+title: "Worktree Maintenance"
+description: "Design boundaries for worktree inventory, structural repair, removal policies, and guarded lifecycle operations."
+last_edited: "2026-08-11"
+---
 # Worktree Maintenance
 
 Worktree maintenance separates structural consistency repair from policies that

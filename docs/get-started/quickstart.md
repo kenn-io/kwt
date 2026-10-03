@@ -1,3 +1,8 @@
+---
+title: "Quickstart"
+description: "First-use guide to registering a project, opening the dashboard, and creating and managing worktrees."
+last_edited: "2026-09-01"
+---
 # Quickstart
 
 ## Before you start

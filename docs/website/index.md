@@ -1,3 +1,8 @@
+---
+title: "kwt: Git worktree manager"
+description: "Product overview of kwt worktree isolation, terminal workspaces, JSON automation, and installation options."
+last_edited: "2026-09-05"
+---
 # kwt: Git worktree manager
 
 kwt is a Git worktree manager for people and coding agents. It creates one

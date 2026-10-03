@@ -1,6 +1,7 @@
 ---
 title: Changelog
 description: Release history for kwt
+last_edited: 2026-09-07
 ---
 
 # Changelog

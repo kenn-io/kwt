@@ -1,3 +1,8 @@
+---
+title: "Local service daemon"
+description: "Architecture and lifecycle contracts for the local kwt service daemon, client discovery, and authenticated operations."
+last_edited: "2026-09-11"
+---
 # Local service daemon
 
 Kwt runs at most one writable local service daemon for each canonical kwt

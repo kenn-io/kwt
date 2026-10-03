@@ -1,3 +1,8 @@
+---
+title: "Agent workspaces"
+description: "Guide to agent layouts, isolated worktrees, command execution, inspection, and protected terminal attachment."
+last_edited: "2026-08-29"
+---
 # Agent workspaces
 
 Give each agent its own branch, worktree, and tmux workspace so parallel tasks

@@ -1,3 +1,8 @@
+---
+title: "Agent Guidelines"
+description: "Agent guidance for kwt development, repository commands, code conventions, and issue tracking."
+last_edited: "2026-09-29"
+---
 # Agent Guidelines
 
 @AGENTS.md

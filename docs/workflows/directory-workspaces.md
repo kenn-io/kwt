@@ -1,3 +1,8 @@
+---
+title: "Directory workspaces"
+description: "Guide to registering, opening, configuring, listing, and removing managed tmux workspaces for non-Git directories."
+last_edited: "2026-09-08"
+---
 # Directory workspaces
 
 Use a directory workspace when you want a managed tmux environment for notes,

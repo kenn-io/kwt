@@ -1,3 +1,8 @@
+---
+title: "Pull-request automation"
+description: "Guide and automation contract for discovering, importing, inspecting, and safely attaching GitHub pull-request worktrees."
+last_edited: "2026-09-01"
+---
 # Pull-request automation
 
 Use kwt to discover a GitHub pull request, import it into an isolated inert

@@ -1,3 +1,8 @@
+---
+title: "Design Notes"
+description: "Index of maintained kwt architecture notes and the design intent behind shipped features."
+last_edited: "2026-08-29"
+---
 # Design Notes
 
 These notes preserve the design intent and architecture behind kwt after a

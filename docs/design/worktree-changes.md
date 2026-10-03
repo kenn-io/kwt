@@ -1,3 +1,8 @@
+---
+title: "Worktree Change Inspection"
+description: "Ownership and correctness boundaries for Git change inspection, generation checks, and transport-neutral services."
+last_edited: "2026-08-23"
+---
 # Worktree Change Inspection
 
 Kwt has a local Git change engine for the transport-neutral Go inspection

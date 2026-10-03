@@ -1,3 +1,8 @@
+---
+title: "Threat model"
+description: "Security boundaries between trusted local execution policy, untrusted repository content, and protected kwt operations."
+last_edited: "2026-09-07"
+---
 # Threat model
 
 `kwt` is a local developer tool, not a sandbox for Git repositories. Security

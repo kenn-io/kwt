@@ -1,3 +1,8 @@
+---
+title: "Contributing"
+description: "Contributor guidance covering repository structure, Go development, verification commands, and documentation updates."
+last_edited: "2026-09-16"
+---
 # Contributing
 
 `kwt` is a Go CLI/TUI project. Keep changes small, terminal-friendly, and

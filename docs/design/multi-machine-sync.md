@@ -1,3 +1,8 @@
+---
+title: "Multi-machine Sync Architecture"
+description: "Architecture for opt-in worktree manifests, trusted sync hubs, and advisory state across machines."
+last_edited: "2026-08-02"
+---
 # Multi-machine Sync Architecture
 
 Multi-machine sync is the opt-in layer for coordinating active Git worktrees

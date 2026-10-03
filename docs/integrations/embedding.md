@@ -1,3 +1,8 @@
+---
+title: "Embed and connect kwt"
+description: "Integration guide for the kwt CLI, Go services, local daemon, tmux endpoints, and SSH connections."
+last_edited: "2026-09-16"
+---
 # Embed and connect kwt
 
 kwt exposes the same worktree lifecycle used by its dashboard to scripts,

@@ -1,3 +1,8 @@
+---
+title: "Releasing kwt"
+description: "Maintainer checklist for version selection, annotated tags, release artifacts, and published release verification."
+last_edited: "2026-08-10"
+---
 # Releasing kwt
 
 Releases are tag-driven. Do not create a GitHub Release by hand before the tag

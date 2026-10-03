@@ -1,3 +1,8 @@
+---
+title: "CLI Reference"
+description: "Reference for kwt commands, stable JSON fields, exit statuses, and guarded automation contracts."
+last_edited: "2026-09-16"
+---
 # CLI Reference
 
 Use this page for stable command behavior, JSON fields, exit status, and guarded

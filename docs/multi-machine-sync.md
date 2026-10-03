@@ -1,3 +1,8 @@
+---
+title: "Multi-machine sync"
+description: "Guide to configuring trusted-machine sync, comparing worktree observations, and creating local worktrees from remote state."
+last_edited: "2026-08-29"
+---
 # Multi-machine sync
 
 Use multi-machine sync to compare worktree state across your trusted development

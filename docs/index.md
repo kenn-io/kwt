@@ -1,6 +1,7 @@
 ---
 title: kwt documentation
 description: Technical documentation for kwt, a Git worktree manager with a terminal dashboard for people and a scriptable CLI for agents and other tools.
+last_edited: 2026-09-05
 ---
 
 # kwt documentation

@@ -1,3 +1,8 @@
+---
+title: "The kwt guide"
+description: "Practical kwt guide from project registration and workspace layouts to automation, sync, and embedding."
+last_edited: "2026-09-05"
+---
 # The kwt guide
 
 How to use kwt, from registering a project to embedding it in your own tools.

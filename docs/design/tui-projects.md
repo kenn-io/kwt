@@ -1,3 +1,8 @@
+---
+title: "TUI and Project Registry"
+description: "Design of the terminal dashboard, project registry, filtering, perspectives, and inventory refresh."
+last_edited: "2026-08-22"
+---
 # TUI and Project Registry
 
 The dashboard is the primary `kwt` surface. It should let a user steer worktrees

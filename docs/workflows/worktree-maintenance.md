@@ -1,3 +1,8 @@
+---
+title: "Worktree lifecycle and maintenance"
+description: "Guide to creating, inspecting, diagnosing, pruning, and safely removing Git worktrees."
+last_edited: "2026-08-29"
+---
 # Worktree lifecycle and maintenance
 
 Use kwt's everyday commands to create, inspect, diagnose, and remove worktrees.

@@ -1,3 +1,8 @@
+---
+title: "Releases"
+description: "Release versioning policy, installation choices, artifact contents, and links to kwt release history."
+last_edited: "2026-09-05"
+---
 # Releases
 
 kwt uses semantic versions in `vMAJOR.MINOR.PATCH` form. It is still pre-1.0,

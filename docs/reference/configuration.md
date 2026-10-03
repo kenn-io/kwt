@@ -1,3 +1,8 @@
+---
+title: "Configuration"
+description: "Reference for global and repository configuration, storage locations, trust boundaries, and lifecycle settings."
+last_edited: "2026-08-30"
+---
 # Configuration
 
 Use global configuration for machine-wide worktree paths, layouts, agents,
