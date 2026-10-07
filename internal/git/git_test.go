@@ -3809,13 +3809,44 @@ func TestGetMainRepositoryPathResolvesSeparateGitDirectoryMain(t *testing.T) {
 }
 
 func TestGetMainRepositoryPathResolvesBareContainerAnchor(t *testing.T) {
-	_, mainPath, linkedPath := newBareContainerRepository(t)
+	container, mainPath, linkedPath := newBareContainerRepository(t)
 
-	for _, worktreePath := range []string{mainPath, linkedPath} {
+	for _, worktreePath := range []string{filepath.Join(container, ".bare"), mainPath, linkedPath} {
 		got, err := New(worktreePath).GetMainRepositoryPath()
 
 		require.NoError(t, err)
 		assert.Equal(t, utils.PathKey(mainPath), utils.PathKey(got))
+	}
+}
+
+func TestBareRepositoryInventory(t *testing.T) {
+	for _, layout := range []string{"bare-clone", "bare-dotgit"} {
+		t.Run(layout, func(t *testing.T) {
+			repo := NewTestRepository(t)
+			repositoryPath := repo.Path
+			if layout == "bare-clone" {
+				repositoryPath = filepath.Join(t.TempDir(), "repo.git")
+				gitOutput(t, repo.Path, "clone", "--bare", repo.Path, repositoryPath)
+			} else {
+				gitOutput(t, repo.Path, "config", "core.bare", "true")
+			}
+			linkedPath := filepath.Join(t.TempDir(), "topic")
+			gitOutput(t, repositoryPath, "worktree", "add", "-b", "topic", linkedPath)
+
+			for _, directory := range []string{repositoryPath, linkedPath} {
+				g := New(directory)
+				root, err := g.GetMainRepositoryPath()
+				require.NoError(t, err)
+				assert.Equal(t, utils.PathKey(repositoryPath), utils.PathKey(root))
+
+				worktrees, err := g.ListWorktrees()
+				require.NoError(t, err)
+				require.Len(t, worktrees, 1)
+				assert.Equal(t, utils.PathKey(linkedPath), utils.PathKey(worktrees[0].Path))
+				assert.Equal(t, "topic", worktrees[0].Branch)
+				assert.False(t, worktrees[0].IsMain)
+			}
+		})
 	}
 }
 
