@@ -87,9 +87,11 @@ func TestTUILaunchRepositoryBeforeGlobalInventory(t *testing.T) {
 			if location == "linked-worktree" {
 				selectedPath = launch
 			}
-			selectedPath, err = filepath.EvalSymlinks(selectedPath)
+			expectedDirectory, err := os.Stat(selectedPath)
 			require.NoError(t, err)
-			assert.Equal(t, selectedPath, selected.(dashboard.Model).Handoff().Row.Entry.Path)
+			selectedDirectory, err := os.Stat(selected.(dashboard.Model).Handoff().Row.Entry.Path)
+			require.NoError(t, err)
+			assert.True(t, os.SameFile(expectedDirectory, selectedDirectory), "shell handoff must select the launch checkout")
 
 			// A new branch can be entered before the global request completes.
 			ready, _ := next.Update(tea.KeyPressMsg(tea.Key{Code: 'n', Text: "n"}))
