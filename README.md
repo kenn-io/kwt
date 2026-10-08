@@ -117,9 +117,9 @@ The maintained documentation lives at [kwt.sh/docs](https://kwt.sh/docs/). Start
 - [Configuration](docs/reference/configuration.md)
 - [Changelog](docs/changelog.md)
 
-kwt uses semantic-version tags. Pushing a `vMAJOR.MINOR.PATCH` tag runs the test
-suite and publishes platform archives plus checksums. See the
-[release checklist](docs/development/releasing.md) for the maintainer workflow.
+kwt uses semantic-version tags and publishes platform archives plus checksums
+on GitHub Releases. See the [release checklist](docs/development/releasing.md)
+for the maintainer workflow.
 
 To build the documentation locally:
 
