@@ -6,10 +6,10 @@ settles; upgrade notes call out changes that require attention.
 
 ## How releases work
 
-Install v0.5.1 through Go:
+Install v0.7.0 through Go:
 
 ```sh
-go install go.kenn.io/kwt/cmd/kwt@v0.5.1
+go install go.kenn.io/kwt/cmd/kwt@v0.7.0
 ```
 
 Versioned GitHub Releases provide platform archives, release notes, and

@@ -43,7 +43,7 @@ inert imports and protected attachment, and the
 Install the current release with Go:
 
 ```sh
-go install go.kenn.io/kwt/cmd/kwt@v0.5.1
+go install go.kenn.io/kwt/cmd/kwt@v0.7.0
 ```
 
 Prebuilt macOS, Linux, and Windows archives and checksums are available from

@@ -5,13 +5,56 @@ description: Release history for kwt
 
 # Changelog
 
-## Unreleased
+## 0.7.0
+
+<small>2026-10-08</small>
+
+kwt opens the repository you launch it from before refreshing global inventory,
+so a slow or unavailable repository elsewhere does not block your checkout.
+This release also adds project recovery and SSH connection controls.
+
+### Added
+
+- Recover a moved checkout with `kwt projects recover <registered-path>`, or
+  select its new location with `--to`. Missing and ambiguous projects stay
+  registered.
+- Honor OpenSSH compression settings and override them for a destination with
+  `--compression=yes|no` on `ssh resolve`, `lease`, `exec`, and `copy`.
+- Show Tailscale SSH browser-authentication links while the connection waits
+  for approval. Use `--open-browser` to open the link automatically on a local
+  desktop.
+
+### Fixed
+
+- Open regular checkouts, subdirectories, and linked worktrees directly in the
+  dashboard. Refresh warnings clear when requests finish, and refresh failures
+  remain visible.
+- List linked worktrees from bare project roots without requiring a main
+  checkout.
+- Identify an outdated CLI when it cannot use a newer daemon's inventory
+  contract, with guidance to upgrade the CLI.
+- Keep command errors concise without appending the full usage text. Explicit
+  `--help` still shows usage.
+
+### Upgrade notes
+
+- Native clients that validate the SSH execution policy must accept
+  `kwt.openssh.projection.v2` before upgrading their bundled kwt. If resolution
+  uses a compression override, carry the same setting into lease acquisition.
+
+[Compare v0.6.1...v0.7.0](https://github.com/kenn-io/kwt/compare/v0.6.1...v0.7.0)
+
+## 0.6.1
+
+<small>2026-09-07</small>
 
 ### Fixed
 
 - See why an SSH connection failed in native clients, including OpenSSH's
   public-key authentication error, instead of only “SSH connection failed.”
   Failed SSH commands now include their exit status and diagnostic text.
+
+[Compare v0.6.0...v0.6.1](https://github.com/kenn-io/kwt/compare/v0.6.0...v0.6.1)
 
 ## 0.6.0
 
