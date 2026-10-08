@@ -153,6 +153,7 @@ type Model struct {
 	pendingRefresh          bool
 	showHelp                bool
 	message                 string
+	inventoryMessage        string
 	err                     error
 	stickyError             bool
 	handoff                 Handoff
@@ -198,6 +199,18 @@ func (m Model) WithInitialAnchor(path string) Model {
 	return m
 }
 
+// WithInitialRepository loads the launch checkout before consulting global
+// inventory, whose cached rows may omit it or name a containing workspace.
+func (m Model) WithInitialRepository(path, project string) Model {
+	m.anchorPath = path
+	m.projectPerspective = project
+	m.fetchingRequest = InventoryRequest{
+		Scope: InventoryCurrentRepository, WorkingDirectory: path,
+		ProjectIdentity: project, CollectStatuses: true,
+	}
+	return m
+}
+
 // launchPerspective resolves the project key of the row the TUI was launched
 // from. Empty when launched outside any known worktree, which leaves the view
 // unscoped.
@@ -224,6 +237,9 @@ func anchorRowIndex(rows []Row, anchorPath string) (int, bool) {
 }
 
 func (m Model) Init() tea.Cmd {
+	if m.fetchingRequest.Scope == InventoryCurrentRepository {
+		return m.fetchInventoryCmd(m.fetchingRequest, m.inventorySeq)
+	}
 	return m.fetchInventoryCmd(InventoryRequest{Scope: InventoryCachedDashboard}, m.inventorySeq)
 }
 
@@ -351,6 +367,7 @@ func (m Model) applyInventory(msg inventoryMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.fetching = false
+	m.inventoryMessage = ""
 	if msg.err != nil {
 		freshness := scopeFreshness{Diagnostic: msg.err}
 		switch msg.request.Scope {
@@ -358,7 +375,6 @@ func (m Model) applyInventory(msg inventoryMsg) (Model, tea.Cmd) {
 			project := projectFreshnessKey(msg.request.ProjectIdentity)
 			freshness.ObservedAt = m.projectFresh[project].ObservedAt
 			m.projectFresh[project] = freshness
-			m.message = projectRefreshErrorMessage(msg.err)
 		case InventoryCachedDashboard, InventoryCurrentDashboard:
 			freshness.ObservedAt = m.globalFresh.ObservedAt
 			m.globalFresh = freshness
@@ -392,6 +408,9 @@ func (m Model) applyInventory(msg inventoryMsg) (Model, tea.Cmd) {
 			Scope: InventoryCurrentDashboard, CollectStatuses: true,
 		})
 	case InventoryCurrentRepository:
+		if len(m.rows) == 0 {
+			m = m.replaceInventoryRows(msg.result.Rows, msg.result.Warnings, msg.result.Current)
+		}
 		oldRows := m.filteredRows()
 		oldCursor := m.cursor
 		previousRows := m.rows
@@ -763,6 +782,7 @@ func entryCommit(row Row) string {
 
 func (m Model) applyRows(msg rowsMsg, refreshLayouts bool) (Model, tea.Cmd) {
 	m.fetching = false
+	m.inventoryMessage = ""
 	if msg.err != nil {
 		m.err = msg.err
 		m.stickyError = false
@@ -1102,9 +1122,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		key.Matches(msg, m.keys.Sync) ||
 		key.Matches(msg, m.keys.Kill)) && !m.selectedScopeCurrent() {
 		if m.selectedRow().Workspace != nil {
-			m.message = "global inventory is refreshing; wait for current results"
+			m.inventoryMessage = "global inventory is refreshing; wait for current results"
 		} else {
-			m.message = "project inventory is refreshing; wait for current results"
+			m.inventoryMessage = "project inventory is refreshing; wait for current results"
 		}
 		return m, nil
 	}
@@ -1570,7 +1590,7 @@ func (m Model) openSelected() (Model, tea.Cmd) {
 	}
 	if !m.selectedScopeCurrent() {
 		if !row.SessionLive {
-			m.message = "project inventory is refreshing; starting a workspace waits for current results"
+			m.inventoryMessage = "project inventory is refreshing; starting a workspace waits for current results"
 			return m, nil
 		}
 		if m.backend.InsideTmux() {
@@ -2208,6 +2228,11 @@ func (m Model) renderWarnings() string {
 }
 
 func (m Model) renderStatusLine() string {
+	project := rowProjectKey(m.selectedRow())
+	if project == "" {
+		project = m.projectPerspective
+	}
+	projectDiagnostic := m.projectFresh[projectFreshnessKey(project)].Diagnostic
 	switch {
 	case m.err != nil:
 		return m.theme.error.Render(m.err.Error())
@@ -2218,10 +2243,14 @@ func (m Model) renderStatusLine() string {
 			return ""
 		}
 		return m.input.View()
-	case m.message != "":
-		return m.theme.success.Render(m.message)
+	case projectDiagnostic != nil:
+		return m.theme.warning.Render(projectRefreshErrorMessage(projectDiagnostic))
 	case m.globalFresh.Diagnostic != nil:
 		return m.theme.warning.Render(m.globalFreshnessDiagnostic())
+	case m.inventoryMessage != "":
+		return m.theme.warning.Render(m.inventoryMessage)
+	case m.message != "":
+		return m.theme.success.Render(m.message)
 	default:
 		return m.renderSelectionDetails()
 	}

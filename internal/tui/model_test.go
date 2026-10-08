@@ -146,7 +146,7 @@ func TestInitialProjectRefreshFailureStillStartsBackgroundGlobal(t *testing.T) {
 	assert.True(t, model.backgroundGlobalStarted)
 	assert.Equal(t, InventoryCurrentDashboard, model.fetchingRequest.Scope)
 	assert.False(t, model.fetchingRequest.CollectStatuses)
-	assert.Contains(t, model.message, "repository unavailable")
+	assert.Contains(t, viewContent(model), "repository unavailable")
 }
 
 func TestBackgroundGlobalPreservesFreshProjectStatus(t *testing.T) {
@@ -219,7 +219,7 @@ func TestBackgroundGlobalMakesProjectStaleWhenWorktreeAppears(t *testing.T) {
 	model, _ = updateModel(t, model, press("d"))
 
 	assert.Equal(t, confirmNone, model.confirm.kind)
-	assert.Contains(t, model.message, "project inventory is refreshing")
+	assert.Contains(t, viewContent(model), "project inventory is refreshing")
 }
 
 func TestStatusFreeGlobalRefreshDoesNotAuthorizeProjectMutation(t *testing.T) {
@@ -237,7 +237,7 @@ func TestStatusFreeGlobalRefreshDoesNotAuthorizeProjectMutation(t *testing.T) {
 	model, _ = updateModel(t, model, press("d"))
 
 	assert.Equal(t, confirmNone, model.confirm.kind)
-	assert.Contains(t, model.message, "project inventory is refreshing")
+	assert.Contains(t, viewContent(model), "project inventory is refreshing")
 }
 
 func TestStatusBearingGlobalRefreshAuthorizesProjectMutation(t *testing.T) {
@@ -267,7 +267,7 @@ func TestStatusBearingGlobalRefreshMakesExistingProjectFreshnessStale(t *testing
 	model, _ = updateModel(t, model, press("d"))
 
 	assert.Equal(t, confirmNone, model.confirm.kind)
-	assert.Contains(t, model.message, "project inventory is refreshing")
+	assert.Contains(t, viewContent(model), "project inventory is refreshing")
 }
 
 func TestDirectoryWorkspaceMutationRequiresCurrentGlobalScope(t *testing.T) {
@@ -277,7 +277,7 @@ func TestDirectoryWorkspaceMutationRequiresCurrentGlobalScope(t *testing.T) {
 
 	blocked, _ := updateModel(t, model, press("d"))
 	assert.Equal(t, confirmNone, blocked.confirm.kind)
-	assert.Contains(t, blocked.message, "global inventory is refreshing")
+	assert.Contains(t, viewContent(blocked), "global inventory is refreshing")
 
 	model.globalFresh = scopeFreshness{ObservedAt: time.Now(), Current: true}
 	current, _ := updateModel(t, model, press("d"))
@@ -420,6 +420,51 @@ func TestBackgroundGlobalFailureKeepsRowsAndShowsAge(t *testing.T) {
 	content := stripANSI(viewContent(model))
 	assert.Contains(t, content, "global inventory 2m old")
 	assert.Contains(t, content, "daemon refresh failed")
+}
+
+func TestInventoryWaitMessageEndsWithRefresh(t *testing.T) {
+	for _, scope := range []InventoryScope{InventoryCurrentDashboard, InventoryCurrentRepository} {
+		for _, failed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("scope=%d/failed=%t", scope, failed), func(t *testing.T) {
+				row := Row{Workspace: &WorkspaceInfo{Name: "notes", Path: "/work/notes"}}
+				if scope == InventoryCurrentRepository {
+					row = testRow("widget", "topic", "/work/widget")
+				}
+				backend := &fakeBackend{rows: []Row{row}}
+				model := NewModel(backend, "/work").WithInitialAnchor(rowPath(row))
+				model, refresh := updateModel(t, model, model.Init()())
+				model, _ = updateModel(t, model, press("d"))
+				require.Contains(t, viewContent(model), "inventory is refreshing")
+				completion := refresh().(inventoryMsg)
+				if failed {
+					completion.err = errors.New("inventory refresh timed out")
+				}
+				model, _ = updateModel(t, model, completion)
+				assert.NotContains(t, viewContent(model), "wait for current results")
+				if failed {
+					assert.Contains(t, viewContent(model), "inventory refresh timed out")
+					model, _ = updateModel(t, model, press("d"))
+					assert.Contains(t, viewContent(model), "inventory refresh timed out")
+					assert.NotContains(t, viewContent(model), "wait for current results")
+				}
+			})
+		}
+	}
+}
+
+func TestInventoryWaitMessageReplacesPreviousActionMessage(t *testing.T) {
+	for _, key := range []string{"n", "enter"} {
+		t.Run(key, func(t *testing.T) {
+			row := testRow("widget", "topic", "/work/widget")
+			backend := &fakeBackend{rows: []Row{row}}
+			model := NewModel(backend, "/work")
+			model, _ = updateModel(t, model, rowsMsg{rows: []Row{row}})
+			model, _ = updateModel(t, model, actionDoneMsg{message: "workspace stopped", refresh: true})
+			model, _ = updateModel(t, model, press(key))
+			assert.Contains(t, viewContent(model), "project inventory is refreshing")
+			assert.NotContains(t, viewContent(model), "workspace stopped")
+		})
+	}
 }
 
 func TestModelShellOnCachedDeletedPathStaysOpen(t *testing.T) {
@@ -877,7 +922,7 @@ func TestCachedRowsBlockMutationsUntilCurrentRowsArrive(t *testing.T) {
 	blocked, _ := updateModel(t, model, press("d"))
 
 	assert.Equal(t, confirmNone, blocked.confirm.kind)
-	assert.Contains(t, blocked.message, "refresh")
+	assert.Contains(t, viewContent(blocked), "refresh")
 
 	model, _ = updateModel(t, model, rowsMsg{rows: []Row{row}})
 	current, _ := updateModel(t, model, press("d"))

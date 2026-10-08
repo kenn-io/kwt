@@ -24,9 +24,10 @@ Open the terminal dashboard:
 kwt
 ```
 
-Running kwt inside the repository registers it as a project. The dashboard now
-shows its primary checkout and linked worktrees alongside your other registered
-projects.
+Running kwt inside the repository opens its primary checkout and linked
+worktrees, with the checkout you launched from selected. Other projects refresh
+in the background, so their inventory does not block work in this repository.
+Press `Escape` to show all projects.
 
 Create a worktree with `n`, enter a branch name such as `feature/new-ui`, and
 confirm. kwt creates the isolated checkout and starts its tmux workspace with

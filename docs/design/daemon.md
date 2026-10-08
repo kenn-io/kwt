@@ -213,9 +213,14 @@ expiry. The client releases the daemon lease under a separate cleanup deadline.
 
 `kwt projects` and `kwt list` auto-start or reuse the daemon and require a
 current inventory result. They fail instead of falling back to cached or direct
-filesystem data. The TUI may paint immediately from the derived last-known-good
-cache at `<kwt-home>/cache/inventory-v2.json`, then requests one current
-snapshot. Failure to initialize or publish the disposable cache is diagnostic;
+filesystem data. When launched inside a Git repository, the TUI resolves that
+repository directly and requests its current inventory before refreshing the
+global dashboard in the background. A cached parent directory workspace cannot
+override the launch repository, and a global refresh failure does not block
+actions on its current rows. Outside a repository, the TUI may paint immediately
+from the derived last-known-good cache at `<kwt-home>/cache/inventory-v2.json`,
+then requests current inventory. Failure to initialize or publish the disposable
+cache is diagnostic;
 current inventory remains available without it. Only dashboard snapshots with
 protected tmux sockets resolved may replace the shared cache. The cache is never
 mutation authority. Git status and fetch remain in the foreground client so
