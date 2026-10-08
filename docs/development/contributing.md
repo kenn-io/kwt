@@ -136,7 +136,7 @@ Rerun it whenever the dashboard's columns or footer change.
 
 ## Releases
 
-Version tags publish platform archives and checksums through GoReleaser. See
+Versioned releases provide platform archives and checksums. See
 [Releasing kwt](releasing.md) for the complete maintainer checklist. Do not move
 or replace an existing release tag.
 

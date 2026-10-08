@@ -43,8 +43,8 @@ v0.5.1 archives for:
 - Linux on ARM64 and AMD64; and
 - Windows on ARM64 and AMD64.
 
-Each release includes `checksums.txt`. Verify the archive before extracting it,
-then place `kwt` (or `kwt.exe`) somewhere on `PATH`. The older `v0.3.0` tag
+Use the checksum file attached to the release to verify the archive before
+extracting it, then place `kwt` (or `kwt.exe`) somewhere on `PATH`. The older `v0.3.0` tag
 predates packaged release artifacts and remains available through `go install`.
 
 ## Build from source

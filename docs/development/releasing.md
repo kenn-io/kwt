@@ -1,9 +1,10 @@
 # Releasing kwt
 
-Releases are tag-driven. Do not create a GitHub Release by hand before the tag
-workflow runs.
+Coordinate publication with the release operator. This repository does not
+publish release artifacts when a tag is pushed. Do not create a tag or GitHub
+Release separately from the release process.
 
-## Before tagging
+## Before publication
 
 1. Start from the exact commit on `main` that should be released.
 2. Confirm the branch is clean and the intended CI checks passed.
@@ -12,21 +13,10 @@ workflow runs.
    version. Because kwt is pre-1.0, user-visible contract changes normally
    require a minor version.
 
-## Tag the release
+## Release identity
 
-Create and push an annotated tag without rewriting existing history:
-
-```sh
-git switch main
-git pull --ff-only
-release_version=vX.Y.Z # replace with the chosen semantic version
-git tag -a "$release_version" -m "kwt $release_version"
-git push origin "$release_version"
-```
-
-The release workflow tests the tagged commit, builds the supported target
-matrix with GoReleaser, and publishes archives, checksums, and generated notes
-to GitHub.
+Each release must use a new annotated semantic-version tag at the approved
+source commit. Never move or replace a published tag or its artifacts.
 
 Daemon build identity includes the full source revision and its source commit
 time. The source time must be canonical RFC3339 UTC and must not be a package,
@@ -38,17 +28,19 @@ Ghosthub's managed helper build, must also pass its resolved source time:
 -X go.kenn.io/kwt/internal/cmd.revisionTime=$revision_time
 ```
 
-GoReleaser stamps the same field from the tagged commit date.
+Release builds must stamp the same field from the tagged commit date.
 
 ## Verify the result
 
 On the [GitHub Releases](https://github.com/kenn-io/kwt/releases) page, confirm
-that the release contains six archives plus `checksums.txt`. Download one
-archive for the current platform, verify its checksum, and run:
+that the release contains archives for macOS, Linux, and Windows on AMD64 and
+ARM64, plus a checksum file. Download one archive for the current platform,
+verify its checksum, and run:
 
 ```sh
 kwt version
 ```
 
-If the workflow fails, fix the cause on a new commit and tag a new version. Do
-not move or replace a published version tag.
+If publication fails, preserve the tag and existing artifacts while the
+release operator investigates. If the source needs a fix, merge it and use a
+new version.

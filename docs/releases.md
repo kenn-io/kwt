@@ -12,8 +12,8 @@ Install v0.5.1 through Go:
 go install go.kenn.io/kwt/cmd/kwt@v0.5.1
 ```
 
-Semantic-version tags run the full test suite and publish a GitHub Release with
-platform archives, generated release notes, and checksums. `v0.4.0` was the
+Versioned GitHub Releases provide platform archives, release notes, and
+checksums. Pushing a tag alone does not publish a release. `v0.4.0` was the
 first release produced by this automated artifact pipeline. `v0.3.0` was the
 first versioned tag and predates packaged archives.
 
