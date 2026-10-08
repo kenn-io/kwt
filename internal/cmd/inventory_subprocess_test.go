@@ -147,7 +147,7 @@ path = "$KWT_TEST_PROJECT"
 			var worktrees []models.Worktree
 			require.NoError(t, json.Unmarshal(stdout, &worktrees))
 			require.Len(t, worktrees, 1)
-			assert.Equal(t, linkedPath, worktrees[0].Path)
+			assert.Equal(t, filepath.ToSlash(linkedPath), worktrees[0].Path)
 			assert.Equal(t, "topic", worktrees[0].Branch)
 			assert.False(t, worktrees[0].IsMain)
 			if registration == "registered" {
