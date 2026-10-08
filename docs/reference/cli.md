@@ -460,6 +460,12 @@ remote shell invokes kwt. Its human output and machine-readable schema are
 unchanged; freshness metadata stays in the daemon API envelope and is not
 added to the top-level JSON array.
 
+Worktree inventory excludes bare repository control directories and lists their
+linked checkouts. A project root with a `.git` directory marked `core.bare=true`
+does not need a main checkout. Its linked checkouts have `is_main=false`. In the
+conventional `.bare/` plus `main/` layout, the `main/` checkout retains
+`is_main=true`.
+
 `--json` emits an array of objects with `path`, `branch`, `commit_hash`,
 `is_main`, `created_at` (worktree directory mtime), `generation` (the durable
 identity for conditional removal), `repository` (the `host/owner/name` slug,

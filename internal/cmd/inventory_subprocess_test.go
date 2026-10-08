@@ -119,6 +119,47 @@ func TestInventorySubprocessPreservesGhosthubJSONAndTrustBehavior(t *testing.T) 
 	assert.Equal(t, "[]\n", string(stdout))
 }
 
+func TestInventorySubprocessListsBareProjectWorktrees(t *testing.T) {
+	binary, cleanupBinary := buildDaemonTestBinaries(t)
+	repository := newTUITestRepo(t)
+	linkedPath := filepath.Join(t.TempDir(), "topic")
+	runTUITestGit(t, repository, "worktree", "add", "-b", "topic", linkedPath)
+	runTUITestGit(t, repository, "config", "core.bare", "true")
+	linkedPath, err := filepath.EvalSymlinks(linkedPath)
+	require.NoError(t, err)
+	t.Setenv("KWT_TEST_PROJECT", repository)
+
+	for _, registration := range []string{"unregistered", "registered"} {
+		t.Run(registration, func(t *testing.T) {
+			body := validDaemonConfig
+			if registration == "registered" {
+				body += `
+[[projects]]
+repository = "example.com/team/project"
+name = "project"
+path = "$KWT_TEST_PROJECT"
+`
+			}
+			home := newDaemonTestHome(t, body)
+			registerDaemonCleanup(t, cleanupBinary, home)
+			stdout, stderr, err := runInventoryCommand(t, binary, home, repository, "list", "--json")
+			require.NoError(t, err, "stdout=%s stderr=%s", stdout, stderr)
+			var worktrees []models.Worktree
+			require.NoError(t, json.Unmarshal(stdout, &worktrees))
+			require.Len(t, worktrees, 1)
+			assert.Equal(t, filepath.ToSlash(linkedPath), worktrees[0].Path)
+			assert.Equal(t, "topic", worktrees[0].Branch)
+			assert.False(t, worktrees[0].IsMain)
+			if registration == "registered" {
+				assert.Equal(t, "example.com/team/project", worktrees[0].Repository)
+			} else {
+				assert.True(t, strings.HasPrefix(worktrees[0].Repository, "local/"))
+			}
+			assert.NotEmpty(t, worktrees[0].SessionName)
+		})
+	}
+}
+
 func TestInventorySubprocessPreservesExactPathWithClientScopedIdentity(t *testing.T) {
 	binary, cleanupBinary := buildDaemonTestBinaries(t)
 	home := newDaemonTestHome(t, validDaemonConfig+`
