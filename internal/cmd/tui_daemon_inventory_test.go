@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,6 +24,99 @@ import (
 	dashboard "go.kenn.io/kwt/internal/tui"
 	"go.kenn.io/kwt/pkg/models"
 )
+
+func TestTUILaunchRepositoryBeforeGlobalInventory(t *testing.T) {
+	for _, location := range []string{"checkout", "uncached", "subdirectory", "linked-worktree"} {
+		t.Run(location, func(t *testing.T) {
+			home, parent, base := t.TempDir(), t.TempDir(), t.TempDir()
+			t.Setenv("KWT_HOME", home)
+			repository := newTUITestRepoAt(t, filepath.Join(parent, "widget"))
+			runTUITestGit(t, repository, "checkout", "-b", "feature/launch")
+			require.NoError(t, os.WriteFile(filepath.Join(repository, "untracked.txt"), []byte("work in progress"), 0o600))
+			launch := repository
+			switch location {
+			case "subdirectory":
+				launch = filepath.Join(repository, "src")
+				require.NoError(t, os.Mkdir(launch, 0o700))
+			case "linked-worktree":
+				launch = filepath.Join(parent, "linked")
+				runTUITestGit(t, repository, "worktree", "add", "-b", "feature/linked", launch)
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(fmt.Sprintf(
+				"[worktree]\nbasedir = %q\n[[workspaces]]\nname = 'code'\npath = %q\n", base, parent,
+			)), 0o600))
+			cfg := &models.Config{
+				Worktree:   models.WorktreeConfig{BaseDir: base},
+				Workspaces: []models.Workspace{{Name: "code", Path: parent}},
+			}
+			cache, _, err := kwt.NewFileCache(home)
+			require.NoError(t, err)
+			if location != "uncached" {
+				require.NoError(t, cache.Store(kwt.Result{ObservedAt: time.Now(), Snapshot: kwt.Snapshot{
+					Config: cfg, Workspaces: cfg.Workspaces,
+				}}))
+			}
+			inventory := kwt.NewInventoryService(kwt.InventoryServiceOptions{
+				Source: kwt.NewSource(kwt.SourceOptions{Home: home}), Cache: cache,
+			})
+			backend := newTUIBackendWithLaunchDir(cfg, launch)
+			backend.resolveSessions = resolveStoppedWorkspaceSessions
+			backend.registerProject = nil
+			backend.registerWorkspace = nil
+			var requests []kwt.Request
+			backend.queryInventory = func(ctx context.Context, request kwt.Request, _ bool, _ io.Writer) (kwt.Result, error) {
+				requests = append(requests, request)
+				if request.RequireCurrent && request.View == kwt.ViewDashboard {
+					return kwt.Result{}, errors.New("unrelated repository unavailable")
+				}
+				request.Expansion = kwt.ExpansionContext{WorkingDirectory: launch, HomeDirectory: home}
+				request.UntrustedConfig = kwt.RequireConfigInteraction
+				return inventory.Query(ctx, request)
+			}
+
+			model := newTUIModel(context.Background(), backend)
+			next, background := model.Update(model.Init()())
+			require.NotNil(t, background)
+			require.Len(t, requests, 1)
+			require.Equal(t, kwt.ViewRepository, requests[0].View, "startup must not wait on dashboard inventory")
+			assert.Contains(t, next.View().Content, "project:widget")
+			assert.Contains(t, next.View().Content, "feature/launch")
+			assert.NotContains(t, next.View().Content, "project:code")
+			selected, _ := next.Update(tea.KeyPressMsg(tea.Key{Code: 'c', Text: "c"}))
+			selectedPath := repository
+			if location == "linked-worktree" {
+				selectedPath = launch
+			}
+			selectedPath, err = filepath.EvalSymlinks(selectedPath)
+			require.NoError(t, err)
+			assert.Equal(t, selectedPath, selected.(dashboard.Model).Handoff().Row.Entry.Path)
+
+			// A new branch can be entered before the global request completes.
+			ready, _ := next.Update(tea.KeyPressMsg(tea.Key{Code: 'n', Text: "n"}))
+			assert.Contains(t, ready.View().Content, "new branch in widget:")
+			assert.NotContains(t, ready.View().Content, "wait for current results")
+			next, _ = next.Update(background())
+			assert.Contains(t, next.View().Content, "project:widget")
+			assert.Contains(t, next.View().Content, "unrelated repository unavailable")
+		})
+	}
+}
+
+func TestTUILaunchOutsideRepositoryUsesCachedDashboard(t *testing.T) {
+	directory := t.TempDir()
+	backend := newTUIBackendWithLaunchDir(&models.Config{
+		Workspaces: []models.Workspace{{Name: "notes", Path: directory}},
+	}, directory)
+	backend.resolveSessions = resolveStoppedWorkspaceSessions
+	backend.queryInventory = func(_ context.Context, request kwt.Request, _ bool, _ io.Writer) (kwt.Result, error) {
+		assert.Equal(t, kwt.ViewDashboard, request.View)
+		assert.False(t, request.RequireCurrent)
+		return kwt.Result{Freshness: kwt.Stale, ObservedAt: time.Now()}, nil
+	}
+	model := newTUIModel(context.Background(), backend)
+	next, _ := model.Update(model.Init()())
+	assert.Contains(t, next.View().Content, "project:notes")
+}
 
 func TestTUIBackendInventoryModesSeparateCurrencyAndStatus(t *testing.T) {
 	backend := newTUIBackendWithLaunchDir(&models.Config{}, "/launch")

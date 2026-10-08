@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,8 +10,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/tmux"
 	dashboard "go.kenn.io/kwt/internal/tui"
+	"go.kenn.io/kwt/internal/worktree"
 )
 
 var tuiCmd = &cobra.Command{
@@ -48,8 +51,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	backend := newTUIBackend(cfg)
 	backend.queryInventory = queryCLIInventory
 	backend.stderr = os.Stderr
-	model := dashboard.NewModel(backend, cfg.Worktree.BaseDir).
-		WithInitialAnchor(launchAnchorPath(backend.launchDir))
+	model := newTUIModel(cmd.Context(), backend)
 	final, err := tea.NewProgram(model).Run()
 	if err != nil {
 		return err
@@ -60,6 +62,19 @@ func runTUI(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	return executeTUIHandoff(backend, finalModel.Handoff())
+}
+
+func newTUIModel(ctx context.Context, backend *tuiBackend) dashboard.Model {
+	anchor := launchAnchorPath(backend.launchDir)
+	model := dashboard.NewModel(backend, backend.cfg.Worktree.BaseDir).WithInitialAnchor(anchor)
+	if anchor == "" {
+		return model
+	}
+	g := git.NewForInventory(ctx, anchor, backend.protectedNames)
+	if info, err := worktree.RepositoryInfoWithProjects(g, backend.cfg.Projects); err == nil {
+		return model.WithInitialRepository(anchor, info.FullPath)
+	}
+	return model
 }
 
 func executeTUIHandoff(backend *tuiBackend, handoff dashboard.Handoff) error {
