@@ -330,23 +330,6 @@ func (r remoteFetchRefspec) sourceForDestination(
 	return strings.Replace(r.source, "*", match, 1), true
 }
 
-// DeleteBranch deletes a branch.
-func (g *Git) DeleteBranch(branch string, force bool) error {
-	args := []string{"branch"}
-	if force {
-		args = append(args, "-D")
-	} else {
-		args = append(args, "-d")
-	}
-	args = append(args, branch)
-
-	if _, err := g.run(args...); err != nil {
-		return fmt.Errorf("failed to delete branch %s: %w", branch, err)
-	}
-
-	return nil
-}
-
 // getCurrentBranch returns the current branch name for a specific worktree.
 func (g *Git) getCurrentBranch(worktreePath string) string {
 	oldWorkDir := g.workDir

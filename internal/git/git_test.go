@@ -227,7 +227,7 @@ func TestInventoryGitAllowsBranchDeletionToFinishRetainedHookPipes(t *testing.T)
 	require.NoError(t, repo.run("config", "core.hooksPath", hooksDir))
 	g := NewForInventory(context.Background(), repo.Path, nil)
 
-	err := g.DeleteBranch("delete-with-retained-hook-pipe", true)
+	_, err := g.RunCommand("branch", "-D", "delete-with-retained-hook-pipe")
 
 	require.NoError(t, err)
 	assert.NoFileExists(t, donePath)
