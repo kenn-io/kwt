@@ -103,7 +103,7 @@ func (s *Scope) List(ctx context.Context, identity IdentityPolicy) ([]Entry, err
 		if err != nil {
 			return nil, &IncompleteInventoryError{Path: e.Path, Err: fmt.Errorf("initialize worktree identity: %w", err)}
 		}
-		if identity.Generate {
+		if identity.FileName == generationFileName {
 			e.Generation = value
 			e.GenerationStatus = GenerationValid
 		}

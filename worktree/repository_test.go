@@ -278,3 +278,33 @@ func TestOpenRejectsGitWithoutAbsolutePathFormat(t *testing.T) {
 	_, err = coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: gitcmd.New()})
 	require.ErrorContains(t, err, "Git 2.31")
 }
+
+// Generation fields describe kwt's marker. Initializing another application's
+// marker must not replace them, while initializing kwt's marker refreshes them.
+func TestListReportsKwtGenerationOnlyForItsMarker(t *testing.T) {
+	root, path := fixture(t)
+	repo := open(t, root, kwtPolicy())
+	kwt, err := repo.List(t.Context(), worktree.IdentityPolicy{FileName: "kwt-generation", Generate: true})
+	require.NoError(t, err)
+	require.Len(t, kwt, 2)
+	generation := kwt[1].Generation
+	require.Regexp(t, "^[0-9a-f]{32}$", generation)
+
+	for _, identity := range []worktree.IdentityPolicy{
+		{FileName: "workspace-id", Generate: true},
+		{FileName: "workspace-key", Value: "workspace-a"},
+	} {
+		entries, err := repo.List(t.Context(), identity)
+		require.NoError(t, err)
+		require.Equal(t, path, entries[1].Path)
+		require.Equal(t, generation, entries[1].Generation, identity.FileName)
+		require.Equal(t, worktree.GenerationValid, entries[1].GenerationStatus, identity.FileName)
+	}
+
+	fresh, _ := fixture(t)
+	const explicit = "00112233445566778899aabbccddeeff"
+	entries, err := open(t, fresh, kwtPolicy()).List(t.Context(), worktree.IdentityPolicy{FileName: "kwt-generation", Value: explicit})
+	require.NoError(t, err)
+	require.Equal(t, explicit, entries[1].Generation)
+	require.Equal(t, worktree.GenerationValid, entries[1].GenerationStatus)
+}
