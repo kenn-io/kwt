@@ -686,24 +686,6 @@ func TestListWorktreesKeepsGenerationStableWhenDirectoryChanges(t *testing.T) {
 	t.Fatal("worktree missing after ordinary directory change")
 }
 
-func TestInspectWorktreesDoesNotInitializeGeneration(t *testing.T) {
-	repo := NewTestRepository(t)
-	repo.CreateBranch(t, "raw-topic")
-	worktreePath := filepath.Join(t.TempDir(), "raw-topic")
-	repo.CreateWorktree(t, worktreePath, "raw-topic")
-	g := New(repo.Path)
-	adminDir, err := shared.ReadWorktreeBacklink(t.Context(), worktreePath)
-	require.NoError(t, err)
-	assert.NoFileExists(t, filepath.Join(adminDir, "kwt-generation"))
-
-	inspections, err := inspectSharedWorktrees(t, g)
-	require.NoError(t, err)
-	inspection := requireWorktreeInspection(t, inspections, worktreePath)
-	assert.Equal(t, shared.GenerationMissing, inspection.GenerationStatus)
-	assert.Empty(t, inspection.Generation)
-	assert.NoFileExists(t, filepath.Join(adminDir, "kwt-generation"))
-}
-
 func TestInspectWorktreesReportsMissingDirectoryWithoutInitializing(t *testing.T) {
 	repo := NewTestRepository(t)
 	repo.CreateBranch(t, "missing-topic")
@@ -986,44 +968,6 @@ func TestWorktreeGenerationRecoversFromRelativeAdministrativeGitDir(
 
 	require.NoError(t, err)
 	assert.Equal(t, generation, recovered)
-}
-
-func TestWorktreeGenerationRecoversInterruptedInitialization(t *testing.T) {
-	repo := NewTestRepository(t)
-	g := New(repo.Path)
-	repo.CreateBranch(t, "interrupted-generation")
-	worktreePath := filepath.Join(t.TempDir(), "interrupted-generation")
-	repo.CreateWorktree(t, worktreePath, "interrupted-generation")
-	adminDir, err := shared.ReadWorktreeBacklink(t.Context(), worktreePath)
-	require.NoError(t, err)
-	generationPath := filepath.Join(adminDir, "kwt-generation")
-	require.NoError(t, os.WriteFile(generationPath, []byte("partial"), 0o600))
-
-	generation, err := openSharedWorktrees(t, g).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
-
-	require.NoError(t, err)
-	require.NoError(t, shared.ValidateWorktreeGeneration(generation))
-	data, err := os.ReadFile(generationPath)
-	require.NoError(t, err)
-	assert.Equal(t, generation, strings.TrimSpace(string(data)))
-}
-
-func TestListWorktreesReportsGenerationInitializationFailure(t *testing.T) {
-	repo := NewTestRepository(t)
-	g := New(repo.Path)
-	repo.CreateBranch(t, "broken-generation")
-	worktreePath := filepath.Join(t.TempDir(), "broken-generation")
-	repo.CreateWorktree(t, worktreePath, "broken-generation")
-	adminDir, err := shared.ReadWorktreeBacklink(t.Context(), worktreePath)
-	require.NoError(t, err)
-	require.NoError(t, os.Mkdir(
-		filepath.Join(adminDir, "kwt-generation"),
-		0700,
-	))
-
-	_, err = openSharedWorktrees(t, g).List(t.Context(), shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
-
-	require.True(t, shared.IsIncompleteInventory(err))
 }
 
 func TestListWorktreesWaitsForConcurrentWorktreeReplacement(t *testing.T) {

@@ -351,13 +351,14 @@ func TestPruneMergedDirtyPromptTimeCleanUsesNonForcedRemoval(t *testing.T) {
 		inspections++
 		return inspections == 1, nil
 	}
-	var forced bool
+	removals, forced := 0, true
 	removePruneMergedWorktree = func(
 		_ context.Context,
 		_ pruneMergedCandidate,
 		force bool,
 		claim func(func() (shared.RemovalResult, error)) (bool, error),
 	) (bool, error) {
+		removals++
 		forced = force
 		return claim(func() (shared.RemovalResult, error) {
 			return shared.RemovalResult{RemoveWorktreeResult: managed.RemoveWorktreeResult{RegistrationRemoved: true, CheckoutRemoved: true}}, nil
@@ -366,6 +367,7 @@ func TestPruneMergedDirtyPromptTimeCleanUsesNonForcedRemoval(t *testing.T) {
 	cmd, _, _ := fleetTestCommand()
 
 	require.NoError(t, runPruneMerged(cmd, nil))
+	require.Equal(t, 1, removals, "the candidate clean at prompt time must still be removed")
 	assert.False(t, forced)
 }
 
