@@ -130,7 +130,7 @@ func (s *Scope) Recover(ctx context.Context, req RecoveryRequest) (result Create
 		result.Disposition = Recovered
 	}
 	if req.Identity.FileName != "" {
-		_, err = s.EnsureIdentity(ctx, req.Path, req.Identity)
+		result.IdentityValue, err = s.EnsureIdentity(ctx, req.Path, req.Identity)
 	}
 	return result, err
 }

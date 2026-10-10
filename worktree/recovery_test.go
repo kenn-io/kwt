@@ -165,3 +165,26 @@ func TestRecoveryFailurePreservesReplacementDirectory(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "keep", string(data))
 }
+
+func TestRecoveryReturnsCapturedIdentity(t *testing.T) {
+	for _, mode := range []worktree.RecoveryMode{worktree.AdoptExistingOnly, worktree.ReconstructRegistered} {
+		for _, identity := range []worktree.IdentityPolicy{
+			{FileName: "kwt-generation", Generate: true},
+			{FileName: "workspace-id", Value: "workspace-a"},
+		} {
+			t.Run(fmt.Sprintf("mode=%d/%s", mode, identity.FileName), func(t *testing.T) {
+				root, path := fixture(t)
+				repo := open(t, root, kwtPolicy())
+				if mode == worktree.ReconstructRegistered {
+					require.NoError(t, os.RemoveAll(path))
+				}
+				result, err := repo.Recover(t.Context(), worktree.RecoveryRequest{Path: path, Mode: mode, Identity: identity})
+				require.NoError(t, err)
+				persisted, err := repo.ReadIdentity(t.Context(), path, identity.FileName)
+				require.NoError(t, err)
+				require.NotEmpty(t, persisted)
+				require.Equal(t, persisted, result.IdentityValue)
+			})
+		}
+	}
+}
