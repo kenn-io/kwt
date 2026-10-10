@@ -274,7 +274,11 @@ func (s *Scope) Remove(ctx context.Context, req RemovalRequest) (result RemovalR
 		if req.DeleteObservedBranch && branch != "" {
 			branches = []managed.BranchRemoval{{Name: branch, ExpectedOID: check.Entry.Head, Force: req.ForceObservedBranch}}
 		}
-		result.RemoveWorktreeResult, err = managed.RemoveWorktreeFromDisk(ctx, managed.RemoveWorktreeOptions{ProjectRoot: s.repo.path, Path: req.Path, Branch: branch, Force: req.Force, Branches: branches, Runner: s.repo.runner, RunGit: s.repo.runGit})
+		root, err := s.rootOutside(ctx, req.Path)
+		if err != nil {
+			return err
+		}
+		result.RemoveWorktreeResult, err = managed.RemoveWorktreeFromDisk(ctx, managed.RemoveWorktreeOptions{ProjectRoot: root, Path: req.Path, Branch: branch, Force: req.Force, Branches: branches, Runner: s.repo.runner, RunGit: s.repo.runGit})
 		if err != nil && result.RegistrationRemoved {
 			if !result.CheckoutRemoved {
 				return fmt.Errorf("worktree removed, but files remain at %s: %w", req.Path, err)
@@ -295,6 +299,27 @@ func (s *Scope) Remove(ctx context.Context, req RemovalRequest) (result RemovalR
 		err = remove()
 	}
 	return result, err
+}
+
+// rootOutside returns a directory for Git to run from that removing target
+// will not delete. Windows refuses to delete a process's working directory,
+// and branch cleanup cannot start from a directory that removal deleted.
+func (s *Scope) rootOutside(ctx context.Context, target string) (string, error) {
+	within := func(path string) bool {
+		key, targetKey := pathKey(path), pathKey(target)
+		return key == targetKey || strings.HasPrefix(key, strings.TrimSuffix(targetKey, "/")+"/")
+	}
+	if !within(s.repo.path) {
+		return s.repo.path, nil
+	}
+	primary, err := s.repo.PrimaryPath(ctx)
+	if err != nil {
+		return "", fmt.Errorf("find a repository directory outside %s: %w", target, err)
+	}
+	if !within(primary) {
+		return primary, nil
+	}
+	return s.repo.commonDir, nil
 }
 
 // removeRequestedBranches applies requested branch cleanup when the checkout

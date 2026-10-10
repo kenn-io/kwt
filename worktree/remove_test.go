@@ -359,3 +359,24 @@ func TestRemoveMissingArtifactsStillDeletesRequestedBranches(t *testing.T) {
 		})
 	}
 }
+
+// Git cannot remove the directory it runs in on Windows, and it cannot delete a
+// branch from a working directory that removal just deleted. Removal must run
+// outside the target even when the repository was opened from that checkout.
+func TestRemoveRunsOutsideTheCheckoutItOpenedFrom(t *testing.T) {
+	root, path := fixture(t)
+	head := git(t, root, "rev-parse", "refs/heads/topic")
+	repo := open(t, path, kwtPolicy())
+
+	result, err := repo.Remove(t.Context(), worktree.RemovalRequest{
+		Path:     path,
+		Branches: []managed.BranchRemoval{{Name: "topic", ExpectedOID: head, Force: true}},
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.CheckoutRemoved)
+	require.Equal(t, []string{"topic"}, result.BranchesRemoved)
+	require.NoDirExists(t, path)
+	_, err = gitcmd.New().Output(t.Context(), root, "rev-parse", "--verify", "refs/heads/topic")
+	require.Error(t, err)
+}
