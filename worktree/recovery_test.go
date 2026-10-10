@@ -227,12 +227,11 @@ func TestSyncBaseRefusesBranchMovedByAnotherWriter(t *testing.T) {
 // lands while the old tip is backed up still stops the sync.
 func TestSyncBaseSkipsBranchCheckedOutDuringBackup(t *testing.T) {
 	root, path := fixture(t)
-	local := git(t, root, "rev-parse", "topic")
 	git(t, path, "checkout", "--detach")
 	git(t, root, "-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "--allow-empty", "-m", "rewritten base")
 	target := git(t, root, "rev-parse", "HEAD")
 	git(t, root, "update-ref", "refs/heads/topic", git(t, root, "-c", "user.name=Example", "-c", "user.email=example@example.com", "commit-tree", git(t, root, "rev-parse", "topic^{tree}"), "-p", "topic", "-m", "local only"))
-	local = git(t, root, "rev-parse", "topic")
+	local := git(t, root, "rev-parse", "topic")
 	checkedOut := false
 	coordinator, err := worktree.NewCoordinator(kwtPolicy())
 	require.NoError(t, err)
