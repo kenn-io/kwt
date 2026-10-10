@@ -94,15 +94,14 @@ func (r *Repository) ObserveRegistration(ctx context.Context, path, identityFile
 	if strings.TrimSpace(string(inside)) != "true" {
 		return state, nil
 	}
-	out, err := r.run(ctx, path, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir")
+	paths, err := r.revParseAbsolute(ctx, path, "--show-toplevel", "--git-dir", "--git-common-dir")
 	if IsCheckoutAbsent(err) {
 		return state, nil
 	}
 	if err != nil {
 		return state, err
 	}
-	paths := strings.Split(strings.TrimSpace(string(out)), "\n")
-	state.Live = len(paths) == 3 && pathKey(paths[0]) == pathKey(path) && pathKey(paths[1]) == pathKey(state.GitDir) && pathKey(paths[2]) == pathKey(r.commonDir)
+	state.Live = pathKey(paths[0]) == pathKey(path) && pathKey(paths[1]) == pathKey(state.GitDir) && pathKey(paths[2]) == pathKey(r.commonDir)
 	return state, nil
 }
 

@@ -50,11 +50,11 @@ func Quarantine(ctx context.Context, opts QuarantineOptions) (bool, error) {
 			return false, err
 		}
 		if err == nil && strings.TrimSpace(string(inside)) == "true" {
-			out, err := r.run(ctx, opts.Path, "rev-parse", "--path-format=absolute", "--show-toplevel")
+			top, err := r.revParseAbsolute(ctx, opts.Path, "--show-toplevel")
 			if err != nil {
 				return false, err
 			}
-			if pathKey(strings.TrimSpace(string(out))) == pathKey(opts.Path) {
+			if pathKey(top[0]) == pathKey(opts.Path) {
 				return false, nil
 			}
 		}

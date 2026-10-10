@@ -252,3 +252,29 @@ func TestInventoryOpenedAtCommonGitDirectoryFindsPrimaryCheckout(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, root, primary)
 }
+
+// Git before 2.31 echoes --path-format=absolute as an unknown argument and then
+// prints relative paths. Treating that output as a path would select a lock
+// that processes opening the repository elsewhere do not share.
+func TestOpenRejectsGitWithoutAbsolutePathFormat(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the Git shim is a POSIX shell script")
+	}
+	root, _ := fixture(t)
+	realGit, err := exec.LookPath("git")
+	require.NoError(t, err)
+	shim := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = rev-parse ] && [ \"$2\" = --path-format=absolute ]; then\n" +
+		"  shift 2\n" +
+		"  echo --path-format=absolute\n" +
+		"  exec \"" + realGit + "\" rev-parse \"$@\"\n" +
+		"fi\n" +
+		"exec \"" + realGit + "\" \"$@\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(shim, "git"), []byte(script), 0o755))
+	t.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH"))
+	coordinator, err := worktree.NewCoordinator(worktree.LockPolicy{FileName: ".kenn-forge-worktree.lock", NonBareRoot: t.TempDir()})
+	require.NoError(t, err)
+	_, err = coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: gitcmd.New()})
+	require.ErrorContains(t, err, "Git 2.31")
+}

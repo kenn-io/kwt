@@ -111,13 +111,33 @@ func (c *Coordinator) Open(ctx context.Context, opts RepositoryOptions) (*Reposi
 	if r.bare && c.policy.BareUsesSuppliedPath {
 		r.lockDir = opts.Path
 	} else if !r.bare && c.policy.NonBareRoot != "" {
-		common, resolveErr := r.run(ctx, opts.Path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+		common, resolveErr := r.revParseAbsolute(ctx, opts.Path, "--git-common-dir")
 		if resolveErr != nil {
 			return nil, resolveErr
 		}
-		r.lockDir = filepath.Join(c.policy.NonBareRoot, fmt.Sprintf("%x", sha256.Sum256([]byte(strings.TrimSpace(string(common))))))
+		r.lockDir = filepath.Join(c.policy.NonBareRoot, fmt.Sprintf("%x", sha256.Sum256([]byte(common[0]))))
 	}
 	return r, nil
+}
+
+// revParseAbsolute returns one absolute path per rev-parse option. Git before
+// 2.31 echoes --path-format=absolute as an unknown argument and prints relative
+// paths, which would otherwise be used as if they were absolute.
+func (r *Repository) revParseAbsolute(ctx context.Context, dir string, options ...string) ([]string, error) {
+	out, err := r.run(ctx, dir, append([]string{"rev-parse", "--path-format=absolute"}, options...)...)
+	if err != nil {
+		return nil, err
+	}
+	paths := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(paths) != len(options) {
+		return nil, fmt.Errorf("absolute Git paths require Git 2.31 or newer: unexpected rev-parse output %q", out)
+	}
+	for _, path := range paths {
+		if !filepath.IsAbs(path) {
+			return nil, fmt.Errorf("absolute Git paths require Git 2.31 or newer: rev-parse returned %q", path)
+		}
+	}
+	return paths, nil
 }
 
 func (r *Repository) run(ctx context.Context, dir string, args ...string) ([]byte, error) {
