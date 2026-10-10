@@ -123,21 +123,32 @@ func defaultWorktreeBase(ctx context.Context, repo *shared.Repository, execution
 			return ref, nil
 		}
 	}
-	inventory, err := repo.Inspect(ctx)
-	if err == nil {
-		for _, entry := range inventory.Entries {
-			if entry.IsMain && entry.Branch != "" {
-				ref := "refs/heads/" + entry.Branch
-				if exists(ref) {
-					return ref, nil
-				}
-			}
+	// PrimaryPath and symbolic-ref stay within the Git 2.20 baseline, and a
+	// bare repository reports the branch its HEAD names.
+	primaryBranch, primaryErr := primaryWorktreeBranch(ctx, repo, execution)
+	if primaryErr == nil {
+		ref := "refs/heads/" + primaryBranch
+		if exists(ref) {
+			return ref, nil
 		}
+		primaryErr = fmt.Errorf("primary worktree branch %s does not exist", primaryBranch)
 	}
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
-	return "", fmt.Errorf("could not resolve default worktree base: remote default unavailable (%v); no local main, master, or primary worktree branch", remoteErr)
+	return "", fmt.Errorf("could not resolve default worktree base: remote default unavailable (%v); no local main, master, or primary worktree branch (%v)", remoteErr, primaryErr)
+}
+
+func primaryWorktreeBranch(ctx context.Context, repo *shared.Repository, execution shared.RepositoryOptions) (string, error) {
+	primary, err := repo.PrimaryPath(ctx)
+	if err != nil {
+		return "", err
+	}
+	branch, err := execution.Runner.Output(ctx, primary, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("read primary worktree branch: %w", err)
+	}
+	return strings.TrimSpace(string(branch)), nil
 }
 
 func reusableTrackingBranch(ctx context.Context, scope *shared.Scope, branch, source string) (bool, error) {
