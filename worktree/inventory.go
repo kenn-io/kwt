@@ -192,7 +192,7 @@ func (r *Repository) mainRoot(ctx context.Context, entries []gitworktree.Porcela
 				}
 			}
 		}
-		return "", nil
+		return entries[0].Path, nil
 	}
 	dir, err := r.run(ctx, r.path, "rev-parse", "--absolute-git-dir")
 	if err != nil {
@@ -238,7 +238,9 @@ func HasExactWorktreeRoot(entries []Entry, path string) bool {
 
 // PrimaryPath resolves the repository's primary checkout without creating
 // identities or taking a mutation lock. It is an advisory path lookup, including
-// when application policy needs it while a Scope is already held.
+// when application policy needs it while a Scope is already held. A bare
+// repository returns its bare root, or the main checkout beside a
+// conventional .bare control directory.
 func (r *Repository) PrimaryPath(ctx context.Context) (string, error) {
 	dir, err := r.run(ctx, r.path, "rev-parse", "--absolute-git-dir")
 	if err != nil {
@@ -258,5 +260,9 @@ func (r *Repository) PrimaryPath(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return r.mainRoot(ctx, gitworktree.ParsePorcelain(string(out)))
+	primary, err := r.mainRoot(ctx, gitworktree.ParsePorcelain(string(out)))
+	if err == nil && primary == "" {
+		err = fmt.Errorf("primary worktree path is unavailable for %s", r.commonDir)
+	}
+	return primary, err
 }
