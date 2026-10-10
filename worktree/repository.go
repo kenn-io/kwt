@@ -83,16 +83,19 @@ func (c *Coordinator) Open(ctx context.Context, opts RepositoryOptions) (*Reposi
 		return nil, errors.New("worktree repository path is required")
 	}
 	r := &Repository{coordinator: c, path: opts.Path, runner: opts.Runner, runGit: opts.RunGit}
-	common, err := r.run(ctx, opts.Path, "rev-parse", "--git-common-dir")
+	// One rev-parse answers both questions; Git prints them in option order.
+	out, err := r.run(ctx, opts.Path, "rev-parse", "--git-common-dir", "--is-bare-repository")
 	if err != nil {
 		if _, statErr := os.Stat(opts.Path); os.IsNotExist(statErr) {
 			return nil, errors.Join(ErrWorktreeNotFound, err)
 		}
 		return nil, fmt.Errorf("resolve worktree repository: %w", err)
 	}
-	r.commonDir = strings.TrimSpace(string(common))
-	if r.commonDir == "" {
-		return nil, errors.New("git returned an empty common directory")
+	common, bare, ok := strings.Cut(strings.TrimRight(string(out), "\r\n"), "\n")
+	r.commonDir = strings.TrimSpace(common)
+	bare = strings.TrimSpace(bare)
+	if !ok || r.commonDir == "" || (bare != "true" && bare != "false") {
+		return nil, fmt.Errorf("unexpected rev-parse output for %s: %q", opts.Path, out)
 	}
 	if !filepath.IsAbs(r.commonDir) {
 		r.commonDir = filepath.Join(opts.Path, r.commonDir)
@@ -102,11 +105,7 @@ func (c *Coordinator) Open(ctx context.Context, opts RepositoryOptions) (*Reposi
 			r.commonDir = resolved
 		}
 	}
-	bare, err := r.run(ctx, opts.Path, "rev-parse", "--is-bare-repository")
-	if err != nil {
-		return nil, err
-	}
-	r.bare = strings.TrimSpace(string(bare)) == "true"
+	r.bare = bare == "true"
 	r.lockDir = r.commonDir
 	if r.bare && c.policy.BareUsesSuppliedPath {
 		r.lockDir = opts.Path
