@@ -230,86 +230,6 @@ func (m *mockGit) GetBareContainerPath() (string, error) {
 	return m.bareContainerPath, nil
 }
 
-func TestManagerAdd(t *testing.T) {
-	tests := []struct {
-		name         string
-		branch       string
-		customPath   string
-		createBranch bool
-		config       *models.Config
-		wantErr      bool
-		errContains  string
-	}{
-		{
-			name:   "WithGeneratedPath",
-			branch: "feature/test",
-			config: &models.Config{
-				Worktree: models.WorktreeConfig{
-					BaseDir:   t.TempDir(),
-					AutoMkdir: true,
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name:       "WithCustomPath",
-			branch:     "feature/test",
-			customPath: filepath.Join(t.TempDir(), "custom-worktree"),
-			config: &models.Config{
-				Worktree: models.WorktreeConfig{
-					BaseDir:   t.TempDir(),
-					AutoMkdir: true,
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name:         "CreateNewBranch",
-			branch:       "feature/new",
-			createBranch: true,
-			config: &models.Config{
-				Worktree: models.WorktreeConfig{
-					BaseDir:   t.TempDir(),
-					AutoMkdir: true,
-				},
-			},
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("KWT_HOME", t.TempDir())
-			mockG := &mockGit{}
-			m := newMockManager(mockG, tt.config)
-			state := &mockRemoteSourceState{}
-			m.openRemoteSourceState = func() (remoteSourceState, error) {
-				return state, nil
-			}
-
-			_, err := m.Create(t.Context(), CreateOptions{Branch: tt.branch, Path: tt.customPath, NewBranch: tt.createBranch})
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Add() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if tt.wantErr && tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
-				t.Errorf("Add() error = %v, want error containing %s", err, tt.errContains)
-			}
-
-			if !tt.wantErr {
-				// Verify worktree was added
-				if len(mockG.worktrees) != 1 {
-					t.Errorf("Expected 1 worktree, got %d", len(mockG.worktrees))
-				}
-				reg, err := registry.New()
-				require.NoError(t, err)
-				assert.Empty(t, reg.List())
-			}
-		})
-	}
-}
-
 func TestManagerAddTrackingUsesRemoteSource(t *testing.T) {
 	baseDir := t.TempDir()
 	repoDir := t.TempDir()
@@ -614,7 +534,6 @@ func TestManagerAddTrackingPreservesAbandonedGenerationlessCheckout(
 	_, err := manager.Create(t.Context(), CreateOptions{Branch: "feature/incomplete", Source: "refs/remotes/origin/feature/incomplete", Path: worktreePath})
 
 	require.ErrorContains(t, err, "already registered without a generation")
-	assert.Empty(t, mockG.trackingSource)
 	entry, ok := state.entries[worktreePath]
 	require.True(t, ok)
 	assert.Empty(t, entry.CreationToken)

@@ -2275,11 +2275,31 @@ func TestTUIBackendCreateWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 	newFleetManifestBuilder = func() fleet.ManifestBuildProvider {
 		return &stubFleetManifestBuilder{}
 	}
+	// Git's own registration list locates the checkout without reusing kwt's
+	// naming, so publication can be checked against what already exists.
+	registeredPath := func() string {
+		var path string
+		for _, line := range strings.Split(runTUITestGitOutput(t, repoPath, "worktree", "list", "--porcelain"), "\n") {
+			if value, ok := strings.CutPrefix(line, "worktree "); ok {
+				path = value
+			}
+			if line == "branch refs/heads/feature/from-tui" {
+				return path
+			}
+		}
+		return ""
+	}
+	var publishedPath string
 	publishFleetBestEffort = func(ctx context.Context, gotCfg *models.Config, builder fleet.ManifestBuildProvider, warn *bytes.Buffer) error {
 		published++
 		assert.Equal(t, cfg, gotCfg)
 		assert.NotNil(t, builder)
 		assert.NotNil(t, warn)
+		publishedPath = registeredPath()
+		if assert.NotEmpty(t, publishedPath, "publish must follow checkout creation") {
+			assert.DirExists(t, publishedPath)
+			assert.NotEmpty(t, tuiTestPersistedGeneration(t, repoPath, publishedPath), "publish must follow identity persistence")
+		}
 		return errors.New("hub unavailable")
 	}
 	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
@@ -2294,9 +2314,8 @@ func TestTUIBackendCreateWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 	path, err := backend.CreateWorktree(context.Background(), row, "feature/from-tui", "")
 
 	require.NoError(t, err)
-	assert.DirExists(t, path)
-	require.NotEmpty(t, tuiTestPersistedGeneration(t, repoPath, path))
 	assert.Equal(t, 1, published)
+	assert.Equal(t, utils.PathKey(path), utils.PathKey(publishedPath))
 }
 
 func TestTUIBackendCreateWorktreeLosesToProjectRemoval(t *testing.T) {

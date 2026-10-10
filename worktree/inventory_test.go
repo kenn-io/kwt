@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -129,11 +130,13 @@ func TestScopeCancellationAndExecutionPolicy(t *testing.T) {
 	coordinator, err := worktree.NewCoordinator(kwtPolicy())
 	require.NoError(t, err)
 	runner := gitcmd.New().WithConfig("example.value", "caller-value")
-	called := 0
+	var scopedRead bool
 	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{
 		Path: root, Runner: runner,
 		RunGit: func(ctx context.Context, runner gitcmd.Runner, dir string, args ...string) ([]byte, error) {
-			called++
+			if dir == path && slices.Equal(args, []string{"config", "--get", "example.value"}) {
+				scopedRead = true
+			}
 			return runner.Output(ctx, dir, args...)
 		},
 	})
@@ -149,7 +152,7 @@ func TestScopeCancellationAndExecutionPolicy(t *testing.T) {
 		require.ErrorIs(t, err, worktree.ErrWorktreeRepositoryMismatch)
 		return nil
 	}))
-	require.Greater(t, called, 0)
+	require.True(t, scopedRead, "scoped Git commands must run through the caller's RunGit")
 	_, err = gitcmd.New().Output(t.Context(), other, "config", "--get", "example.written")
 	require.Error(t, err)
 }
