@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	managed "go.kenn.io/kit/git/managed"
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/prunepolicy"
@@ -26,6 +27,7 @@ import (
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 const (
@@ -99,13 +101,17 @@ func (r *fakePruneMergedRegistry) EntryMatches(
 
 func fakePruneMergedRemoval(
 	remove func(pruneMergedCandidate) error,
-) func(pruneMergedCandidate, bool, func(func() error) (bool, error)) (bool, error) {
+) func(context.Context, pruneMergedCandidate, bool, func(func() (shared.RemovalResult, error)) (bool, error)) (bool, error) {
 	return func(
+		_ context.Context,
 		candidate pruneMergedCandidate,
 		_ bool,
-		claim func(func() error) (bool, error),
+		claim func(func() (shared.RemovalResult, error)) (bool, error),
 	) (bool, error) {
-		return claim(func() error { return remove(candidate) })
+		return claim(func() (shared.RemovalResult, error) {
+			err := remove(candidate)
+			return shared.RemovalResult{RemoveWorktreeResult: managed.RemoveWorktreeResult{RegistrationRemoved: err == nil, CheckoutRemoved: err == nil}}, err
+		})
 	}
 }
 
@@ -190,7 +196,7 @@ func TestPruneMergedDryRunAndJSONDoNotMutateOrPublish(t *testing.T) {
 	setPruneMergedInventory(candidate)
 	setPruneMergedProvider(providerForCommandCandidates(candidate))
 	validated := 0
-	validatePruneMergedWorktree = func(got pruneMergedCandidate) error {
+	validatePruneMergedWorktree = func(_ context.Context, got pruneMergedCandidate) error {
 		validated++
 		assert.Equal(t, candidate, got)
 		return nil
@@ -225,7 +231,7 @@ func TestPruneMergedDirtyDryRunWouldRequireConfirmation(t *testing.T) {
 	setPruneMergedInventory(candidate)
 	setPruneMergedProvider(providerForCommandCandidates(candidate))
 	inspectPruneMergedDirty = func(pruneMergedCandidate) (bool, error) { return true, nil }
-	validatePruneMergedDirtyWorktree = func(pruneMergedCandidate) error { return nil }
+	validatePruneMergedDirtyWorktree = func(context.Context, pruneMergedCandidate) error { return nil }
 	cmd, stdout, _ := fleetTestCommand()
 
 	err := runPruneMerged(cmd, nil)
@@ -273,12 +279,15 @@ func TestPruneMergedDirtyPromptRechecksAndForcesOnlyAfterYes(t *testing.T) {
 	}
 	var forced bool
 	removePruneMergedWorktree = func(
+		_ context.Context,
 		_ pruneMergedCandidate,
 		force bool,
-		claim func(func() error) (bool, error),
+		claim func(func() (shared.RemovalResult, error)) (bool, error),
 	) (bool, error) {
 		forced = force
-		return claim(func() error { return nil })
+		return claim(func() (shared.RemovalResult, error) {
+			return shared.RemovalResult{RemoveWorktreeResult: managed.RemoveWorktreeResult{RegistrationRemoved: true, CheckoutRemoved: true}}, nil
+		})
 	}
 	cmd, _, _ := fleetTestCommand()
 
@@ -312,9 +321,10 @@ func TestPruneMergedDirtyDeclineContinuesSuccessfully(t *testing.T) {
 	confirmPruneMergedDirty = func(*cobra.Command, pruneMergedCandidate) (bool, error) { return false, nil }
 	var removals int
 	removePruneMergedWorktree = func(
+		context.Context,
 		pruneMergedCandidate,
 		bool,
-		func(func() error) (bool, error),
+		func(func() (shared.RemovalResult, error)) (bool, error),
 	) (bool, error) {
 		removals++
 		return true, nil
@@ -343,12 +353,15 @@ func TestPruneMergedDirtyPromptTimeCleanUsesNonForcedRemoval(t *testing.T) {
 	}
 	var forced bool
 	removePruneMergedWorktree = func(
+		_ context.Context,
 		_ pruneMergedCandidate,
 		force bool,
-		claim func(func() error) (bool, error),
+		claim func(func() (shared.RemovalResult, error)) (bool, error),
 	) (bool, error) {
 		forced = force
-		return claim(func() error { return nil })
+		return claim(func() (shared.RemovalResult, error) {
+			return shared.RemovalResult{RemoveWorktreeResult: managed.RemoveWorktreeResult{RegistrationRemoved: true, CheckoutRemoved: true}}, nil
+		})
 	}
 	cmd, _, _ := fleetTestCommand()
 
@@ -439,8 +452,8 @@ func TestPruneMergedDryRunMapsRevalidationChanges(t *testing.T) {
 	candidate := commandMergedCandidate("/worktrees/changed", commandMergedHead)
 	setPruneMergedInventory(candidate)
 	setPruneMergedProvider(providerForCommandCandidates(candidate))
-	validatePruneMergedWorktree = func(got pruneMergedCandidate) error {
-		return &git.ConditionError{Reason: git.ReasonDirty, Path: got.Policy.Path}
+	validatePruneMergedWorktree = func(_ context.Context, got pruneMergedCandidate) error {
+		return &shared.ConditionError{Reason: shared.ReasonDirty, Path: got.Policy.Path}
 	}
 	removed := 0
 	removePruneMergedWorktree = fakePruneMergedRemoval(
@@ -526,7 +539,7 @@ func TestPruneMergedDoesNotRemoveWhenExpirationAppearsBeforeGitLock(t *testing.T
 	runTUITestGit(t, repositoryRoot, "config", "branch."+branch+".merge", "refs/heads/topic")
 	runTUITestGit(t, repositoryRoot, "worktree", "add", worktreePath, branch)
 	g := git.New(repositoryRoot)
-	generation, err := g.WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, g).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	head := strings.TrimSpace(runTUITestGitOutput(t, worktreePath, "rev-parse", "HEAD"))
 	candidate := commandMergedCandidate(worktreePath, head)
@@ -549,7 +562,7 @@ func TestPruneMergedDoesNotRemoveWhenExpirationAppearsBeforeGitLock(t *testing.T
 	gitLocked := make(chan struct{})
 	expirationDone := make(chan error, 1)
 	go func() {
-		expirationDone <- g.WithWorktreeGeneration(worktreePath, generation, func() error {
+		expirationDone <- openSharedWorktrees(t, g).WithIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Value: generation}, func(*shared.Scope) error {
 			close(gitLocked)
 			<-registryChecked
 			expiresAt := time.Now().Add(time.Hour)
@@ -652,7 +665,7 @@ func TestPruneMergedRemovesWorktreePreservesBranchAndPublishesOnce(t *testing.T)
 	runTUITestGit(t, repositoryRoot, "config", "branch."+branch+".remote", "source")
 	runTUITestGit(t, repositoryRoot, "config", "branch."+branch+".merge", "refs/heads/topic")
 	runTUITestGit(t, repositoryRoot, "worktree", "add", worktreePath, branch)
-	generation, err := git.New(repositoryRoot).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryRoot)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	head := strings.TrimSpace(runTUITestGitOutput(t, worktreePath, "rev-parse", "HEAD"))
 	candidate := commandMergedCandidate(worktreePath, head)
@@ -702,7 +715,7 @@ func TestPruneMergedRemovesMultipleGloballyDiscoveredWorktrees(t *testing.T) {
 		runTUITestGit(t, fixture.path, "commit", "--allow-empty", "-m", fixture.branch)
 		fixture.head = strings.TrimSpace(runTUITestGitOutput(t, fixture.path, "rev-parse", "HEAD"))
 		var err error
-		fixture.generation, err = git.New(repositoryRoot).WorktreeGeneration(fixture.path)
+		fixture.generation, err = openSharedWorktrees(t, git.New(repositoryRoot)).EnsureIdentity(t.Context(), fixture.path, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 		require.NoError(t, err)
 		entries = append(entries, &registry.WorktreeEntry{
 			Path: fixture.path, Generation: fixture.generation, Repository: commandBaseRepo,
@@ -747,19 +760,19 @@ func TestPruneMergedRemovesMultipleGloballyDiscoveredWorktrees(t *testing.T) {
 func TestPruneMergedMapsRemovalPreconditionChanges(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
-		gitReason git.ConditionReason
+		gitReason shared.ConditionReason
 		want      prunepolicy.Reason
 	}{
-		{name: "backlink", gitReason: git.ReasonBacklinkChanged, want: prunepolicy.DoctorRequired},
-		{name: "generation", gitReason: git.ReasonGenerationChanged, want: prunepolicy.GenerationChanged},
-		{name: "head", gitReason: git.ReasonHeadChanged, want: prunepolicy.HeadChanged},
-		{name: "identity", gitReason: git.ReasonRepositoryChanged, want: prunepolicy.RepositoryChanged},
-		{name: "branch", gitReason: git.ReasonBranchChanged, want: prunepolicy.SourceBranchMismatch},
-		{name: "upstream repository", gitReason: git.ReasonUpstreamRepositoryChanged, want: prunepolicy.SourceRepositoryMismatch},
-		{name: "upstream branch", gitReason: git.ReasonUpstreamBranchChanged, want: prunepolicy.SourceBranchMismatch},
-		{name: "dirty", gitReason: git.ReasonDirty, want: prunepolicy.DirtyWorktree},
-		{name: "locked", gitReason: git.ReasonLocked, want: prunepolicy.LockedWorktree},
-		{name: "main", gitReason: git.ReasonMainWorktree, want: prunepolicy.MainWorktree},
+		{name: "backlink", gitReason: shared.ReasonBacklinkChanged, want: prunepolicy.DoctorRequired},
+		{name: "generation", gitReason: shared.ReasonGenerationChanged, want: prunepolicy.GenerationChanged},
+		{name: "head", gitReason: shared.ReasonHeadChanged, want: prunepolicy.HeadChanged},
+		{name: "identity", gitReason: shared.ReasonRepositoryChanged, want: prunepolicy.RepositoryChanged},
+		{name: "branch", gitReason: shared.ReasonBranchChanged, want: prunepolicy.SourceBranchMismatch},
+		{name: "upstream repository", gitReason: shared.ReasonUpstreamRepositoryChanged, want: prunepolicy.SourceRepositoryMismatch},
+		{name: "upstream branch", gitReason: shared.ReasonUpstreamBranchChanged, want: prunepolicy.SourceBranchMismatch},
+		{name: "dirty", gitReason: shared.ReasonDirty, want: prunepolicy.DirtyWorktree},
+		{name: "locked", gitReason: shared.ReasonLocked, want: prunepolicy.LockedWorktree},
+		{name: "main", gitReason: shared.ReasonMainWorktree, want: prunepolicy.MainWorktree},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resetPruneMergedCommand(t)
@@ -768,7 +781,7 @@ func TestPruneMergedMapsRemovalPreconditionChanges(t *testing.T) {
 			setPruneMergedInventory(candidate)
 			setPruneMergedProvider(providerForCommandCandidates(candidate))
 			removePruneMergedWorktree = fakePruneMergedRemoval(func(candidate pruneMergedCandidate) error {
-				return &git.ConditionError{Reason: tc.gitReason, Path: candidate.Policy.Path}
+				return &shared.ConditionError{Reason: tc.gitReason, Path: candidate.Policy.Path}
 			})
 			publications := 0
 			publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) { publications++ }
@@ -1024,11 +1037,6 @@ func TestPruneMergedReportsCleanupIncompleteAfterRemoval(t *testing.T) {
 	assert.Equal(t, 1, publications)
 }
 
-type completedWorktreeRemovalWarning struct{ message string }
-
-func (e completedWorktreeRemovalWarning) Error() string       { return e.message }
-func (completedWorktreeRemovalWarning) WorktreeRemoved() bool { return true }
-
 func TestPruneMergedCompletesBookkeepingAfterGitDeregistersWithResidualFiles(t *testing.T) {
 	resetPruneMergedCommand(t)
 	candidate := commandMergedCandidate("/worktrees/residual", commandMergedHead)
@@ -1045,9 +1053,11 @@ func TestPruneMergedCompletesBookkeepingAfterGitDeregistersWithResidualFiles(t *
 		removeResult: true,
 	}
 	openPruneMergedProvenanceStore = func() pruneMergedProvenanceStore { return store }
-	removePruneMergedWorktree = fakePruneMergedRemoval(func(pruneMergedCandidate) error {
-		return completedWorktreeRemovalWarning{message: "worktree removed, but files remain"}
-	})
+	removePruneMergedWorktree = func(_ context.Context, _ pruneMergedCandidate, _ bool, claim func(func() (shared.RemovalResult, error)) (bool, error)) (bool, error) {
+		return claim(func() (shared.RemovalResult, error) {
+			return shared.RemovalResult{RemoveWorktreeResult: managed.RemoveWorktreeResult{RegistrationRemoved: true}}, errors.New("worktree removed, but files remain")
+		})
+	}
 	publications := 0
 	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) { publications++ }
 	cmd, stdout, _ := fleetTestCommand()
@@ -1168,7 +1178,7 @@ func TestPruneMergedInventoryIncludesFinalizedRegistryWorktreeRoot(t *testing.T)
 	worktreePath := filepath.Join(t.TempDir(), "registered-only")
 	runTUITestGit(t, repositoryRoot, "branch", branch)
 	runTUITestGit(t, repositoryRoot, "worktree", "add", worktreePath, branch)
-	generation, err := git.New(repositoryRoot).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryRoot)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	entry := &registry.WorktreeEntry{
 		Path: worktreePath, Generation: generation, Repository: commandBaseRepo,
@@ -1195,7 +1205,7 @@ func TestPruneMergedInventoryRejectsRegistrySubdirectory(t *testing.T) {
 	worktreePath := filepath.Join(t.TempDir(), "registered-subdirectory")
 	runTUITestGit(t, repositoryRoot, "branch", branch)
 	runTUITestGit(t, repositoryRoot, "worktree", "add", worktreePath, branch)
-	_, err := git.New(repositoryRoot).WorktreeGeneration(worktreePath)
+	_, err := openSharedWorktrees(t, git.New(repositoryRoot)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	registryPath := filepath.Join(worktreePath, "nested")
 	require.NoError(t, os.Mkdir(registryPath, 0o755))
@@ -1277,7 +1287,7 @@ func TestPruneMergedInventoryUsesReadOnlyGitFactsAndUpstreamIdentity(t *testing.
 		[]byte("keep me\n"),
 		0o644,
 	))
-	generation, err := git.New(repositoryRoot).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryRoot)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	entry := &registry.WorktreeEntry{
 		Path: worktreePath, Generation: generation,
@@ -1322,7 +1332,7 @@ func TestPruneMergedInventoryRejectsMismatchedWorktreeBacklink(t *testing.T) {
 	secondPath := filepath.Join(t.TempDir(), "second")
 	runTUITestGit(t, repositoryRoot, "worktree", "add", "-b", "first", firstPath)
 	runTUITestGit(t, repositoryRoot, "worktree", "add", "-b", "second", secondPath)
-	_, err := git.New(repositoryRoot).ListWorktrees()
+	_, err := openSharedWorktrees(t, git.New(repositoryRoot)).List(t.Context(), shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	secondGitDir := strings.TrimSpace(
 		runTUITestGitOutput(t, secondPath, "rev-parse", "--absolute-git-dir"),
@@ -1373,7 +1383,7 @@ func TestPruneMergedInventoryRejectsDistinctRootClaimingCandidateBacklink(
 				t, repositoryRoot, "worktree", "add", "-b", "real-topic",
 				worktreePath,
 			)
-			generation, err := git.New(repositoryRoot).WorktreeGeneration(worktreePath)
+			generation, err := openSharedWorktrees(t, git.New(repositoryRoot)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 			require.NoError(t, err)
 			gitDir := strings.TrimSpace(
 				runTUITestGitOutput(t, worktreePath, "rev-parse", "--absolute-git-dir"),
@@ -1769,7 +1779,7 @@ func TestPruneMergedInventoryStripsCredentialsFromWorktreeGitProcesses(t *testin
 			"printf '%s|%s' \"${KWT_GITHUB_TOKEN-unset}\" \"${CUSTOM_FLEET_TOKEN-unset}\" > \"$KWT_PROBE_OUTPUT\"\n",
 	), 0o755))
 	runTUITestGit(t, repositoryRoot, "config", "core.fsmonitor", probeScript)
-	_, err := git.New(repositoryRoot).EnsureWorktreeGeneration(worktreePath)
+	_, err := openSharedWorktrees(t, git.New(repositoryRoot)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	t.Setenv("KWT_PROBE_OUTPUT", probeOutput)
 	t.Setenv("KWT_GITHUB_TOKEN", "github-secret")
@@ -1792,18 +1802,19 @@ func TestPruneMergedInventoryStripsCredentialsFromWorktreeGitProcesses(t *testin
 	assert.Equal(t, "unset|unset", string(probeContents))
 	require.NoError(t, os.WriteFile(probeOutput, []byte("not-invoked"), 0o600))
 
-	require.NoError(t, defaultValidatePruneMergedWorktree(candidates[0]))
+	require.NoError(t, defaultValidatePruneMergedWorktree(t.Context(), candidates[0]))
 	probeContents, err = os.ReadFile(probeOutput)
 	require.NoError(t, err)
 	assert.Equal(t, "unset|unset", string(probeContents))
 	require.NoError(t, os.WriteFile(probeOutput, []byte("not-invoked"), 0o600))
 
 	removed, err := defaultRemovePruneMergedWorktree(
+		t.Context(),
 		candidates[0],
 		false,
-		func(remove func() error) (bool, error) {
-			err := remove()
-			return err == nil || git.WorktreeWasRemoved(err), err
+		func(remove func() (shared.RemovalResult, error)) (bool, error) {
+			effects, err := remove()
+			return effects.RegistrationRemoved, err
 		},
 	)
 	require.NoError(t, err)

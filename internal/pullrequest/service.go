@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -158,6 +159,9 @@ func (s *Service) Import(ctx context.Context, project Project, selector string) 
 	var created *Workspace
 	cleanupReason := "workspace created but provenance could not be persisted"
 
+	// Project claim and registry lease precede this provenance lock. Listing
+	// takes a short repository scope; import then takes its own scope and
+	// releases it before provenance persistence. No scope spans this callback.
 	err = s.store.Update(ctx, func(records map[string]Provenance) error {
 		workspaces, listErr := s.backend.ListWorkspaces(ctx)
 		if listErr != nil {
@@ -264,7 +268,11 @@ func (s *Service) Import(ctx context.Context, project Project, selector string) 
 	})
 	if err != nil {
 		if created != nil {
-			if rollbackErr := s.backend.Rollback(context.WithoutCancel(ctx), *created); rollbackErr != nil {
+			// Provenance is released; project and registry leases still apply.
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			rollbackErr := s.backend.Rollback(cleanupCtx, *created)
+			cancel()
+			if rollbackErr != nil {
 				return ImportResult{}, NewError(CodeWorkspaceCreation,
 					fmt.Sprintf("%s and rollback failed; manual cleanup is required at %s for branch %q", cleanupReason, created.Path, created.Branch),
 					false, errors.Join(err, rollbackErr))

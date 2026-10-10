@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 	kitdaemon "go.kenn.io/kit/daemon"
 	kwt "go.kenn.io/kwt"
-	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/service"
 )
 
@@ -121,7 +120,7 @@ func TestRemovalClientPreservesPartialResultOnError(t *testing.T) {
 
 			require.Error(t, err)
 			assert.True(t, service.IsCode(err, code))
-			assert.True(t, git.WorktreeWasRemoved(err))
+			assert.True(t, reportsWorktreeRemoved(err))
 			assert.Equal(t, "/worktrees/topic", result.Path)
 			assert.True(t, result.WorktreeRemoved)
 			assert.True(t, result.RegistryUnregistered)
@@ -171,7 +170,7 @@ func TestRemovalClientPreservesKnownRemovalFailure(t *testing.T) {
 			assert.Equal(t, service.RemovalFailed, typed.Code)
 			assert.Equal(t, test.message, typed.Message)
 			assert.Equal(t, test.result, result)
-			assert.Equal(t, test.result.WorktreeRemoved, git.WorktreeWasRemoved(err))
+			assert.Equal(t, test.result.WorktreeRemoved, reportsWorktreeRemoved(err))
 		})
 	}
 }
@@ -234,7 +233,7 @@ func TestRemovalClientReconcilesLostSuccessfulResponse(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, reconciled.Load())
 	assert.True(t, result.WorktreeRemoved)
-	assert.True(t, git.WorktreeWasRemoved(err))
+	assert.True(t, reportsWorktreeRemoved(err))
 	assert.True(t, service.IsCode(err, service.DaemonTransportFailed))
 }
 
@@ -258,7 +257,7 @@ func TestRemovalClientMarksUnreconciledResponseLossForRefresh(t *testing.T) {
 
 	require.Error(t, err)
 	assert.False(t, result.WorktreeRemoved)
-	assert.False(t, git.WorktreeWasRemoved(err))
+	assert.False(t, reportsWorktreeRemoved(err))
 	assert.True(t, RequiresRefresh(err))
 	assert.True(t, service.IsCode(err, service.DaemonTransportFailed))
 }
@@ -281,4 +280,9 @@ func removalTestClient(t *testing.T, remover kwt.Remover) (*Client, func()) {
 	client := newClient(endpoint, "secret", server.Client())
 	client.capabilities = []string{CapabilityRemoval, CapabilityGuardedRemoval}
 	return client, server.Close
+}
+
+func reportsWorktreeRemoved(err error) bool {
+	var removed interface{ WorktreeRemoved() bool }
+	return errors.As(err, &removed) && removed.WorktreeRemoved()
 }

@@ -15,6 +15,42 @@
 - Keep changes focused. Do not refactor unrelated code or rewrite user changes while completing a task.
 - Prefer the repo's commands for verification: `make test`, `make build`, and focused `go test ./path` runs while iterating.
 
+## Worktree lifecycle
+
+CLI, TUI, and fleet creation use `internal/worktree.Manager.Create`, which
+returns the public `worktree.CreateResult`. Keep naming, provenance records,
+and warning-only setup in the application. Use the captured identity for
+registry writes and retain the result for rollback; do not reconstruct cleanup
+authority from a path or branch name.
+
+The default-branch fetch runs before creation synchronization because native
+Git hooks may re-enter inventory. Plain checkout uses the shared creation
+reservation, releasing the mutation lock while hooks run. Existing and remote
+branches use Kit's isolated checkout through a held shared scope.
+
+PR imports hold project claim, registry path lease, provenance lock, then
+repository mutation lock, in that order. Listing uses a short scope before
+import. Creation, identity finalization, and immediate rollback share the
+import scope; a failed provenance save reacquires the repository lock for
+conservative cleanup and must respect an active plain-creation reservation.
+
+Inventory, generation guards, removal, and maintenance use the public
+`worktree` package. `internal/git.WorktreeRepository` supplies application
+execution policy and the shared coordinator; it owns no lifecycle mechanics.
+Keep app JSON models as projections of inventory and pass a held `Scope` to
+callbacks that need more Git facts. `PrimaryPath` is an advisory path lookup
+that neither acquires the mutation lock nor initializes generation files.
+
+Removal claims receive cleanup effects before committing registry changes.
+A removed registration permits registry cleanup even if checkout files remain;
+return the cleanup error afterward. Direct removal without a session guard
+leaves native dirty/submodule refusal to Git after the process check. Session
+removal preflights before stopping a runtime and revalidates before cleanup.
+
+Warm claims retain Kit acquisition evidence for the consumed checkout and any
+new branch. Keep that result for rollback; a preexisting branch remains outside
+cleanup authority, and an unknown move outcome must preserve its artifacts.
+
 ## CI runners
 
 Public CI profiles use Namespace's
@@ -38,3 +74,17 @@ contract. The short version:
 - Never `kata delete` or `kata purge` without explicit user authorization.
 
 <!-- END KATA -->
+
+Repository inventory may be opened through a normal checkout's common `.git`
+directory. Resolve its primary checkout before querying worktree-only facts.
+For a recorded path replaced by another repository, use the held scope's
+`InspectRegistration` and `PruneRegistration`: stale cleanup removes only that
+administrative entry, preserving replacement files and unrelated registrations.
+Symlink paths never authorize registration cleanup.
+
+Use `ObserveRegistration` for advisory repository selection before acquiring a
+scope. It reads an optional marker without creating one or taking another lock;
+cleanup must still revalidate through the held scope. `Quarantine` preserves
+orphaned files under a caller-selected name and leaves valid checkout roots
+alone. Branch cleanup after stale registration removal uses `Scope.RemoveBranch`
+so checked-out branches and explicit expected revisions remain enforced by Kit.

@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 // Inspector gathers local facts and classifies consistency findings. Its
@@ -92,7 +93,7 @@ func (i *Inspector) Inspect(ctx context.Context) (Report, error) {
 			i.addUnreachableProject(reports, project, message)
 			continue
 		}
-		if !gitadapter.HasExactWorktreeRoot(snapshot.Worktrees, project.Path) {
+		if !shared.HasExactWorktreeRoot(snapshot.Worktrees, project.Path) {
 			inventoryComplete = false
 			i.addUnreachableProject(
 				reports,
@@ -161,7 +162,7 @@ func (i *Inspector) Inspect(ctx context.Context) (Report, error) {
 			})
 			continue
 		}
-		if !gitadapter.HasExactWorktreeRoot(snapshot.Worktrees, path) {
+		if !shared.HasExactWorktreeRoot(snapshot.Worktrees, path) {
 			inventoryComplete = false
 			report := reportForKey(reports, "unreachable:"+pathKey(path))
 			report.Root = path
@@ -212,7 +213,7 @@ func (i *Inspector) Inspect(ctx context.Context) (Report, error) {
 			})
 			continue
 		}
-		if !gitadapter.HasExactWorktreeRoot(snapshot.Worktrees, entry.Path) {
+		if !shared.HasExactWorktreeRoot(snapshot.Worktrees, entry.Path) {
 			inventoryComplete = false
 			continue
 		}
@@ -607,7 +608,7 @@ func (i *Inspector) classifyRepository(
 			})
 			continue
 		}
-		if inspection.GenerationStatus != gitadapter.GenerationValid {
+		if inspection.GenerationStatus != shared.GenerationValid {
 			addFinding(report, Finding{
 				Code: MissingGeneration, Severity: SeverityWarning, Path: inspection.Path,
 				Message:     "live worktree has no valid durable kwt generation",
@@ -623,7 +624,7 @@ func (i *Inspector) classifyRegistry(
 	liveRepositoryIdentities map[string]string,
 ) {
 	byPath := make(map[string]*RepositoryReport)
-	inspectionByPath := make(map[string]gitadapter.WorktreeInspection)
+	inspectionByPath := make(map[string]shared.Entry)
 	byIdentity := make(map[string][]*RepositoryReport)
 	for _, report := range reports {
 		if report.RepositoryIdentity != "" {
@@ -834,7 +835,7 @@ func (i *Inspector) classifyRegistry(
 			continue
 		}
 		if exists && matchedInspection &&
-			inspection.GenerationStatus == gitadapter.GenerationValid &&
+			inspection.GenerationStatus == shared.GenerationValid &&
 			entry.Generation != inspection.Generation {
 			fixable := entry.Generation == ""
 			severity := SeverityWarning
@@ -1013,7 +1014,12 @@ func (i *Inspector) inspectRepository(path string) (RepositorySnapshot, error) {
 		commonDir = filepath.Join(path, commonDir)
 	}
 	rootGit := gitadapter.New(root)
-	worktrees, err := rootGit.InspectWorktrees()
+	repo, err := rootGit.WorktreeRepository(context.Background(), nil)
+	if err != nil {
+		return RepositorySnapshot{}, err
+	}
+	inventory, err := repo.Inspect(context.Background())
+	worktrees := inventory.Entries
 	if err != nil {
 		return RepositorySnapshot{}, err
 	}
@@ -1088,7 +1094,7 @@ func mergeSnapshot(
 		report.CommonDir = utils.CanonicalPath(snapshot.CommonDir)
 		report.Root = snapshot.Root
 		report.RepositoryIdentity = snapshot.RepositoryIdentity
-		report.Worktrees = append([]gitadapter.WorktreeInspection(nil), snapshot.Worktrees...)
+		report.Worktrees = append([]shared.Entry(nil), snapshot.Worktrees...)
 	}
 	return report
 }
@@ -1139,7 +1145,7 @@ func addClaim(claims map[string][]string, target string, path string) {
 
 func claimantPaths(
 	claims map[string][]string,
-	inspection gitadapter.WorktreeInspection,
+	inspection shared.Entry,
 ) []string {
 	unique := make(map[string]string)
 	for _, target := range []string{inspection.DotGitTarget, inspection.GitDir} {

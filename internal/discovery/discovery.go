@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 // GlobalWorktreeEntry represents a discovered worktree.
@@ -383,11 +384,12 @@ func snapshotCandidateWorktrees(
 				if ctx.Err() != nil {
 					return
 				}
-				worktrees, err := git.NewForInventory(
-					ctx,
-					repositoryRoot,
-					protectedNames,
-				).ListWorktrees()
+				repo, err := git.NewForInventory(ctx, repositoryRoot, protectedNames).WorktreeRepository(ctx, nil)
+				var listed []shared.Entry
+				if err == nil {
+					listed, err = repo.List(ctx, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
+				}
+				worktrees := models.WorktreeModels(listed)
 				if err != nil {
 					snapshotsMu.Lock()
 					snapshotErrors = append(
@@ -429,7 +431,12 @@ sendRepositories:
 // extractWorktreeInfo extracts worktree information from a worktree directory.
 func extractWorktreeInfo(worktreePath string, projects []models.Project) (*GlobalWorktreeEntry, error) {
 	repositoryGit := git.New(worktreePath)
-	worktrees, err := repositoryGit.ListWorktrees()
+	repo, err := repositoryGit.WorktreeRepository(context.Background(), nil)
+	if err != nil {
+		return nil, err
+	}
+	listed, err := repo.List(context.Background(), shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
+	worktrees := models.WorktreeModels(listed)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list repository worktrees: %w", err)
 	}

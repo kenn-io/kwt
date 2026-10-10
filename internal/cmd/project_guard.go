@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 func runWorktreeSessionEstablishment(
@@ -68,22 +69,23 @@ func withCurrentWorktreeSession(
 	establish func(string) error,
 ) (string, error) {
 	var sessionName string
-	err := git.NewWithContext(ctx, mainPath).WithWorktreeGeneration(
-		worktreePath,
-		expectedGeneration,
-		func() error {
-			var err error
-			sessionName, _, err = lifecycle.ResolveCurrentWorktreeSessionIdentity(
-				ctx,
-				worktreePath,
-				projects,
-				protectedNames,
-			)
-			if err != nil {
-				return err
-			}
-			return establish(sessionName)
-		},
+	repo, err := git.New(mainPath).WorktreeRepository(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	err = repo.WithIdentity(ctx, worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Value: expectedGeneration}, func(*shared.Scope) error {
+		var err error
+		sessionName, _, err = lifecycle.ResolveCurrentWorktreeSessionIdentity(
+			ctx,
+			worktreePath,
+			projects,
+			protectedNames,
+		)
+		if err != nil {
+			return err
+		}
+		return establish(sessionName)
+	},
 	)
 	return sessionName, err
 }

@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 var (
@@ -290,7 +291,7 @@ func validateExpectedOpenFlags(cmd *cobra.Command, args []string) (bool, error) 
 			false, nil, nil,
 		)
 	}
-	if err := git.ValidateWorktreeGeneration(openExpectedGeneration); err != nil {
+	if err := shared.ValidateWorktreeGeneration(openExpectedGeneration); err != nil {
 		return false, service.NewError(
 			service.InvalidRequest,
 			"expected worktree generation is invalid",
@@ -590,9 +591,9 @@ func openExpectedWorktree(
 				return establishErr
 			},
 		)
-		var conditionErr *git.ConditionError
+		var conditionErr *shared.ConditionError
 		if errors.As(generationErr, &conditionErr) &&
-			conditionErr.Reason == git.ReasonGenerationChanged {
+			conditionErr.Reason == shared.ReasonGenerationChanged {
 			return registrationChangedOpenError(generationErr)
 		}
 		return generationErr

@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	gitadapter "go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/pullrequest"
 	"go.kenn.io/kwt/internal/utils"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 // MergedProvider supplies provider evidence without owning prune policy.
@@ -52,7 +52,7 @@ func evaluateMergedCandidate(
 	switch {
 	case candidate.IsMain:
 		return mergedOutcome(candidate, MainWorktree, "main worktree is never pruned")
-	case gitadapter.ValidateWorktreeGeneration(candidate.Generation) != nil:
+	case shared.ValidateWorktreeGeneration(candidate.Generation) != nil:
 		return mergedOutcome(candidate, MissingGeneration, "worktree has no valid generation")
 	case strings.TrimSpace(candidate.LiveRepository) == "":
 		return mergedOutcome(candidate, RepositoryChanged, "worktree origin repository identity is unavailable")

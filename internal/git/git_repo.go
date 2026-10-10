@@ -1,6 +1,7 @@
 package git
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -122,98 +123,15 @@ func (g *Git) getMainRepoRoot() (string, error) {
 func (g *Git) getMainRepoRootWithoutCredentials(
 	protectedNames []string,
 ) (string, error) {
-	currentRootOutput, currentRootErr := g.runWithoutCredentials(
-		protectedNames,
-		"rev-parse", "--show-toplevel",
-	)
-	gitDirOutput, err := g.runWithoutCredentials(
-		protectedNames,
-		"rev-parse", "--absolute-git-dir",
-	)
+	ctx := g.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	repo, err := g.WorktreeRepository(ctx, protectedNames)
 	if err != nil {
-		return "", fmt.Errorf("failed to get absolute git dir: %w", err)
+		return "", err
 	}
-	commonDirOutput, err := g.runWithoutCredentials(
-		protectedNames,
-		"rev-parse", "--git-common-dir",
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to get git common dir: %w", err)
-	}
-	commonDir := strings.TrimSpace(commonDirOutput)
-	if !filepath.IsAbs(commonDir) {
-		commonDir = filepath.Join(g.workDir, commonDir)
-	}
-	commonDir = utils.CanonicalPath(commonDir)
-	gitDir := utils.CanonicalPath(strings.TrimSpace(gitDirOutput))
-	if currentRootErr == nil {
-		currentRoot := utils.CanonicalPath(strings.TrimSpace(currentRootOutput))
-		if utils.PathKey(gitDir) == utils.PathKey(commonDir) {
-			return currentRoot, nil
-		}
-		if filepath.Base(commonDir) == ".git" {
-			standardRoot := utils.CanonicalPath(filepath.Dir(commonDir))
-			standardGitDir, verifyErr := New(standardRoot).
-				worktreeGitDirWithoutCredentials(standardRoot, protectedNames)
-			if verifyErr == nil &&
-				utils.PathKey(standardGitDir) == utils.PathKey(commonDir) {
-				return standardRoot, nil
-			}
-		}
-	}
-
-	output, err := g.runWithoutCredentials(
-		protectedNames,
-		"worktree", "list", "--porcelain",
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to list repository worktrees: %w", err)
-	}
-	entries := gitworktree.ParsePorcelain(output)
-	if len(entries) == 0 {
-		return "", fmt.Errorf("main worktree path is unavailable")
-	}
-	if entries[0].Bare {
-		if anchor, ok := bareContainerAnchor(entries, commonDir); ok {
-			return anchor, nil
-		}
-		return utils.CanonicalPath(entries[0].Path), nil
-	}
-	if currentRootErr != nil {
-		return "", fmt.Errorf("failed to get current worktree root: %w", currentRootErr)
-	}
-
-	inventoryMain := utils.CanonicalPath(entries[0].Path)
-	if utils.PathKey(inventoryMain) != utils.PathKey(commonDir) {
-		return inventoryMain, nil
-	}
-	coreWorktree, coreErr := g.runWithoutCredentials(
-		protectedNames,
-		"config", "--path", "--get", "core.worktree",
-	)
-	if coreErr == nil && strings.TrimSpace(coreWorktree) != "" {
-		path := strings.TrimSpace(coreWorktree)
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(commonDir, path)
-		}
-		path = utils.CanonicalPath(path)
-		gitDir, verifyErr := New(path).worktreeGitDirWithoutCredentials(
-			path,
-			protectedNames,
-		)
-		if verifyErr != nil || utils.PathKey(gitDir) != utils.PathKey(commonDir) {
-			return "", fmt.Errorf(
-				"configured core.worktree does not name the main worktree for %s",
-				commonDir,
-			)
-		}
-		return path, nil
-	}
-
-	return "", fmt.Errorf(
-		"main worktree path is unavailable for separate Git directory %s",
-		commonDir,
-	)
+	return repo.PrimaryPath(ctx)
 }
 
 func bareContainerAnchor(

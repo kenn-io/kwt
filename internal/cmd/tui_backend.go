@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	managed "go.kenn.io/kit/git/managed"
 	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/credentials"
@@ -33,6 +34,7 @@ import (
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 type tuiBackend struct {
@@ -791,7 +793,7 @@ func (b *tuiBackend) loadRegisteredProjectInventory() (
 			defer wg.Done()
 			projectEntries, err := b.discoverProjectWorktrees(project.Path)
 			if err != nil {
-				if git.IsIncompleteInventory(err) {
+				if shared.IsIncompleteInventory(err) {
 					projectErrors[i] = err
 				}
 				return
@@ -1028,9 +1030,14 @@ func discoverLaunchRepoWorktrees(launchDir string) ([]*discovery.GlobalWorktreeE
 	}
 
 	g := git.New(launchDir)
-	worktrees, err := g.ListWorktrees()
+	repo, err := g.WorktreeRepository(context.Background(), nil)
 	if err != nil {
-		if git.IsIncompleteInventory(err) {
+		return nil, err
+	}
+	listed, err := repo.List(context.Background(), shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
+	worktrees := models.WorktreeModels(listed)
+	if err != nil {
+		if shared.IsIncompleteInventory(err) {
 			return nil, err
 		}
 		return nil, nil
@@ -1400,15 +1407,12 @@ func (b *tuiBackend) CreateWorktree(
 	}
 	var path string
 	err = b.runProjectOperation(ctx, row.Entry.Path, false, nil, func() error {
-		var mutationErr error
-		switch source {
-		case "":
-			path, mutationErr = manager.Add(branch, "", true)
-		case branch:
-			path, mutationErr = manager.Add(branch, "", false)
-		default:
-			path, mutationErr = manager.AddTracking(branch, source, "")
+		opts := worktree.CreateOptions{Branch: branch, NewBranch: source == ""}
+		if source != "" && source != branch {
+			opts.Source = source
 		}
+		created, mutationErr := manager.Create(ctx, opts)
+		path = created.Path
 		return mutationErr
 	})
 	if err != nil {
@@ -1558,29 +1562,13 @@ func (b *tuiBackend) materializeWorktree(
 		return "", fmt.Errorf("load selected project config: %w", err)
 	}
 	manager := worktree.New(repo, cfg)
-	var (
-		path               string
-		worktreeGeneration string
-		branchCreated      bool
-	)
-	if branchExisted {
-		path, worktreeGeneration, err = manager.AddWithGeneration(
-			row.Fleet.Branch,
-			"",
-			false,
-			worktree.AddOptions{SkipSetup: true},
-		)
-	} else {
-		var source string
-		source, err = resolveFetchedRemoteSource(repo, row.Fleet.Branch)
-		if err == nil {
-			path, worktreeGeneration, err = manager.AddTrackingWithGeneration(
-				row.Fleet.Branch,
-				source,
-				"",
-			)
-			branchCreated = err == nil
-		}
+	opts := worktree.CreateOptions{Branch: row.Fleet.Branch, RequireGeneration: true, SkipSetup: true}
+	if !branchExisted {
+		opts.Source, err = resolveFetchedRemoteSource(repo, row.Fleet.Branch)
+	}
+	var created shared.CreateResult
+	if err == nil {
+		created, err = manager.Create(ctx, opts)
 	}
 	if err != nil {
 		syncErr := fmt.Errorf(
@@ -1590,23 +1578,10 @@ func (b *tuiBackend) materializeWorktree(
 		)
 		return "", syncErr
 	}
-	if err := b.verifyMaterializedHead(
-		ctx,
-		project.Path,
-		path,
-		worktreeGeneration,
-		row.Fleet,
-	); err != nil {
-		if branchCreated {
-			err = b.rollbackMaterializedBranch(
-				repo,
-				row.Fleet.Branch,
-				err,
-			)
-		}
-		return "", err
+	if err := verifyMaterializedHead(ctx, created.Path, row.Fleet); err != nil {
+		return "", rollbackMaterialization(ctx, created, err)
 	}
-	return path, nil
+	return created.Path, nil
 }
 
 func resolveFetchedRemoteSource(repo *git.Git, branch string) (string, error) {
@@ -1636,106 +1611,34 @@ func resolveFetchedRemoteSource(repo *git.Git, branch string) (string, error) {
 	return source, nil
 }
 
-func (b *tuiBackend) rollbackMaterializedBranch(
-	repo *git.Git,
-	branch string,
-	materializeErr error,
-) error {
-	if cleanupErr := repo.DeleteBranchIsolated(
-		branch,
-		b.protectedNames,
-	); cleanupErr != nil {
-		return fmt.Errorf(
-			"%w (failed to remove auto-created branch %s; an incomplete worktree may remain: %v)",
-			materializeErr,
-			branch,
-			cleanupErr,
-		)
-	}
-	return materializeErr
-}
-
-func (b *tuiBackend) verifyMaterializedHead(
-	ctx context.Context,
-	repoRoot string,
-	worktreePath string,
-	worktreeGeneration string,
-	info *dashboard.FleetInfo,
-) error {
+func verifyMaterializedHead(ctx context.Context, path string, info *dashboard.FleetInfo) error {
 	if info == nil || strings.TrimSpace(info.RemoteHead) == "" {
 		return nil
 	}
 	want := strings.TrimSpace(info.RemoteHead)
-	got, err := git.New(worktreePath).RunWithContext(ctx, "rev-parse", "HEAD")
+	got, err := git.New(path).RunWithContext(ctx, "rev-parse", "HEAD")
 	if err != nil {
-		return b.failMaterializedHeadVerification(
-			repoRoot,
-			worktreePath,
-			worktreeGeneration,
-			fmt.Errorf(
-				"could not verify synced head for %s; push or fetch it first: %w",
-				info.Branch,
-				err,
-			),
-		)
+		return fmt.Errorf("could not verify synced head for %s; push or fetch it first: %w", info.Branch, err)
 	}
 	got = strings.TrimSpace(got)
 	if strings.EqualFold(got, want) {
 		return nil
 	}
-	return b.failMaterializedHeadVerification(
-		repoRoot,
-		worktreePath,
-		worktreeGeneration,
-		fmt.Errorf(
-			"synced %s at %s, but hub reported head %s; push or fetch the reported commit first",
-			info.Branch,
-			shortCommit(got),
-			shortCommit(want),
-		),
-	)
+	return fmt.Errorf("synced %s at %s, but hub reported head %s; push or fetch the reported commit first", info.Branch, shortCommit(got), shortCommit(want))
 }
 
-func (b *tuiBackend) failMaterializedHeadVerification(
-	repoRoot string,
-	worktreePath string,
-	worktreeGeneration string,
-	verificationErr error,
-) error {
-	if err := git.ValidateWorktreeGeneration(worktreeGeneration); err != nil {
-		return fmt.Errorf(
-			"%w (rejected worktree preserved because its generation is unavailable)",
-			verificationErr,
-		)
-	}
-	if err := worktree.New(git.New(repoRoot), b.cfg).Remove(
-		worktreePath,
-		true,
-		worktreeGeneration,
-	); err != nil {
-		return fmt.Errorf(
-			"%w (failed to remove rejected worktree: %v)",
-			verificationErr,
-			err,
-		)
+func rollbackMaterialization(ctx context.Context, created shared.CreateResult, verificationErr error) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if _, err := created.Rollback(cleanupCtx, managed.RollbackFreshOwned); err != nil {
+		return errors.Join(verificationErr, fmt.Errorf("failed to remove rejected worktree or its auto-created branch: %w", err))
 	}
 	reg, err := registry.New()
 	if err != nil {
-		return fmt.Errorf(
-			"%w (worktree removed, but failed to open registry: %v)",
-			verificationErr,
-			err,
-		)
+		return errors.Join(verificationErr, fmt.Errorf("worktree removed, but failed to open registry: %w", err))
 	}
-	if _, err := reg.UnregisterIfGeneration(
-		worktreePath,
-		worktreeGeneration,
-	); err != nil {
-		return fmt.Errorf(
-			"%w (worktree removed, but failed to unregister it: %v)",
-			verificationErr,
-			err,
-		)
+	if _, err := reg.UnregisterIfGeneration(created.Path, created.IdentityValue); err != nil {
+		return errors.Join(verificationErr, fmt.Errorf("worktree removed, but failed to unregister it: %w", err))
 	}
 	return verificationErr
 }
@@ -1920,7 +1823,7 @@ func (operation tuiRemovalOperation) run(ctx context.Context) error {
 		}
 	}
 	joinedErr := errors.Join(removalErr, cleanupErr)
-	if joinedErr != nil && result.WorktreeRemoved && !git.WorktreeWasRemoved(joinedErr) {
+	if joinedErr != nil && result.WorktreeRemoved {
 		return &removedWorktreeCleanupError{err: joinedErr}
 	}
 	return joinedErr

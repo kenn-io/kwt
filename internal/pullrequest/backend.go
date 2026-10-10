@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	gitcmd "go.kenn.io/kit/git/cmd"
 	managedworktree "go.kenn.io/kit/git/managed"
@@ -14,9 +15,8 @@ import (
 	"go.kenn.io/kwt/internal/tmux"
 	urlutil "go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/worktree"
+	shared "go.kenn.io/kwt/worktree"
 )
-
-var createMergeRequestWorktree = managedworktree.CreateWorktreeFromMergeRequest
 
 type GitBackend struct {
 	git               *gitadapter.Git
@@ -99,7 +99,11 @@ func (b *GitBackend) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	worktrees, err := b.manager.List()
+	repo, _, err := b.openWorktrees(ctx)
+	if err != nil {
+		return nil, err
+	}
+	worktrees, err := repo.List(ctx, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	if err != nil {
 		return nil, err
 	}
@@ -128,96 +132,81 @@ func (b *GitBackend) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
 	return result, nil
 }
 
-func (b *GitBackend) ImportPullRequest(
-	ctx context.Context, pr PullRequest, branch string,
-) (Workspace, error) {
-	if err := ctx.Err(); err != nil {
-		return Workspace{}, err
-	}
-	projectRoot, err := b.git.GetMainRepositoryPath()
+func (b *GitBackend) openWorktrees(ctx context.Context) (*shared.Repository, gitcmd.Runner, error) {
+	root, err := b.git.GetMainRepositoryPath()
 	if err != nil {
-		return Workspace{}, err
-	}
-	path, err := b.manager.PreparePathForRepository(
-		"", branch, b.project.Identity,
-	)
-	if err != nil {
-		return Workspace{}, err
+		return nil, gitcmd.Runner{}, err
 	}
 	runner := gitcmd.New()
 	runner.Env = append([]string(nil), b.gitEnvironment...)
-	// Pull-request fetches use the same credential helpers as ordinary Git.
-	// Kit still strips inherited Git state, suppresses prompts, and neutralizes
-	// executable checkout configuration before materializing untrusted content.
+	// Preserve PR import's credential helpers, prompt suppression, inherited
+	// Git-state stripping, and Kit's process limits.
 	runner.NullGlobalConfig = false
 	runner.NoSystemConfig = false
 	runner.DisableSafeDirectoryForward = true
-	created, createErr := createMergeRequestWorktree(
-		ctx, managedworktree.MergeRequestWorktreeOptions{
-			ProjectRoot: projectRoot, Path: path, Branch: branch,
-			Runner: runner, HookEnvironmentPrefix: "KWT",
-			Number: pr.Number, HeadBranch: pr.Source.Name,
-			HeadRepoCloneURL: pr.Source.Repository.CloneURL,
-			ExpectedHeadSHA:  pr.HeadSHA, Platform: pr.Provider,
-			ProjectRepoIdentity: b.project.Identity,
-		},
-	)
-	if created.Path == "" {
-		return Workspace{}, mapSharedChangeRequestError(createErr)
+	repo, err := gitadapter.OpenWorktrees(ctx, shared.RepositoryOptions{Path: root, Runner: runner})
+	return repo, runner, err
+}
+
+func (b *GitBackend) ImportPullRequest(ctx context.Context, pr PullRequest, branch string) (workspace Workspace, err error) {
+	if err := ctx.Err(); err != nil {
+		return workspace, err
+	}
+	path, err := b.manager.PreparePathForRepository("", branch, b.project.Identity)
+	if err != nil {
+		return workspace, err
 	}
 	info, ok := urlutil.CanonicalRepositoryInfo(b.project.Identity)
 	if !ok {
-		return Workspace{}, fmt.Errorf(
-			"invalid project repository identity %q", b.project.Identity,
-		)
+		return workspace, fmt.Errorf("invalid project repository identity %q", b.project.Identity)
 	}
-	workspace := Workspace{
-		ID:          b.project.Identity + ":" + branch + ":" + template.ShortHash(created.Path),
-		Repository:  b.project.Identity,
-		Branch:      branch,
-		Path:        created.Path,
-		State:       "ready",
-		SessionName: tmux.WorkspaceSessionName(info, branch, created.Path),
-	}
-	workspace.partialCleanup = &workspacePartialCleanup{run: func(cleanupCtx context.Context) error {
-		remaining, cleanupErr := created.Rollback(cleanupCtx)
-		if cleanupErr != nil {
-			return cleanupErr
-		}
-		if remaining.Path != "" || remaining.Branch != "" {
-			return fmt.Errorf(
-				"ownership-safe cleanup preserved path %q and branch %q",
-				remaining.Path, remaining.Branch,
-			)
-		}
-		return nil
-	}}
-	if createErr != nil {
-		workspace.preserveOnImportError = errors.Is(
-			createErr, managedworktree.ErrWorktreeCleanupIncomplete,
-		)
-		return workspace, mapSharedChangeRequestError(createErr)
-	}
-	if err := ensurePullRequestPushSafety(
-		ctx, runner, created.Path, branch,
-		pr.Source.Repository.Identity, pr.Source.Name,
-	); err != nil {
-		return workspace, NewError(
-			CodeWorkspaceCreation,
-			"failed to validate pull-request push routing",
-			false, err,
-		)
-	}
-	generation, err := gitadapter.New(created.Path).EnsureWorktreeGeneration(created.Path)
+	repo, runner, err := b.openWorktrees(ctx)
 	if err != nil {
-		return workspace, NewError(
-			CodeWorkspaceCreation,
-			"failed to persist pull-request worktree identity",
-			false, err,
-		)
+		return workspace, err
 	}
-	workspace.Generation = generation
-	return workspace, nil
+	err = repo.WithLock(ctx, func(scope *shared.Scope) error {
+		created, createErr := scope.Import(ctx, shared.ImportRequest{
+			Git: managedworktree.MergeRequestWorktreeOptions{
+				Path: path, Branch: branch, HookEnvironmentPrefix: "KWT", Number: pr.Number, HeadBranch: pr.Source.Name,
+				HeadRepoCloneURL: pr.Source.Repository.CloneURL, ExpectedHeadSHA: pr.HeadSHA, Platform: pr.Provider,
+				ProjectRepoIdentity: b.project.Identity,
+			}, Identity: shared.IdentityPolicy{FileName: "kwt-generation", Generate: true},
+		})
+		if created.Path == "" && created.OwnedBranch == "" {
+			return mapSharedChangeRequestError(createErr)
+		}
+		workspace = Workspace{
+			ID: b.project.Identity + ":" + branch + ":" + template.ShortHash(created.Path), Repository: b.project.Identity,
+			Branch: created.Branch, Path: created.Path, Generation: created.IdentityValue, State: "ready",
+			SessionName: tmux.WorkspaceSessionName(info, branch, created.Path),
+		}
+		workspace.partialCleanup = &workspacePartialCleanup{run: func(cleanupCtx context.Context) error {
+			_, err := created.Rollback(cleanupCtx, managedworktree.RollbackUnchanged)
+			return err
+		}}
+		if createErr == nil {
+			if checkErr := ensurePullRequestPushSafety(ctx, runner, created.Path, branch, pr.Source.Repository.Identity, pr.Source.Name); checkErr != nil {
+				createErr = NewError(CodeWorkspaceCreation, "failed to validate pull-request push routing", false, checkErr)
+			}
+		}
+		if createErr == nil {
+			return nil
+		}
+		if errors.Is(createErr, shared.ErrIdentityUnavailable) {
+			workspace.preserveOnImportError = true
+			return NewError(CodeWorkspaceCreation, "failed to persist pull-request worktree identity", false, createErr)
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_, cleanupErr := scope.Rollback(cleanupCtx, created, managedworktree.RollbackFreshOwned)
+		if cleanupErr != nil {
+			workspace.preserveOnImportError = true
+			return errors.Join(mapSharedChangeRequestError(createErr), cleanupErr)
+		}
+		workspace = Workspace{}
+		return mapSharedChangeRequestError(createErr)
+	})
+	return workspace, err
 }
 
 func ensurePullRequestPushSafety(
@@ -453,7 +442,8 @@ func mapSharedChangeRequestError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, managedworktree.ErrBranchInUse) ||
+	if errors.Is(err, managedworktree.ErrBranchAlreadyExists) ||
+		errors.Is(err, managedworktree.ErrBranchInUse) ||
 		errors.Is(err, managedworktree.ErrWorktreeDestinationExists) ||
 		errors.Is(err, managedworktree.ErrInvalidBranchName) {
 		return NewError(

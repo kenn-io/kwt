@@ -15,7 +15,6 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
-	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
@@ -1999,8 +1998,8 @@ func (m Model) removeWorktreeCmd(job removalJob) tea.Cmd {
 		err := m.backend.RemoveWorktree(context.Background(), job.row, job.force)
 		return removalDoneMsg{
 			job: job, err: err,
-			removed: err == nil || git.WorktreeWasRemoved(err),
-			refresh: err == nil || git.WorktreeWasRemoved(err) || actionRefreshRequired(err),
+			removed: err == nil || worktreeWasRemoved(err),
+			refresh: err == nil || worktreeWasRemoved(err) || actionRefreshRequired(err),
 		}
 	}
 }
@@ -2712,4 +2711,9 @@ func (m Model) renderHelp() string {
 		"",
 		"Press any key to close help.",
 	}, "\n")
+}
+
+func worktreeWasRemoved(err error) bool {
+	var removed interface{ WorktreeRemoved() bool }
+	return errors.As(err, &removed) && removed.WorktreeRemoved()
 }

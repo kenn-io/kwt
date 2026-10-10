@@ -11,9 +11,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/discovery"
 	gitadapter "go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/pkg/models"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 func TestFixerRepairsBeforePruningAndRegistryCleanup(t *testing.T) {
@@ -34,19 +36,19 @@ func TestFixerRepairsBeforePruningAndRegistryCleanup(t *testing.T) {
 	fixer := &Fixer{
 		Registry:        store,
 		RegistryEntries: []*registry.WorktreeEntry{entry},
-		MaintainRepository: func(root string, request gitadapter.WorktreeMaintenanceRequest) ([]gitadapter.WorktreeInspection, error) {
+		MaintainRepository: func(_ context.Context, root string, request shared.MaintenanceRequest) (shared.Inventory, error) {
 			calls = append(calls, "maintain")
 			assert.Equal(t, "/repos/widget", root)
-			assert.True(t, request.RepairBacklinks)
-			assert.True(t, request.PruneMissing)
+			assert.True(t, request.Repair)
+			assert.True(t, request.Prune)
 			require.Len(t, request.Expected, 2)
-			return nil, nil
+			return shared.Inventory{}, nil
 		},
 		PathExists: func(string) (bool, error) { return false, nil },
 	}
 	report := Report{Repositories: []RepositoryReport{{
 		Root: "/repos/widget",
-		Worktrees: []gitadapter.WorktreeInspection{
+		Worktrees: []shared.Entry{
 			{Path: "/worktrees/broken", GitDir: "/repos/widget/.git/worktrees/broken", DotGitTarget: "/old/widget/.git/worktrees/broken", Exists: true},
 			{Path: "/worktrees/missing", GitDir: "/repos/widget/.git/worktrees/missing", Generation: generation, Exists: false},
 		},
@@ -66,14 +68,14 @@ func TestFixerRepairsBeforePruningAndRegistryCleanup(t *testing.T) {
 func TestFixerSkipsRepositoryPruneWhenAnyMissingRecordIsNotFixable(t *testing.T) {
 	var mutationCalls int
 	fixer := &Fixer{
-		MaintainRepository: func(string, gitadapter.WorktreeMaintenanceRequest) ([]gitadapter.WorktreeInspection, error) {
+		MaintainRepository: func(context.Context, string, shared.MaintenanceRequest) (shared.Inventory, error) {
 			mutationCalls++
-			return nil, nil
+			return shared.Inventory{}, nil
 		},
 	}
 	report := Report{Repositories: []RepositoryReport{{
 		Root: "/repos/widget",
-		Worktrees: []gitadapter.WorktreeInspection{
+		Worktrees: []shared.Entry{
 			{Path: "/worktrees/fixable", Exists: false, Prunable: true},
 			{Path: "/worktrees/ambiguous", Exists: false, Prunable: true},
 		},
@@ -99,21 +101,21 @@ func TestFixerSkipsBacklinkRepairButContinuesOtherSafeCleanup(t *testing.T) {
 	fixer := &Fixer{
 		Registry:        &fakeRegistryMutator{unregister: func(string, string) (bool, error) { calls = append(calls, "unregister"); return true, nil }},
 		RegistryEntries: []*registry.WorktreeEntry{entry},
-		MaintainRepository: func(_ string, request gitadapter.WorktreeMaintenanceRequest) ([]gitadapter.WorktreeInspection, error) {
-			if request.RepairBacklinks {
-				return nil, errors.New("unexpected partial backlink repair")
+		MaintainRepository: func(_ context.Context, _ string, request shared.MaintenanceRequest) (shared.Inventory, error) {
+			if request.Repair {
+				return shared.Inventory{}, errors.New("unexpected partial backlink repair")
 			}
 			calls = append(calls, "prune")
-			require.True(t, request.PruneMissing)
+			require.True(t, request.Prune)
 			require.Len(t, request.Expected, 1)
 			assert.Equal(t, "/worktrees/missing", request.Expected[0].Path)
-			return nil, nil
+			return shared.Inventory{}, nil
 		},
 		PathExists: func(string) (bool, error) { return false, nil },
 	}
 	report := Report{Repositories: []RepositoryReport{{
 		Root: "/repos/widget",
-		Worktrees: []gitadapter.WorktreeInspection{
+		Worktrees: []shared.Entry{
 			{Path: "/worktrees/fixable-backlink", Exists: true},
 			{Path: "/worktrees/ambiguous-backlink", Exists: true},
 			{Path: "/worktrees/missing", Generation: generation, Exists: false},
@@ -264,11 +266,11 @@ func TestFixerPreservesNonemptyRegistryGenerationMismatch(t *testing.T) {
 		Generation: "fedcba9876543210fedcba9876543210",
 	}
 	report := Report{Repositories: []RepositoryReport{{
-		Worktrees: []gitadapter.WorktreeInspection{{
+		Worktrees: []shared.Entry{{
 			Path:             observed.Path,
 			Exists:           true,
 			Generation:       gitGeneration,
-			GenerationStatus: gitadapter.GenerationValid,
+			GenerationStatus: shared.GenerationValid,
 		}},
 		Findings: []Finding{{
 			Code: RegistryGenerationMismatch, Path: observed.Path, Fixable: true,
@@ -282,8 +284,8 @@ func TestFixerPreservesNonemptyRegistryGenerationMismatch(t *testing.T) {
 		}},
 		RegistryEntries: []*registry.WorktreeEntry{observed},
 		PathExists:      func(string) (bool, error) { return true, nil },
-		WithWorktreeGeneration: func(_ string, _ string, operation func() error) error {
-			return operation()
+		WithIdentity: func(_ context.Context, _ string, _ string, operation func(*shared.Scope) error) error {
+			return operation(nil)
 		},
 	}
 
@@ -456,11 +458,11 @@ func TestFixerAdoptsGenerationlessRegistryEntryWithoutExpiration(t *testing.T) {
 		ExpiresAt:  &expiresAt,
 	}
 	report := Report{Repositories: []RepositoryReport{{
-		Worktrees: []gitadapter.WorktreeInspection{{
+		Worktrees: []shared.Entry{{
 			Path:             observed.Path,
 			Exists:           true,
 			Generation:       gitGeneration,
-			GenerationStatus: gitadapter.GenerationValid,
+			GenerationStatus: shared.GenerationValid,
 		}},
 		Findings: []Finding{{
 			Code: RegistryGenerationMismatch, Path: observed.Path, Fixable: true,
@@ -480,8 +482,8 @@ func TestFixerAdoptsGenerationlessRegistryEntryWithoutExpiration(t *testing.T) {
 		}},
 		RegistryEntries: []*registry.WorktreeEntry{observed},
 		PathExists:      func(string) (bool, error) { return true, nil },
-		WithWorktreeGeneration: func(_ string, _ string, operation func() error) error {
-			return operation()
+		WithIdentity: func(_ context.Context, _ string, _ string, operation func(*shared.Scope) error) error {
+			return operation(nil)
 		},
 	}
 
@@ -495,9 +497,9 @@ func TestFixerDoesNotAdoptGenerationAfterWorktreeReplacement(t *testing.T) {
 	inspectedGeneration := "0123456789abcdef0123456789abcdef"
 	entry := &registry.WorktreeEntry{Path: "/worktrees/replaced"}
 	report := Report{Repositories: []RepositoryReport{{
-		Worktrees: []gitadapter.WorktreeInspection{{
+		Worktrees: []shared.Entry{{
 			Path: entry.Path, Exists: true, Generation: inspectedGeneration,
-			GenerationStatus: gitadapter.GenerationValid,
+			GenerationStatus: shared.GenerationValid,
 		}},
 		Findings: []Finding{{
 			Code: RegistryGenerationMismatch, Path: entry.Path, Fixable: true,
@@ -511,10 +513,10 @@ func TestFixerDoesNotAdoptGenerationAfterWorktreeReplacement(t *testing.T) {
 		}},
 		RegistryEntries: []*registry.WorktreeEntry{entry},
 		PathExists:      func(string) (bool, error) { return true, nil },
-		WithWorktreeGeneration: func(path, expected string, operation func() error) error {
+		WithIdentity: func(_ context.Context, path, expected string, operation func(*shared.Scope) error) error {
 			assert.Equal(t, entry.Path, path)
 			assert.Equal(t, inspectedGeneration, expected)
-			return &gitadapter.ConditionError{Reason: gitadapter.ReasonGenerationChanged, Path: path}
+			return &shared.ConditionError{Reason: shared.ReasonGenerationChanged, Path: path}
 		},
 	}
 
@@ -536,7 +538,7 @@ func TestFixerIgnoresGenerationChangeFromRealGitAdapter(t *testing.T) {
 	require.NoError(t, err)
 	_, err = g.RunCommand("worktree", "add", worktreePath, "replacement")
 	require.NoError(t, err)
-	gitDir, err := gitadapter.ReadWorktreeBacklink(worktreePath)
+	gitDir, err := shared.ReadWorktreeBacklink(context.Background(), worktreePath)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(
 		filepath.Join(gitDir, "kwt-generation"),
@@ -545,9 +547,9 @@ func TestFixerIgnoresGenerationChangeFromRealGitAdapter(t *testing.T) {
 	))
 	entry := &registry.WorktreeEntry{Path: worktreePath}
 	report := Report{Repositories: []RepositoryReport{{
-		Worktrees: []gitadapter.WorktreeInspection{{
+		Worktrees: []shared.Entry{{
 			Path: worktreePath, Exists: true, Generation: inspectedGeneration,
-			GenerationStatus: gitadapter.GenerationValid,
+			GenerationStatus: shared.GenerationValid,
 		}},
 		Findings: []Finding{{
 			Code: RegistryGenerationMismatch, Path: worktreePath, Fixable: true,
@@ -586,11 +588,11 @@ func TestFixerAdoptsGenerationThroughSymlinkedRegistryPath(t *testing.T) {
 		Path: filepath.Join(aliasParent, "workspace"), Branch: "topic",
 	}
 	report := Report{Repositories: []RepositoryReport{{
-		Worktrees: []gitadapter.WorktreeInspection{{
+		Worktrees: []shared.Entry{{
 			Path:             realPath,
 			Exists:           true,
 			Generation:       gitGeneration,
-			GenerationStatus: gitadapter.GenerationValid,
+			GenerationStatus: shared.GenerationValid,
 		}},
 		Findings: []Finding{{
 			Code: RegistryGenerationMismatch, Path: entry.Path, Fixable: true,
@@ -608,8 +610,8 @@ func TestFixerAdoptsGenerationThroughSymlinkedRegistryPath(t *testing.T) {
 		}},
 		RegistryEntries: []*registry.WorktreeEntry{entry},
 		PathExists:      func(string) (bool, error) { return true, nil },
-		WithWorktreeGeneration: func(_ string, _ string, operation func() error) error {
-			return operation()
+		WithIdentity: func(_ context.Context, _ string, _ string, operation func(*shared.Scope) error) error {
+			return operation(nil)
 		},
 	}
 
@@ -623,9 +625,9 @@ func TestFixerPreservesAmbiguousFinding(t *testing.T) {
 	var mutationCalls int
 	fixer := &Fixer{
 		Registry: &fakeRegistryMutator{},
-		MaintainRepository: func(string, gitadapter.WorktreeMaintenanceRequest) ([]gitadapter.WorktreeInspection, error) {
+		MaintainRepository: func(context.Context, string, shared.MaintenanceRequest) (shared.Inventory, error) {
 			mutationCalls++
-			return nil, nil
+			return shared.Inventory{}, nil
 		},
 		PathExists: func(string) (bool, error) {
 			mutationCalls++
@@ -839,4 +841,44 @@ func (f *fakeRegistryMutator) AcquireCreation(path string) (func() error, bool, 
 		return func() error { return nil }, true, nil
 	}
 	return f.acquireCreation(path)
+}
+
+func TestInventoryAndGenerationGuardsShareMutationScope(t *testing.T) {
+	root := newMaintenanceTestRepository(t)
+	base := t.TempDir()
+	path := filepath.Join(base, "topic")
+	_, err := gitadapter.New(root).RunCommand("worktree", "add", "-b", "topic", path)
+	require.NoError(t, err)
+	discovered, err := discovery.DiscoverGlobalWorktreesContext(t.Context(), base, nil)
+	require.NoError(t, err)
+	require.Len(t, discovered, 1)
+	generation := discovered[0].Generation
+	require.NotEmpty(t, generation)
+	fixer := &Fixer{}
+	fixer.setDefaults()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	err = fixer.WithIdentity(ctx, path, generation, func(scope *shared.Scope) error {
+		listed, err := scope.List(ctx, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
+		require.NoError(t, err)
+		require.Len(t, listed, 2)
+		got, err := scope.ReadIdentity(ctx, path, "kwt-generation")
+		require.NoError(t, err)
+		require.Equal(t, generation, got)
+		return nil
+	})
+	require.NoError(t, err)
+	dir, err := shared.ReadWorktreeBacklink(t.Context(), path)
+	require.NoError(t, err)
+	replacement := "fedcba9876543210fedcba9876543210"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "kwt-generation"), []byte(replacement+"\n"), 0o600))
+	called := false
+	err = fixer.WithIdentity(ctx, path, generation, func(*shared.Scope) error { called = true; return nil })
+	var changed *shared.ConditionError
+	require.ErrorAs(t, err, &changed)
+	require.Equal(t, shared.ReasonGenerationChanged, changed.Reason)
+	require.False(t, called)
+	discovered, err = discovery.DiscoverGlobalWorktreesContext(ctx, base, nil)
+	require.NoError(t, err)
+	require.Equal(t, replacement, discovered[0].Generation)
 }

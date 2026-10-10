@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"path/filepath"
 
+	gitcmd "go.kenn.io/kit/git/cmd"
+	managed "go.kenn.io/kit/git/managed"
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/service"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 type RemovalSessionCondition = tmux.RemovalSessionCondition
@@ -85,7 +88,7 @@ func (s *removalService) Remove(
 	if !filepath.IsAbs(request.Path) {
 		return result, removalInvalid("worktree path must be absolute")
 	}
-	if err := git.ValidateWorktreeGeneration(request.ExpectedGeneration); err != nil {
+	if err := shared.ValidateWorktreeGeneration(request.ExpectedGeneration); err != nil {
 		return result, removalInvalid("expected generation must be a 32-character hexadecimal value")
 	}
 	if request.Session != nil {
@@ -180,20 +183,17 @@ func (s *removalService) Remove(
 
 	record, registered := reg.Get(request.Path)
 	var mutationErr error
-	transaction, committed, err := newRemovalInventoryGit(
-		ctx,
-		root,
-		protectedNames,
-	).RemoveWorktreeTransactionAfterClaim(
-		request.Path,
-		request.ExpectedGeneration,
-		request.ExpectedBranch,
-		request.ExpectedHead,
-		request.Force,
-		request.DeleteBranch,
-		request.ForceDeleteBranch,
-		request.Session != nil,
-		func(preflight func() error, remove func() error) (bool, error) {
+	repo, err := newRemovalInventoryGit(ctx, root, protectedNames).WorktreeRepository(ctx, nil)
+	if err != nil {
+		return result, classifyRemovalError(err, result)
+	}
+	transaction, err := repo.Remove(ctx, shared.RemovalRequest{
+		Path: request.Path, Authority: shared.MatchingIdentity,
+		Identity:             shared.IdentityPolicy{FileName: "kwt-generation", Value: request.ExpectedGeneration},
+		Conditions:           &shared.RemovalConditions{Generation: request.ExpectedGeneration, Branch: request.ExpectedBranch, Head: request.ExpectedHead},
+		DeferNativePreflight: request.Session == nil,
+		Force:                request.Force, DeleteObservedBranch: request.DeleteBranch, ForceObservedBranch: request.ForceDeleteBranch,
+		Claim: func(_ context.Context, preflight func() error, remove func() (shared.RemovalResult, error)) (bool, error) {
 			return reg.RemoveIfMatchAfter(request.Path, record, func() error {
 				if request.Session != nil {
 					sessionCondition := *request.Session
@@ -235,22 +235,23 @@ func (s *removalService) Remove(
 						return err
 					}
 				}
-				mutationErr = remove()
-				if git.WorktreeWasRemoved(mutationErr) {
+				effects, cleanupErr := remove()
+				mutationErr = cleanupErr
+
+				if effects.RegistrationRemoved {
 					return nil
 				}
 				return mutationErr
 			})
 		},
-	)
-	result.Path = transaction.Path
+	})
 	result.Branch = transaction.Branch
-	result.WorktreeRemoved = transaction.WorktreeRemoved
-	result.BranchDeleted = transaction.BranchDeleted
+	result.WorktreeRemoved = transaction.RegistrationRemoved
+	result.BranchDeleted = len(transaction.BranchesRemoved) > 0
 	if err != nil {
 		return result, classifyRemovalError(err, result)
 	}
-	if !committed {
+	if !transaction.Claimed {
 		return result, service.NewError(
 			service.Conflict,
 			"worktree registry changed before removal",
@@ -328,11 +329,11 @@ func classifyRemovalError(err error, result RemovalResult) error {
 		"branch_deleted":        result.BranchDeleted,
 		"registry_unregistered": result.RegistryUnregistered,
 	}
-	var condition *git.ConditionError
+	var condition *shared.ConditionError
 	if errors.As(err, &condition) {
 		details["reason"] = string(condition.Reason)
 		message := condition.Error()
-		if condition.Reason == git.ReasonGenerationChanged {
+		if condition.Reason == shared.ReasonGenerationChanged {
 			message = fmt.Sprintf("worktree generation changed for %s", condition.Path)
 		}
 		return service.NewError(service.Conflict, message, true, details, err)
@@ -355,7 +356,10 @@ func classifyRemovalError(err error, result RemovalResult) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return service.NewError(service.Busy, "worktree removal canceled", true, details, err)
 	}
-	if git.WorktreeWasRemoved(err) || git.IsWorktreeRemovalCommandError(err) {
+	var commandError *gitcmd.GitError
+	isRemovalCommand := errors.As(err, &commandError) && len(commandError.Args) >= 2 &&
+		(commandError.Args[0] == "worktree" && commandError.Args[1] == "remove" || commandError.Args[0] == "branch" && (commandError.Args[1] == "-d" || commandError.Args[1] == "-D"))
+	if isRemovalCommand || errors.Is(err, managed.ErrWorktreeCleanupIncomplete) {
 		return service.NewError(service.RemovalFailed, boundedDiagnostic(err), false, details, err)
 	}
 	return service.NewError(service.Internal, "internal failure", false, details, err)

@@ -9,6 +9,7 @@ import (
 	gitadapter "go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/pkg/models"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 // RegistryMutator is the narrow registry surface needed after Git maintenance
@@ -29,13 +30,13 @@ type ProjectMutator interface {
 
 // Fixer applies only findings whose inspection established unique ownership.
 type Fixer struct {
-	Registry               RegistryMutator
-	RegistryEntries        []*registry.WorktreeEntry
-	MaintainRepository     func(string, gitadapter.WorktreeMaintenanceRequest) ([]gitadapter.WorktreeInspection, error)
-	PathExists             func(string) (bool, error)
-	Projects               ProjectMutator
-	InspectRepository      func(string) (RepositorySnapshot, error)
-	WithWorktreeGeneration func(string, string, func() error) error
+	Registry           RegistryMutator
+	RegistryEntries    []*registry.WorktreeEntry
+	MaintainRepository func(context.Context, string, shared.MaintenanceRequest) (shared.Inventory, error)
+	PathExists         func(string) (bool, error)
+	Projects           ProjectMutator
+	InspectRepository  func(string) (RepositorySnapshot, error)
+	WithIdentity       func(context.Context, string, string, func(*shared.Scope) error) error
 }
 
 // Fix repairs backlinks before native metadata pruning per repository, then
@@ -100,15 +101,15 @@ func (f *Fixer) Fix(ctx context.Context, report Report) error {
 			}
 		}
 		if repairBacklinks || pruneMissing {
-			request := gitadapter.WorktreeMaintenanceRequest{
-				RepairBacklinks: repairBacklinks,
-				PruneMissing:    pruneMissing,
+			request := shared.MaintenanceRequest{
+				Repair: repairBacklinks,
+				Prune:  pruneMissing,
 			}
 			for _, inspection := range repositoryReport.Worktrees {
 				if _, ok := structural[pathKey(inspection.Path)]; !ok {
 					continue
 				}
-				request.Expected = append(request.Expected, gitadapter.WorktreeStructuralCondition{
+				request.Expected = append(request.Expected, shared.StructuralCondition{
 					Path:         inspection.Path,
 					GitDir:       inspection.GitDir,
 					DotGitTarget: inspection.DotGitTarget,
@@ -116,7 +117,7 @@ func (f *Fixer) Fix(ctx context.Context, report Report) error {
 					Exists:       inspection.Exists,
 				})
 			}
-			if _, err := f.MaintainRepository(repositoryReport.Root, request); err != nil {
+			if _, err := f.MaintainRepository(ctx, repositoryReport.Root, request); err != nil {
 				return fmt.Errorf("maintain worktrees for %s: %w", repositoryReport.Root, err)
 			}
 		}
@@ -163,7 +164,7 @@ func (f *Fixer) Fix(ctx context.Context, report Report) error {
 			}
 		}
 
-		inspections := make(map[string]gitadapter.WorktreeInspection, len(repositoryReport.Worktrees))
+		inspections := make(map[string]shared.Entry, len(repositoryReport.Worktrees))
 		for _, inspection := range repositoryReport.Worktrees {
 			inspections[pathKey(inspection.Path)] = inspection
 		}
@@ -175,11 +176,11 @@ func (f *Fixer) Fix(ctx context.Context, report Report) error {
 			entry := entries[key]
 			inspection, ok := inspections[key]
 			if entry == nil || entry.Generation != "" || !ok || f.Registry == nil ||
-				inspection.GenerationStatus != gitadapter.GenerationValid {
+				inspection.GenerationStatus != shared.GenerationValid {
 				continue
 			}
 			if err := f.withInactiveCreation(entry, func() error {
-				err := f.WithWorktreeGeneration(entry.Path, inspection.Generation, func() error {
+				err := f.WithIdentity(ctx, entry.Path, inspection.Generation, func(*shared.Scope) error {
 					exists, err := f.PathExists(entry.Path)
 					if err != nil {
 						return fmt.Errorf("recheck registry generation path %s: %w", entry.Path, err)
@@ -196,8 +197,8 @@ func (f *Fixer) Fix(ctx context.Context, report Report) error {
 					}
 					return nil
 				})
-				var conditionErr *gitadapter.ConditionError
-				if errors.As(err, &conditionErr) && conditionErr.Reason == gitadapter.ReasonGenerationChanged {
+				var conditionErr *shared.ConditionError
+				if errors.As(err, &conditionErr) && conditionErr.Reason == shared.ReasonGenerationChanged {
 					return nil
 				}
 				return err
@@ -223,7 +224,7 @@ func (f *Fixer) Fix(ctx context.Context, report Report) error {
 				if exists {
 					return nil
 				}
-				if entry.CreationToken == "" && gitadapter.ValidateWorktreeGeneration(entry.Generation) == nil {
+				if entry.CreationToken == "" && shared.ValidateWorktreeGeneration(entry.Generation) == nil {
 					if _, err := f.Registry.UnregisterIfGeneration(entry.Path, entry.Generation); err != nil {
 						return fmt.Errorf("unregister stale worktree %s: %w", entry.Path, err)
 					}
@@ -329,10 +330,14 @@ func (f *Fixer) withInactiveCreation(
 func (f *Fixer) setDefaults() {
 	if f.MaintainRepository == nil {
 		f.MaintainRepository = func(
-			root string,
-			request gitadapter.WorktreeMaintenanceRequest,
-		) ([]gitadapter.WorktreeInspection, error) {
-			return gitadapter.New(root).MaintainWorktrees(request)
+			ctx context.Context, root string,
+			request shared.MaintenanceRequest,
+		) (shared.Inventory, error) {
+			repo, err := gitadapter.New(root).WorktreeRepository(ctx, nil)
+			if err != nil {
+				return shared.Inventory{}, err
+			}
+			return repo.Maintain(ctx, request)
 		}
 	}
 	if f.PathExists == nil {
@@ -343,9 +348,13 @@ func (f *Fixer) setDefaults() {
 		inspector.setDefaults()
 		f.InspectRepository = inspector.inspectRepository
 	}
-	if f.WithWorktreeGeneration == nil {
-		f.WithWorktreeGeneration = func(path, expected string, operation func() error) error {
-			return gitadapter.New(path).WithWorktreeGeneration(path, expected, operation)
+	if f.WithIdentity == nil {
+		f.WithIdentity = func(ctx context.Context, path, expected string, operation func(*shared.Scope) error) error {
+			repo, err := gitadapter.New(path).WorktreeRepository(ctx, nil)
+			if err != nil {
+				return err
+			}
+			return repo.WithIdentity(ctx, path, shared.IdentityPolicy{FileName: "kwt-generation", Value: expected}, operation)
 		}
 	}
 }

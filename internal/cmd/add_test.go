@@ -142,6 +142,7 @@ func TestAddPublishesBestEffortAfterSuccessfulCreation(t *testing.T) {
 		assert.True(t, cfg.Fleet.Enabled)
 		assert.NotNil(t, builder)
 		assert.DirExists(t, worktreePath, "publish should run after the worktree exists")
+		require.NotEmpty(t, tuiTestWorktreeGeneration(t, repoPath, worktreePath), "generation must be durable before publication")
 		return errors.New("publish failed")
 	}
 
@@ -275,6 +276,7 @@ func TestRegisterWorktreeExpirationRejectsRecreatedWorktree(t *testing.T) {
 	staleExpiry := time.Now().Add(time.Hour)
 
 	err = registerWorktreeExpiration(
+		t.Context(),
 		git.New(repoPath),
 		reg,
 		worktreePath,
@@ -314,6 +316,7 @@ func TestRegisterWorktreeExpirationCreatesOrdinaryWorktreeEntry(t *testing.T) {
 	expiresAt := time.Now().Add(time.Hour)
 
 	err = registerWorktreeExpiration(
+		t.Context(),
 		git.New(repoPath),
 		reg,
 		worktreePath,
@@ -346,6 +349,7 @@ func TestRegisterWorktreeExpirationUsesDestinationRemoteIdentity(t *testing.T) {
 	expiresAt := time.Now().Add(time.Hour)
 
 	err = registerWorktreeExpiration(
+		t.Context(),
 		git.New(repoPath), reg, worktreePath, generation,
 		"feature/destination-origin", &expiresAt,
 	)
@@ -371,6 +375,7 @@ func TestRegisterWorktreeExpirationRejectsRelativeDestinationRemote(t *testing.T
 	expiresAt := time.Now().Add(time.Hour)
 
 	err = registerWorktreeExpiration(
+		t.Context(),
 		git.New(repoPath), reg, worktreePath, generation,
 		"feature/relative-origin", &expiresAt,
 	)
@@ -408,6 +413,7 @@ func TestRegisterWorktreeExpirationRejectsProvisionalCreation(t *testing.T) {
 	expiresAt := time.Now().Add(time.Hour)
 
 	err = registerWorktreeExpiration(
+		t.Context(),
 		git.New(repoPath),
 		reg,
 		worktreePath,

@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 type inspectionTestInventory struct {
@@ -325,7 +326,7 @@ func TestInspectionServiceProductionInventoryCarriesConfiguredProtectedNames(t *
 	runStatusTestGit(t, repository, "config", "user.name", "Test User")
 	runStatusTestGit(t, repository, "config", "user.email", "test@example.com")
 	runStatusTestGit(t, repository, "commit", "--allow-empty", "-m", "initial")
-	generation, err := gitpkg.New(repository).EnsureWorktreeGeneration(repository)
+	generation, err := openSharedWorktrees(t, gitpkg.New(repository)).EnsureIdentity(t.Context(), repository, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(
 		filepath.Join(home, "config.toml"),
@@ -476,7 +477,7 @@ func TestInspectionServiceClassifiesReadAndCollectionFailures(t *testing.T) {
 		{
 			name: "generation missing before collection",
 			generation: func(context.Context, string, []string) (string, error) {
-				return "", errors.Join(private, gitpkg.ErrWorktreeGenerationNotFound)
+				return "", errors.Join(private, shared.ErrWorktreeGenerationNotFound)
 			},
 			collect: func(context.Context, string, []string) (ChangeSet, error) {
 				t.Fatal("collection ran after missing generation pre-read")
@@ -578,7 +579,7 @@ func TestInspectionServiceRechecksGenerationAfterCollectionFailure(t *testing.T)
 		},
 		{
 			name: "generation disappeared",
-			err:  fmt.Errorf("generation disappeared: %w", gitpkg.ErrWorktreeGenerationNotFound),
+			err:  fmt.Errorf("generation disappeared: %w", shared.ErrWorktreeGenerationNotFound),
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1044,7 +1045,7 @@ func TestInspectionServiceClassifiesRemovedWorktreeAroundGenerationFence(
 			require.Error(t, err)
 			assert.True(t, service.IsCode(err, service.RegistrationChanged))
 			assert.True(t, service.AsError(err).Retryable)
-			assert.ErrorIs(t, err, gitpkg.ErrWorktreeNotFound)
+			assert.ErrorIs(t, err, shared.ErrWorktreeNotFound)
 			assert.Equal(t, InspectionResult{}, got)
 		})
 	}
@@ -1121,9 +1122,9 @@ func newInspectionTestWorktrees(t *testing.T) (string, string, string, string) {
 		"initial",
 	)
 	runStatusTestGit(t, primary, "worktree", "add", "-b", "feature", linked)
-	primaryGeneration, err := gitpkg.New(primary).EnsureWorktreeGeneration(primary)
+	primaryGeneration, err := openSharedWorktrees(t, gitpkg.New(primary)).EnsureIdentity(t.Context(), primary, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
-	linkedGeneration, err := gitpkg.New(primary).EnsureWorktreeGeneration(linked)
+	linkedGeneration, err := openSharedWorktrees(t, gitpkg.New(primary)).EnsureIdentity(t.Context(), linked, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	return primary, linked, primaryGeneration, linkedGeneration
 }

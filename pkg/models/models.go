@@ -1,7 +1,11 @@
 // Package models defines the core data structures used throughout the kwt application.
 package models
 
-import "time"
+import (
+	"time"
+
+	shared "go.kenn.io/kwt/worktree"
+)
 
 // TmuxAttachMode tells clients whether a selected tmux endpoint can be
 // attached directly or requires KWT's protected-workspace attach flow. Every
@@ -210,3 +214,12 @@ const (
 	// WorktreeTypeWorktree represents an additional worktree.
 	WorktreeTypeWorktree = "worktree"
 )
+
+// WorktreeModels projects Git inventory into the application's display model.
+func WorktreeModels(entries []shared.Entry) []Worktree {
+	result := make([]Worktree, 0, len(entries))
+	for _, e := range entries {
+		result = append(result, Worktree{Path: e.Path, Branch: e.Branch, CommitHash: e.Head, IsMain: e.IsMain, Prunable: e.Prunable, CreatedAt: e.CreatedAt, Generation: e.Generation})
+	}
+	return result
+}
