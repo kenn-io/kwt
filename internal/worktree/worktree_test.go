@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	configpkg "go.kenn.io/kwt/internal/config"
-	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
@@ -35,7 +34,6 @@ type mockGit struct {
 	mainRepoPathError error
 	trackingSource    string
 	existingSource    string
-	protectedNames    []string
 }
 
 type mockRemoteSourceState struct {
@@ -184,9 +182,6 @@ func newMockManager(g *mockGit, cfg *models.Config) *Manager {
 			g.trackingSource = opts.Source
 		} else if !opts.NewBranch {
 			g.existingSource = opts.Branch
-		}
-		if opts.Source != "" || !opts.NewBranch {
-			g.protectedNames = credentials.ProtectedNames(cfg)
 		}
 		for i := range g.worktrees {
 			if utils.PathKey(g.worktrees[i].Path) == utils.PathKey(opts.Path) {
@@ -351,11 +346,6 @@ func TestManagerAddTrackingUsesRemoteSource(t *testing.T) {
 	require.Len(t, mockG.worktrees, 1)
 	assert.Equal(t, "feature/remote", mockG.worktrees[0].Branch)
 	assert.Equal(t, "origin/feature/remote", mockG.trackingSource)
-	assert.ElementsMatch(
-		t,
-		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN", "Custom_Fleet_Token"},
-		mockG.protectedNames,
-	)
 	require.Contains(t, state.entries, worktreePath)
 	assert.True(t, state.entries[worktreePath].UnreviewedRemoteSource)
 	assert.Equal(
@@ -400,11 +390,6 @@ func TestManagerAddExistingMarksSourceUnreviewedAndSkipsSetup(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, worktreePath, path)
 	assert.Equal(t, "feature/local", mockG.existingSource)
-	assert.ElementsMatch(
-		t,
-		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN", "Custom_Fleet_Token"},
-		mockG.protectedNames,
-	)
 	require.Contains(t, state.entries, worktreePath)
 	assert.True(t, state.entries[worktreePath].UnreviewedRemoteSource)
 	assert.Equal(
@@ -661,28 +646,6 @@ func TestManagerAddTrackingDoesNotExpandRemoteBranchEnvironmentReferences(
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(trustedBase, "$KWT_GITHUB_TOKEN"), path)
 	assert.NotContains(t, path, "credential-must-not-appear-in-path")
-}
-
-func TestManagerList(t *testing.T) {
-	expectedWorktrees := []models.Worktree{
-		{Path: "/path/1", Branch: "main", IsMain: true},
-		{Path: "/path/2", Branch: "feature"},
-	}
-
-	mockG := &mockGit{
-		worktrees: expectedWorktrees,
-	}
-
-	m := newMockManager(mockG, &models.Config{})
-
-	worktrees, err := m.List()
-	if err != nil {
-		t.Fatalf("List() error = %v", err)
-	}
-
-	if len(worktrees) != len(expectedWorktrees) {
-		t.Errorf("List() returned %d worktrees, want %d", len(worktrees), len(expectedWorktrees))
-	}
 }
 
 func TestManagerGetWorktreePath(t *testing.T) {

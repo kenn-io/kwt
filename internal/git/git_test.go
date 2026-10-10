@@ -704,20 +704,6 @@ func TestInspectWorktreesDoesNotInitializeGeneration(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(adminDir, "kwt-generation"))
 }
 
-func TestReadWorktreeBacklinkReturnsDirectAdministrativeDirectory(t *testing.T) {
-	repo := NewTestRepository(t)
-	repo.CreateBranch(t, "backlink-topic")
-	worktreePath := filepath.Join(t.TempDir(), "backlink-topic")
-	repo.CreateWorktree(t, worktreePath, "backlink-topic")
-	expected, err := shared.ReadWorktreeBacklink(t.Context(), worktreePath)
-	require.NoError(t, err)
-
-	actual, err := shared.ReadWorktreeBacklink(t.Context(), worktreePath)
-
-	require.NoError(t, err)
-	assert.Equal(t, utils.PathKey(expected), utils.PathKey(actual))
-}
-
 func TestInspectWorktreesReportsMissingDirectoryWithoutInitializing(t *testing.T) {
 	repo := NewTestRepository(t)
 	repo.CreateBranch(t, "missing-topic")

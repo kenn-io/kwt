@@ -2295,7 +2295,7 @@ func TestTUIBackendCreateWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 
 	require.NoError(t, err)
 	assert.DirExists(t, path)
-	require.NotEmpty(t, tuiTestWorktreeGeneration(t, repoPath, path))
+	require.NotEmpty(t, tuiTestPersistedGeneration(t, repoPath, path))
 	assert.Equal(t, 1, published)
 }
 
@@ -3744,6 +3744,15 @@ func runTUITestGitOutput(t *testing.T, dir string, args ...string) string {
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, fmt.Sprintf("git %s failed:\n%s", strings.Join(args, " "), output))
 	return string(output)
+}
+
+// tuiTestPersistedGeneration reads the generation marker without creating one,
+// so it fails when creation did not persist the marker.
+func tuiTestPersistedGeneration(t *testing.T, repoPath, worktreePath string) string {
+	t.Helper()
+	generation, err := openSharedWorktrees(t, git.New(repoPath)).ReadIdentity(t.Context(), worktreePath, "kwt-generation")
+	require.NoError(t, err)
+	return generation
 }
 
 func tuiTestWorktreeGeneration(

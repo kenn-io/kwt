@@ -1321,3 +1321,36 @@ func TestManagerCreateDefaultFetchAllowsHookToListWorktrees(t *testing.T) {
 	require.NoError(t, err)
 	require.NoFileExists(t, failure, "the default-branch fetch must permit native hooks to list worktrees")
 }
+
+// An existing local branch is unreviewed content, so its checkout must not see
+// the credentials kwt protects, just like a remote-source checkout.
+func TestManagerCreateExistingBranchWithholdsCredentials(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the Git wrapper is a POSIX shell script")
+	}
+	repo := NewTestRepository(t)
+	gitOutput(t, repo.Path, "branch", "local-only")
+	realGit, err := exec.LookPath("git")
+	require.NoError(t, err)
+	wrapperDir := t.TempDir()
+	wrapper := "#!/bin/sh\n" +
+		"if [ -n \"$KWT_GITHUB_TOKEN\" ] || [ -n \"$KWT_FLEET_TOKEN\" ] || [ -n \"$custom_fleet_token\" ]; then\n" +
+		"  echo 'kwt credential reached existing-branch git command' >&2\n" +
+		"  exit 88\n" +
+		"fi\n" +
+		"exec \"" + realGit + "\" \"$@\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(wrapperDir, "git"), []byte(wrapper), 0o755))
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("KWT_GITHUB_TOKEN", "must-not-reach-existing-checkout")
+	t.Setenv("KWT_FLEET_TOKEN", "must-not-reach-existing-checkout")
+	t.Setenv("custom_fleet_token", "must-not-reach-existing-checkout")
+
+	worktreePath := filepath.Join(t.TempDir(), "local-only")
+	err = createForTest(t, git.New(repo.Path), CreateOptions{Path: worktreePath, Branch: "local-only"})
+	t.Setenv("KWT_GITHUB_TOKEN", "")
+	t.Setenv("KWT_FLEET_TOKEN", "")
+	t.Setenv("custom_fleet_token", "")
+
+	require.NoError(t, err)
+	assert.Equal(t, "local-only", gitOutput(t, worktreePath, "branch", "--show-current"))
+}

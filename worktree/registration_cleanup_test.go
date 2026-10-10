@@ -227,3 +227,29 @@ func TestPruneRegistrationPreservesLinkedCheckoutGitCannotUse(t *testing.T) {
 	require.DirExists(t, admin)
 	require.DirExists(t, path)
 }
+
+func TestReadWorktreeBacklinkFollowsDotGitClaim(t *testing.T) {
+	for _, layout := range []string{"linked", "relative", "primary", "missing"} {
+		t.Run(layout, func(t *testing.T) {
+			root, path := fixture(t)
+			admin := git(t, path, "rev-parse", "--absolute-git-dir")
+			want := admin
+			switch layout {
+			case "relative":
+				relative, err := filepath.Rel(path, admin)
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(filepath.Join(path, ".git"), []byte("gitdir: "+relative+"\n"), 0o600))
+			case "primary":
+				path, want = root, filepath.Join(root, ".git")
+			case "missing":
+				require.NoError(t, os.Remove(filepath.Join(path, ".git")))
+				want = ""
+			}
+
+			got, err := worktree.ReadWorktreeBacklink(t.Context(), path)
+
+			require.NoError(t, err)
+			require.Equal(t, want, got)
+		})
+	}
+}

@@ -142,7 +142,7 @@ func TestAddPublishesBestEffortAfterSuccessfulCreation(t *testing.T) {
 		assert.True(t, cfg.Fleet.Enabled)
 		assert.NotNil(t, builder)
 		assert.DirExists(t, worktreePath, "publish should run after the worktree exists")
-		require.NotEmpty(t, tuiTestWorktreeGeneration(t, repoPath, worktreePath), "generation must be durable before publication")
+		require.NotEmpty(t, tuiTestPersistedGeneration(t, repoPath, worktreePath), "generation must be durable before publication")
 		return errors.New("publish failed")
 	}
 
