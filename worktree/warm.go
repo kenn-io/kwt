@@ -367,6 +367,11 @@ func (s *Scope) currentBranch(ctx context.Context, path string) (string, error) 
 // Bare repositories retain their shared core.bare value. Once worktree config
 // is enabled, each linked checkout needs its own override to remain usable.
 func (s *Scope) configureBareLinked(ctx context.Context, path string) error {
+	// A prepared spare already carries its override, and moving it keeps the
+	// registration, so a claim need not ask Git to write it again.
+	if metadata, err := s.repo.registration(path); err == nil && bareOverrideSet(filepath.Join(metadata, "config.worktree")) {
+		return nil
+	}
 	for _, key := range []string{"core.bare", "extensions.worktreeConfig"} {
 		out, err := s.repo.run(ctx, s.repo.commonDir, "config", "--bool", key)
 		if gitcmd.IsExitCode(err, 1) {
@@ -387,6 +392,48 @@ func (s *Scope) configureBareLinked(ctx context.Context, path string) error {
 		return fmt.Errorf("configure linked checkout: %w", err)
 	}
 	return nil
+}
+
+// bareOverrideSet reports whether a per-worktree config file plainly sets
+// core.bare=false. It accepts only the simple layout Git writes; includes,
+// continued lines, quoted or commented values, and other spellings return
+// false so that Git resolves the file instead.
+func bareOverrideSet(file string) bool {
+	data, err := fslink.ReadFile(file)
+	if err != nil || len(data) > 64<<10 {
+		return false
+	}
+	core, bare := false, ""
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		switch {
+		case line == "" || line[0] == '#' || line[0] == ';':
+			continue
+		case strings.HasSuffix(line, "\\"):
+			return false
+		case line[0] == '[':
+			header := strings.ToLower(line)
+			if !strings.HasSuffix(header, "]") || strings.Count(header, "]") != 1 || strings.HasPrefix(header, "[include") {
+				return false
+			}
+			core = header == "[core]"
+			continue
+		}
+		if !core {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return false
+		}
+		if strings.EqualFold(strings.TrimSpace(key), "bare") {
+			bare = strings.TrimSpace(value)
+			if bare != "false" && bare != "true" {
+				return false
+			}
+		}
+	}
+	return bare == "false"
 }
 
 // Failed warm cleanup is a report, never new authority to remove the spare.

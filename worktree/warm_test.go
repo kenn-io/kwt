@@ -359,3 +359,77 @@ func TestWarmResumeLeavesForeignLockedSpareUntouched(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "preparing\n", string(state))
 }
+
+// Preparation writes the spare's per-worktree core.bare override, and moving
+// the spare keeps it. A claim must not pay for rewriting it, but any config it
+// cannot read with certainty still goes through Git.
+func TestWarmClaimReusesPreparedBareOverride(t *testing.T) {
+	for _, layout := range []string{"prepared", "commented", "inline-header"} {
+		t.Run(layout, func(t *testing.T) {
+			root, _ := fixture(t)
+			bare := filepath.Join(t.TempDir(), "bare.git")
+			git(t, root, "clone", "--bare", root, bare)
+			git(t, bare, "config", "extensions.worktreeConfig", "true")
+			req := warmRequest(t)
+			configs := 0
+			coordinator, err := worktree.NewCoordinator(kwtPolicy())
+			require.NoError(t, err)
+			repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: bare, Runner: gitcmd.New(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
+				if len(args) > 0 && args[0] == "config" {
+					configs++
+				}
+				return r.Output(ctx, dir, args...)
+			}})
+			require.NoError(t, err)
+			require.NoError(t, repo.PrepareWarm(t.Context(), req))
+			metadata := git(t, req.Path, "rev-parse", "--absolute-git-dir")
+			// Git accepts these spellings; the fast path must leave them to Git.
+			switch layout {
+			case "commented":
+				require.NoError(t, os.WriteFile(filepath.Join(metadata, "config.worktree"), []byte("[core]\n\tbare = false ; set by another tool\n"), 0o600))
+			case "inline-header":
+				require.NoError(t, os.WriteFile(filepath.Join(metadata, "config.worktree"), []byte("[core] bare = false\n"), 0o600))
+			}
+			require.Equal(t, "false", git(t, req.Path, "rev-parse", "--is-bare-repository"))
+			configs = 0
+
+			result, claimed, err := repo.ClaimWarm(t.Context(), worktree.WarmClaimRequest{Warm: req, Create: worktree.CreateRequest{Git: managed.CreateWorktreeOptions{Path: filepath.Join(t.TempDir(), "workspace"), Branch: "claimed", BaseRef: "HEAD", Mode: managed.CheckoutNewBranch}}})
+
+			require.NoError(t, err)
+			require.True(t, claimed)
+			require.Equal(t, "false", git(t, result.Path, "rev-parse", "--is-bare-repository"))
+			if layout == "prepared" {
+				require.Zero(t, configs, "a prepared override needs no Git config commands")
+			} else {
+				require.NotZero(t, configs, "an unrecognized config file must be resolved by Git")
+			}
+		})
+	}
+}
+
+// The fast path may skip Git only when it reads core.bare exactly as Git would.
+func TestBareOverrideSetAcceptsOnlyPlainGitLayout(t *testing.T) {
+	for name, tc := range map[string]struct {
+		content string
+		want    bool
+	}{
+		"git-written":         {"[core]\n\tbare = false\n", true},
+		"other sections":      {"[branch \"topic\"]\n\tremote = origin\n[core]\n\tbare = false\n", true},
+		"last value wins":     {"[core]\n\tbare = false\n\tbare = true\n", false},
+		"inline header value": {"[core]\n\tbare = false\n[core] bare = true\n", false},
+		"include":             {"[core]\n\tbare = false\n[include]\n\tpath = other\n", false},
+		"include if":          {"[core]\n\tbare = false\n[includeIf \"gitdir:/x\"]\n\tpath = other\n", false},
+		"continued line":      {"[core]\n\tbare = false\n\teditor = vi \\\n", false},
+		"trailing comment":    {"[core]\n\tbare = false ; note\n", false},
+		"boolean shorthand":   {"[core]\n\tbare\n", false},
+		"other subsection":    {"[core \"x\"]\n\tbare = false\n", false},
+		"empty":               {"", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "config.worktree")
+			require.NoError(t, os.WriteFile(file, []byte(tc.content), 0o600))
+			require.Equal(t, tc.want, worktree.BareOverrideSet(file))
+		})
+	}
+	require.False(t, worktree.BareOverrideSet(filepath.Join(t.TempDir(), "missing")))
+}
