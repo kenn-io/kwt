@@ -39,7 +39,10 @@ Inventory, generation guards, removal, and maintenance use the public
 execution policy and the shared coordinator; it owns no lifecycle mechanics.
 Keep app JSON models as projections of inventory and pass a held `Scope` to
 callbacks that need more Git facts. `PrimaryPath` is an advisory path lookup
-that neither acquires the mutation lock nor initializes generation files.
+that neither acquires the mutation lock nor initializes generation files. A
+bare repository's primary path is its bare root, or `main` beside `.bare`; it is
+never empty. Default-base selection stays within the Git 2.20 baseline, so do
+not route it through `worktree list --expire`.
 
 Removal claims receive cleanup effects before committing registry changes.
 A removed registration permits registry cleanup even if checkout files remain;
@@ -50,6 +53,9 @@ removal preflights before stopping a runtime and revalidates before cleanup.
 Warm claims retain Kit acquisition evidence for the consumed checkout and any
 new branch. Keep that result for rollback; a preexisting branch remains outside
 cleanup authority, and an unknown move outcome must preserve its artifacts.
+Warm preparation keeps the spare's native Git lock while reset runs without
+the repository lock, and unlocks only to publish it as ready. A missing spare's
+registration may be discarded only while it still carries spare evidence.
 
 ## CI runners
 
