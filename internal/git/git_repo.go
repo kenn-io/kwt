@@ -131,7 +131,12 @@ func (g *Git) getMainRepoRootWithoutCredentials(
 	if err != nil {
 		return "", err
 	}
-	return repo.PrimaryPath(ctx)
+	primary, err := repo.PrimaryPath(ctx)
+	if err != nil {
+		return "", err
+	}
+	// Git reports forward slashes on Windows; callers compare native paths.
+	return utils.CanonicalPath(primary), nil
 }
 
 func bareContainerAnchor(
