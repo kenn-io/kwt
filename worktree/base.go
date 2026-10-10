@@ -65,7 +65,17 @@ func (s *Scope) SyncBase(ctx context.Context, req BaseSyncRequest) error {
 			}
 		}
 	}
-	_, err = s.repo.run(ctx, s.repo.path, "branch", "--force", "--", req.Branch, remote)
+	if !exists {
+		// An unborn branch can still be checked out by another worktree.
+		checked, err := s.branchCheckedOut(ctx, req.Branch)
+		if err != nil || checked {
+			return err
+		}
+	}
+	// Compare against the tip read above: native Git does not take kwt's lock,
+	// so a commit written since then must survive. An empty old value requires
+	// the branch to remain absent.
+	_, err = s.repo.run(ctx, s.repo.path, "update-ref", "-m", "kwt: sync base branch", "refs/heads/"+req.Branch, remote, local)
 	if err == nil {
 		return nil
 	}

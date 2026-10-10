@@ -7,6 +7,7 @@ import (
 	gitcmd "go.kenn.io/kit/git/cmd"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -187,4 +188,36 @@ func TestRecoveryReturnsCapturedIdentity(t *testing.T) {
 			})
 		}
 	}
+}
+
+// Native Git can update the base branch while kwt holds only its own lock. The
+// sync must not overwrite a tip it did not read.
+func TestSyncBaseRefusesBranchMovedByAnotherWriter(t *testing.T) {
+	root, path := fixture(t)
+	git(t, path, "checkout", "--detach")
+	git(t, root, "-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "--allow-empty", "-m", "remote update")
+	target := git(t, root, "rev-parse", "HEAD")
+	tree := git(t, root, "rev-parse", "topic^{tree}")
+	newer := git(t, root, "-c", "user.name=Example", "-c", "user.email=example@example.com", "commit-tree", tree, "-p", "topic", "-m", "written by native git")
+	moved := false
+	coordinator, err := worktree.NewCoordinator(kwtPolicy())
+	require.NoError(t, err)
+	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: gitcmd.New(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
+		writesTopic := len(args) > 1 && ((args[0] == "branch" && args[1] == "--force") || (args[0] == "update-ref" && slices.Contains(args, "refs/heads/topic")))
+		if writesTopic && !moved {
+			moved = true
+			_, moveErr := r.Output(ctx, root, "update-ref", "refs/heads/topic", newer)
+			require.NoError(t, moveErr)
+		}
+		return r.Output(ctx, dir, args...)
+	}})
+	require.NoError(t, err)
+
+	err = repo.WithLock(t.Context(), func(s *worktree.Scope) error {
+		return s.SyncBase(t.Context(), worktree.BaseSyncRequest{Branch: "topic", SourceRef: target, Managed: true, BackupPrefix: "refs/kenn-forge/base-backups/"})
+	})
+
+	require.True(t, moved)
+	require.Error(t, err)
+	require.Equal(t, newer, git(t, root, "rev-parse", "topic"))
 }
