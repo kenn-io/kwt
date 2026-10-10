@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -220,4 +221,37 @@ func TestSyncBaseRefusesBranchMovedByAnotherWriter(t *testing.T) {
 	require.True(t, moved)
 	require.Error(t, err)
 	require.Equal(t, newer, git(t, root, "rev-parse", "topic"))
+}
+
+// The checked-out check runs immediately before the write, so a checkout that
+// lands while the old tip is backed up still stops the sync.
+func TestSyncBaseSkipsBranchCheckedOutDuringBackup(t *testing.T) {
+	root, path := fixture(t)
+	local := git(t, root, "rev-parse", "topic")
+	git(t, path, "checkout", "--detach")
+	git(t, root, "-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "--allow-empty", "-m", "rewritten base")
+	target := git(t, root, "rev-parse", "HEAD")
+	git(t, root, "update-ref", "refs/heads/topic", git(t, root, "-c", "user.name=Example", "-c", "user.email=example@example.com", "commit-tree", git(t, root, "rev-parse", "topic^{tree}"), "-p", "topic", "-m", "local only"))
+	local = git(t, root, "rev-parse", "topic")
+	checkedOut := false
+	coordinator, err := worktree.NewCoordinator(kwtPolicy())
+	require.NoError(t, err)
+	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: gitcmd.New(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
+		out, runErr := r.Output(ctx, dir, args...)
+		if !checkedOut && len(args) > 1 && args[0] == "update-ref" && strings.HasPrefix(args[1], "refs/kenn-forge/base-backups/") {
+			checkedOut = true
+			_, checkoutErr := r.Output(ctx, path, "checkout", "topic")
+			require.NoError(t, checkoutErr)
+		}
+		return out, runErr
+	}})
+	require.NoError(t, err)
+
+	require.NoError(t, repo.WithLock(t.Context(), func(s *worktree.Scope) error {
+		return s.SyncBase(t.Context(), worktree.BaseSyncRequest{Branch: "topic", SourceRef: target, Managed: true, BackupPrefix: "refs/kenn-forge/base-backups/"})
+	}))
+
+	require.True(t, checkedOut)
+	require.Equal(t, local, git(t, root, "rev-parse", "topic"))
+	require.Equal(t, local, git(t, path, "rev-parse", "HEAD"))
 }

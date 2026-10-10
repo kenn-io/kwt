@@ -41,10 +41,6 @@ func (s *Scope) SyncBase(ctx context.Context, req BaseSyncRequest) error {
 		if local == remote {
 			return nil
 		}
-		checked, err := s.branchCheckedOut(ctx, req.Branch)
-		if err != nil || checked {
-			return err
-		}
 		_, err = s.repo.run(ctx, s.repo.path, "merge-base", "--is-ancestor", local, remote)
 		if err != nil {
 			if !gitcmd.IsExitCode(err, 1) {
@@ -65,12 +61,12 @@ func (s *Scope) SyncBase(ctx context.Context, req BaseSyncRequest) error {
 			}
 		}
 	}
-	if !exists {
-		// An unborn branch can still be checked out by another worktree.
-		checked, err := s.branchCheckedOut(ctx, req.Branch)
-		if err != nil || checked {
-			return err
-		}
+	// Check worktrees immediately before the write, as git branch --force does;
+	// neither can exclude a native checkout that lands between check and write.
+	// An unborn branch can be checked out too.
+	checked, err := s.branchCheckedOut(ctx, req.Branch)
+	if err != nil || checked {
+		return err
 	}
 	// Compare against the tip read above: native Git does not take kwt's lock,
 	// so a commit written since then must survive. An empty old value requires
