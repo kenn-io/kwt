@@ -3,6 +3,7 @@ package worktree_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -248,4 +249,91 @@ func TestWarmClaimCreatesAndRollsBackNewBranch(t *testing.T) {
 	require.NoDirExists(t, result.Path)
 	_, err = gitcmd.New().Output(t.Context(), root, "rev-parse", "--verify", "refs/heads/new-topic")
 	require.Error(t, err)
+}
+
+func TestWarmPreparationPreservesMissingNonSpareRegistration(t *testing.T) {
+	for _, state := range []string{"attached", "unmarked", "assigned", "foreign-lock"} {
+		t.Run(state, func(t *testing.T) {
+			root, _ := fixture(t)
+			repo := open(t, root, kwtPolicy())
+			req := warmRequest(t)
+			if state == "attached" {
+				git(t, root, "worktree", "add", "-b", "assigned", req.Path)
+			} else {
+				git(t, root, "worktree", "add", "--detach", req.Path, "HEAD")
+			}
+			metadata := git(t, req.Path, "rev-parse", "--absolute-git-dir")
+			switch state {
+			case "assigned":
+				require.NoError(t, os.WriteFile(filepath.Join(metadata, req.MarkerFile), []byte("ready\n"), 0o600))
+				require.NoError(t, os.WriteFile(filepath.Join(metadata, req.IdentityFile), []byte("workspace-a\n"), 0o600))
+			case "foreign-lock":
+				require.NoError(t, os.WriteFile(filepath.Join(metadata, req.MarkerFile), []byte("ready\n"), 0o600))
+				git(t, root, "worktree", "lock", "--reason", "removable media", req.Path)
+			}
+			head, err := os.ReadFile(filepath.Join(metadata, "HEAD"))
+			require.NoError(t, err)
+			require.NoError(t, os.RemoveAll(req.Path))
+			require.Error(t, repo.PrepareWarm(t.Context(), req))
+			require.NoDirExists(t, req.Path)
+			after, err := os.ReadFile(filepath.Join(metadata, "HEAD"))
+			require.NoError(t, err)
+			require.Equal(t, head, after)
+		})
+	}
+}
+
+func TestWarmPreparationRebuildsMissingSpare(t *testing.T) {
+	root, _ := fixture(t)
+	repo := open(t, root, kwtPolicy())
+	req := warmRequest(t)
+	require.NoError(t, repo.PrepareWarm(t.Context(), req))
+	require.NoError(t, os.RemoveAll(req.Path))
+	require.NoError(t, repo.PrepareWarm(t.Context(), req))
+	metadata := git(t, req.Path, "rev-parse", "--absolute-git-dir")
+	state, err := os.ReadFile(filepath.Join(metadata, req.MarkerFile))
+	require.NoError(t, err)
+	require.Equal(t, "ready\n", string(state))
+}
+
+func TestWarmPreparationKeepsSpareLockedDuringReset(t *testing.T) {
+	for _, resumed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("resumed=%t", resumed), func(t *testing.T) {
+			root, _ := fixture(t)
+			require.NoError(t, os.WriteFile(filepath.Join(root, "file"), []byte("base\n"), 0o600))
+			git(t, root, "add", "file")
+			git(t, root, "-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "-m", "tracked file")
+			req := warmRequest(t)
+			if resumed {
+				// An interrupted earlier preparation left the spare unlocked.
+				git(t, root, "worktree", "add", "--detach", "--no-checkout", req.Path, "HEAD")
+				metadata := git(t, req.Path, "rev-parse", "--absolute-git-dir")
+				require.NoError(t, os.WriteFile(filepath.Join(metadata, req.MarkerFile), []byte("preparing\n"), 0o600))
+			}
+			other := open(t, root, kwtPolicy())
+			var removeErr error
+			coordinator, err := worktree.NewCoordinator(kwtPolicy())
+			require.NoError(t, err)
+			repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: gitcmd.New(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
+				if slices.Contains(args, "reset") {
+					require.NoError(t, other.WithLock(ctx, func(*worktree.Scope) error {
+						_, removeErr = r.Output(ctx, root, "worktree", "remove", "--force", req.Path)
+						return nil
+					}))
+				}
+				return r.Output(ctx, dir, args...)
+			}})
+			require.NoError(t, err)
+			require.NoError(t, repo.PrepareWarm(t.Context(), req))
+			require.Error(t, removeErr)
+			metadata := git(t, req.Path, "rev-parse", "--absolute-git-dir")
+			state, err := os.ReadFile(filepath.Join(metadata, req.MarkerFile))
+			require.NoError(t, err)
+			require.Equal(t, "ready\n", string(state))
+			require.NoFileExists(t, filepath.Join(metadata, "locked"))
+			data, err := os.ReadFile(filepath.Join(req.Path, "file"))
+			require.NoError(t, err)
+			require.Equal(t, "base\n", string(data))
+		})
+	}
 }

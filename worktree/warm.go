@@ -34,7 +34,8 @@ func (req WarmRequest) validate() error {
 }
 
 // PrepareWarm takes the pool lock before the repository lock. Materialization
-// holds only the pool lock so foreground operations can continue during reset.
+// holds only the pool lock so foreground operations can continue during reset;
+// the spare's native Git lock keeps removal and replacement away until it is ready.
 func (r *Repository) PrepareWarm(ctx context.Context, req WarmRequest) error {
 	if err := req.validate(); err != nil {
 		return err
@@ -74,6 +75,9 @@ func (r *Repository) PrepareWarm(ctx context.Context, req WarmRequest) error {
 					if pathKey(dir) == pathKey(r.commonDir) {
 						return errors.New("warm path is the primary worktree")
 					}
+					if err = requireStaleSpare(dir, req); err != nil {
+						return err
+					}
 					if err = os.RemoveAll(dir); err != nil {
 						return err
 					}
@@ -94,19 +98,22 @@ func (r *Repository) PrepareWarm(ctx context.Context, req WarmRequest) error {
 					return err
 				}
 			}
+			locked, err := spareLocked(metadata, req)
+			if err != nil {
+				return err
+			}
 			if err := s.configureBareLinked(ctx, req.Path); err != nil {
 				return err
 			}
 			if err := atomicfile.WriteFile(filepath.Join(metadata, req.MarkerFile), []byte("preparing\n"), atomicfile.WithPrivate()); err != nil {
 				return err
 			}
-			reason, err := fslink.ReadFile(filepath.Join(metadata, "locked"))
-			if err == nil && strings.TrimSpace(string(reason)) == req.MarkerFile {
-				if _, err = r.run(ctx, r.path, "worktree", "unlock", req.Path); err != nil {
+			// The native lock keeps removal and replacement away from the spare
+			// while reset runs without the repository lock.
+			if !locked {
+				if _, err = r.run(ctx, r.path, "worktree", "lock", "--reason", req.MarkerFile, req.Path); err != nil {
 					return err
 				}
-			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
 			}
 			fill = true
 			return nil
@@ -124,6 +131,14 @@ func (r *Repository) PrepareWarm(ctx context.Context, req WarmRequest) error {
 			}
 			if state != "preparing" || pathKey(current) != pathKey(metadata) {
 				return errors.New("warm checkout changed during preparation")
+			}
+			if locked, err := spareLocked(metadata, req); err != nil || !locked {
+				return errors.Join(errors.New("warm checkout lost its preparation lock"), err)
+			}
+			// Claims move the spare, and Git refuses to move a locked worktree.
+			// An interruption before ready leaves preparing, which relocks on retry.
+			if _, err = r.run(ctx, r.path, "worktree", "unlock", req.Path); err != nil {
+				return err
 			}
 			return atomicfile.WriteFile(filepath.Join(metadata, req.MarkerFile), []byte("ready\n"), atomicfile.WithPrivate())
 		})
@@ -161,33 +176,77 @@ func (s *Scope) warmState(ctx context.Context, req WarmRequest) (string, string,
 	if pathKey(direct) != pathKey(metadata) {
 		return "", "", nil
 	}
+	state, err := spareState(metadata, req)
+	if err != nil || state == "" {
+		return "", "", err
+	}
+	return state, metadata, nil
+}
+
+// spareState reads spare evidence from a registration directory. It reports no
+// state for an assigned identity, an attached branch, or an unmarked checkout.
+func spareState(metadata string, req WarmRequest) (string, error) {
 	if req.IdentityFile != "" {
 		if _, err := os.Lstat(filepath.Join(metadata, req.IdentityFile)); !errors.Is(err, os.ErrNotExist) {
-			return "", "", err
+			return "", err
 		}
 	}
 	head, err := fslink.ReadFile(filepath.Join(metadata, "HEAD"))
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	if strings.HasPrefix(strings.TrimSpace(string(head)), "ref: ") {
-		return "", "", nil
+		return "", nil
 	}
 	state, err := fslink.ReadFile(filepath.Join(metadata, req.MarkerFile))
 	if errors.Is(err, os.ErrNotExist) {
-		reason, err := fslink.ReadFile(filepath.Join(metadata, "locked"))
-		if errors.Is(err, os.ErrNotExist) {
-			return "", "", nil
+		locked, err := spareLocked(metadata, req)
+		var condition *ConditionError
+		if errors.As(err, &condition) {
+			return "", nil
 		}
-		if err != nil || strings.TrimSpace(string(reason)) != req.MarkerFile {
-			return "", "", err
+		if err != nil || !locked {
+			return "", err
 		}
-		return "preparing", metadata, nil
+		return "preparing", nil
 	}
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-	return strings.TrimSpace(string(state)), metadata, nil
+	return strings.TrimSpace(string(state)), nil
+}
+
+// spareLocked reports whether the spare's own lock reason holds its
+// registration. Any other native lock belongs to someone else.
+func spareLocked(metadata string, req WarmRequest) (bool, error) {
+	reason, err := fslink.ReadFile(filepath.Join(metadata, "locked"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(string(reason)) != req.MarkerFile {
+		return false, &ConditionError{Reason: ReasonLocked, Path: req.Path}
+	}
+	return true, nil
+}
+
+// requireStaleSpare permits discarding a missing checkout's registration only
+// while it still carries spare evidence. Discarding any other registration
+// would lose its saved index, HEAD, and reflog.
+func requireStaleSpare(metadata string, req WarmRequest) error {
+	if _, err := spareLocked(metadata, req); err != nil {
+		return err
+	}
+	state, err := spareState(metadata, req)
+	if err != nil {
+		return err
+	}
+	if state == "" {
+		return fmt.Errorf("warm path is registered to a worktree that is not a spare: %s", req.Path)
+	}
+	return nil
 }
 
 // ClaimWarm holds only the repository lock. It never waits on the pool lock,
