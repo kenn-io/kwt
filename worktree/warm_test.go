@@ -32,7 +32,7 @@ func TestWarmPreparationAndClaimLockOrder(t *testing.T) {
 	coordinator, err := worktree.NewCoordinator(kwtPolicy())
 	require.NoError(t, err)
 	entered, release := make(chan struct{}), make(chan struct{})
-	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: gitcmd.New(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
+	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: hooklessRunner(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
 		if slices.Contains(args, "reset") {
 			close(entered)
 			select {
@@ -94,7 +94,7 @@ func TestWarmPreparationAndClaimLockOrder(t *testing.T) {
 
 func TestWarmClaimUsesLatestRevisionAndPreservesChangedSpare(t *testing.T) {
 	root, _ := fixture(t)
-	repo := open(t, root, kwtPolicy())
+	repo := openHookless(t, root, kwtPolicy())
 	req := warmRequest(t)
 	require.NoError(t, repo.PrepareWarm(t.Context(), req))
 	git(t, root, "-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "--allow-empty", "-m", "new revision")
@@ -126,7 +126,7 @@ func TestWarmResumesInterruptedBareRegistration(t *testing.T) {
 	git(t, bare, "worktree", "add", "--lock", "--reason", req.MarkerFile, "--detach", "--no-checkout", req.Path, "HEAD")
 	metadata := git(t, req.Path, "rev-parse", "--absolute-git-dir")
 	require.NoError(t, os.WriteFile(filepath.Join(metadata, "index.lock"), nil, 0o600))
-	repo := open(t, bare, kwtPolicy())
+	repo := openHookless(t, bare, kwtPolicy())
 	require.NoError(t, repo.PrepareWarm(t.Context(), req))
 	require.Equal(t, "false", git(t, req.Path, "rev-parse", "--is-bare-repository"))
 	state, err := os.ReadFile(filepath.Join(metadata, req.MarkerFile))
@@ -143,7 +143,7 @@ func TestWarmCanceledRegistrationCompletesBeforeReleasingRepository(t *testing.T
 	defer cancel()
 	coordinator, err := worktree.NewCoordinator(kwtPolicy())
 	require.NoError(t, err)
-	repo, err := coordinator.Open(ctx, worktree.RepositoryOptions{Path: root, Runner: gitcmd.New(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
+	repo, err := coordinator.Open(ctx, worktree.RepositoryOptions{Path: root, Runner: hooklessRunner(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
 		out, err := r.Output(ctx, dir, args...)
 		if err == nil && len(args) > 1 && args[0] == "worktree" && args[1] == "add" {
 			cancel()
@@ -159,19 +159,19 @@ func TestWarmCanceledRegistrationCompletesBeforeReleasingRepository(t *testing.T
 	reason, err := os.ReadFile(filepath.Join(metadata, "locked"))
 	require.NoError(t, err)
 	require.Equal(t, req.MarkerFile, strings.TrimSpace(string(reason)))
-	repo = open(t, root, kwtPolicy())
+	repo = openHookless(t, root, kwtPolicy())
 	require.NoError(t, repo.PrepareWarm(t.Context(), req))
 }
 
 func TestWarmClaimReportsCheckoutRetainedAfterCleanupFailure(t *testing.T) {
 	root, _ := fixture(t)
 	req := warmRequest(t)
-	repo := open(t, root, kwtPolicy())
+	repo := openHookless(t, root, kwtPolicy())
 	require.NoError(t, repo.PrepareWarm(t.Context(), req))
 	coordinator, err := worktree.NewCoordinator(kwtPolicy())
 	require.NoError(t, err)
 	checkoutFailure, removeFailure := errors.New("checkout interrupted"), errors.New("cleanup unavailable")
-	repo, err = coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: gitcmd.New(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
+	repo, err = coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: hooklessRunner(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
 		if len(args) > 1 && args[0] == "worktree" && args[1] == "remove" {
 			return nil, removeFailure
 		}
@@ -196,7 +196,7 @@ func TestWarmClaimReportsCheckoutRetainedAfterCleanupFailure(t *testing.T) {
 
 func TestWarmExistingBranchKeepsAttachmentSemantics(t *testing.T) {
 	root, _ := fixture(t)
-	repo := open(t, root, kwtPolicy())
+	repo := openHookless(t, root, kwtPolicy())
 	req := warmRequest(t)
 	git(t, root, "tag", "tag-only")
 	git(t, root, "branch", "available")
@@ -227,7 +227,7 @@ func TestWarmExistingBranchKeepsAttachmentSemantics(t *testing.T) {
 
 func TestWarmClaimCreatesAndRollsBackNewBranch(t *testing.T) {
 	root, _ := fixture(t)
-	repo := open(t, root, kwtPolicy())
+	repo := openHookless(t, root, kwtPolicy())
 	req := warmRequest(t)
 	require.NoError(t, repo.PrepareWarm(t.Context(), req))
 	before, err := os.Stat(req.Path)
@@ -255,7 +255,7 @@ func TestWarmPreparationPreservesMissingNonSpareRegistration(t *testing.T) {
 	for _, state := range []string{"attached", "unmarked", "assigned", "foreign-lock"} {
 		t.Run(state, func(t *testing.T) {
 			root, _ := fixture(t)
-			repo := open(t, root, kwtPolicy())
+			repo := openHookless(t, root, kwtPolicy())
 			req := warmRequest(t)
 			if state == "attached" {
 				git(t, root, "worktree", "add", "-b", "assigned", req.Path)
@@ -285,7 +285,7 @@ func TestWarmPreparationPreservesMissingNonSpareRegistration(t *testing.T) {
 
 func TestWarmPreparationRebuildsMissingSpare(t *testing.T) {
 	root, _ := fixture(t)
-	repo := open(t, root, kwtPolicy())
+	repo := openHookless(t, root, kwtPolicy())
 	req := warmRequest(t)
 	require.NoError(t, repo.PrepareWarm(t.Context(), req))
 	require.NoError(t, os.RemoveAll(req.Path))
@@ -310,11 +310,11 @@ func TestWarmPreparationKeepsSpareLockedDuringReset(t *testing.T) {
 				metadata := git(t, req.Path, "rev-parse", "--absolute-git-dir")
 				require.NoError(t, os.WriteFile(filepath.Join(metadata, req.MarkerFile), []byte("preparing\n"), 0o600))
 			}
-			other := open(t, root, kwtPolicy())
+			other := openHookless(t, root, kwtPolicy())
 			var removeErr error
 			coordinator, err := worktree.NewCoordinator(kwtPolicy())
 			require.NoError(t, err)
-			repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: gitcmd.New(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
+			repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: hooklessRunner(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
 				if slices.Contains(args, "reset") {
 					require.NoError(t, other.WithLock(ctx, func(*worktree.Scope) error {
 						_, removeErr = r.Output(ctx, root, "worktree", "remove", "--force", req.Path)
@@ -340,7 +340,7 @@ func TestWarmPreparationKeepsSpareLockedDuringReset(t *testing.T) {
 
 func TestWarmResumeLeavesForeignLockedSpareUntouched(t *testing.T) {
 	root, _ := fixture(t)
-	repo := open(t, root, kwtPolicy())
+	repo := openHookless(t, root, kwtPolicy())
 	req := warmRequest(t)
 	git(t, root, "worktree", "add", "--detach", "--no-checkout", req.Path, "HEAD")
 	metadata := git(t, req.Path, "rev-parse", "--absolute-git-dir")
@@ -374,7 +374,7 @@ func TestWarmClaimReusesPreparedBareOverride(t *testing.T) {
 			configs := 0
 			coordinator, err := worktree.NewCoordinator(kwtPolicy())
 			require.NoError(t, err)
-			repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: bare, Runner: gitcmd.New(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
+			repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: bare, Runner: hooklessRunner(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
 				if len(args) > 0 && args[0] == "config" {
 					configs++
 				}
@@ -432,4 +432,48 @@ func TestBareOverrideSetAcceptsOnlyPlainGitLayout(t *testing.T) {
 		})
 	}
 	require.False(t, worktree.BareOverrideSet(filepath.Join(t.TempDir(), "missing")))
+}
+
+// hooklessRunner disables native hooks, as applications that claim warm
+// spares do; a claim cannot let hooks re-enter while it holds the lock.
+func hooklessRunner() gitcmd.Runner {
+	return gitcmd.New().WithConfig("core.hooksPath", os.DevNull)
+}
+
+func openHookless(t *testing.T, root string, policy worktree.LockPolicy) *worktree.Repository {
+	t.Helper()
+	coordinator, err := worktree.NewCoordinator(policy)
+	require.NoError(t, err)
+	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: hooklessRunner()})
+	require.NoError(t, err)
+	return repo
+}
+
+// A claim checks out the spare while holding the repository lock. A native
+// hook that lists worktrees would wait on that lock forever, so a claim that
+// could run hooks declines and leaves creation to the reservation protocol.
+func TestWarmClaimDeclinesWhenCheckoutHooksMayRun(t *testing.T) {
+	for _, hooks := range []bool{true, false} {
+		t.Run(fmt.Sprintf("hooks=%t", hooks), func(t *testing.T) {
+			root, _ := fixture(t)
+			req := warmRequest(t)
+			require.NoError(t, openHookless(t, root, kwtPolicy()).PrepareWarm(t.Context(), req))
+			repo := openHookless(t, root, kwtPolicy())
+			if hooks {
+				repo = open(t, root, kwtPolicy())
+			}
+			claim := worktree.WarmClaimRequest{Warm: req, Create: worktree.CreateRequest{Git: managed.CreateWorktreeOptions{Path: filepath.Join(t.TempDir(), "workspace"), Branch: "claimed", BaseRef: "HEAD", Mode: managed.CheckoutNewBranch}}}
+
+			_, claimed, err := repo.ClaimWarm(t.Context(), claim)
+
+			require.NoError(t, err)
+			require.Equal(t, !hooks, claimed)
+			if hooks {
+				metadata := git(t, req.Path, "rev-parse", "--absolute-git-dir")
+				state, err := os.ReadFile(filepath.Join(metadata, req.MarkerFile))
+				require.NoError(t, err)
+				require.Equal(t, "ready\n", string(state))
+			}
+		})
+	}
 }

@@ -186,6 +186,18 @@ func (s *Scope) warmState(ctx context.Context, req WarmRequest) (string, string,
 	return state, metadata, nil
 }
 
+// hooksDisabled reports whether the caller's Git policy points native hooks at
+// the null device, so no checkout, reference, or index hook can run.
+func (r *Repository) hooksDisabled() bool {
+	path := ""
+	for _, entry := range r.runner.Config {
+		if strings.EqualFold(entry.Key, "core.hooksPath") {
+			path = entry.Value
+		}
+	}
+	return path == os.DevNull || path == "/dev/null"
+}
+
 // spareState reads spare evidence from a registration directory. It reports no
 // state for an assigned identity, an attached branch, or an unmarked checkout.
 func spareState(metadata string, req WarmRequest) (string, error) {
@@ -273,6 +285,12 @@ func (s *Scope) ClaimWarm(ctx context.Context, req WarmClaimRequest) (CreateResu
 		return CreateResult{}, false, err
 	}
 	if req.Create.Serialization != CreateSerialized || len(req.Create.Candidates) != 0 || opts.Checkout != managed.CheckoutTrusted || opts.NoCheckout || opts.LockReason != "" || (opts.Mode != managed.CheckoutNewBranch && opts.Mode != managed.CheckoutExistingBranch && opts.Mode != managed.CheckoutDetached) {
+		return CreateResult{}, false, nil
+	}
+	// The claim checks out under the held lock. A native hook that re-enters
+	// worktree inventory would wait on that lock, so only callers that disable
+	// hooks can claim; others create normally, where hooks may re-enter.
+	if !s.repo.hooksDisabled() {
 		return CreateResult{}, false, nil
 	}
 	if !filepath.IsAbs(opts.Path) || comparableWorktreePath(opts.Path) == comparableWorktreePath(req.Warm.Path) {

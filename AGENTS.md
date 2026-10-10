@@ -56,6 +56,9 @@ cleanup authority, and an unknown move outcome must preserve its artifacts.
 Warm preparation keeps the spare's native Git lock while reset runs without
 the repository lock, and unlocks only to publish it as ready. A missing spare's
 registration may be discarded only while it still carries spare evidence.
+Claims check out under the held lock, so they decline unless the caller's
+runner disables native hooks; hook-enabled callers create through the
+reservation protocol instead.
 
 ## CI runners
 
