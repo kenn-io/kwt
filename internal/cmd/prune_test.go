@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -696,4 +697,14 @@ func registerExpiredWorktree(t *testing.T, path string, generation string) {
 		Repository: "repo", Branch: "expired", Path: path,
 		ExpiresAt: &expiredAt, Generation: generation,
 	}))
+}
+
+// A candidate whose registration disappears before removal has a different
+// generation from the one selected, as kwt reported before the shared library.
+func TestPruneOutcomeReportsVanishedCandidateAsGenerationChange(t *testing.T) {
+	outcome := pruneOutcomeForError("/repo/feature", "feature", fmt.Errorf("inspect removal: %w", shared.ErrWorktreeNotFound))
+
+	require.Equal(t, prunepolicy.GenerationChanged, outcome.Reason)
+	require.Equal(t, "/repo/feature", outcome.Path)
+	require.Equal(t, "feature", outcome.Branch)
 }

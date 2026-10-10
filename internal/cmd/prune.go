@@ -387,6 +387,11 @@ func pruneOutcomeForError(path string, branch string, err error) prunepolicy.Out
 		}
 		return outcome
 	}
+	if errors.Is(err, shared.ErrWorktreeNotFound) {
+		outcome.Reason = prunepolicy.GenerationChanged
+		outcome.Message = "worktree registration disappeared after candidate selection"
+		return outcome
+	}
 	outcome.Reason = prunepolicy.RemovalFailed
 	outcome.Message = fmt.Sprintf("worktree removal failed: %v", err)
 	outcome.Remediation = "Inspect the local Git worktree state and retry."
