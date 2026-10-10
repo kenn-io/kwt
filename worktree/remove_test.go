@@ -380,3 +380,32 @@ func TestRemoveRunsOutsideTheCheckoutItOpenedFrom(t *testing.T) {
 	_, err = gitcmd.New().Output(t.Context(), root, "rev-parse", "--verify", "refs/heads/topic")
 	require.Error(t, err)
 }
+
+// A fenced removal whose worktree disappeared before inspection names a
+// generation that no longer exists; callers treat that as a refreshable
+// conflict, not an internal failure.
+func TestFencedRemovalOfVanishedWorktreeReportsGenerationChange(t *testing.T) {
+	for _, fence := range []string{"identity", "generation"} {
+		t.Run(fence, func(t *testing.T) {
+			root, path := fixture(t)
+			repo := open(t, root, kwtPolicy())
+			identity := worktree.IdentityPolicy{FileName: "kwt-generation", Generate: true}
+			generation, err := repo.EnsureIdentity(t.Context(), path, identity)
+			require.NoError(t, err)
+			git(t, root, "worktree", "remove", "--force", path)
+			req := worktree.RemovalRequest{Path: path}
+			if fence == "identity" {
+				req.Authority = worktree.MatchingIdentity
+				req.Identity = worktree.IdentityPolicy{FileName: "kwt-generation", Value: generation}
+			} else {
+				req.Conditions = &worktree.RemovalConditions{Generation: generation}
+			}
+
+			_, err = repo.Remove(t.Context(), req)
+
+			var condition *worktree.ConditionError
+			require.ErrorAs(t, err, &condition)
+			require.Equal(t, worktree.ReasonGenerationChanged, condition.Reason)
+		})
+	}
+}

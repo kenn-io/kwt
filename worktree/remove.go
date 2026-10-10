@@ -109,6 +109,11 @@ func (s *Scope) InspectRemoval(ctx context.Context, req RemovalRequest) (Removal
 			check.Disposition = MissingArtifacts
 			return check, nil
 		}
+		// The identity or generation the caller selected no longer exists, which
+		// callers treat as a refreshable conflict rather than an internal error.
+		if req.Authority == MatchingIdentity || (req.Conditions != nil && req.Conditions.Generation != "") {
+			return check, errors.Join(&ConditionError{Reason: ReasonGenerationChanged, Path: req.Path}, ErrWorktreeNotFound)
+		}
 		return check, ErrWorktreeNotFound
 	}
 	entry := check.Entry
