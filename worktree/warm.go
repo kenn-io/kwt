@@ -46,7 +46,7 @@ func (r *Repository) PrepareWarm(ctx context.Context, req WarmRequest) error {
 	}
 	return r.coordinator.withFileLock(ctx, pool, func() error {
 		var metadata string
-		fill := false
+		fill, locked := false, false
 		err := r.WithLock(ctx, func(s *Scope) error {
 			if err := s.rejectCreation(); err != nil {
 				return err
@@ -60,6 +60,10 @@ func (r *Repository) PrepareWarm(ctx context.Context, req WarmRequest) error {
 					return nil
 				}
 				metadata = dir
+				// Another owner's lock means its work may still be using the index.
+				if locked, err = spareLocked(dir, req); err != nil {
+					return err
+				}
 				if err := os.Remove(filepath.Join(dir, "index.lock")); err != nil && !errors.Is(err, os.ErrNotExist) {
 					return err
 				}
@@ -97,10 +101,9 @@ func (r *Repository) PrepareWarm(ctx context.Context, req WarmRequest) error {
 				if err != nil {
 					return err
 				}
-			}
-			locked, err := spareLocked(metadata, req)
-			if err != nil {
-				return err
+				if locked, err = spareLocked(metadata, req); err != nil {
+					return err
+				}
 			}
 			if err := s.configureBareLinked(ctx, req.Path); err != nil {
 				return err
@@ -111,7 +114,7 @@ func (r *Repository) PrepareWarm(ctx context.Context, req WarmRequest) error {
 			// The native lock keeps removal and replacement away from the spare
 			// while reset runs without the repository lock.
 			if !locked {
-				if _, err = r.run(ctx, r.path, "worktree", "lock", "--reason", req.MarkerFile, req.Path); err != nil {
+				if _, err := r.run(ctx, r.path, "worktree", "lock", "--reason", req.MarkerFile, req.Path); err != nil {
 					return err
 				}
 			}

@@ -337,3 +337,25 @@ func TestWarmPreparationKeepsSpareLockedDuringReset(t *testing.T) {
 		})
 	}
 }
+
+func TestWarmResumeLeavesForeignLockedSpareUntouched(t *testing.T) {
+	root, _ := fixture(t)
+	repo := open(t, root, kwtPolicy())
+	req := warmRequest(t)
+	git(t, root, "worktree", "add", "--detach", "--no-checkout", req.Path, "HEAD")
+	metadata := git(t, req.Path, "rev-parse", "--absolute-git-dir")
+	require.NoError(t, os.WriteFile(filepath.Join(metadata, req.MarkerFile), []byte("preparing\n"), 0o600))
+	git(t, root, "worktree", "lock", "--reason", "another tool", req.Path)
+	indexLock := filepath.Join(metadata, "index.lock")
+	require.NoError(t, os.WriteFile(indexLock, nil, 0o600))
+
+	err := repo.PrepareWarm(t.Context(), req)
+
+	var condition *worktree.ConditionError
+	require.ErrorAs(t, err, &condition)
+	require.Equal(t, worktree.ReasonLocked, condition.Reason)
+	require.FileExists(t, indexLock)
+	state, err := os.ReadFile(filepath.Join(metadata, req.MarkerFile))
+	require.NoError(t, err)
+	require.Equal(t, "preparing\n", string(state))
+}
