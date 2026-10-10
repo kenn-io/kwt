@@ -264,7 +264,7 @@ func (s *Scope) Remove(ctx context.Context, req RemovalRequest) (result RemovalR
 		if check.Disposition == MissingArtifacts {
 			result.CheckoutRemoved, result.RegistrationRemoved = true, true
 			result.Remaining.Path, result.Remaining.Registration = "", ""
-			return nil
+			return s.removeRequestedBranches(ctx, req.Branches, &result)
 		}
 		branch := check.Entry.Branch
 		if check.Entry.Detached {
@@ -295,6 +295,26 @@ func (s *Scope) Remove(ctx context.Context, req RemovalRequest) (result RemovalR
 		err = remove()
 	}
 	return result, err
+}
+
+// removeRequestedBranches applies requested branch cleanup when the checkout
+// and its registration were already gone, so Git's removal never ran.
+func (s *Scope) removeRequestedBranches(ctx context.Context, branches []managed.BranchRemoval, result *RemovalResult) error {
+	for _, branch := range branches {
+		absent, err := s.RemoveBranch(ctx, branch)
+		if absent {
+			result.BranchesRemoved = append(result.BranchesRemoved, branch.Name)
+			result.BranchesRemaining = slices.DeleteFunc(result.BranchesRemaining, func(name string) bool { return name == branch.Name })
+			result.Remaining.Branch = ""
+			if len(result.BranchesRemaining) > 0 {
+				result.Remaining.Branch = result.BranchesRemaining[0]
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("worktree already removed but failed to delete branch %s: %w", branch.Name, err)
+		}
+	}
+	return nil
 }
 
 func (s *Scope) removalPreflight(ctx context.Context, req RemovalRequest) (RemovalCheck, error) {

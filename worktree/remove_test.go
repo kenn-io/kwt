@@ -325,3 +325,37 @@ func TestExactRemovalRejectsForeignReplacementAndSubdirectory(t *testing.T) {
 	require.ErrorIs(t, err, worktree.ErrWorktreeRepositoryMismatch)
 	require.Equal(t, "replacement", git(t, path, "branch", "--show-current"))
 }
+
+func TestRemoveMissingArtifactsStillDeletesRequestedBranches(t *testing.T) {
+	for _, expected := range []string{"current", "moved"} {
+		t.Run(expected, func(t *testing.T) {
+			root, _ := fixture(t)
+			git(t, root, "branch", "leftover")
+			oid := git(t, root, "rev-parse", "leftover")
+			if expected == "moved" {
+				git(t, root, "-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "--allow-empty", "-m", "advance")
+				git(t, root, "branch", "-f", "leftover", "HEAD")
+			}
+			repo := open(t, root, kwtPolicy())
+			result, err := repo.Remove(t.Context(), worktree.RemovalRequest{
+				Path:     filepath.Join(t.TempDir(), "gone"),
+				Branches: []managed.BranchRemoval{{Name: "leftover", ExpectedOID: oid, Force: true}},
+			})
+			require.True(t, result.CheckoutRemoved)
+			require.True(t, result.RegistrationRemoved)
+			if expected == "current" {
+				require.NoError(t, err)
+				require.Equal(t, []string{"leftover"}, result.BranchesRemoved)
+				require.Empty(t, result.BranchesRemaining)
+				require.Empty(t, result.Remaining.Branch)
+				_, err = gitcmd.New().Output(t.Context(), root, "rev-parse", "--verify", "refs/heads/leftover")
+				require.Error(t, err)
+				return
+			}
+			require.Error(t, err)
+			require.Equal(t, []string{"leftover"}, result.BranchesRemaining)
+			require.Equal(t, "leftover", result.Remaining.Branch)
+			require.NotEmpty(t, git(t, root, "rev-parse", "refs/heads/leftover"))
+		})
+	}
+}
