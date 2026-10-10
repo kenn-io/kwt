@@ -125,6 +125,17 @@ func (s *Scope) PruneRegistration(ctx context.Context, path string) (bool, error
 	if state.GitDir == "" {
 		return false, nil
 	}
+	if state.Exists && !state.Symlink {
+		// Git keeps a registration whose checkout still links back to it, even
+		// when that checkout is unusable; pruning would lose its index and HEAD.
+		backlink, err := ReadWorktreeBacklink(ctx, path)
+		if err != nil {
+			return false, err
+		}
+		if backlink != "" && pathKey(backlink) == pathKey(state.GitDir) {
+			return false, errors.New("cannot prune a registration its checkout still uses")
+		}
+	}
 	if _, err := os.Lstat(filepath.Join(state.GitDir, "locked")); err == nil {
 		return false, &ConditionError{Reason: ReasonLocked, Path: path}
 	} else if !errors.Is(err, os.ErrNotExist) {

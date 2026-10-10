@@ -202,3 +202,28 @@ func TestBranchCleanupAndAvailabilityUseHeldScope(t *testing.T) {
 		return nil
 	}))
 }
+
+// A checkout that still links to its registration is not stale, even when Git
+// cannot use it as a work tree, such as a bare repository's checkout without
+// its per-worktree core.bare override.
+func TestPruneRegistrationPreservesLinkedCheckoutGitCannotUse(t *testing.T) {
+	root, _ := fixture(t)
+	bare := filepath.Join(t.TempDir(), "bare.git")
+	git(t, root, "clone", "--bare", root, bare)
+	git(t, bare, "config", "extensions.worktreeConfig", "true")
+	path := filepath.Join(t.TempDir(), "linked")
+	git(t, bare, "worktree", "add", "--detach", path, "HEAD")
+	admin := filepath.Join(bare, "worktrees", "linked")
+	repo := open(t, bare, kwtPolicy())
+	require.NoError(t, repo.WithLock(t.Context(), func(scope *worktree.Scope) error {
+		state, err := scope.InspectRegistration(t.Context(), path)
+		require.NoError(t, err)
+		require.False(t, state.Live)
+		removed, err := scope.PruneRegistration(t.Context(), path)
+		require.Error(t, err)
+		require.False(t, removed)
+		return nil
+	}))
+	require.DirExists(t, admin)
+	require.DirExists(t, path)
+}
