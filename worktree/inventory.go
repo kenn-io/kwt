@@ -13,7 +13,12 @@ import (
 	gitworktree "go.kenn.io/kit/git/worktree"
 )
 
-// GenerationStatus describes a durable generation without initializing it.
+// generationFileName is kwt's generation marker. Entry.Generation and
+// RemovalConditions.Generation describe only this file; other applications
+// select their own marker through IdentityPolicy.
+const generationFileName = "kwt-generation"
+
+// GenerationStatus describes a durable kwt generation without initializing it.
 type GenerationStatus string
 
 const (
@@ -164,7 +169,7 @@ func (s *Scope) inspect(ctx context.Context, expire bool) (Inventory, error) {
 }
 
 func inspectGeneration(dir string) (string, GenerationStatus) {
-	data, err := fslink.ReadFile(filepath.Join(dir, "kwt-generation"))
+	data, err := fslink.ReadFile(filepath.Join(dir, generationFileName))
 	if os.IsNotExist(err) {
 		return "", GenerationMissing
 	}

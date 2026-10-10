@@ -126,7 +126,7 @@ func (s *Scope) ReadIdentity(ctx context.Context, path, fileName string) (string
 		return "", err
 	}
 	value := strings.TrimSpace(string(data))
-	if fileName == "kwt-generation" {
+	if fileName == generationFileName {
 		if err := ValidateWorktreeGeneration(value); err != nil {
 			return "", err
 		}

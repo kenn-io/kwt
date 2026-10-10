@@ -32,6 +32,8 @@ func (e *ConditionError) Error() string {
 // supplies repository identity comparison because application identity rules
 // need not match Git clone-URL normalization. Empty fields impose no condition;
 // callers that require generation fencing must supply a validated Generation.
+// Generation compares kwt's generation marker; select another application's
+// marker with RemovalRequest.Identity and MatchingIdentity instead.
 type RemovalConditions struct {
 	ExpectedGitDir, Generation, Head, RepositoryIdentity string
 	Branch, UpstreamRepository, UpstreamBranch           string
