@@ -477,3 +477,37 @@ func TestWarmClaimDeclinesWhenCheckoutHooksMayRun(t *testing.T) {
 		})
 	}
 }
+
+// Preparation unlocks a spare before publishing it, so a lock on a ready spare
+// belongs to someone else. A claim must decline before checkout mutates it.
+func TestWarmClaimDeclinesLockedReadySpare(t *testing.T) {
+	for _, mode := range []managed.CheckoutMode{managed.CheckoutDetached, managed.CheckoutExistingBranch, managed.CheckoutNewBranch} {
+		t.Run(fmt.Sprintf("mode=%d", mode), func(t *testing.T) {
+			root, _ := fixture(t)
+			git(t, root, "branch", "existing")
+			git(t, root, "-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "--allow-empty", "-m", "newer")
+			repo := openHookless(t, root, kwtPolicy())
+			req := warmRequest(t)
+			req.Revision = "HEAD~1"
+			require.NoError(t, repo.PrepareWarm(t.Context(), req))
+			git(t, root, "worktree", "lock", "--reason", "another tool", req.Path)
+			head := git(t, req.Path, "rev-parse", "HEAD")
+			opts := managed.CreateWorktreeOptions{Path: filepath.Join(t.TempDir(), "workspace"), Mode: mode}
+			switch mode {
+			case managed.CheckoutDetached:
+				opts.BaseRef = "HEAD"
+			case managed.CheckoutExistingBranch:
+				opts.Branch = "existing"
+			case managed.CheckoutNewBranch:
+				opts.Branch, opts.BaseRef = "claimed", "HEAD"
+			}
+
+			_, claimed, err := repo.ClaimWarm(t.Context(), worktree.WarmClaimRequest{Warm: req, Create: worktree.CreateRequest{Git: opts}})
+
+			require.NoError(t, err)
+			require.False(t, claimed)
+			require.Equal(t, head, git(t, req.Path, "rev-parse", "HEAD"))
+			require.Equal(t, "", git(t, req.Path, "branch", "--show-current"))
+		})
+	}
+}

@@ -300,6 +300,13 @@ func (s *Scope) ClaimWarm(ctx context.Context, req WarmClaimRequest) (CreateResu
 	if err != nil || state != "ready" {
 		return CreateResult{}, false, err
 	}
+	// Preparation unlocks a spare before publishing it, so any native lock on a
+	// ready spare belongs to someone else; leave it untouched.
+	if _, err := os.Lstat(filepath.Join(metadata, "locked")); err == nil {
+		return CreateResult{}, false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return CreateResult{}, false, err
+	}
 	dirty, err := s.repo.run(ctx, req.Warm.Path, "status", "--porcelain", "--untracked-files=all", "--ignored")
 	if err != nil || strings.TrimSpace(string(dirty)) != "" {
 		return CreateResult{}, false, err
