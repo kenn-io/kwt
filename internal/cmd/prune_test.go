@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -21,6 +23,7 @@ import (
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 func TestPruneRequiresPolicy(t *testing.T) {
@@ -276,7 +279,7 @@ func TestPruneExpiredDryRunReportsDirtyWorktree(t *testing.T) {
 	worktreePath := filepath.Join(t.TempDir(), "dirty-expired")
 	runTUITestGit(t, repoPath, "branch", "feature/dirty-expired")
 	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/dirty-expired")
-	generation, err := git.New(repoPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repoPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, "dirty.txt"), []byte("dirty\n"), 0o644))
 	registerExpiredWorktree(t, worktreePath, generation)
@@ -304,7 +307,7 @@ func TestPruneExpiredRejectsMismatchedWorktreeBacklink(t *testing.T) {
 	runTUITestGit(
 		t, repositoryRoot, "worktree", "add", "-b", "expired-second", secondPath,
 	)
-	generation, err := git.New(repositoryRoot).WorktreeGeneration(firstPath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryRoot)).EnsureIdentity(t.Context(), firstPath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	registerExpiredWorktree(t, firstPath, generation)
 	secondGitDir := strings.TrimSpace(
@@ -337,18 +340,19 @@ func TestPruneExpiredCarriesVerifiedGitDirIntoValidation(t *testing.T) {
 		t, repositoryRoot, "worktree", "add", "-b", "expired-verified-backlink",
 		worktreePath,
 	)
-	generation, err := git.New(repositoryRoot).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryRoot)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	registerExpiredWorktree(t, worktreePath, generation)
 	expectedGitDir := strings.TrimSpace(
 		runTUITestGitOutput(t, worktreePath, "rev-parse", "--absolute-git-dir"),
 	)
-	var captured git.WorktreeRemovalConditions
+	var captured shared.RemovalConditions
 	validatePruneExpiredWorktree = func(
-		_ *git.Git, _ string, conditions git.WorktreeRemovalConditions,
+		ctx context.Context,
+		_ *git.Git, _ string, conditions shared.RemovalConditions,
 	) error {
 		captured = conditions
-		return &git.ConditionError{Reason: git.ReasonLocked, Path: worktreePath}
+		return &shared.ConditionError{Reason: shared.ReasonLocked, Path: worktreePath}
 	}
 	pruneExpired = true
 	pruneDryRun = true
@@ -369,7 +373,7 @@ func TestPruneExpiredDryRunReportsLockedWorktree(t *testing.T) {
 	worktreePath := filepath.Join(t.TempDir(), "locked-expired")
 	runTUITestGit(t, repoPath, "branch", "feature/locked-expired")
 	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/locked-expired")
-	generation, err := git.New(repoPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repoPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	registerExpiredWorktree(t, worktreePath, generation)
 	runTUITestGit(t, repoPath, "worktree", "lock", "--reason", "maintenance", worktreePath)
@@ -394,7 +398,7 @@ func TestPruneExpiredDryRunRevalidatesMainWorktree(t *testing.T) {
 	resetPruneCommandFlags(t)
 	repoPath := newTUITestRepo(t)
 	initCommandTestConfig(t, t.TempDir())
-	generation, err := git.New(repoPath).WorktreeGeneration(repoPath)
+	generation, err := openSharedWorktrees(t, git.New(repoPath)).EnsureIdentity(t.Context(), repoPath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	registerExpiredWorktree(t, repoPath, generation)
 	pruneExpired = true
@@ -421,7 +425,7 @@ func TestPruneExpiredRemovesWorktreeWithIgnoredArtifact(t *testing.T) {
 	worktreePath := filepath.Join(t.TempDir(), "ignored-expired")
 	runTUITestGit(t, repoPath, "branch", "feature/ignored-expired")
 	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/ignored-expired")
-	generation, err := git.New(repoPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repoPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(
 		filepath.Join(repoPath, ".git", "info", "exclude"),
@@ -451,13 +455,13 @@ func TestPruneExpiredPreservesReplacementGeneration(t *testing.T) {
 	worktreePath := filepath.Join(t.TempDir(), "expired-replacement")
 	runTUITestGit(t, repoPath, "branch", "feature/expired-original")
 	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/expired-original")
-	originalGeneration, err := git.New(repoPath).WorktreeGeneration(worktreePath)
+	originalGeneration, err := openSharedWorktrees(t, git.New(repoPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	registerExpiredWorktree(t, worktreePath, originalGeneration)
 	runTUITestGit(t, repoPath, "worktree", "remove", "--force", worktreePath)
 	runTUITestGit(t, repoPath, "branch", "feature/expired-replacement")
 	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/expired-replacement")
-	_, err = git.New(repoPath).WorktreeGeneration(worktreePath)
+	_, err = openSharedWorktrees(t, git.New(repoPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	pruneExpired = true
 	pruneForce = true
@@ -482,13 +486,14 @@ func TestPruneExpiredPreservesWorktreeWhenExpirationChangesAfterInspection(t *te
 	worktreePath := filepath.Join(t.TempDir(), "expiration-extended")
 	runTUITestGit(t, repoPath, "branch", "feature/expiration-extended")
 	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/expiration-extended")
-	generation, err := git.New(repoPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repoPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	registerExpiredWorktree(t, worktreePath, generation)
 	pruneExpired = true
 	pruneForce = true
 	validatePruneExpiredWorktree = func(
-		g *git.Git, path string, conditions git.WorktreeRemovalConditions,
+		ctx context.Context,
+		g *git.Git, path string, conditions shared.RemovalConditions,
 	) error {
 		reg, registryErr := registry.New()
 		require.NoError(t, registryErr)
@@ -497,7 +502,7 @@ func TestPruneExpiredPreservesWorktreeWhenExpirationChangesAfterInspection(t *te
 		future := time.Now().Add(time.Hour)
 		entry.ExpiresAt = &future
 		require.NoError(t, reg.Register(entry))
-		return g.ValidateWorktreeRemoval(path, conditions)
+		return inspectPruneRemoval(ctx, g, path, conditions)
 	}
 	cmd, stdout, _ := fleetTestCommand()
 
@@ -516,7 +521,7 @@ func TestPruneExpiredRemovesMatchingGenerationAndPublishesOnce(t *testing.T) {
 	worktreePath := filepath.Join(t.TempDir(), "expired-matching")
 	runTUITestGit(t, repoPath, "branch", "feature/expired-matching")
 	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/expired-matching")
-	generation, err := git.New(repoPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repoPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	registerExpiredWorktree(t, worktreePath, generation)
 	pruneExpired = true
@@ -692,4 +697,14 @@ func registerExpiredWorktree(t *testing.T, path string, generation string) {
 		Repository: "repo", Branch: "expired", Path: path,
 		ExpiresAt: &expiredAt, Generation: generation,
 	}))
+}
+
+// A candidate whose registration disappears before removal has a different
+// generation from the one selected, as kwt reported before the shared library.
+func TestPruneOutcomeReportsVanishedCandidateAsGenerationChange(t *testing.T) {
+	outcome := pruneOutcomeForError("/repo/feature", "feature", fmt.Errorf("inspect removal: %w", shared.ErrWorktreeNotFound))
+
+	require.Equal(t, prunepolicy.GenerationChanged, outcome.Reason)
+	require.Equal(t, "/repo/feature", outcome.Path)
+	require.Equal(t, "feature", outcome.Branch)
 }

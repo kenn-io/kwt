@@ -20,6 +20,7 @@ import (
 	internalworktree "go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 const maxDashboardRepositoryScans = 8
@@ -321,7 +322,12 @@ func (s *currentSource) loadRepository(
 
 	protectedNames := credentials.ProtectedNames(resolved.Config)
 	g := git.NewForInventory(ctx, workingDirectory, protectedNames)
-	worktrees, listErr := g.ListWorktrees()
+	repo, err := g.WorktreeRepository(ctx, nil)
+	if err != nil {
+		return Result{}, err
+	}
+	listed, listErr := repo.List(ctx, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
+	worktrees := models.WorktreeModels(listed)
 	if listErr != nil {
 		return Result{}, listErr
 	}
@@ -398,7 +404,7 @@ func (s *currentSource) loadDashboard(
 	}
 	for _, result := range projectResults {
 		if result.err != nil {
-			if git.IsIncompleteInventory(result.err) {
+			if shared.IsIncompleteInventory(result.err) {
 				return nil, nil, result.err
 			}
 			continue
@@ -418,7 +424,7 @@ func (s *currentSource) loadDashboard(
 			if errors.Is(loadErr, context.Canceled) || errors.Is(loadErr, context.DeadlineExceeded) {
 				return nil, nil, loadErr
 			}
-			if git.IsIncompleteInventory(loadErr) {
+			if shared.IsIncompleteInventory(loadErr) {
 				return nil, nil, loadErr
 			}
 		}
@@ -475,7 +481,12 @@ func entriesForRepository(
 		return nil, nil
 	}
 	g := git.NewForInventory(ctx, path, protectedNames)
-	worktrees, err := g.ListWorktrees()
+	repo, err := g.WorktreeRepository(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	listed, err := repo.List(ctx, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
+	worktrees := models.WorktreeModels(listed)
 	if err != nil {
 		return nil, err
 	}

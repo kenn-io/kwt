@@ -31,7 +31,7 @@ func TestGenerateWorktreePathEncodesWindowsInvalidAuthorityCharacters(t *testing
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			baseDir := t.TempDir()
-			manager := New(&mockGit{repoURL: tt.remote}, &models.Config{
+			manager := newMockManager(&mockGit{repoURL: tt.remote}, &models.Config{
 				Worktree: models.WorktreeConfig{BaseDir: baseDir},
 				Naming:   models.NamingConfig{Template: config.DefaultNamingTemplate},
 			})

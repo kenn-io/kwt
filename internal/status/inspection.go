@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/service"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 type InspectionRequest struct {
@@ -57,11 +58,11 @@ func NewInspectionService(options InspectionServiceOptions) Inspector {
 			path string,
 			protectedNames []string,
 		) (string, error) {
-			return git.NewForInventory(
-				ctx,
-				path,
-				protectedNames,
-			).ReadWorktreeGeneration(path)
+			repo, err := git.NewForInventory(ctx, path, protectedNames).WorktreeRepository(ctx, nil)
+			if err != nil {
+				return "", err
+			}
+			return repo.ReadIdentity(ctx, path, "kwt-generation")
 		},
 		collectChanges: CollectChanges,
 		gitBudget:      collectChangesTimeout,
@@ -77,7 +78,7 @@ func (s *inspectionService) Inspect(
 		return InspectionResult{}, inspectionInvalid("worktree path must be absolute")
 	}
 	if request.ExpectedGeneration != "" {
-		if err := git.ValidateWorktreeGeneration(request.ExpectedGeneration); err != nil {
+		if err := shared.ValidateWorktreeGeneration(request.ExpectedGeneration); err != nil {
 			return InspectionResult{}, inspectionInvalid(
 				"expected generation must be a 32-character hexadecimal value",
 			)
@@ -139,7 +140,7 @@ func (s *inspectionService) Inspect(
 	entry := matches[0]
 	if entry.Path == "" ||
 		!validInspectionRepositoryIdentity(entry.Repository.FullPath) ||
-		git.ValidateWorktreeGeneration(entry.Generation) != nil {
+		shared.ValidateWorktreeGeneration(entry.Generation) != nil {
 		return InspectionResult{}, inspectionFailure(nil)
 	}
 	if request.ExpectedRepository != "" &&
@@ -290,9 +291,9 @@ func inspectionExpiredContext(
 }
 
 func inspectionRegistrationDidChange(err error) bool {
-	return errors.Is(err, git.ErrWorktreeNotFound) ||
-		errors.Is(err, git.ErrWorktreeRepositoryMismatch) ||
-		errors.Is(err, git.ErrWorktreeGenerationNotFound)
+	return errors.Is(err, shared.ErrWorktreeNotFound) ||
+		errors.Is(err, shared.ErrWorktreeRepositoryMismatch) ||
+		errors.Is(err, shared.ErrWorktreeGenerationNotFound)
 }
 
 func validInspectionRepositoryIdentity(identity string) bool {

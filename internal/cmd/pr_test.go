@@ -32,6 +32,7 @@ import (
 	urlutil "go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 type fakePRService struct {
@@ -1426,7 +1427,7 @@ func TestRunPRAttachClassifiesDisappearanceWhileWaitingAsRegistrationChanged(t *
 		if disappeared {
 			return "", fmt.Errorf(
 				"read worktree identity: %w",
-				gitadapter.ErrWorktreeNotFound,
+				shared.ErrWorktreeNotFound,
 			)
 		}
 		return workspace.Generation, nil
@@ -1494,7 +1495,7 @@ func TestRunPRAttachClassifiesDeletedWorkspaceAsRegistrationChanged(t *testing.T
 	workspacePath := filepath.Join(t.TempDir(), branch)
 	runPRInspectionGit(t, repo, "branch", branch)
 	runPRInspectionGit(t, repo, "worktree", "add", workspacePath, branch)
-	generation, err := gitadapter.New(repo).WorktreeGeneration(workspacePath)
+	generation, err := openSharedWorktrees(t, gitadapter.New(repo)).EnsureIdentity(t.Context(), workspacePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	project := pullrequest.Project{
 		Identity: "github.com/acme/widget",
@@ -1570,7 +1571,7 @@ func TestRunPRAttachClassifiesDeletedProjectCheckoutAsChanged(t *testing.T) {
 	workspacePath := filepath.Join(t.TempDir(), branch)
 	runPRInspectionGit(t, repo, "branch", branch)
 	runPRInspectionGit(t, repo, "worktree", "add", workspacePath, branch)
-	generation, err := gitadapter.New(repo).WorktreeGeneration(workspacePath)
+	generation, err := openSharedWorktrees(t, gitadapter.New(repo)).EnsureIdentity(t.Context(), workspacePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	project := pullrequest.Project{
 		Identity: "github.com/acme/widget",
@@ -1646,7 +1647,7 @@ func TestRunPRAttachClassifiesReplacedProjectRegistrationAsChanged(t *testing.T)
 	workspacePath := filepath.Join(t.TempDir(), branch)
 	runPRInspectionGit(t, repo, "branch", branch)
 	runPRInspectionGit(t, repo, "worktree", "add", workspacePath, branch)
-	generation, err := gitadapter.New(repo).WorktreeGeneration(workspacePath)
+	generation, err := openSharedWorktrees(t, gitadapter.New(repo)).EnsureIdentity(t.Context(), workspacePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	project := pullrequest.Project{
 		Identity: "github.com/acme/widget",
@@ -1730,7 +1731,7 @@ func TestRunPRAttachHoldsWorktreeGenerationThroughSessionEstablishment(t *testin
 	runPRInspectionGit(t, repo, "branch", branch)
 	runPRInspectionGit(t, repo, "worktree", "add", workspacePath, branch)
 	g := gitadapter.New(repo)
-	generation, err := g.WorktreeGeneration(workspacePath)
+	generation, err := openSharedWorktrees(t, g).EnsureIdentity(t.Context(), workspacePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	project := pullrequest.Project{
 		Identity: "github.com/acme/widget",
@@ -1812,13 +1813,10 @@ func TestRunPRAttachHoldsWorktreeGenerationThroughSessionEstablishment(t *testin
 	mutationEntered := make(chan struct{})
 	mutationDone := make(chan error, 1)
 	go func() {
-		mutationDone <- gitadapter.New(repo).WithWorktreeGeneration(
-			workspacePath,
-			generation,
-			func() error {
-				close(mutationEntered)
-				return nil
-			},
+		mutationDone <- openSharedWorktrees(t, gitadapter.New(repo)).WithIdentity(t.Context(), workspacePath, shared.IdentityPolicy{FileName: "kwt-generation", Value: generation}, func(*shared.Scope) error {
+			close(mutationEntered)
+			return nil
+		},
 		)
 	}()
 	mutationEnteredBeforeEstablishment := false
@@ -1878,7 +1876,7 @@ func TestImportedWorkspaceProvenanceEvaluatesEachCandidateProject(t *testing.T) 
 		assert.Equal(t, workspacePath, gotWorkspacePath)
 		inspectedProjects[projectPath] = true
 		if projectPath == stale.Project.Path {
-			return "", fmt.Errorf("inspect stale candidate: %w", gitadapter.ErrWorktreeNotFound)
+			return "", fmt.Errorf("inspect stale candidate: %w", shared.ErrWorktreeNotFound)
 		}
 		return currentGeneration, nil
 	}
@@ -1929,7 +1927,7 @@ func TestImportedWorkspaceProvenanceInitializesOwnedLegacyGeneration(
 	worktreePath := filepath.Join(t.TempDir(), branch)
 	runPRInspectionGit(t, repo, "branch", branch)
 	runPRInspectionGit(t, repo, "worktree", "add", worktreePath, branch)
-	_, err := gitadapter.New(repo).ReadWorktreeGeneration(worktreePath)
+	_, err := openSharedWorktrees(t, gitadapter.New(repo)).ReadIdentity(t.Context(), worktreePath, "kwt-generation")
 	require.ErrorIs(t, err, os.ErrNotExist)
 
 	repository := "github.com/acme/widget"
@@ -1978,12 +1976,10 @@ func TestImportedWorkspaceProvenanceInitializesOwnedLegacyGeneration(
 
 	require.NoError(t, err)
 	assert.Equal(t, record, verified.record)
-	require.NoError(t, gitadapter.ValidateWorktreeGeneration(
+	require.NoError(t, shared.ValidateWorktreeGeneration(
 		verified.liveGeneration,
 	))
-	persistedGeneration, err := gitadapter.New(repo).ReadWorktreeGeneration(
-		worktreePath,
-	)
+	persistedGeneration, err := openSharedWorktrees(t, gitadapter.New(repo)).ReadIdentity(t.Context(), worktreePath, "kwt-generation")
 	require.NoError(t, err)
 	assert.Equal(t, verified.liveGeneration, persistedGeneration)
 }
@@ -2001,9 +1997,7 @@ func testImportedWorkspaceProvenanceDiscardsAnotherRepositoryOwner(
 	runPRInspectionGit(
 		t, staleRepo, "worktree", "add", worktreePath, "stale-owner",
 	)
-	staleGeneration, err := gitadapter.New(staleRepo).WorktreeGeneration(
-		worktreePath,
-	)
+	staleGeneration, err := openSharedWorktrees(t, gitadapter.New(staleRepo)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	runPRInspectionGit(
 		t, staleRepo, "worktree", "remove", "--force", worktreePath,
@@ -2012,9 +2006,7 @@ func testImportedWorkspaceProvenanceDiscardsAnotherRepositoryOwner(
 	runPRInspectionGit(
 		t, currentRepo, "worktree", "add", worktreePath, "current-owner",
 	)
-	currentGeneration, err := gitadapter.New(currentRepo).WorktreeGeneration(
-		worktreePath,
-	)
+	currentGeneration, err := openSharedWorktrees(t, gitadapter.New(currentRepo)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	require.NotEqual(t, staleGeneration, currentGeneration)
 	staleRecordGeneration := staleGeneration

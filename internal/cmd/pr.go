@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 type prService interface {
@@ -60,7 +61,11 @@ var (
 	ensurePRWorkspaceSession         = defaultStartPRWorkspaceSession
 	attachExistingPRWorkspaceSession = defaultAttachExistingPRWorkspaceSession
 	readPRWorkspaceGeneration        = func(projectPath, path string) (string, error) {
-		return gitadapter.New(projectPath).ReadWorktreeGeneration(path)
+		repo, err := gitadapter.New(projectPath).WorktreeRepository(context.Background(), nil)
+		if err != nil {
+			return "", err
+		}
+		return repo.ReadIdentity(context.Background(), path, "kwt-generation")
 	}
 	withPRWorkspaceGeneration     = defaultWithPRWorkspaceGeneration
 	errImportedPRWorkspaceChanged = errors.New(
@@ -449,9 +454,9 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 			currentVerified.liveGeneration,
 			establish,
 		)
-		var conditionErr *gitadapter.ConditionError
+		var conditionErr *shared.ConditionError
 		if errors.As(currentErr, &conditionErr) &&
-			conditionErr.Reason == gitadapter.ReasonGenerationChanged {
+			conditionErr.Reason == shared.ReasonGenerationChanged {
 			return service.NewError(
 				service.RegistrationChanged,
 				"the imported workspace changed before attachment",
@@ -491,11 +496,11 @@ func defaultWithPRWorkspaceGeneration(
 	generation string,
 	establish func() error,
 ) error {
-	return gitadapter.NewWithContext(ctx, projectPath).WithWorktreeGeneration(
-		workspacePath,
-		generation,
-		establish,
-	)
+	repo, err := gitadapter.New(projectPath).WorktreeRepository(ctx, nil)
+	if err != nil {
+		return err
+	}
+	return repo.WithIdentity(ctx, workspacePath, shared.IdentityPolicy{FileName: "kwt-generation", Value: generation}, func(*shared.Scope) error { return establish() })
 }
 
 func guardedPRAttachError(err error, guarded bool) error {
@@ -568,7 +573,7 @@ func validateExpectedPRAttachFlags(cmd *cobra.Command) (bool, error) {
 			false, nil, nil,
 		)
 	}
-	if err := gitadapter.ValidateWorktreeGeneration(prAttachExpectedGeneration); err != nil {
+	if err := shared.ValidateWorktreeGeneration(prAttachExpectedGeneration); err != nil {
 		return false, service.NewError(
 			service.InvalidRequest,
 			"expected worktree generation is invalid",
@@ -666,7 +671,7 @@ func importedWorkspaceProvenance(
 		if observation.err != nil {
 			if record.Workspace.Generation == "" && errors.Is(
 				observation.err,
-				gitadapter.ErrWorktreeGenerationNotFound,
+				shared.ErrWorktreeGenerationNotFound,
 			) {
 				// Ownership was proven before the missing marker was reported.
 				// The project inventory below initializes the generation under
@@ -674,10 +679,10 @@ func importedWorkspaceProvenance(
 				matches = append(matches, record)
 				continue
 			}
-			if errors.Is(observation.err, gitadapter.ErrWorktreeNotFound) ||
+			if errors.Is(observation.err, shared.ErrWorktreeNotFound) ||
 				errors.Is(
 					observation.err,
-					gitadapter.ErrWorktreeRepositoryMismatch,
+					shared.ErrWorktreeRepositoryMismatch,
 				) ||
 				prProjectCheckoutMissing(record.Project.Path) {
 				continue
@@ -782,7 +787,7 @@ func rejectProtectedWorkspaceOpen(
 		}
 	}
 	if liveGeneration != "" {
-		if err := gitadapter.ValidateWorktreeGeneration(liveGeneration); err != nil {
+		if err := shared.ValidateWorktreeGeneration(liveGeneration); err != nil {
 			return fmt.Errorf(
 				"failed to verify live generation for pull-request workspace: %w",
 				err,

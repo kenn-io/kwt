@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/kwt/internal/tmux"
 	internalworktree "go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/service"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 type recordingRemovalSessionGuard struct {
@@ -89,7 +90,7 @@ func (l recordingRemovalSessionLease) Resume() error {
 
 func TestRemovalServiceRemovesWorktreeAndRegistryRecord(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "remove-me")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	home := t.TempDir()
 	reg, err := registry.NewAt(home)
@@ -122,7 +123,7 @@ func TestRemovalServiceRemovesWorktreeAndRegistryRecord(t *testing.T) {
 
 func TestRemovalServiceUsesConfiguredProcessGuard(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "process-guard")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	guardCalled := false
 
@@ -188,7 +189,7 @@ func TestRemovalServiceRejectsChangedCheckout(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repositoryPath, worktreePath := removalRepository(t, "confirmed")
-			generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+			generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 			require.NoError(t, err)
 			head, err := git.New(worktreePath).RunCommand("rev-parse", "HEAD")
 			require.NoError(t, err)
@@ -216,7 +217,7 @@ func TestRemovalServiceRejectsChangedCheckout(t *testing.T) {
 
 func TestRemovalServiceTerminatesConfirmedSessionBeforeRemovingWorktree(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "guarded-remove")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	home := t.TempDir()
 	registerRemovalRepository(t, home, repositoryPath)
@@ -254,7 +255,7 @@ func TestRemovalServiceTerminatesConfirmedSessionBeforeRemovingWorktree(t *testi
 
 func TestRemovalServiceReloadsConfiguredProtectedNamesPerRequest(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "configured-token")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	home := t.TempDir()
 	guard := &recordingRemovalSessionGuard{}
@@ -303,7 +304,7 @@ func TestRemovalServiceReloadsConfiguredProtectedNamesPerRequest(t *testing.T) {
 
 func TestGuardedRemovalSupportsUnregisteredRepository(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "unregistered-guarded")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	home := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), nil, 0o600))
@@ -328,7 +329,7 @@ func TestGuardedRemovalSupportsUnregisteredRepository(t *testing.T) {
 
 func TestRemovalServicePreservesWorktreeWhenSessionConditionChanges(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "guarded-conflict")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	home := t.TempDir()
 	registerRemovalRepository(t, home, repositoryPath)
@@ -355,11 +356,11 @@ func TestRemovalServicePreservesWorktreeWhenSessionConditionChanges(t *testing.T
 
 func TestRemovalServiceRejectsStaleSessionNameAfterBranchSwitch(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "branch-a")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	staleSessionName := removalSessionName(t, worktreePath, "branch-a")
 	runRemovalGit(t, worktreePath, "switch", "-c", "branch-b")
-	currentGeneration, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	currentGeneration, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	require.Equal(t, generation, currentGeneration, "an in-place branch switch keeps the worktree generation")
 	home := t.TempDir()
@@ -388,7 +389,7 @@ func TestRemovalServiceRejectsStaleSessionNameAfterBranchSwitch(t *testing.T) {
 
 func TestRemovalServiceRejectsOldBranchSessionForCurrentWorktree(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "old-branch")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	oldSessionName := removalSessionName(t, worktreePath, "old-branch")
 	runRemovalGit(t, worktreePath, "switch", "-c", "new-branch")
@@ -430,7 +431,7 @@ func TestRemovalServiceRejectsOldBranchSessionForCurrentWorktree(t *testing.T) {
 func TestRemovalServiceRejectsStaleSessionSocket(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "socket-changed")
 	runRemovalGit(t, repositoryPath, "remote", "add", "origin", "https://github.com/acme/widget.git")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	home := t.TempDir()
 	registerRemovalRepository(t, home, repositoryPath)
@@ -478,7 +479,7 @@ func TestRemovalServiceRejectsStaleSessionSocket(t *testing.T) {
 
 func TestRemovalServiceAcceptsDirectSessionOnCanonicalSocketEndpoint(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "custom-endpoint")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	home := t.TempDir()
 	registerRemovalRepository(t, home, repositoryPath)
@@ -515,7 +516,7 @@ func TestRemovalServiceAcceptsDirectSessionOnCanonicalSocketEndpoint(t *testing.
 
 func TestRemovalServiceRejectsDirectSessionSocketDirectoryOutsideRequest(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "wrong-socket-directory")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	home := t.TempDir()
 	registerRemovalRepository(t, home, repositoryPath)
@@ -547,7 +548,7 @@ func TestRemovalServiceRejectsDirectSessionSocketDirectoryOutsideRequest(t *test
 
 func TestRemovalServiceUsesRequestSocketDirectoryWhenConditionOmitsIt(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "implicit-socket-directory")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	home := t.TempDir()
 	registerRemovalRepository(t, home, repositoryPath)
@@ -577,7 +578,7 @@ func TestRemovalServiceUsesRequestSocketDirectoryWhenConditionOmitsIt(t *testing
 
 func TestRemovalServiceRejectsDirectSessionOnArbitraryNamedSocket(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "arbitrary-endpoint")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	home := t.TempDir()
 	registerRemovalRepository(t, home, repositoryPath)
@@ -606,11 +607,11 @@ func TestRemovalServiceRejectsDirectSessionOnArbitraryNamedSocket(t *testing.T) 
 
 func TestRemovalServiceCarriesDurableGenerationAfterWorktreeMove(t *testing.T) {
 	repositoryPath, originalPath := removalRepository(t, "moved-worktree")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(originalPath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), originalPath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	movedPath := originalPath + "-new-location"
 	runRemovalGit(t, repositoryPath, "worktree", "move", originalPath, movedPath)
-	movedGeneration, err := git.New(repositoryPath).WorktreeGeneration(movedPath)
+	movedGeneration, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), movedPath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	require.Equal(t, generation, movedGeneration)
 
@@ -643,7 +644,7 @@ func TestRemovalServiceCarriesDurableGenerationAfterWorktreeMove(t *testing.T) {
 func TestRemovalServiceAcceptsCurrentProtectedSessionEndpoint(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "protected-session")
 	runRemovalGit(t, repositoryPath, "remote", "add", "origin", "https://github.com/acme/widget.git")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	home := t.TempDir()
 	registerRemovalRepository(t, home, repositoryPath)
@@ -694,7 +695,7 @@ func TestRemovalServiceAcceptsCurrentProtectedSessionEndpoint(t *testing.T) {
 func TestRemovalServiceFindsProtectedProvenanceAfterWorktreeMove(t *testing.T) {
 	repositoryPath, originalPath := removalRepository(t, "moved-protected")
 	runRemovalGit(t, repositoryPath, "remote", "add", "origin", "https://github.com/acme/widget.git")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(originalPath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), originalPath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	home := t.TempDir()
 	registerRemovalRepository(t, home, repositoryPath)
@@ -746,7 +747,7 @@ func TestRemovalServiceFindsProtectedProvenanceAfterWorktreeMove(t *testing.T) {
 
 func TestRemovalServicePreservesConfirmedSessionWhenDirtyWorktreeCannotBeRemoved(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "guarded-dirty")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(
 		filepath.Join(worktreePath, "untracked.txt"),
@@ -777,7 +778,7 @@ func TestRemovalServicePreservesConfirmedSessionWhenDirtyWorktreeCannotBeRemoved
 
 func TestRemovalServicePreservesNativeDirtyErrorWithoutSessionGuard(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "direct-dirty")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(
 		filepath.Join(worktreePath, "untracked.txt"),
@@ -785,7 +786,8 @@ func TestRemovalServicePreservesNativeDirtyErrorWithoutSessionGuard(t *testing.T
 		0o644,
 	))
 
-	result, err := newFixtureRemovalService(RemovalServiceOptions{Home: t.TempDir()}).Remove(
+	processChecked := false
+	result, err := newFixtureRemovalService(RemovalServiceOptions{Home: t.TempDir(), ProcessGuard: func(context.Context, string) error { processChecked = true; return nil }}).Remove(
 		context.Background(),
 		RemovalRequest{
 			RepositoryPath: repositoryPath,
@@ -795,13 +797,14 @@ func TestRemovalServicePreservesNativeDirtyErrorWithoutSessionGuard(t *testing.T
 
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.RemovalFailed))
+	assert.True(t, processChecked, "native dirty refusal follows the process check")
 	assert.False(t, result.WorktreeRemoved)
 	assert.DirExists(t, worktreePath)
 }
 
 func TestRemovalServiceUsesClientExpansionForProjectFence(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "expanded-project")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	home := t.TempDir()
 	projectRoot := filepath.Dir(repositoryPath)
@@ -836,7 +839,7 @@ func TestRemovalServiceUsesClientExpansionForProjectFence(t *testing.T) {
 
 func TestRemovalServiceWaitsForProjectSessionStartupFence(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "guarded-race")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	home := t.TempDir()
 	registerRemovalRepository(t, home, repositoryPath)
@@ -914,7 +917,7 @@ func TestRemovalServicePreservesConfirmedSessionForInitializedSubmodule(t *testi
 		t, worktreePath, "-c", "protocol.file.allow=always",
 		"submodule", "update", "--init",
 	)
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	guard := &recordingRemovalSessionGuard{}
 	home := t.TempDir()
@@ -939,7 +942,7 @@ func TestRemovalServicePreservesConfirmedSessionForInitializedSubmodule(t *testi
 
 func TestRemovalServiceResumesSessionWhenCheckoutChangesDuringQuiesce(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "guarded-quiesce-race")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	home := t.TempDir()
 	registerRemovalRepository(t, home, repositoryPath)
@@ -969,7 +972,7 @@ func TestRemovalServiceResumesSessionWhenCheckoutChangesDuringQuiesce(t *testing
 
 func TestRemovalServiceRejectsActiveCreation(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "creating")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	home := t.TempDir()
 	reg, err := registry.NewAt(home)
@@ -1007,7 +1010,7 @@ func TestRemovalServiceRejectsActiveCreation(t *testing.T) {
 func TestRemovalServiceRejectsProcessWithWorkingDirectoryInsideWorktree(t *testing.T) {
 	useHostProcessTable(t)
 	repositoryPath, worktreePath := removalRepository(t, "process-cwd")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	workingDirectory := filepath.Join(worktreePath, "nested")
 	require.NoError(t, os.Mkdir(workingDirectory, 0o755))
@@ -1030,7 +1033,7 @@ func TestRemovalServiceRejectsProcessWithWorkingDirectoryInsideWorktree(t *testi
 
 func TestRemovalServiceForceRemovesWorktreeUsedAsProcessWorkingDirectory(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "force-process-cwd")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	command := startRemovalProcess(t, worktreePath)
 
@@ -1051,7 +1054,7 @@ func TestRemovalServiceForceRemovesWorktreeUsedAsProcessWorkingDirectory(t *test
 func TestRemovalServiceResumesGuardedSessionWhenProcessUsesWorktree(t *testing.T) {
 	useHostProcessTable(t)
 	repositoryPath, worktreePath := removalRepository(t, "guarded-process-cwd")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	home := t.TempDir()
 	registerRemovalRepository(t, home, repositoryPath)
@@ -1109,7 +1112,7 @@ func TestRemovalProcessHelper(t *testing.T) {
 
 func TestRemovalServiceIgnoresDaemonRepositoryRoutingEnvironment(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "routed-remove")
-	generation, err := git.New(repositoryPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repositoryPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	otherRepository, _ := removalRepository(t, "other-worktree")
 	t.Setenv("GIT_DIR", filepath.Join(otherRepository, ".git"))

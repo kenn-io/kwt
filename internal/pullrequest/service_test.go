@@ -648,47 +648,14 @@ func TestImportIsIdempotent(t *testing.T) {
 }
 
 func TestImportReassociatesAfterWorktreeRemovalPreservesBranch(t *testing.T) {
+	repositoryPath, backend, fixturePR := newRealBackendImport(t)
 	pr := testPR(43, false)
-	repositoryPath, backend := newBackendRepo(t)
-	service := newTestService(
-		&fakeProvider{prs: []PullRequest{pr}},
-		backend,
-		newMemoryStore(),
-	)
-	var preservedBranch string
-	originalCreate := createMergeRequestWorktree
-	createMergeRequestWorktree = func(
-		ctx context.Context,
-		opts managedworktree.MergeRequestWorktreeOptions,
-	) (managedworktree.CreateWorktreeResult, error) {
-		if opts.Branch == preservedBranch {
-			return managedworktree.CreateWorktreeResult{},
-				managedworktree.ErrBranchAlreadyExists
-		}
-		created, err := managedworktree.CreateWorktreeOnDisk(
-			ctx,
-			managedworktree.CreateWorktreeOptions{
-				ProjectRoot: opts.ProjectRoot,
-				Path:        opts.Path,
-				Branch:      opts.Branch,
-				BaseRef:     "HEAD",
-				Runner:      opts.Runner,
-			},
-		)
-		if err != nil {
-			return created, err
-		}
-		runGit(t, created.Path, "config", "branch."+opts.Branch+".remote", "origin")
-		runGit(t, created.Path, "config", "branch."+opts.Branch+".merge", "refs/heads/"+pr.Source.Name)
-		runGit(t, created.Path, "config", "branch."+opts.Branch+".pushRemote", "origin")
-		runGit(t, created.Path, "config", "push.default", "upstream")
-		return created, nil
-	}
-	t.Cleanup(func() { createMergeRequestWorktree = originalCreate })
+	pr.HeadSHA = fixturePR.HeadSHA
+	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, newMemoryStore())
 
 	first, err := service.Import(t.Context(), testProject(), "43")
 	require.NoError(t, err)
-	preservedBranch = first.Workspace.Branch
+	preservedBranch := first.Workspace.Branch
 	runGit(t, repositoryPath, "worktree", "remove", "--force", first.Workspace.Path)
 	assert.NoDirExists(t, first.Workspace.Path)
 	runGit(t, repositoryPath, "show-ref", "--verify", "refs/heads/"+preservedBranch)

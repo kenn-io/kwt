@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 var (
@@ -301,39 +302,11 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			launchRunner = newAddWorkspaceRunner(protectedNames)
 		}
 		err = guard.run(commandContext, func() error {
-			var mutationErr error
-			if remoteSource != "" {
-				if addExpires != "" || launch {
-					worktreePath, worktreeGeneration, mutationErr =
-						ctx.WorktreeManager.AddTrackingWithGeneration(
-							branch,
-							remoteSource,
-							path,
-						)
-				} else {
-					worktreePath, mutationErr = ctx.WorktreeManager.AddTracking(
-						branch,
-						remoteSource,
-						path,
-					)
-				}
-			} else {
-				if addExpires != "" || launch {
-					worktreePath, worktreeGeneration, mutationErr =
-						ctx.WorktreeManager.AddWithGeneration(
-							branch,
-							path,
-							addBranch,
-							worktree.AddOptions{},
-						)
-				} else {
-					worktreePath, mutationErr = ctx.WorktreeManager.Add(
-						branch,
-						path,
-						addBranch,
-					)
-				}
-			}
+			created, mutationErr := ctx.WorktreeManager.Create(commandContext, worktree.CreateOptions{
+				Branch: branch, Path: path, Source: remoteSource, NewBranch: addBranch,
+				RequireGeneration: addExpires != "" || launch,
+			})
+			worktreePath, worktreeGeneration = created.Path, created.IdentityValue
 			if mutationErr != nil {
 				return mutationErr
 			}
@@ -348,6 +321,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 				expiresAt = &t
 
 				if err := registerWorktreeExpiration(
+					commandContext,
 					ctx.Git,
 					reg,
 					worktreePath,
@@ -404,6 +378,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 }
 
 func registerWorktreeExpiration(
+	ctx context.Context,
 	g *git.Git,
 	reg *registry.Registry,
 	worktreePath string,
@@ -413,35 +388,36 @@ func registerWorktreeExpiration(
 ) error {
 	remote, _ := git.New(worktreePath).GetRepositoryURL()
 	repository, _ := url.CanonicalRepositoryIdentityFromRemote(remote)
-	return g.WithWorktreeGeneration(
-		worktreePath,
-		generation,
-		func() error {
-			updated, err := reg.SetExpirationIfGeneration(
-				worktreePath,
-				generation,
-				repository,
-				branch,
-				expiresAt,
-			)
-			if err != nil {
-				return err
-			}
-			if !updated {
-				if observed, ok := reg.Get(worktreePath); ok &&
-					observed.CreationToken != "" {
-					return fmt.Errorf(
-						"worktree creation in progress for %s",
-						worktreePath,
-					)
-				}
+	repo, err := g.WorktreeRepository(ctx, nil)
+	if err != nil {
+		return err
+	}
+	return repo.WithIdentity(ctx, worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Value: generation}, func(*shared.Scope) error {
+		updated, err := reg.SetExpirationIfGeneration(
+			worktreePath,
+			generation,
+			repository,
+			branch,
+			expiresAt,
+		)
+		if err != nil {
+			return err
+		}
+		if !updated {
+			if observed, ok := reg.Get(worktreePath); ok &&
+				observed.CreationToken != "" {
 				return fmt.Errorf(
-					"registry ownership changed for %s",
+					"worktree creation in progress for %s",
 					worktreePath,
 				)
 			}
-			return nil
-		},
+			return fmt.Errorf(
+				"registry ownership changed for %s",
+				worktreePath,
+			)
+		}
+		return nil
+	},
 	)
 }
 

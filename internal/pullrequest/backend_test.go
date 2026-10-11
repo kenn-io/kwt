@@ -16,6 +16,7 @@ import (
 	gitadapter "go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 func runGit(t *testing.T, dir string, args ...string) string {
@@ -124,49 +125,30 @@ func newTestPushRunner(t *testing.T) (gitcmd.Runner, string) {
 	return runner, filepath.Join(configDir, "global.gitconfig")
 }
 
-func TestGitBackendDelegatesPullRequestLifecycleToKit(t *testing.T) {
+func newRealBackendImport(t *testing.T) (string, *GitBackend, PullRequest) {
+	t.Helper()
 	repo, backend := newBackendRepo(t)
-	runGit(t, repo, "remote", "set-url", "origin",
-		"https://github.com/octocat/widget.git")
-	var got managedworktree.MergeRequestWorktreeOptions
-	original := createMergeRequestWorktree
-	createMergeRequestWorktree = func(
-		_ context.Context, opts managedworktree.MergeRequestWorktreeOptions,
-	) (managedworktree.CreateWorktreeResult, error) {
-		got = opts
-		configureTestPushTracking(
-			t, opts.Path, opts.Branch, "origin",
-			"https://github.com/acme/widget.git",
-		)
-		return managedworktree.CreateWorktreeResult{
-			Path: opts.Path, Branch: opts.Branch, BranchCreated: true,
-		}, nil
-	}
-	t.Cleanup(func() { createMergeRequestWorktree = original })
+	runGit(t, repo, "remote", "set-url", "origin", repo)
+	runGit(t, repo, "remote", "set-url", "--push", "origin", "https://github.com/acme/widget.git")
+	runGit(t, repo, "branch", "feature/widgets")
 	pr := testPR(17, false)
+	pr.HeadSHA = runGit(t, repo, "rev-parse", "HEAD")
+	return repo, backend, pr
+}
 
-	workspace, err := backend.ImportPullRequest(
-		context.Background(), pr, "pr-17-feature-widgets",
-	)
-
+func TestGitBackendImportsVerifiedHeadAndIdentity(t *testing.T) {
+	repo, backend, pr := newRealBackendImport(t)
+	workspace, err := backend.ImportPullRequest(t.Context(), pr, "pr-17-feature-widgets")
 	require.NoError(t, err)
-	resolvedRepo, resolveErr := filepath.EvalSymlinks(repo)
-	require.NoError(t, resolveErr)
-	assert.Equal(t, resolvedRepo, got.ProjectRoot)
-	assert.Equal(t, "pr-17-feature-widgets", got.Branch)
-	assert.Equal(t, 17, got.Number)
-	assert.Equal(t, pr.Source.Name, got.HeadBranch)
-	assert.Equal(t, pr.Source.Repository.CloneURL, got.HeadRepoCloneURL)
-	assert.Equal(t, pr.HeadSHA, got.ExpectedHeadSHA)
-	assert.Equal(t, "github", got.Platform)
-	assert.Equal(t, testProject().Identity, got.ProjectRepoIdentity)
-	assert.Equal(t, "KWT", got.HookEnvironmentPrefix)
-	assert.Contains(t, filepath.ToSlash(got.Path), "github.com/acme/widget/pr-17-feature-widgets")
-	assert.Equal(t, got.Path, workspace.Path)
+	assert.Contains(t, filepath.ToSlash(workspace.Path), "github.com/acme/widget/pr-17-feature-widgets")
 	assert.Equal(t, "pr-17-feature-widgets", workspace.Branch)
-	assert.NoError(t, gitadapter.ValidateWorktreeGeneration(workspace.Generation))
+	assert.Equal(t, pr.HeadSHA, runGit(t, workspace.Path, "rev-parse", "HEAD"))
+	assert.NoError(t, shared.ValidateWorktreeGeneration(workspace.Generation))
 	assert.NotEmpty(t, workspace.ID)
 	assert.NotEmpty(t, workspace.SessionName)
+	require.NoError(t, backend.Rollback(t.Context(), workspace))
+	assert.NoDirExists(t, workspace.Path)
+	assert.NotContains(t, runGit(t, repo, "for-each-ref", "--format=%(refname)"), "refs/heads/pr-17-feature-widgets")
 }
 
 func TestGitBackendImportedWorktreePreservesMergeConflictContents(t *testing.T) {
@@ -267,29 +249,9 @@ fi
 	t.Setenv("HOME", configDir)
 
 	repo, backend := newBackendRepo(t)
-	var credentialOutput []byte
-	var credentialErr error
-	original := createMergeRequestWorktree
-	createMergeRequestWorktree = func(
-		ctx context.Context, opts managedworktree.MergeRequestWorktreeOptions,
-	) (managedworktree.CreateWorktreeResult, error) {
-		assert.False(t, opts.Runner.NullGlobalConfig)
-		assert.False(t, opts.Runner.NoSystemConfig)
-		assert.True(t, opts.Runner.StripEnv)
-		assert.False(t, opts.Runner.TerminalPrompt)
-		credentialOutput, _, credentialErr = opts.Runner.Run(
-			ctx,
-			repo,
-			strings.NewReader("url=https://example.com/acme/widget.git\n\n"),
-			"credential", "fill",
-		)
-		return managedworktree.CreateWorktreeResult{}, errors.New("stop after credential lookup")
-	}
-	t.Cleanup(func() { createMergeRequestWorktree = original })
-
-	_, _ = backend.ImportPullRequest(
-		t.Context(), testPR(17, false), "pr-17-feature-widgets",
-	)
+	_, runner, err := backend.openWorktrees(t.Context())
+	require.NoError(t, err)
+	credentialOutput, _, credentialErr := runner.Run(t.Context(), repo, strings.NewReader("url=https://example.com/acme/widget.git\n\n"), "credential", "fill")
 
 	require.NoError(t, credentialErr)
 	assert.Contains(t, string(credentialOutput), "username=helper-user")
@@ -314,57 +276,34 @@ func TestGitBackendSameRepositoryImportRejectsBroadPush(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, backend := newBackendRepo(t)
-			original := createMergeRequestWorktree
-			createMergeRequestWorktree = func(
-				_ context.Context,
-				opts managedworktree.MergeRequestWorktreeOptions,
-			) (managedworktree.CreateWorktreeResult, error) {
-				configureTestPushTracking(
-					t, opts.Path, opts.Branch, "origin",
-					"https://github.com/acme/widget.git",
-				)
-				runGit(t, opts.Path, "config", tc.key, tc.value)
-				return managedworktree.CreateWorktreeResult{
-					Path: opts.Path, Branch: opts.Branch, BranchCreated: true,
-				}, nil
-			}
-			t.Cleanup(func() { createMergeRequestWorktree = original })
-
-			workspace, err := backend.ImportPullRequest(
-				t.Context(), testPR(17, false), "pr-17-feature-widgets",
-			)
-
+			repo, backend, pr := newRealBackendImport(t)
+			runGit(t, repo, "config", tc.key, tc.value)
+			path, err := backend.manager.PreparePathForRepository("", "pr-17-feature-widgets", backend.project.Identity)
+			require.NoError(t, err)
+			workspace, err := backend.ImportPullRequest(t.Context(), pr, "pr-17-feature-widgets")
 			assertErrorCode(t, err, CodeWorkspaceCreation)
-			assert.NotEmpty(t, workspace.Path)
+			assert.Empty(t, workspace.Path)
+			assert.NoDirExists(t, path)
+			assert.NotContains(t, runGit(t, repo, "for-each-ref", "--format=%(refname)"), "refs/heads/pr-17-feature-widgets")
 		})
 	}
 }
 
 func TestGitBackendForkImportWithoutTrackingRejectsExplicitOriginPush(t *testing.T) {
-	_, backend := newBackendRepo(t)
-	original := createMergeRequestWorktree
-	createMergeRequestWorktree = func(
-		_ context.Context, opts managedworktree.MergeRequestWorktreeOptions,
-	) (managedworktree.CreateWorktreeResult, error) {
-		require.NoError(t, os.MkdirAll(opts.Path, 0o755))
-		runGit(t, opts.Path, "init", "-b", opts.Branch)
-		runGit(t, opts.Path, "config", "push.default", "current")
-		runGit(t, opts.Path, "config", "remote.origin.push",
-			"HEAD:refs/heads/main")
-		runGit(t, opts.Path, "config", "extensions.worktreeConfig", "true")
-		return managedworktree.CreateWorktreeResult{
-			Path: opts.Path, Branch: opts.Branch, BranchCreated: true,
-		}, nil
-	}
-	t.Cleanup(func() { createMergeRequestWorktree = original })
-
-	workspace, err := backend.ImportPullRequest(
-		context.Background(), testPR(17, true), "pr-17-feature-widgets",
-	)
-
+	repo, backend, _ := newRealBackendImport(t)
+	fork := t.TempDir()
+	runGit(t, fork, "init", "--bare", "-b", "main")
+	request := testPR(17, true)
+	request.Source.Repository.CloneURL = fork
+	request.HeadSHA = runGit(t, repo, "rev-parse", "HEAD")
+	runGit(t, repo, "update-ref", "refs/pull/17/head", request.HeadSHA)
+	runGit(t, repo, "config", "push.default", "current")
+	runGit(t, repo, "config", "remote.origin.push", "HEAD:refs/heads/main")
+	workspace, err := backend.ImportPullRequest(t.Context(), request, "pr-17-feature-widgets")
 	assertErrorCode(t, err, CodeWorkspaceCreation)
-	assert.NotEmpty(t, workspace.Path)
+	require.ErrorContains(t, err, "failed to validate pull-request push routing")
+	assert.Empty(t, workspace.Path)
+	assert.NotContains(t, runGit(t, repo, "for-each-ref", "--format=%(refname)"), "refs/heads/pr-17-feature-widgets")
 }
 
 func TestEnsurePullRequestPushSafetyValidatesEffectiveDestination(t *testing.T) {

@@ -19,6 +19,7 @@ import (
 	repositoryurl "go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 // ManifestBuilderOptions contains dependencies used by ManifestBuilder.
@@ -65,7 +66,12 @@ func NewManifestBuilder(opts ManifestBuilderOptions) *ManifestBuilder {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			return git.New(project.Path).ListWorktrees()
+			repo, err := git.New(project.Path).WorktreeRepository(ctx, nil)
+			if err != nil {
+				return nil, err
+			}
+			listed, err := repo.List(ctx, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
+			return models.WorktreeModels(listed), err
 		}
 	}
 	return builder
@@ -181,7 +187,7 @@ func (b *ManifestBuilder) addConfiguredProject(
 
 	worktrees, err := b.listProjectWorktrees(ctx, project)
 	if err != nil {
-		if isContextError(err) || git.IsIncompleteInventory(err) {
+		if isContextError(err) || shared.IsIncompleteInventory(err) {
 			return err
 		}
 		return nil

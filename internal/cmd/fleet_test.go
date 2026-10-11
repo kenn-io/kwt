@@ -228,6 +228,7 @@ func resetFleetCommandDeps(t *testing.T) {
 
 func fleetTestCommand() (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
 	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	cmd.SetOut(stdout)

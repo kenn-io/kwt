@@ -2,6 +2,7 @@
 package worktree
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -13,7 +14,6 @@ import (
 	"time"
 	"unicode"
 
-	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/template"
@@ -21,34 +21,11 @@ import (
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 // GitInterface defines the git operations used by Manager.
 type GitInterface interface {
-	ListWorktrees() ([]models.Worktree, error)
-	AddWorktree(path, branch string, createBranch bool) error
-	AddWorktreeWithGeneration(
-		path, branch string,
-		createBranch bool,
-	) (string, error)
-	AddWorktreeExisting(path, branch string, protectedNames []string) error
-	AddWorktreeExistingWithGeneration(
-		path, branch string,
-		protectedNames []string,
-	) (string, error)
-	AddWorktreeTracking(
-		path, branch, remoteBranch string,
-		protectedNames []string,
-	) error
-	AddWorktreeTrackingWithGeneration(
-		path, branch, remoteBranch string,
-		protectedNames []string,
-	) (string, error)
-	AddWorktreeFromBase(path, branch, baseBranch string) error
-	RemoveWorktree(path string, force bool, ifGeneration string) error
-	DeleteBranch(branch string, force bool) error
-	PruneWorktrees() error
-	ReadWorktreeGeneration(path string) (string, error)
 	GetRepositoryName() (string, error)
 	GetRecentCommits(path string, limit int) ([]models.CommitInfo, error)
 	GetRepositoryURL() (string, error)
@@ -63,6 +40,9 @@ type bareContainerGit interface {
 type Manager struct {
 	git                   GitInterface
 	config                *models.Config
+	listGit               func(context.Context) ([]models.Worktree, error)
+	readIdentity          func(context.Context, string) (string, error)
+	createGit             func(context.Context, CreateOptions) (shared.CreateResult, error)
 	openRemoteSourceState func() (remoteSourceState, error)
 }
 
@@ -87,156 +67,50 @@ type remoteSourceState interface {
 	) (bool, error)
 }
 
-// AddOptions controls optional behavior for creating a worktree.
-type AddOptions struct {
-	SkipSetup bool
-}
-
 // New creates a new worktree Manager.
-func New(g GitInterface, config *models.Config) *Manager {
-	return &Manager{
-		git:    g,
-		config: config,
-		openRemoteSourceState: func() (remoteSourceState, error) {
-			return registry.New()
-		},
+func New(g *git.Git, config *models.Config) *Manager {
+	m := &Manager{
+		git:                   g,
+		config:                config,
+		openRemoteSourceState: func() (remoteSourceState, error) { return registry.New() },
 	}
-}
-
-// Add creates a new worktree and returns the path of the created worktree.
-func (m *Manager) Add(branch string, customPath string, createBranch bool) (string, error) {
-	return m.AddWithOptions(branch, customPath, createBranch, AddOptions{})
-}
-
-// AddWithOptions creates a new worktree and returns the path of the created worktree.
-func (m *Manager) AddWithOptions(branch string, customPath string, createBranch bool, opts AddOptions) (string, error) {
-	if !createBranch {
-		return m.addExisting(branch, customPath)
+	m.listGit = func(ctx context.Context) ([]models.Worktree, error) {
+		repo, err := g.WorktreeRepository(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		entries, err := repo.List(ctx, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
+		return models.WorktreeModels(entries), err
 	}
-
-	path, err := m.preparePath(customPath, branch, nil)
-	if err != nil {
-		return "", err
+	m.readIdentity = func(ctx context.Context, path string) (string, error) {
+		repo, err := g.WorktreeRepository(ctx, nil)
+		if err != nil {
+			return "", err
+		}
+		return repo.ReadIdentity(ctx, path, "kwt-generation")
 	}
-
-	if err := m.git.AddWorktree(path, branch, createBranch); err != nil {
-		return "", err
+	m.createGit = func(ctx context.Context, opts CreateOptions) (shared.CreateResult, error) {
+		return createShared(ctx, g, config, opts)
 	}
-
-	if !opts.SkipSetup {
-		m.runPostWorktreeSetup(branch, path)
-	}
-	return path, nil
-}
-
-// AddWithGeneration creates a worktree and returns the durable generation
-// captured before creation synchronization is released.
-func (m *Manager) AddWithGeneration(
-	branch string,
-	customPath string,
-	createBranch bool,
-	opts AddOptions,
-) (string, string, error) {
-	if !createBranch {
-		return m.addExistingWithGeneration(branch, customPath)
-	}
-
-	path, err := m.preparePath(customPath, branch, nil)
-	if err != nil {
-		return "", "", err
-	}
-	generation, err := m.git.AddWorktreeWithGeneration(
-		path,
-		branch,
-		createBranch,
-	)
-	if err != nil {
-		return "", "", err
-	}
-	if !opts.SkipSetup {
-		m.runPostWorktreeSetup(branch, path)
-	}
-	return path, generation, nil
-}
-
-func (m *Manager) addExisting(branch, customPath string) (string, error) {
-	path, _, err := m.addExistingWithGeneration(branch, customPath)
-	return path, err
-}
-
-func (m *Manager) addExistingWithGeneration(
-	branch,
-	customPath string,
-) (string, string, error) {
-	path, err := m.preparePath(customPath, branch, nil)
-	if err != nil {
-		return "", "", err
-	}
-	return m.addUnreviewedSource(
-		path,
-		branch,
-		func() (string, error) {
-			return m.git.AddWorktreeExistingWithGeneration(
-				path,
-				branch,
-				credentials.ProtectedNames(m.config),
-			)
-		},
-	)
-}
-
-// AddTracking creates a worktree on a local branch that tracks remoteBranch.
-// Repository setup is intentionally deferred: the remote checkout is
-// untrusted until the user has reviewed it.
-func (m *Manager) AddTracking(branch, remoteBranch, customPath string) (string, error) {
-	path, _, err := m.AddTrackingWithGeneration(
-		branch,
-		remoteBranch,
-		customPath,
-	)
-	return path, err
-}
-
-// AddTrackingWithGeneration creates a tracking worktree and returns the
-// generation captured before its mutation lock is released.
-func (m *Manager) AddTrackingWithGeneration(
-	branch,
-	remoteBranch,
-	customPath string,
-) (string, string, error) {
-	path, err := m.preparePath(customPath, branch, nil)
-	if err != nil {
-		return "", "", err
-	}
-	return m.addUnreviewedSource(
-		path,
-		branch,
-		func() (string, error) {
-			return m.git.AddWorktreeTrackingWithGeneration(
-				path,
-				branch,
-				remoteBranch,
-				credentials.ProtectedNames(m.config),
-			)
-		},
-	)
+	return m
 }
 
 func (m *Manager) addUnreviewedSource(
+	ctx context.Context,
 	path,
 	branch string,
-	add func() (string, error),
-) (resultPath string, resultGeneration string, resultErr error) {
+	add func() (shared.CreateResult, error),
+) (result shared.CreateResult, resultErr error) {
 	state, err := m.openRemoteSourceState()
 	if err != nil {
-		return "", "", fmt.Errorf("open remote-source state: %w", err)
+		return result, fmt.Errorf("open remote-source state: %w", err)
 	}
 	release, acquired, err := state.AcquireCreation(path)
 	if err != nil {
-		return "", "", fmt.Errorf("lock remote-source creation: %w", err)
+		return result, fmt.Errorf("lock remote-source creation: %w", err)
 	}
 	if !acquired {
-		return "", "", fmt.Errorf(
+		return result, fmt.Errorf(
 			"worktree creation in progress for %s",
 			path,
 		)
@@ -253,7 +127,7 @@ func (m *Manager) addUnreviewedSource(
 	previous, existed := state.Get(path)
 	creationToken, err := newRegistryCreationToken()
 	if err != nil {
-		return "", "", err
+		return result, err
 	}
 	entry := &registry.WorktreeEntry{
 		Branch:                 branch,
@@ -265,7 +139,7 @@ func (m *Manager) addUnreviewedSource(
 	var claimed bool
 	reclaimedAbandoned := false
 	if existed && previous.CreationToken != "" {
-		generation, found, recoveryErr := m.registeredGeneration(path)
+		generation, found, recoveryErr := m.registeredGeneration(ctx, path)
 		if recoveryErr == nil && found {
 			completed, completeErr := state.CompleteCreation(
 				path,
@@ -273,18 +147,18 @@ func (m *Manager) addUnreviewedSource(
 				generation,
 			)
 			if completeErr != nil {
-				return "", "", fmt.Errorf(
+				return result, fmt.Errorf(
 					"recover completed remote-source worktree: %w",
 					completeErr,
 				)
 			}
 			if !completed {
-				return "", "", fmt.Errorf(
+				return result, fmt.Errorf(
 					"registry ownership changed for %s; retry creation",
 					path,
 				)
 			}
-			return "", "", fmt.Errorf(
+			return result, fmt.Errorf(
 				"recovered completed remote-source worktree at %s; retry after reviewing it",
 				path,
 			)
@@ -303,35 +177,21 @@ func (m *Manager) addUnreviewedSource(
 		claimed, err = state.CompareAndSwap(path, expected, entry)
 	}
 	if err != nil {
-		return "", "", fmt.Errorf("mark remote-source worktree unreviewed: %w", err)
+		return result, fmt.Errorf("mark remote-source worktree unreviewed: %w", err)
 	}
 	if !claimed {
-		return "", "", fmt.Errorf(
+		return result, fmt.Errorf(
 			"registry ownership changed for %s; retry creation",
 			path,
 		)
 	}
 
-	generation, err := add()
+	result, err = add()
 	if err != nil {
 		var cleaned bool
 		var cleanupErr error
-		if errorCreatedWorktree(err) {
-			recoveredGeneration, found, recoveryErr :=
-				m.registeredGeneration(path)
-			if recoveryErr == nil && found {
-				cleaned, cleanupErr = state.CompleteCreation(
-					path,
-					creationToken,
-					recoveredGeneration,
-				)
-			} else {
-				cleaned, cleanupErr = state.CompleteCreation(
-					path,
-					creationToken,
-					"",
-				)
-			}
+		if result.Path != "" {
+			cleaned, cleanupErr = state.CompleteCreation(path, creationToken, result.IdentityValue)
 		} else {
 			restore := previous
 			if reclaimedAbandoned {
@@ -350,52 +210,46 @@ func (m *Manager) addUnreviewedSource(
 			)
 		}
 		if cleanupErr != nil {
-			return "", "", fmt.Errorf(
+			return result, fmt.Errorf(
 				"%w (failed to finalize remote-source state: %v)",
 				err,
 				cleanupErr,
 			)
 		}
 		if !cleaned {
-			return "", "", fmt.Errorf(
+			return result, fmt.Errorf(
 				"%w (registry ownership changed for %s; preserved)",
 				err,
 				path,
 			)
 		}
-		return "", "", err
+		return result, err
 	}
 	replaced, err := state.CompleteCreation(
 		path,
 		creationToken,
-		generation,
+		result.IdentityValue,
 	)
 	if err != nil {
-		return "", "", fmt.Errorf(
+		return result, fmt.Errorf(
 			"record remote-source worktree generation: %w",
 			err,
 		)
 	}
 	if !replaced {
-		return "", "", fmt.Errorf(
+		return result, fmt.Errorf(
 			"worktree created at %s but registry ownership changed; preserved",
 			path,
 		)
 	}
-	return path, generation, nil
-}
-
-func errorCreatedWorktree(err error) bool {
-	var created interface {
-		WorktreeCreated() bool
-	}
-	return errors.As(err, &created) && created.WorktreeCreated()
+	return result, nil
 }
 
 func (m *Manager) registeredGeneration(
+	ctx context.Context,
 	path string,
 ) (string, bool, error) {
-	generation, err := m.git.ReadWorktreeGeneration(path)
+	generation, err := m.readIdentity(ctx, path)
 	if err != nil {
 		return "", false, err
 	}
@@ -415,73 +269,9 @@ func newRegistryCreationToken() (string, error) {
 	return hex.EncodeToString(tokenBytes), nil
 }
 
-// AddFromBase creates a new worktree with a branch from a specific base branch
-// and returns the path of the created worktree.
-func (m *Manager) AddFromBase(branch string, baseBranch string, customPath string) (string, error) {
-	path, err := m.preparePath(customPath, branch, nil)
-	if err != nil {
-		return "", err
-	}
-
-	if err := m.git.AddWorktreeFromBase(path, branch, baseBranch); err != nil {
-		return "", err
-	}
-
-	m.runPostWorktreeSetup(branch, path)
-	return path, nil
-}
-
-// Remove deletes a worktree.
-func (m *Manager) Remove(
-	path string,
-	force bool,
-	ifGeneration string,
-) error {
-	return m.git.RemoveWorktree(path, force, ifGeneration)
-}
-
-// RemoveWithBranch deletes a worktree and optionally its branch.
-func (m *Manager) RemoveWithBranch(
-	path string,
-	branch string,
-	forceWorktree bool,
-	deleteBranch bool,
-	forceBranch bool,
-	ifGeneration string,
-) error {
-	removalErr := m.git.RemoveWorktree(
-		path,
-		forceWorktree,
-		ifGeneration,
-	)
-	if removalErr != nil && !git.WorktreeWasRemoved(removalErr) {
-		return removalErr
-	}
-
-	if deleteBranch && branch != "" {
-		if err := m.git.DeleteBranch(branch, forceBranch); err != nil {
-			branchErr := fmt.Errorf(
-				"worktree removed but failed to delete branch: %w",
-				err,
-			)
-			if removalErr != nil {
-				return errors.Join(removalErr, branchErr)
-			}
-			return branchErr
-		}
-	}
-
-	return removalErr
-}
-
 // List returns all worktrees.
 func (m *Manager) List() ([]models.Worktree, error) {
-	return m.git.ListWorktrees()
-}
-
-// Prune removes worktree information for deleted directories.
-func (m *Manager) Prune() error {
-	return m.git.PruneWorktrees()
+	return m.listGit(context.Background())
 }
 
 // GetWorktreePath returns the path for a worktree by pattern matching.

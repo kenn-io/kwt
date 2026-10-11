@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"go.kenn.io/kwt/internal/prunepolicy"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/utils"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 type pruneExpiredRegistry interface {
@@ -24,14 +26,18 @@ var (
 	openPruneExpiredRegistry = func() (pruneExpiredRegistry, error) {
 		return registry.New()
 	}
-	validatePruneExpiredWorktree = func(g *git.Git, path string, conditions git.WorktreeRemovalConditions) error {
-		return g.ValidateWorktreeRemoval(path, conditions)
-	}
-	removePruneExpiredWorktree = func(
-		g *git.Git, path string, force bool, conditions git.WorktreeRemovalConditions,
-		claim func(func() error) (bool, error),
-	) (bool, error) {
-		return g.RemoveWorktreeCheckedAfterClaim(path, force, conditions, claim)
+	validatePruneExpiredWorktree = inspectPruneRemoval
+	removePruneExpiredWorktree   = func(ctx context.Context, g *git.Git, path string, force bool, conditions shared.RemovalConditions,
+		claim func(func() (shared.RemovalResult, error)) (bool, error)) (bool, error) {
+		repo, err := g.WorktreeRepository(ctx, nil)
+		if err != nil {
+			return false, err
+		}
+		result, err := repo.Remove(ctx, shared.RemovalRequest{Path: path, Force: force, Conditions: &conditions,
+			Claim: func(_ context.Context, _ func() error, remove func() (shared.RemovalResult, error)) (bool, error) {
+				return claim(remove)
+			}})
+		return result.Claimed, err
 	}
 )
 
@@ -145,7 +151,7 @@ func runPruneExpired(cmd *cobra.Command, _ []string) error {
 	type preparedExpiredCandidate struct {
 		entry      *registry.WorktreeEntry
 		git        *git.Git
-		conditions git.WorktreeRemovalConditions
+		conditions shared.RemovalConditions
 		outcome    prunepolicy.Outcome
 		eligible   bool
 	}
@@ -165,7 +171,7 @@ func runPruneExpired(cmd *cobra.Command, _ []string) error {
 			candidate.outcome.Reason = prunepolicy.DoctorRequired
 			candidate.outcome.Message = "expired registry path is already absent"
 			candidate.outcome.Remediation = "Run kwt doctor --fix for structural Git and registry cleanup."
-		case git.ValidateWorktreeGeneration(entry.Generation) != nil:
+		case shared.ValidateWorktreeGeneration(entry.Generation) != nil:
 			candidate.outcome.Reason = prunepolicy.MissingGeneration
 			candidate.outcome.Message = "live expired worktree has no valid durable generation"
 			candidate.outcome.Remediation = "Run kwt list from its repository to initialize Git state, then run kwt doctor --fix to reconcile the registry before retrying."
@@ -182,12 +188,12 @@ func runPruneExpired(cmd *cobra.Command, _ []string) error {
 				candidate.outcome = pruneOutcomeForError(entry.Path, entry.Branch, gitDirErr)
 				break
 			}
-			candidate.conditions = git.WorktreeRemovalConditions{
+			candidate.conditions = shared.RemovalConditions{
 				ExpectedGitDir: expectedGitDir,
 				Generation:     entry.Generation,
 				RequireClean:   !pruneForce,
 			}
-			if err := validatePruneExpiredWorktree(candidate.git, entry.Path, candidate.conditions); err != nil {
+			if err := validatePruneExpiredWorktree(cmd.Context(), candidate.git, entry.Path, candidate.conditions); err != nil {
 				candidate.outcome = pruneOutcomeForError(entry.Path, entry.Branch, err)
 				break
 			}
@@ -221,11 +227,11 @@ func runPruneExpired(cmd *cobra.Command, _ []string) error {
 			outcome = func() prunepolicy.Outcome {
 				var residualWarning error
 				removed, removeErr := removePruneExpiredWorktree(
-					candidate.git, entry.Path, pruneForce, candidate.conditions,
-					func(remove func() error) (bool, error) {
+					cmd.Context(), candidate.git, entry.Path, pruneForce, candidate.conditions,
+					func(remove func() (shared.RemovalResult, error)) (bool, error) {
 						return reg.RemoveIfMatchAfter(entry.Path, entry, func() error {
-							err := remove()
-							if git.WorktreeWasRemoved(err) {
+							effects, err := remove()
+							if effects.RegistrationRemoved {
 								residualWarning = err
 								return nil
 							}
@@ -298,24 +304,29 @@ func runPruneExpired(cmd *cobra.Command, _ []string) error {
 }
 
 func expiredWorktreeGitDir(g *git.Git, path string) (string, error) {
-	inspections, err := g.InspectWorktrees()
+	repo, err := g.WorktreeRepository(context.Background(), nil)
 	if err != nil {
-		return "", &git.ConditionError{Reason: git.ReasonBacklinkChanged, Path: path}
+		return "", err
 	}
-	matches := make([]git.WorktreeInspection, 0, 1)
+	inventory, err := repo.Inspect(context.Background())
+	inspections := inventory.Entries
+	if err != nil {
+		return "", &shared.ConditionError{Reason: shared.ReasonBacklinkChanged, Path: path}
+	}
+	matches := make([]shared.Entry, 0, 1)
 	for _, inspection := range inspections {
 		if utils.PathKey(inspection.Path) == utils.PathKey(path) {
 			matches = append(matches, inspection)
 		}
 	}
 	if len(matches) != 1 {
-		return "", &git.ConditionError{Reason: git.ReasonBacklinkChanged, Path: path}
+		return "", &shared.ConditionError{Reason: shared.ReasonBacklinkChanged, Path: path}
 	}
 	inspection := matches[0]
 	if inspection.GitDirError != "" || inspection.GitDir == "" ||
 		inspection.DotGitTarget == "" ||
 		utils.PathKey(inspection.DotGitTarget) != utils.PathKey(inspection.GitDir) {
-		return "", &git.ConditionError{Reason: git.ReasonBacklinkChanged, Path: path}
+		return "", &shared.ConditionError{Reason: shared.ReasonBacklinkChanged, Path: path}
 	}
 	return inspection.GitDir, nil
 }
@@ -336,44 +347,49 @@ func pathIsMissing(path string) bool {
 
 func pruneOutcomeForError(path string, branch string, err error) prunepolicy.Outcome {
 	outcome := prunepolicy.Outcome{Path: path, Branch: branch}
-	var conditionErr *git.ConditionError
+	var conditionErr *shared.ConditionError
 	if errors.As(err, &conditionErr) {
 		switch conditionErr.Reason {
-		case git.ReasonBacklinkChanged:
+		case shared.ReasonBacklinkChanged:
 			outcome.Reason = prunepolicy.DoctorRequired
 			outcome.Message = "worktree backlink changed after candidate selection"
 			outcome.Remediation = "Run kwt doctor and repair the reported structural state before retrying."
-		case git.ReasonGenerationChanged:
+		case shared.ReasonGenerationChanged:
 			outcome.Reason = prunepolicy.GenerationChanged
 			outcome.Message = "worktree generation changed after candidate selection"
-		case git.ReasonHeadChanged:
+		case shared.ReasonHeadChanged:
 			outcome.Reason = prunepolicy.HeadChanged
 			outcome.Message = "worktree HEAD changed after candidate selection"
-		case git.ReasonRepositoryChanged:
+		case shared.ReasonRepositoryChanged:
 			outcome.Reason = prunepolicy.RepositoryChanged
 			outcome.Message = "worktree repository identity changed after candidate selection"
-		case git.ReasonBranchChanged:
+		case shared.ReasonBranchChanged:
 			outcome.Reason = prunepolicy.SourceBranchMismatch
 			outcome.Message = "worktree branch changed after candidate selection"
-		case git.ReasonUpstreamRepositoryChanged:
+		case shared.ReasonUpstreamRepositoryChanged:
 			outcome.Reason = prunepolicy.SourceRepositoryMismatch
 			outcome.Message = "worktree upstream repository changed after candidate selection"
-		case git.ReasonUpstreamBranchChanged:
+		case shared.ReasonUpstreamBranchChanged:
 			outcome.Reason = prunepolicy.SourceBranchMismatch
 			outcome.Message = "worktree upstream branch changed after candidate selection"
-		case git.ReasonDirty:
+		case shared.ReasonDirty:
 			outcome.Reason = prunepolicy.DirtyWorktree
 			outcome.Message = "worktree has uncommitted changes"
 			outcome.Remediation = "Commit or discard the changes, or use --force with --expired."
-		case git.ReasonLocked:
+		case shared.ReasonLocked:
 			outcome.Reason = prunepolicy.LockedWorktree
 			outcome.Message = "worktree is locked"
 			outcome.Remediation = "Unlock the worktree with git worktree unlock, then retry."
-		case git.ReasonMainWorktree:
+		case shared.ReasonMainWorktree:
 			outcome.Reason = prunepolicy.MainWorktree
 			outcome.Message = "main worktrees are never eligible for policy removal"
 			outcome.Remediation = "Remove the expiration from the main-worktree registry entry."
 		}
+		return outcome
+	}
+	if errors.Is(err, shared.ErrWorktreeNotFound) {
+		outcome.Reason = prunepolicy.GenerationChanged
+		outcome.Message = "worktree registration disappeared after candidate selection"
 		return outcome
 	}
 	outcome.Reason = prunepolicy.RemovalFailed
@@ -470,4 +486,19 @@ func renderPruneReport(
 		report.Summary.Skipped,
 	)
 	return err
+}
+
+func inspectPruneRemoval(ctx context.Context, g *git.Git, path string, conditions shared.RemovalConditions) error {
+	repo, err := g.WorktreeRepository(ctx, nil)
+	if err != nil {
+		return err
+	}
+	check, err := repo.InspectRemoval(ctx, shared.RemovalRequest{Path: path, Force: !conditions.RequireClean, Conditions: &conditions})
+	if err != nil {
+		return err
+	}
+	if check.Dirty {
+		return &shared.ConditionError{Reason: shared.ReasonDirty, Path: path}
+	}
+	return nil
 }

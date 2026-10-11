@@ -42,6 +42,7 @@ jobs:
               ./internal/utils
               ./internal/worktree
               ./pkg/models
+              ./worktree
 
     steps:
       - name: Checkout

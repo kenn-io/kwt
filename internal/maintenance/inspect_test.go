@@ -16,6 +16,7 @@ import (
 	gitadapter "go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/pkg/models"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 func TestInspectorClassifiesLocalFindings(t *testing.T) {
@@ -35,10 +36,10 @@ func TestInspectorClassifiesLocalFindings(t *testing.T) {
 			name:     "moved main",
 			projects: []models.Project{{Name: "widget", Repository: "github.com/acme/widget", Path: "/moved/widget"}},
 			snapshots: map[string]RepositorySnapshot{
-				"/moved/widget": repositorySnapshot("/moved/widget", gitadapter.WorktreeInspection{
+				"/moved/widget": repositorySnapshot("/moved/widget", shared.Entry{
 					Path: "/worktrees/topic", GitDir: "/moved/widget/.git/worktrees/topic",
 					DotGitTarget: "/old/widget/.git/worktrees/topic", Exists: true,
-					Generation: validGeneration, GenerationStatus: gitadapter.GenerationValid,
+					Generation: validGeneration, GenerationStatus: shared.GenerationValid,
 				}),
 			},
 			global:  []string{"/worktrees/topic"},
@@ -50,10 +51,10 @@ func TestInspectorClassifiesLocalFindings(t *testing.T) {
 			name:     "copied claimant",
 			projects: []models.Project{{Name: "widget", Repository: "github.com/acme/widget", Path: "/moved/widget"}},
 			snapshots: map[string]RepositorySnapshot{
-				"/moved/widget": repositorySnapshot("/moved/widget", gitadapter.WorktreeInspection{
+				"/moved/widget": repositorySnapshot("/moved/widget", shared.Entry{
 					Path: "/worktrees/topic", GitDir: "/moved/widget/.git/worktrees/topic",
 					DotGitTarget: "/old/widget/.git/worktrees/topic", Exists: true,
-					Generation: validGeneration, GenerationStatus: gitadapter.GenerationValid,
+					Generation: validGeneration, GenerationStatus: shared.GenerationValid,
 				}),
 			},
 			global: []string{"/worktrees/topic", "/copies/topic"},
@@ -71,10 +72,10 @@ func TestInspectorClassifiesLocalFindings(t *testing.T) {
 			name:     "missing path",
 			projects: []models.Project{{Name: "widget", Repository: "github.com/acme/widget", Path: "/repos/widget"}},
 			snapshots: map[string]RepositorySnapshot{
-				"/repos/widget": repositorySnapshot("/repos/widget", gitadapter.WorktreeInspection{
+				"/repos/widget": repositorySnapshot("/repos/widget", shared.Entry{
 					Path: "/worktrees/missing", GitDir: "/repos/widget/.git/worktrees/missing",
 					Exists: false, Prunable: true, Generation: validGeneration,
-					GenerationStatus: gitadapter.GenerationValid,
+					GenerationStatus: shared.GenerationValid,
 				}),
 			},
 			exists: map[string]bool{"/worktrees/missing": false},
@@ -109,10 +110,10 @@ func TestInspectorClassifiesLocalFindings(t *testing.T) {
 			name:     "live missing generation",
 			projects: []models.Project{{Name: "widget", Repository: "github.com/acme/widget", Path: "/repos/widget"}},
 			snapshots: map[string]RepositorySnapshot{
-				"/repos/widget": repositorySnapshot("/repos/widget", gitadapter.WorktreeInspection{
+				"/repos/widget": repositorySnapshot("/repos/widget", shared.Entry{
 					Path: "/worktrees/legacy", GitDir: "/repos/widget/.git/worktrees/legacy",
 					DotGitTarget: "/repos/widget/.git/worktrees/legacy", Exists: true,
-					GenerationStatus: gitadapter.GenerationMissing,
+					GenerationStatus: shared.GenerationMissing,
 				}),
 			},
 			global:  []string{"/worktrees/legacy"},
@@ -124,10 +125,10 @@ func TestInspectorClassifiesLocalFindings(t *testing.T) {
 			name:     "live registry missing generation",
 			projects: []models.Project{{Name: "widget", Repository: "github.com/acme/widget", Path: "/repos/widget"}},
 			snapshots: map[string]RepositorySnapshot{
-				"/repos/widget": repositorySnapshot("/repos/widget", gitadapter.WorktreeInspection{
+				"/repos/widget": repositorySnapshot("/repos/widget", shared.Entry{
 					Path: "/worktrees/legacy", GitDir: "/repos/widget/.git/worktrees/legacy",
 					DotGitTarget: "/repos/widget/.git/worktrees/legacy", Exists: true,
-					Generation: validGeneration, GenerationStatus: gitadapter.GenerationValid,
+					Generation: validGeneration, GenerationStatus: shared.GenerationValid,
 				}),
 			},
 			registry: []*registry.WorktreeEntry{{
@@ -142,10 +143,10 @@ func TestInspectorClassifiesLocalFindings(t *testing.T) {
 			name:     "live registry generation differs from Git",
 			projects: []models.Project{{Name: "widget", Repository: "github.com/acme/widget", Path: "/repos/widget"}},
 			snapshots: map[string]RepositorySnapshot{
-				"/repos/widget": repositorySnapshot("/repos/widget", gitadapter.WorktreeInspection{
+				"/repos/widget": repositorySnapshot("/repos/widget", shared.Entry{
 					Path: "/worktrees/topic", GitDir: "/repos/widget/.git/worktrees/topic",
 					DotGitTarget: "/repos/widget/.git/worktrees/topic", Exists: true,
-					Generation: validGeneration, GenerationStatus: gitadapter.GenerationValid,
+					Generation: validGeneration, GenerationStatus: shared.GenerationValid,
 				}),
 			},
 			registry: []*registry.WorktreeEntry{{
@@ -161,10 +162,10 @@ func TestInspectorClassifiesLocalFindings(t *testing.T) {
 			name:     "wrong repository",
 			projects: []models.Project{{Name: "widget", Repository: "github.com/acme/widget", Path: "/repos/widget"}},
 			snapshots: map[string]RepositorySnapshot{
-				"/repos/widget": repositorySnapshot("/repos/widget", gitadapter.WorktreeInspection{
+				"/repos/widget": repositorySnapshot("/repos/widget", shared.Entry{
 					Path: "/worktrees/topic", GitDir: "/repos/widget/.git/worktrees/topic",
 					DotGitTarget: "/repos/widget/.git/worktrees/topic", Exists: true,
-					Generation: validGeneration, GenerationStatus: gitadapter.GenerationValid,
+					Generation: validGeneration, GenerationStatus: shared.GenerationValid,
 				}),
 			},
 			registry: []*registry.WorktreeEntry{{
@@ -206,9 +207,9 @@ func TestInspectorReportsGitDirInspectionAmbiguity(t *testing.T) {
 		map[string]RepositorySnapshot{
 			"/repos/widget": repositorySnapshot(
 				"/repos/widget",
-				gitadapter.WorktreeInspection{
+				shared.Entry{
 					Path: path, Exists: true, GitDirError: gitDirError,
-					GenerationStatus: gitadapter.GenerationMissing,
+					GenerationStatus: shared.GenerationMissing,
 				},
 			),
 		},
@@ -267,11 +268,11 @@ func TestInspectorTreatsDanglingSymlinksAsUnreachable(t *testing.T) {
 				Path: repositoryRoot,
 			}}},
 			InspectRepository: func(string) (RepositorySnapshot, error) {
-				return repositorySnapshot(repositoryRoot, gitadapter.WorktreeInspection{
+				return repositorySnapshot(repositoryRoot, shared.Entry{
 					Path: path, GitDir: filepath.Join(repositoryRoot, ".git", "worktrees", "topic"),
 					Exists: false, Prunable: true,
 					Generation:       "0123456789abcdef0123456789abcdef",
-					GenerationStatus: gitadapter.GenerationValid,
+					GenerationStatus: shared.GenerationValid,
 				}), nil
 			},
 		}
@@ -312,10 +313,10 @@ func TestInspectorOnlyAutoFixesGenerationlessRegistryMismatch(t *testing.T) {
 					Generation: tt.registryGeneration,
 				}},
 				map[string]RepositorySnapshot{
-					"/repos/widget": repositorySnapshot("/repos/widget", gitadapter.WorktreeInspection{
+					"/repos/widget": repositorySnapshot("/repos/widget", shared.Entry{
 						Path: "/worktrees/topic", GitDir: "/repos/widget/.git/worktrees/topic",
 						DotGitTarget: "/repos/widget/.git/worktrees/topic", Exists: true,
-						Generation: gitGeneration, GenerationStatus: gitadapter.GenerationValid,
+						Generation: gitGeneration, GenerationStatus: shared.GenerationValid,
 					}),
 				},
 				nil,
@@ -345,11 +346,11 @@ func TestInspectorReportsExistingUnverifiedRegistryPath(t *testing.T) {
 	const generation = "0123456789abcdef0123456789abcdef"
 	repositoryRoot := "/repos/widget"
 	registryPath := "/repos/widget/copied-metadata"
-	snapshot := repositorySnapshot(repositoryRoot, gitadapter.WorktreeInspection{
+	snapshot := repositorySnapshot(repositoryRoot, shared.Entry{
 		Path: repositoryRoot, IsMain: true, Exists: true,
 		GitDir:       filepath.Join(repositoryRoot, ".git"),
 		DotGitTarget: filepath.Join(repositoryRoot, ".git"),
-		Generation:   generation, GenerationStatus: gitadapter.GenerationValid,
+		Generation:   generation, GenerationStatus: shared.GenerationValid,
 	})
 	inspector := fakeInspector(
 		[]models.Project{{
@@ -437,9 +438,9 @@ func TestInspectorClassifiesDuplicateRegistryAliases(t *testing.T) {
 				nil,
 				[]*registry.WorktreeEntry{&first, &second},
 				map[string]RepositorySnapshot{
-					worktreePath: repositorySnapshot(worktreePath, gitadapter.WorktreeInspection{
+					worktreePath: repositorySnapshot(worktreePath, shared.Entry{
 						Path: worktreePath, Exists: true, Generation: generation,
-						GenerationStatus: gitadapter.GenerationValid,
+						GenerationStatus: shared.GenerationValid,
 					}),
 				},
 				nil, nil, nil,
@@ -571,9 +572,9 @@ func TestInspectorCanonicalizesLegacyRegistryRepositoryURL(t *testing.T) {
 			Generation: generation,
 		}},
 		map[string]RepositorySnapshot{
-			"/repos/widget": repositorySnapshot("/repos/widget", gitadapter.WorktreeInspection{
+			"/repos/widget": repositorySnapshot("/repos/widget", shared.Entry{
 				Path: "/worktrees/topic", Exists: true, Generation: generation,
-				GenerationStatus: gitadapter.GenerationValid,
+				GenerationStatus: shared.GenerationValid,
 			}),
 		},
 		nil, nil, nil,
@@ -603,7 +604,7 @@ func TestInspectorAcceptsOriginBasedExpirationForConfiguredUpstream(t *testing.T
 	worktreePath := filepath.Join(t.TempDir(), "expiring")
 	_, err = g.RunCommand("worktree", "add", worktreePath, "feature/expiring")
 	require.NoError(t, err)
-	generation, err := g.WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, g).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	inspector := NewInspector(
 		&models.Config{Projects: []models.Project{{
@@ -652,9 +653,9 @@ func TestInspectorRedactsUnparseableRegistryRepository(t *testing.T) {
 				Path: "/worktrees/topic", Repository: rawRepository, Generation: generation,
 			}},
 			map[string]RepositorySnapshot{
-				"/repos/widget": repositorySnapshot("/repos/widget", gitadapter.WorktreeInspection{
+				"/repos/widget": repositorySnapshot("/repos/widget", shared.Entry{
 					Path: "/worktrees/topic", Exists: true, Generation: generation,
-					GenerationStatus: gitadapter.GenerationValid,
+					GenerationStatus: shared.GenerationValid,
 				}),
 			},
 			nil, nil, nil,
@@ -758,15 +759,15 @@ func TestInspectorReportsConfiguredRepositoryIdentityClaims(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			snapshot := repositorySnapshot(
 				"/repos/widget",
-				gitadapter.WorktreeInspection{
+				shared.Entry{
 					Path: "/configured/widget-a", Exists: true,
 					Generation:       projectInspectionGeneration,
-					GenerationStatus: gitadapter.GenerationValid,
+					GenerationStatus: shared.GenerationValid,
 				},
-				gitadapter.WorktreeInspection{
+				shared.Entry{
 					Path: "/configured/widget-b", Exists: true,
 					Generation:       projectInspectionGeneration,
-					GenerationStatus: gitadapter.GenerationValid,
+					GenerationStatus: shared.GenerationValid,
 				},
 			)
 			inspector := fakeInspector(
@@ -880,15 +881,15 @@ func TestInspectRepositorySupportsSeparateGitDirectory(t *testing.T) {
 func TestInspectorDeduplicatesProjectsByCommonDirectory(t *testing.T) {
 	snapshot := repositorySnapshot(
 		"/repos/widget",
-		gitadapter.WorktreeInspection{
+		shared.Entry{
 			Path: "/aliases/zeta", Exists: true,
 			Generation:       projectInspectionGeneration,
-			GenerationStatus: gitadapter.GenerationValid,
+			GenerationStatus: shared.GenerationValid,
 		},
-		gitadapter.WorktreeInspection{
+		shared.Entry{
 			Path: "/aliases/alpha", Exists: true,
 			Generation:       projectInspectionGeneration,
-			GenerationStatus: gitadapter.GenerationValid,
+			GenerationStatus: shared.GenerationValid,
 		},
 	)
 	inspector := fakeInspector(
@@ -921,10 +922,10 @@ func TestInspectorInventoriesRepositoryFromGlobalLinkedWorktree(t *testing.T) {
 		nil,
 		nil,
 		map[string]RepositorySnapshot{
-			linkedPath: repositorySnapshot("/repos/widget", gitadapter.WorktreeInspection{
+			linkedPath: repositorySnapshot("/repos/widget", shared.Entry{
 				Path: linkedPath, GitDir: "/repos/widget/.git/worktrees/topic",
 				DotGitTarget: "/repos/widget/.git/worktrees/topic", Exists: true,
-				Generation: generation, GenerationStatus: gitadapter.GenerationValid,
+				Generation: generation, GenerationStatus: shared.GenerationValid,
 			}),
 		},
 		nil,
@@ -990,7 +991,7 @@ func TestInspectorReportsUnreadableGlobalDotGit(t *testing.T) {
 	assert.Contains(t, finding.Message, "permission denied")
 }
 
-func repositorySnapshot(root string, worktrees ...gitadapter.WorktreeInspection) RepositorySnapshot {
+func repositorySnapshot(root string, worktrees ...shared.Entry) RepositorySnapshot {
 	hasMain := false
 	for _, inspection := range worktrees {
 		if pathKey(inspection.Path) == pathKey(root) {
@@ -999,12 +1000,12 @@ func repositorySnapshot(root string, worktrees ...gitadapter.WorktreeInspection)
 		}
 	}
 	if !hasMain {
-		worktrees = append([]gitadapter.WorktreeInspection{{
+		worktrees = append([]shared.Entry{{
 			Path: root, IsMain: true, Exists: true,
 			GitDir:           filepath.Join(root, ".git"),
 			DotGitTarget:     filepath.Join(root, ".git"),
 			Generation:       projectInspectionGeneration,
-			GenerationStatus: gitadapter.GenerationValid,
+			GenerationStatus: shared.GenerationValid,
 		}}, worktrees...)
 	}
 	return RepositorySnapshot{

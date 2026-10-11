@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 var (
@@ -202,7 +203,7 @@ func requestedRemovalGeneration(
 	if !cmd.Flags().Changed("if-generation") {
 		return removalGenerationCondition{}, nil
 	}
-	if err := git.ValidateWorktreeGeneration(removeIfGeneration); err != nil {
+	if err := shared.ValidateWorktreeGeneration(removeIfGeneration); err != nil {
 		return removalGenerationCondition{}, fmt.Errorf(
 			"--if-generation must be a 32-character hexadecimal value",
 		)

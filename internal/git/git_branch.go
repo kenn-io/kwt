@@ -1,13 +1,14 @@
 package git
 
 import (
+	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"go.kenn.io/kwt/pkg/models"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 // BranchUpstream describes the configured source branch and its remote URL.
@@ -179,7 +180,15 @@ func (g *Git) ListAvailableBranches() ([]models.Branch, error) {
 	if err != nil {
 		return nil, err
 	}
-	worktrees, err := g.ListWorktrees()
+	ctx := g.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	repo, err := g.WorktreeRepository(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	worktrees, err := repo.List(ctx, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list checked out branches: %w", err)
 	}
@@ -319,54 +328,6 @@ func (r remoteFetchRefspec) sourceForDestination(
 	}
 	match := destination[len(prefix) : len(destination)-len(suffix)]
 	return strings.Replace(r.source, "*", match, 1), true
-}
-
-// DeleteBranch deletes a branch.
-func (g *Git) DeleteBranch(branch string, force bool) error {
-	args := []string{"branch"}
-	if force {
-		args = append(args, "-D")
-	} else {
-		args = append(args, "-d")
-	}
-	args = append(args, branch)
-
-	if _, err := g.run(args...); err != nil {
-		return fmt.Errorf("failed to delete branch %s: %w", branch, err)
-	}
-
-	return nil
-}
-
-// DeleteBranchIsolated force-deletes a branch without exposing protected
-// credentials or allowing repository-configured hooks to run.
-func (g *Git) DeleteBranchIsolated(
-	branch string,
-	protectedNames []string,
-) error {
-	if err := g.validateLocalBranchName(branch, protectedNames); err != nil {
-		return err
-	}
-	hooksDir, err := os.MkdirTemp("", "kwt-empty-hooks-")
-	if err != nil {
-		return fmt.Errorf("create empty hooks directory: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(hooksDir) }()
-
-	isolationArgs, err := g.checkoutIsolationArgs(
-		protectedNames,
-		"",
-		hooksDir,
-	)
-	if err != nil {
-		return err
-	}
-	args := append([]string(nil), isolationArgs...)
-	args = append(args, "branch", "-D", "--", branch)
-	if _, err := g.runWithoutCredentials(protectedNames, args...); err != nil {
-		return fmt.Errorf("failed to delete branch %s: %w", branch, err)
-	}
-	return nil
 }
 
 // getCurrentBranch returns the current branch name for a specific worktree.

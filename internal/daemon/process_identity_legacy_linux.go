@@ -58,8 +58,7 @@ func canonicalLegacyLinuxBootID(value string) bool {
 				return false
 			}
 		default:
-			if !('0' <= character && character <= '9') &&
-				!('a' <= character && character <= 'f') {
+			if character < '0' || character > '9' && character < 'a' || character > 'f' {
 				return false
 			}
 		}
@@ -79,12 +78,12 @@ func readLegacyLinuxProcessStartTicks(pid int) (string, error) {
 	}
 	closing := bytes.LastIndexByte(stat, ')')
 	if closing < 0 || closing+1 >= len(stat) {
-		return "", errors.New("Linux process stat has no command terminator")
+		return "", errors.New("linux process stat has no command terminator")
 	}
 	fields := strings.Fields(string(stat[closing+1:]))
 	const startTimeIndex = 19
 	if len(fields) <= startTimeIndex || !canonicalPositiveUint(fields[startTimeIndex]) {
-		return "", errors.New("Linux process stat has an invalid start time")
+		return "", errors.New("linux process stat has an invalid start time")
 	}
 	return fields[startTimeIndex], nil
 }

@@ -35,6 +35,7 @@ import (
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 func resolveStoppedWorkspaceSessions(
@@ -590,7 +591,7 @@ func TestTUIBackendListPropagatesIncompleteRegisteredProjectInventory(
 	) ([]*discovery.GlobalWorktreeEntry, error) {
 		return nil, nil
 	}
-	incomplete := &git.IncompleteInventoryError{
+	incomplete := &shared.IncompleteInventoryError{
 		Path: "/repos/tools",
 		Err:  errors.New("generation is unreadable"),
 	}
@@ -1878,7 +1879,7 @@ func TestTUIBackendRemoveWorktreeDoesNotGateMutationOnCleanupInspection(t *testi
 	assert.True(t, removed)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "tmux inventory unavailable")
-	assert.True(t, git.WorktreeWasRemoved(err),
+	assert.True(t, reportsWorktreeRemoved(err),
 		"the TUI must refresh after removal even when cleanup inspection fails")
 }
 
@@ -2274,11 +2275,31 @@ func TestTUIBackendCreateWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 	newFleetManifestBuilder = func() fleet.ManifestBuildProvider {
 		return &stubFleetManifestBuilder{}
 	}
+	// Git's own registration list locates the checkout without reusing kwt's
+	// naming, so publication can be checked against what already exists.
+	registeredPath := func() string {
+		var path string
+		for _, line := range strings.Split(runTUITestGitOutput(t, repoPath, "worktree", "list", "--porcelain"), "\n") {
+			if value, ok := strings.CutPrefix(line, "worktree "); ok {
+				path = value
+			}
+			if line == "branch refs/heads/feature/from-tui" {
+				return path
+			}
+		}
+		return ""
+	}
+	var publishedPath string
 	publishFleetBestEffort = func(ctx context.Context, gotCfg *models.Config, builder fleet.ManifestBuildProvider, warn *bytes.Buffer) error {
 		published++
 		assert.Equal(t, cfg, gotCfg)
 		assert.NotNil(t, builder)
 		assert.NotNil(t, warn)
+		publishedPath = registeredPath()
+		if assert.NotEmpty(t, publishedPath, "publish must follow checkout creation") {
+			assert.DirExists(t, publishedPath)
+			assert.NotEmpty(t, tuiTestPersistedGeneration(t, repoPath, publishedPath), "publish must follow identity persistence")
+		}
 		return errors.New("hub unavailable")
 	}
 	row := dashboard.Row{Entry: &discovery.GlobalWorktreeEntry{
@@ -2293,8 +2314,8 @@ func TestTUIBackendCreateWorktreePublishesAfterSuccessfulMutation(t *testing.T) 
 	path, err := backend.CreateWorktree(context.Background(), row, "feature/from-tui", "")
 
 	require.NoError(t, err)
-	assert.DirExists(t, path)
 	assert.Equal(t, 1, published)
+	assert.Equal(t, utils.PathKey(path), utils.PathKey(publishedPath))
 }
 
 func TestTUIBackendCreateWorktreeLosesToProjectRemoval(t *testing.T) {
@@ -2600,7 +2621,7 @@ exec "$REAL_GIT" "$@"
 	err = backend.RemoveWorktree(context.Background(), row, false)
 
 	require.ErrorContains(t, err, "worktree removed, but files remain at ")
-	assert.True(t, git.WorktreeWasRemoved(err))
+	assert.True(t, reportsWorktreeRemoved(err))
 	assert.Equal(t, 1, published)
 	assert.FileExists(t, filepath.Join(worktreePath, "residual"))
 	refreshedRegistry, registryErr := registry.New()
@@ -2664,7 +2685,7 @@ func TestTUIBackendRemoveWorktreeRejectsReplacementGeneration(t *testing.T) {
 	worktreePath := filepath.Join(t.TempDir(), "replacement-worktree")
 	runTUITestGit(t, repoPath, "worktree", "add", "-b", "codex/original", worktreePath)
 	originalHead := strings.TrimSpace(runTUITestGitOutput(t, worktreePath, "rev-parse", "HEAD"))
-	worktrees, err := git.New(repoPath).ListWorktrees()
+	worktrees, err := openSharedWorktrees(t, git.New(repoPath)).List(t.Context(), shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	var originalGeneration string
 	for _, worktree := range worktrees {
@@ -3305,115 +3326,53 @@ func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnCheckoutFailure(
 }
 
 func TestTUIBackendMaterializeWorktreeReportsBranchRollbackFailure(t *testing.T) {
-	repoPath := newTUITestRepo(t)
-	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
-
-	err := backend.rollbackMaterializedBranch(
-		git.New(repoPath),
-		"missing-branch",
-		errors.New("materialization failed"),
-	)
-
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "materialization failed")
-	assert.ErrorContains(t, err, "failed to remove auto-created branch")
-	assert.ErrorContains(t, err, "an incomplete worktree may remain")
-}
-
-func TestTUIBackendMaterializeWorktreeUnregistersWhenHeadCannotBeRead(t *testing.T) {
 	isolateCommandTestHome(t)
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-
-	repoPath := newTUITestRepo(t)
-	runTUITestGit(t, repoPath, "remote", "add", "origin", "https://github.com/example/kwt.git")
-	runTUITestGit(t, repoPath, "branch", "feature/studio-only")
-	baseDir := filepath.Join(t.TempDir(), "worktrees")
-	cfg := &models.Config{
-		Worktree: models.WorktreeConfig{BaseDir: baseDir, AutoMkdir: true},
-	}
-	manager := worktree.New(git.New(repoPath), cfg)
-	worktreePath, err := manager.AddWithOptions(
-		"feature/studio-only",
-		"",
-		false,
-		worktree.AddOptions{SkipSetup: true},
-	)
+	root := newTUITestRepo(t)
+	manager := worktree.New(git.New(root), &models.Config{Worktree: models.WorktreeConfig{BaseDir: t.TempDir(), AutoMkdir: true}})
+	created, err := manager.Create(t.Context(), worktree.CreateOptions{Branch: "topic", NewBranch: true, RequireGeneration: true, SkipSetup: true})
 	require.NoError(t, err)
-	runTUITestGit(t, worktreePath, "symbolic-ref", "HEAD", "refs/heads/missing")
-
-	backend := newTUIBackendWithLaunchDir(cfg, "")
-	err = backend.verifyMaterializedHead(
-		context.Background(),
-		repoPath,
-		worktreePath,
-		tuiTestWorktreeGeneration(t, repoPath, worktreePath),
-		&dashboard.FleetInfo{
-			Branch:     "feature/studio-only",
-			RemoteHead: strings.Repeat("b", 40),
-		},
-	)
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "could not verify synced head")
-	assert.NoDirExists(t, worktreePath)
-	reg, registryErr := registry.New()
-	require.NoError(t, registryErr)
-	assert.False(t, reg.IsUnreviewedRemoteSource(worktreePath))
+	// A concurrently advanced branch is no longer ours to delete.
+	runTUITestGit(t, created.Path, "commit", "--allow-empty", "-m", "advance")
+	err = rollbackMaterialization(t.Context(), created, errors.New("materialization failed"))
+	require.ErrorContains(t, err, "materialization failed")
+	require.ErrorContains(t, err, "failed to remove rejected worktree or its auto-created branch")
+	require.True(t, tuiTestBranchExists(root, "topic"))
 }
 
-func TestTUIBackendMaterializationCleanupPreservesReplacementWorktree(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+func TestTUIBackendMaterializeWorktreePreservesCheckoutWhenHeadCannotBeRead(t *testing.T) {
+	isolateCommandTestHome(t)
+	root := newTUITestRepo(t)
+	runTUITestGit(t, root, "branch", "topic")
+	manager := worktree.New(git.New(root), &models.Config{Worktree: models.WorktreeConfig{BaseDir: t.TempDir(), AutoMkdir: true}})
+	created, err := manager.Create(t.Context(), worktree.CreateOptions{Branch: "topic", RequireGeneration: true, SkipSetup: true})
+	require.NoError(t, err)
+	runTUITestGit(t, created.Path, "symbolic-ref", "HEAD", "refs/heads/missing")
+	err = verifyMaterializedHead(t.Context(), created.Path, &dashboard.FleetInfo{Branch: "topic", RemoteHead: strings.Repeat("b", 40)})
+	require.ErrorContains(t, err, "could not verify synced head")
+	err = rollbackMaterialization(t.Context(), created, err)
+	require.ErrorContains(t, err, "failed to remove rejected worktree")
+	require.DirExists(t, created.Path)
+	reg, err := registry.New()
+	require.NoError(t, err)
+	require.True(t, reg.IsUnreviewedRemoteSource(created.Path))
+}
 
-	repoPath := newTUITestRepo(t)
-	worktreePath := filepath.Join(t.TempDir(), "materialized")
-	runTUITestGit(t, repoPath, "branch", "feature/materialized")
-	runTUITestGit(
-		t,
-		repoPath,
-		"worktree",
-		"add",
-		worktreePath,
-		"feature/materialized",
-	)
-	originalGeneration := tuiTestWorktreeGeneration(
-		t,
-		repoPath,
-		worktreePath,
-	)
-	runTUITestGit(t, repoPath, "worktree", "remove", "--force", worktreePath)
-	runTUITestGit(t, repoPath, "branch", "feature/replacement")
-	runTUITestGit(
-		t,
-		repoPath,
-		"worktree",
-		"add",
-		worktreePath,
-		"feature/replacement",
-	)
-
-	backend := newTUIBackendWithLaunchDir(&models.Config{}, "")
-	err := backend.failMaterializedHeadVerification(
-		repoPath,
-		worktreePath,
-		originalGeneration,
-		errors.New("stale materialized head"),
-	)
-
-	require.Error(t, err)
-	assert.DirExists(t, worktreePath)
-	assert.Equal(
-		t,
-		"feature/replacement",
-		strings.TrimSpace(runTUITestGitOutput(
-			t,
-			worktreePath,
-			"rev-parse",
-			"--abbrev-ref",
-			"HEAD",
-		)),
-	)
+func TestFleetMaterializationPreservesReplacementOnHeadMismatch(t *testing.T) {
+	isolateCommandTestHome(t)
+	root := newTUITestRepo(t)
+	runTUITestGit(t, root, "branch", "topic")
+	manager := worktree.New(git.New(root), &models.Config{Worktree: models.WorktreeConfig{BaseDir: t.TempDir(), AutoMkdir: true}})
+	created, err := manager.Create(t.Context(), worktree.CreateOptions{Branch: "topic", RequireGeneration: true, SkipSetup: true})
+	require.NoError(t, err)
+	runTUITestGit(t, root, "worktree", "remove", "--force", created.Path)
+	runTUITestGit(t, root, "branch", "replacement")
+	runTUITestGit(t, root, "worktree", "add", created.Path, "replacement")
+	replacementGeneration := tuiTestWorktreeGeneration(t, root, created.Path)
+	require.NotEqual(t, created.IdentityValue, replacementGeneration)
+	err = rollbackMaterialization(t.Context(), created, errors.New("stale materialized head"))
+	require.ErrorContains(t, err, "stale materialized head")
+	require.DirExists(t, created.Path)
+	require.Equal(t, "replacement", strings.TrimSpace(runTUITestGitOutput(t, created.Path, "rev-parse", "--abbrev-ref", "HEAD")))
 }
 
 func tuiTestBranchExists(repoPath string, branch string) bool {
@@ -3806,13 +3765,22 @@ func runTUITestGitOutput(t *testing.T, dir string, args ...string) string {
 	return string(output)
 }
 
+// tuiTestPersistedGeneration reads the generation marker without creating one,
+// so it fails when creation did not persist the marker.
+func tuiTestPersistedGeneration(t *testing.T, repoPath, worktreePath string) string {
+	t.Helper()
+	generation, err := openSharedWorktrees(t, git.New(repoPath)).ReadIdentity(t.Context(), worktreePath, "kwt-generation")
+	require.NoError(t, err)
+	return generation
+}
+
 func tuiTestWorktreeGeneration(
 	t *testing.T,
 	repoPath string,
 	worktreePath string,
 ) string {
 	t.Helper()
-	worktrees, err := git.New(repoPath).ListWorktrees()
+	worktrees, err := openSharedWorktrees(t, git.New(repoPath)).List(t.Context(), shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	for _, worktree := range worktrees {
 		if utils.CanonicalPath(worktree.Path) ==
@@ -4249,7 +4217,7 @@ func TestTUIWorktreeAttachCannotRaceGuardedRemoval(t *testing.T) {
 	worktreePath := filepath.Join(t.TempDir(), "tui-open-race")
 	runTUITestGit(t, repoPath, "branch", "tui-open-race")
 	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "tui-open-race")
-	generation, err := git.New(repoPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repoPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	initCommandTestConfig(t, t.TempDir())
 	home := os.Getenv("KWT_HOME")
@@ -4860,4 +4828,9 @@ func TestTUIBackendUnregisterWorkspace(t *testing.T) {
 
 	err = backend.UnregisterWorkspace(dashboard.Row{})
 	require.Error(t, err)
+}
+
+func reportsWorktreeRemoved(err error) bool {
+	var removed interface{ WorktreeRemoved() bool }
+	return errors.As(err, &removed) && removed.WorktreeRemoved()
 }

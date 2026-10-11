@@ -30,6 +30,7 @@ import (
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 type blockingOpenRemovalGuard struct {
@@ -765,7 +766,7 @@ func TestOpenSelectedWorktreeStartsSessionWithoutAttaching(t *testing.T) {
 	openSelectLayout = false
 	initCommandTestConfig(t, t.TempDir())
 	worktreePath := newTUITestRepo(t)
-	generation, err := git.New(worktreePath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(worktreePath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 
 	err = openSelectedWorktree(
@@ -854,7 +855,7 @@ func TestDirectOpenCannotRaceGuardedRemoval(t *testing.T) {
 	worktreePath := filepath.Join(t.TempDir(), "open-race")
 	runTUITestGit(t, repoPath, "branch", "open-race")
 	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "open-race")
-	generation, err := git.New(repoPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repoPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	initCommandTestConfig(t, t.TempDir())
 	home := os.Getenv("KWT_HOME")
@@ -1110,7 +1111,7 @@ func TestOpenSelectedWorktreeAcknowledgesPersistedRemoteSource(t *testing.T) {
 	worktreePath := filepath.Join(t.TempDir(), "feature-remote")
 	runTUITestGit(t, repoPath, "branch", "feature/remote")
 	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/remote")
-	generation, err := git.New(repoPath).WorktreeGeneration(worktreePath)
+	generation, err := openSharedWorktrees(t, git.New(repoPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	reg, err := registry.New()
 	require.NoError(t, err)
@@ -1167,7 +1168,7 @@ func TestOpenSelectedWorktreeStartSessionDoesNotPromptForTargetTrust(t *testing.
 		[]byte("[layouts]\ndefault = \"focus\"\n"),
 		0o644,
 	))
-	generation, err := git.New(repo).WorktreeGeneration(repo)
+	generation, err := openSharedWorktrees(t, git.New(repo)).EnsureIdentity(t.Context(), repo, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 
 	runner := &recordingOpenWorkspaceRunner{}

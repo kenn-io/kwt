@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/config"
-	gitadapter "go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/pkg/models"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 const projectInspectionGeneration = "0123456789abcdef0123456789abcdef"
@@ -560,10 +560,10 @@ func projectTargetSnapshot(root, inspectionPath string) RepositorySnapshot {
 	return RepositorySnapshot{
 		Root: root, CommonDir: filepath.Join(root, ".git"),
 		RepositoryIdentity: "github.com/acme/widget",
-		Worktrees: []gitadapter.WorktreeInspection{{
+		Worktrees: []shared.Entry{{
 			Path: inspectionPath, Exists: true, IsMain: inspectionPath == root,
 			Generation:       projectInspectionGeneration,
-			GenerationStatus: gitadapter.GenerationValid,
+			GenerationStatus: shared.GenerationValid,
 		}},
 	}
 }

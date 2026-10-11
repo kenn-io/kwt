@@ -14,9 +14,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/discovery"
-	"go.kenn.io/kwt/internal/git"
 	repositoryurl "go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/pkg/models"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 var fixedTime = time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
@@ -278,7 +278,7 @@ func TestBuildManifestPropagatesCanceledProjectWorktreeListing(t *testing.T) {
 
 func TestBuildManifestPropagatesIncompleteProjectInventory(t *testing.T) {
 	repo := initFleetTestRepo(t, "https://github.com/kenn-io/kwt.git")
-	incomplete := &git.IncompleteInventoryError{
+	incomplete := &shared.IncompleteInventoryError{
 		Path: repo,
 		Err:  errors.New("generation is unreadable"),
 	}

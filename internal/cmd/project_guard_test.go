@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 func TestGuardedProjectOperationRejectsRemovedRegistration(t *testing.T) {
@@ -55,7 +56,7 @@ func TestWorktreeSessionEstablishmentCancelsWhileWaitingForMutationLock(t *testi
 	home := t.TempDir()
 	t.Setenv("KWT_HOME", home)
 	repoPath := newTUITestRepo(t)
-	generation, err := git.New(repoPath).WorktreeGeneration(repoPath)
+	generation, err := openSharedWorktrees(t, git.New(repoPath)).EnsureIdentity(t.Context(), repoPath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	lock := flock.New(filepath.Join(repoPath, ".git", "kwt-worktree.lock"))
 	require.NoError(t, lock.Lock())

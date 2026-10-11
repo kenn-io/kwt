@@ -4,8 +4,8 @@ package maintenance
 
 import (
 	"go.kenn.io/kwt/internal/config"
-	gitadapter "go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/registry"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 const SchemaVersion = 1
@@ -74,12 +74,12 @@ type Finding struct {
 }
 
 type RepositoryReport struct {
-	Root               string                          `json:"root,omitempty"`
-	CommonDir          string                          `json:"common_dir,omitempty"`
-	RepositoryIdentity string                          `json:"repository_identity,omitempty"`
-	ProjectNames       []string                        `json:"project_names,omitempty"`
-	Worktrees          []gitadapter.WorktreeInspection `json:"worktrees,omitempty"`
-	Findings           []Finding                       `json:"findings"`
+	Root               string         `json:"root,omitempty"`
+	CommonDir          string         `json:"common_dir,omitempty"`
+	RepositoryIdentity string         `json:"repository_identity,omitempty"`
+	ProjectNames       []string       `json:"project_names,omitempty"`
+	Worktrees          []shared.Entry `json:"worktrees,omitempty"`
+	Findings           []Finding      `json:"findings"`
 }
 
 type Summary struct {
@@ -107,5 +107,5 @@ type RepositorySnapshot struct {
 	CommonDir                string
 	RepositoryIdentity       string
 	LiveRepositoryIdentities map[string]string
-	Worktrees                []gitadapter.WorktreeInspection
+	Worktrees                []shared.Entry
 }

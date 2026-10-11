@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 type pruneMergedRegistry interface {
@@ -219,15 +220,16 @@ func removePruneMergedCandidate(
 		ctx, reg, store, candidate,
 		func() error {
 			removed, err := removePruneMergedWorktree(
+				ctx,
 				candidate,
 				force,
-				func(remove func() error) (bool, error) {
+				func(remove func() (shared.RemovalResult, error)) (bool, error) {
 					return reg.RemoveIfMatchAfter(
 						candidate.Policy.Path,
 						candidate.RegistryEntry,
 						func() error {
-							err := remove()
-							if git.WorktreeWasRemoved(err) {
+							effects, err := remove()
+							if effects.RegistrationRemoved {
 								residualWarning = err
 								return nil
 							}
@@ -372,7 +374,7 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 			case pruneDryRun:
 				if err := runPruneMergedProtectedOperation(ctx, cfg, candidate, func() error {
 					return withPruneMergedOwnershipGuard(ctx, reg, store, candidate, func() error {
-						return validatePruneMergedDirtyWorktree(candidate)
+						return validatePruneMergedDirtyWorktree(cmd.Context(), candidate)
 					})
 				}); err != nil {
 					providerEvidence := outcome.Evidence
@@ -422,7 +424,7 @@ func runPruneMerged(cmd *cobra.Command, _ []string) error {
 					return withPruneMergedOwnershipGuard(
 						ctx, reg, store, candidate,
 						func() error {
-							return validatePruneMergedWorktree(candidate)
+							return validatePruneMergedWorktree(cmd.Context(), candidate)
 						},
 					)
 				},
@@ -527,18 +529,23 @@ func mergedPruneExecutionError(cmd *cobra.Command, message string) error {
 }
 
 func defaultRemovePruneMergedWorktree(
+	ctx context.Context,
 	candidate pruneMergedCandidate,
 	force bool,
-	claim func(func() error) (bool, error),
+	claim func(func() (shared.RemovalResult, error)) (bool, error),
 ) (bool, error) {
 	conditions := pruneMergedRemovalConditions(candidate)
 	conditions.RequireClean = !force
-	return git.New(candidate.RepositoryRoot).RemoveWorktreeCheckedAfterClaim(
-		candidate.Policy.Path,
-		force,
-		conditions,
-		claim,
-	)
+	g := git.New(candidate.RepositoryRoot)
+	repo, err := g.WorktreeRepository(ctx, candidate.ProtectedNames)
+	if err != nil {
+		return false, err
+	}
+	result, err := repo.Remove(ctx, shared.RemovalRequest{Path: candidate.Policy.Path, Force: force, Conditions: &conditions,
+		Claim: func(_ context.Context, _ func() error, remove func() (shared.RemovalResult, error)) (bool, error) {
+			return claim(remove)
+		}})
+	return result.Claimed, err
 }
 
 func defaultInspectPruneMergedDirty(candidate pruneMergedCandidate) (bool, error) {
@@ -586,17 +593,13 @@ func pruneMergedDirtyInspectionOutcome(
 	return outcome
 }
 
-func defaultValidatePruneMergedWorktree(candidate pruneMergedCandidate) error {
-	return git.New(candidate.RepositoryRoot).ValidateWorktreeRemoval(
-		candidate.Policy.Path,
-		pruneMergedRemovalConditions(candidate),
-	)
+func defaultValidatePruneMergedWorktree(ctx context.Context, candidate pruneMergedCandidate) error {
+	return inspectPruneRemoval(ctx, git.NewForInventory(ctx, candidate.RepositoryRoot, candidate.ProtectedNames), candidate.Policy.Path, pruneMergedRemovalConditions(candidate))
 }
-
-func defaultValidatePruneMergedDirtyWorktree(candidate pruneMergedCandidate) error {
+func defaultValidatePruneMergedDirtyWorktree(ctx context.Context, candidate pruneMergedCandidate) error {
 	conditions := pruneMergedRemovalConditions(candidate)
 	conditions.RequireClean = false
-	return git.New(candidate.RepositoryRoot).ValidateWorktreeRemoval(candidate.Policy.Path, conditions)
+	return inspectPruneRemoval(ctx, git.NewForInventory(ctx, candidate.RepositoryRoot, candidate.ProtectedNames), candidate.Policy.Path, conditions)
 }
 
 func withPruneMergedOwnershipGuard(
@@ -670,8 +673,8 @@ func pruneMergedProvenanceMatches(
 	return pathMatches == 1 && expectedMatches, nil
 }
 
-func pruneMergedRemovalConditions(candidate pruneMergedCandidate) git.WorktreeRemovalConditions {
-	return git.WorktreeRemovalConditions{
+func pruneMergedRemovalConditions(candidate pruneMergedCandidate) shared.RemovalConditions {
+	return shared.RemovalConditions{
 		ExpectedGitDir:     candidate.ExpectedGitDir,
 		Generation:         candidate.Policy.Generation,
 		Head:               candidate.Policy.Head,
@@ -681,7 +684,10 @@ func pruneMergedRemovalConditions(candidate pruneMergedCandidate) git.WorktreeRe
 		UpstreamBranch:     candidate.Policy.SourceBranch,
 		RequireClean:       true,
 		IncludeIgnored:     true,
-		ProtectedNames:     candidate.ProtectedNames,
+		MatchRepositoryIdentity: func(remote, expected string) bool {
+			identity, ok := repositoryurl.CanonicalRepositoryIdentityFromRemote(remote)
+			return ok && repositoryurl.FoldRepositoryIdentity(identity) == repositoryurl.FoldRepositoryIdentity(expected)
+		},
 	}
 }
 
@@ -831,7 +837,7 @@ func defaultInspectPruneMergedCandidates(
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if target, backlinkErr := git.ReadWorktreeBacklink(root.path); backlinkErr == nil && target != "" {
+		if target, backlinkErr := shared.ReadWorktreeBacklink(context.Background(), root.path); backlinkErr == nil && target != "" {
 			targetKey := utils.PathKey(target)
 			claimants := backlinkClaims[targetKey]
 			if claimants == nil {
@@ -841,7 +847,12 @@ func defaultInspectPruneMergedCandidates(
 			claimants[utils.PathKey(root.path)] = utils.CanonicalPath(root.path)
 		}
 		g := git.New(root.path)
-		inspections, err := g.InspectWorktreesWithoutCredentials(protectedNames)
+		repo, err := g.WorktreeRepository(ctx, protectedNames)
+		var inventory shared.Inventory
+		if err == nil {
+			inventory, err = repo.Inspect(ctx)
+		}
+		inspections := inventory.Entries
 		if err != nil {
 			if root.configured {
 				configuredInventoryIncomplete = true
@@ -870,7 +881,7 @@ func defaultInspectPruneMergedCandidates(
 			return nil, fmt.Errorf("inspect main repository path for %s: %w", root.path, err)
 		}
 		mainRepositoryPath = utils.CanonicalPath(mainRepositoryPath)
-		if !git.HasExactWorktreeRoot(inspections, root.path) {
+		if !shared.HasExactWorktreeRoot(inspections, root.path) {
 			if root.configured {
 				configuredInventoryIncomplete = true
 			}

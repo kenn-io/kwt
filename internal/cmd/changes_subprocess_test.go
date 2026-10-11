@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/service"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 func TestChangesSubprocessInspectsPrimaryAndLinkedWorktreesWithGuards(t *testing.T) {
@@ -241,7 +242,7 @@ func newChangesSubprocessWorktrees(t *testing.T) (string, string) {
 	runTUITestGit(t, primary, "add", ".")
 	runTUITestGit(t, primary, "commit", "-m", "Initial commit")
 	runTUITestGit(t, primary, "worktree", "add", "-b", "feature", linked)
-	worktrees, err := git.New(primary).ListWorktrees()
+	worktrees, err := openSharedWorktrees(t, git.New(primary)).List(t.Context(), shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 	require.NoError(t, err)
 	require.Len(t, worktrees, 2)
 	return canonicalTestPath(t, primary), canonicalTestPath(t, linked)

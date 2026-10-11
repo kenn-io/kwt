@@ -110,7 +110,8 @@ type Workspace struct {
 	TmuxSocketName string                `json:"tmux_socket_name,omitempty"`
 	TmuxAttachMode models.TmuxAttachMode `json:"tmux_attach_mode"`
 	partialCleanup *workspacePartialCleanup
-	// preserveOnImportError means Kit could not prove that cleanup was safe.
+	// preserveOnImportError means cleanup could not prove ownership or the
+	// required identity could not be established.
 	// Other post-creation failures retain rollback metadata and are cleaned up.
 	preserveOnImportError bool
 }

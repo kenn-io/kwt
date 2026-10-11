@@ -9,12 +9,12 @@ import (
 
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/credentials"
-	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/pullrequest"
 	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/utils"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 type ProjectRemovalRequest struct {
@@ -345,7 +345,7 @@ func (s *projectRemovalService) loadProtectedEndpoints(
 		}
 		workspace := record.Workspace
 		if workspace.Path == "" || workspace.SessionName == "" ||
-			git.ValidateWorktreeGeneration(workspace.Generation) != nil {
+			shared.ValidateWorktreeGeneration(workspace.Generation) != nil {
 			return nil, incompleteProtectedAuthority(fmt.Errorf("protected endpoint record is incomplete"))
 		}
 		endpoint := protectedEndpoint{
