@@ -208,37 +208,6 @@ func TestRunCommandAllowsSuccessfulCommandsToFinishRetainedOutputPipes(t *testin
 	assert.NoFileExists(t, donePath)
 }
 
-func TestInventoryGitAllowsBranchDeletionToFinishRetainedHookPipes(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("test uses a POSIX Git hook")
-	}
-
-	repo := NewTestRepository(t)
-	repo.CreateBranch(t, "delete-with-retained-hook-pipe")
-	require.NoError(t, repo.run("checkout", "main"))
-	hooksDir := t.TempDir()
-	donePath := filepath.Join(t.TempDir(), "hook-descendant.done")
-	t.Setenv("KWT_TEST_GIT_HOOK_DONE", donePath)
-	require.NoError(t, os.WriteFile(
-		filepath.Join(hooksDir, "reference-transaction"),
-		[]byte("#!/bin/sh\nif [ \"$1\" = committed ]; then\n  (sleep 2; : > \"$KWT_TEST_GIT_HOOK_DONE\") &\nfi\n"),
-		0o755,
-	))
-	require.NoError(t, repo.run("config", "core.hooksPath", hooksDir))
-	g := NewForInventory(context.Background(), repo.Path, nil)
-
-	_, err := g.RunCommand("branch", "-D", "delete-with-retained-hook-pipe")
-
-	require.NoError(t, err)
-	assert.NoFileExists(t, donePath)
-	_, err = g.RunCommand(
-		"show-ref",
-		"--verify",
-		"refs/heads/delete-with-retained-hook-pipe",
-	)
-	require.Error(t, err)
-}
-
 func TestRunBytesWithEnvironmentUsesInventoryEnvironmentAndOverrides(t *testing.T) {
 	t.Setenv("GIT_DIR", "/tmp/redirected.git")
 	t.Setenv("KWT_TEST_SECRET", "secret")

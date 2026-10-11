@@ -492,6 +492,19 @@ func TestHookReentrantWorktreeList(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Tests require this report so a suppressed hook cannot pass silently.
+		if report := os.Getenv("KWT_TEST_HOOK_REPORT"); report != "" {
+			file, err := os.OpenFile(report, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := file.WriteString("listed\n"); err != nil {
+				t.Fatal(err)
+			}
+			if err := file.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}
 	case <-time.After(2 * time.Second):
 		fmt.Fprintln(os.Stderr, "hook could not re-enter kwt worktree listing")
 		os.Exit(2)
@@ -530,8 +543,13 @@ func TestHookCapableWorktreeAddsAllowHookToListWorktrees(t *testing.T) {
 
 			worktreePath := filepath.Join(t.TempDir(), "hook-worktree")
 			t.Setenv("KWT_TEST_HOOK_WORKTREE", worktreePath)
+			report := filepath.Join(t.TempDir(), "hook-report")
+			t.Setenv("KWT_TEST_HOOK_REPORT", report)
 			require.NoError(t, tt.add(git.New(repo.Path), worktreePath))
 			assert.DirExists(t, worktreePath)
+			listed, err := os.ReadFile(report)
+			require.NoError(t, err, "the post-checkout hook must run and list worktrees")
+			assert.Contains(t, string(listed), "listed")
 		})
 	}
 }
@@ -596,12 +614,13 @@ func TestHookCapableWorktreeAddRecoversGenerationInitializationFailure(
 
 	tests := []struct {
 		name string
-		add  func(*git.Git, string) error
+		add  func(*git.Git, string) (shared.CreateResult, error)
 	}{
 		{
 			name: "default base",
-			add: func(g *git.Git, path string) error {
-				return createForTest(t, g, CreateOptions{Path: path, Branch: "recover-default-base", NewBranch: true})
+			add: func(g *git.Git, path string) (shared.CreateResult, error) {
+				cfg := &models.Config{Fleet: models.FleetConfig{TokenEnv: "custom_fleet_token"}}
+				return New(g, cfg).Create(t.Context(), CreateOptions{Path: path, Branch: "recover-default-base", NewBranch: true})
 			},
 		},
 	}
@@ -629,8 +648,12 @@ chmod 000 "$KWT_TEST_MUTATION_LOCK"
 			t.Setenv("KWT_TEST_MUTATION_LOCK", lockPath)
 
 			worktreePath := filepath.Join(t.TempDir(), "worktree")
-			require.NoError(t, tt.add(git.New(repo.Path), worktreePath))
+			created, err := tt.add(git.New(repo.Path), worktreePath)
+			require.NoError(t, err)
 			assert.DirExists(t, worktreePath)
+			require.Empty(t, created.IdentityValue, "the hook must block identity initialization")
+			metadata := gitOutput(t, worktreePath, "rev-parse", "--absolute-git-dir")
+			require.NoFileExists(t, filepath.Join(metadata, "kwt-generation"))
 
 			require.NoError(t, os.Chmod(lockPath, 0600))
 			worktrees, err := openSharedWorktrees(t, git.New(repo.Path)).List(t.Context(), shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
@@ -1315,11 +1338,21 @@ func TestManagerCreateDefaultFetchAllowsHookToListWorktrees(t *testing.T) {
 	t.Setenv("KWT_TEST_HOOK_REENTRANT_LIST", "1")
 	t.Setenv("KWT_TEST_HOOK_REPO", repo.Path)
 	t.Setenv("KWT_TEST_HOOK_WORKTREE", path)
-	hook := fmt.Sprintf("#!/bin/sh\nif ! \"$KWT_TEST_BINARY\" -test.run=^TestHookReentrantWorktreeList$; then printf blocked > %q; exit 1; fi\n", failure)
+	report := filepath.Join(t.TempDir(), "hook-report")
+	refs := filepath.Join(t.TempDir(), "hook-refs")
+	t.Setenv("KWT_TEST_HOOK_REPORT", report)
+	// Record each transaction's refs, then list worktrees from inside it.
+	hook := fmt.Sprintf("#!/bin/sh\ncat >> %q\nif ! \"$KWT_TEST_BINARY\" -test.run=^TestHookReentrantWorktreeList$; then printf blocked > %q; exit 1; fi\n", refs, failure)
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Path, ".git", "hooks", "reference-transaction"), []byte(hook), 0o755))
 	err := createForTest(t, git.New(repo.Path), CreateOptions{Branch: "topic", Path: path, NewBranch: true, RequireGeneration: true})
 	require.NoError(t, err)
 	require.NoFileExists(t, failure, "the default-branch fetch must permit native hooks to list worktrees")
+	transactions, err := os.ReadFile(refs)
+	require.NoError(t, err, "the reference-transaction hook must run")
+	assert.Contains(t, string(transactions), "refs/kwt/origin/default", "the hook must run during the default-branch fetch")
+	listed, err := os.ReadFile(report)
+	require.NoError(t, err)
+	assert.Contains(t, string(listed), "listed")
 }
 
 // An existing local branch is unreviewed content, so its checkout must not see
