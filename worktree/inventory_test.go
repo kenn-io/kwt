@@ -52,25 +52,50 @@ func TestIdentityDoesNotAdoptAnotherRepositoryAtRecordedPath(t *testing.T) {
 }
 
 func TestIdentityRejectsAmbiguousOrIncompleteRegistration(t *testing.T) {
-	for _, variant := range []string{"duplicate", "missing backlink", "malformed backlink", "non-directory"} {
+	for _, variant := range []string{"duplicate", "malformed backlink"} {
 		t.Run(variant, func(t *testing.T) {
 			root, path := fixture(t)
 			repo := open(t, root, kwtPolicy())
 			broken := filepath.Join(root, ".git", "worktrees", "broken")
-			if variant == "non-directory" {
-				require.NoError(t, os.WriteFile(broken, []byte("unexpected"), 0o600))
-			} else {
-				require.NoError(t, os.Mkdir(broken, 0o700))
-				switch variant {
-				case "duplicate":
-					require.NoError(t, os.WriteFile(filepath.Join(broken, "gitdir"), []byte(filepath.Join(path, ".git")+"\n"), 0o600))
-				case "malformed backlink":
-					require.NoError(t, os.WriteFile(filepath.Join(broken, "gitdir"), []byte("not-a-worktree"), 0o600))
-				}
+			require.NoError(t, os.Mkdir(broken, 0o700))
+			switch variant {
+			case "duplicate":
+				require.NoError(t, os.WriteFile(filepath.Join(broken, "gitdir"), []byte(filepath.Join(path, ".git")+"\n"), 0o600))
+			case "malformed backlink":
+				require.NoError(t, os.WriteFile(filepath.Join(broken, "gitdir"), []byte("not-a-worktree"), 0o600))
 			}
 			_, err := repo.EnsureIdentity(t.Context(), path, worktree.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 			require.Error(t, err)
 			require.NoFileExists(t, filepath.Join(root, ".git", "worktrees", "topic", "kwt-generation"))
+		})
+	}
+}
+
+// Entries that cannot name any checkout, such as a stray file or a
+// registration a crash left without its backlink, are leftovers Git itself
+// prunes. They must not block identity for every other worktree.
+func TestIdentityIgnoresAdministrativeLeftovers(t *testing.T) {
+	for _, variant := range []string{"stray file", "missing backlink", "empty backlink"} {
+		t.Run(variant, func(t *testing.T) {
+			root, path := fixture(t)
+			repo := open(t, root, kwtPolicy())
+			leftover := filepath.Join(root, ".git", "worktrees", "leftover")
+			switch variant {
+			case "stray file":
+				require.NoError(t, os.WriteFile(leftover, []byte("unexpected"), 0o600))
+			case "missing backlink":
+				require.NoError(t, os.Mkdir(leftover, 0o700))
+			case "empty backlink":
+				require.NoError(t, os.Mkdir(leftover, 0o700))
+				require.NoError(t, os.WriteFile(filepath.Join(leftover, "gitdir"), nil, 0o600))
+			}
+
+			value, err := repo.EnsureIdentity(t.Context(), path, worktree.IdentityPolicy{FileName: "kwt-generation", Generate: true})
+
+			require.NoError(t, err)
+			persisted, err := os.ReadFile(filepath.Join(root, ".git", "worktrees", "topic", "kwt-generation"))
+			require.NoError(t, err)
+			require.Equal(t, value+"\n", string(persisted))
 		})
 	}
 }

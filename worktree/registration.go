@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -105,11 +106,9 @@ func (r *Repository) linkedRegistrations(path string) ([]string, error) {
 	}
 	matches := make([]string, 0, 1)
 	for _, entry := range entries {
+		// A stray file cannot be a registration; Git's own prune removes it.
 		if !entry.IsDir() {
-			return nil, fmt.Errorf(
-				"resolve worktree Git directory: incomplete administrative inventory: unexpected entry %s",
-				filepath.Join(r.commonDir, "worktrees", entry.Name()),
-			)
+			continue
 		}
 		adminDir := filepath.Join(r.commonDir, "worktrees", entry.Name())
 		matchesPath, matchErr := worktreeAdminDirMatchesPath(
@@ -139,12 +138,17 @@ func worktreeAdminDirMatchesPath(
 	}
 	gitDirPath := filepath.Join(adminDir, "gitdir")
 	gitDirFile, err := fslink.ReadFile(gitDirPath)
+	// A registration without a backlink names no checkout, for example after
+	// a crash interrupted git worktree add. Git prunes it; it matches no path.
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
 	if err != nil {
 		return false, fmt.Errorf("read administrative backlink %s: %w", gitDirPath, err)
 	}
 	registeredDotGit := strings.TrimSpace(string(gitDirFile))
 	if registeredDotGit == "" {
-		return false, fmt.Errorf("administrative backlink %s is empty", gitDirPath)
+		return false, nil
 	}
 	if !filepath.IsAbs(registeredDotGit) {
 		registeredDotGit = filepath.Join(adminDir, registeredDotGit)
