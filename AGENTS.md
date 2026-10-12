@@ -70,6 +70,13 @@ Public CI profiles use Namespace's
 which disables workload access to Namespace features and APIs. GitHub fork
 approvals, token permissions, and secrets are separate controls.
 
+Fork pull requests run tests on GitHub-hosted runners, and every CI run also
+tests Windows on one. Its temporary directory can use an 8.3 short name, and
+Git rejects worktree paths longer than 260 characters. Resolve temporary
+directories with `filepath.EvalSymlinks` before comparing them with paths Git
+reports, and build nested worktree fixtures under a short root such as
+`newShortTUITestRoot`.
+
 <!-- BEGIN KATA (managed by `kata init --with-agents`) -->
 
 ## kata issue tracker

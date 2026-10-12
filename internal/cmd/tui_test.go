@@ -3327,8 +3327,9 @@ func TestTUIBackendMaterializeWorktreeDeletesAutoCreatedBranchOnCheckoutFailure(
 
 func TestTUIBackendMaterializeWorktreeReportsBranchRollbackFailure(t *testing.T) {
 	isolateCommandTestHome(t)
-	root := newTUITestRepo(t)
-	manager := worktree.New(git.New(root), &models.Config{Worktree: models.WorktreeConfig{BaseDir: t.TempDir(), AutoMkdir: true}})
+	fixtureRoot := newShortTUITestRoot(t)
+	root := newTUITestRepoAt(t, filepath.Join(fixtureRoot, "repo"))
+	manager := worktree.New(git.New(root), &models.Config{Worktree: models.WorktreeConfig{BaseDir: filepath.Join(fixtureRoot, "worktrees"), AutoMkdir: true}})
 	created, err := manager.Create(t.Context(), worktree.CreateOptions{Branch: "topic", NewBranch: true, RequireGeneration: true, SkipSetup: true})
 	require.NoError(t, err)
 	// A concurrently advanced branch is no longer ours to delete.
@@ -3341,9 +3342,10 @@ func TestTUIBackendMaterializeWorktreeReportsBranchRollbackFailure(t *testing.T)
 
 func TestTUIBackendMaterializeWorktreePreservesCheckoutWhenHeadCannotBeRead(t *testing.T) {
 	isolateCommandTestHome(t)
-	root := newTUITestRepo(t)
+	fixtureRoot := newShortTUITestRoot(t)
+	root := newTUITestRepoAt(t, filepath.Join(fixtureRoot, "repo"))
 	runTUITestGit(t, root, "branch", "topic")
-	manager := worktree.New(git.New(root), &models.Config{Worktree: models.WorktreeConfig{BaseDir: t.TempDir(), AutoMkdir: true}})
+	manager := worktree.New(git.New(root), &models.Config{Worktree: models.WorktreeConfig{BaseDir: filepath.Join(fixtureRoot, "worktrees"), AutoMkdir: true}})
 	created, err := manager.Create(t.Context(), worktree.CreateOptions{Branch: "topic", RequireGeneration: true, SkipSetup: true})
 	require.NoError(t, err)
 	runTUITestGit(t, created.Path, "symbolic-ref", "HEAD", "refs/heads/missing")
@@ -3359,9 +3361,10 @@ func TestTUIBackendMaterializeWorktreePreservesCheckoutWhenHeadCannotBeRead(t *t
 
 func TestFleetMaterializationPreservesReplacementOnHeadMismatch(t *testing.T) {
 	isolateCommandTestHome(t)
-	root := newTUITestRepo(t)
+	fixtureRoot := newShortTUITestRoot(t)
+	root := newTUITestRepoAt(t, filepath.Join(fixtureRoot, "repo"))
 	runTUITestGit(t, root, "branch", "topic")
-	manager := worktree.New(git.New(root), &models.Config{Worktree: models.WorktreeConfig{BaseDir: t.TempDir(), AutoMkdir: true}})
+	manager := worktree.New(git.New(root), &models.Config{Worktree: models.WorktreeConfig{BaseDir: filepath.Join(fixtureRoot, "worktrees"), AutoMkdir: true}})
 	created, err := manager.Create(t.Context(), worktree.CreateOptions{Branch: "topic", RequireGeneration: true, SkipSetup: true})
 	require.NoError(t, err)
 	runTUITestGit(t, root, "worktree", "remove", "--force", created.Path)

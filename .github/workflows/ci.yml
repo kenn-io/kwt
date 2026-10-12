@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   test:
-    name: Go (${{ matrix.os }})
+    name: Go (${{ matrix.label || matrix.os }})
     runs-on: ${{ github.repository == 'kenn-io/kwt' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && matrix.runner || matrix.os }}
     strategy:
       fail-fast: false
@@ -21,7 +21,7 @@ jobs:
             packages: ./...
           - os: windows-latest
             runner: namespace-profile-windows-4cpu
-            packages: >-
+            packages: &windows-packages >-
               ./cmd/kwt
               ./internal/cmd
               ./internal/command
@@ -43,10 +43,16 @@ jobs:
               ./internal/worktree
               ./pkg/models
               ./worktree
+          # Fork pull requests run only on GitHub-hosted runners, whose short
+          # temporary directory names and path limits differ from Namespace.
+          - os: windows-latest
+            runner: windows-latest
+            label: windows-latest, GitHub-hosted
+            packages: *windows-packages
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
 
@@ -152,13 +158,35 @@ jobs:
         if: runner.os == 'Linux'
         run: GOOS=windows GOARCH=arm64 go build -o /tmp/kwt-windows-arm64.exe ./cmd/kwt
 
+  lint:
+    name: Lint
+    runs-on: namespace-profile-linux-4cpu
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.14.0
+          skip-cache: true
+
   docs:
     name: Docs
     runs-on: namespace-profile-linux-4cpu
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
 

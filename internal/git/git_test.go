@@ -658,7 +658,11 @@ func TestListWorktreesKeepsGenerationStableWhenDirectoryChanges(t *testing.T) {
 func TestInspectWorktreesReportsMissingDirectoryWithoutInitializing(t *testing.T) {
 	repo := NewTestRepository(t)
 	repo.CreateBranch(t, "missing-topic")
-	worktreePath := filepath.Join(t.TempDir(), "missing-topic")
+	// Once the directory is gone, path canonicalization can no longer expand
+	// an 8.3 short temporary directory name to the long form Git reports.
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	worktreePath := filepath.Join(parent, "missing-topic")
 	repo.CreateWorktree(t, worktreePath, "missing-topic")
 	g := New(repo.Path)
 	adminDir, err := shared.ReadWorktreeBacklink(t.Context(), worktreePath)

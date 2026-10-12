@@ -27,14 +27,23 @@ func git(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(output))
 }
 
+// fixture returns long-form paths because Git reports them that way. Windows
+// runners can name the temporary directory with an 8.3 short name.
 func fixture(t *testing.T) (string, string) {
 	t.Helper()
-	root := t.TempDir()
+	root := resolvedTempDir(t)
 	git(t, root, "init", "-b", "main")
 	git(t, root, "-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "--allow-empty", "-m", "initial")
-	path := filepath.Join(t.TempDir(), "topic")
+	path := filepath.Join(resolvedTempDir(t), "topic")
 	git(t, root, "worktree", "add", "-b", "topic", path)
 	return root, path
+}
+
+func resolvedTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	return dir
 }
 
 func open(t *testing.T, root string, policy worktree.LockPolicy) *worktree.Repository {
