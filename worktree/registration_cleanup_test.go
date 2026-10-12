@@ -2,6 +2,8 @@ package worktree_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -248,4 +250,31 @@ func TestReadWorktreeBacklinkFollowsDotGitClaim(t *testing.T) {
 			require.Equal(t, want, got)
 		})
 	}
+}
+
+// Force-delete continues past an error only when it proves the checkout is
+// already gone, such as a missing directory or a gitfile left empty by an
+// interrupted git worktree add. Any other Git failure must stay an error.
+func TestIsCheckoutAbsentClassifiesGitErrors(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"corrupt gitfile":            {fmt.Errorf("%w: %s", errors.New("exit status 128"), "fatal: invalid gitfile format: /tmp/wt/.git"), true},
+		"remove on corrupt gitfile":  {fmt.Errorf("%w: %s", errors.New("exit status 128"), "fatal: validation failed, cannot remove working tree: '/tmp/wt/.git' is not a .git file, error code 5"), true},
+		"missing worktree":           {errors.New("fatal: '/tmp/wt' is not a working tree"), true},
+		"missing registration files": {fmt.Errorf("%w: %s", errors.New("exit status 128"), "fatal: failed to read worktrees/pr-1/commondir: Success"), true},
+		"unrelated git failure":      {fmt.Errorf("%w: %s", errors.New("exit status 128"), "fatal: could not read Username for 'https://example.com'"), false},
+		"nil":                        {nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tc.want, worktree.IsCheckoutAbsent(tc.err))
+		})
+	}
+
+	_, path := fixture(t)
+	require.NoError(t, os.WriteFile(filepath.Join(path, ".git"), nil, 0o600))
+	_, err := gitcmd.New().Output(t.Context(), path, "rev-parse", "--git-dir")
+	require.Error(t, err)
+	require.True(t, worktree.IsCheckoutAbsent(err), "a real empty gitfile error: %v", err)
 }

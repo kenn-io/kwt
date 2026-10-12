@@ -272,3 +272,22 @@ func TestRecoveryThroughRelativeRepositoryPath(t *testing.T) {
 	require.Equal(t, head, git(t, path, "rev-parse", "HEAD"))
 	require.Equal(t, "topic", git(t, path, "branch", "--show-current"))
 }
+
+// A base branch cannot be created while a branch already occupies its ref
+// namespace; sync must skip it without touching the occupying branch.
+func TestSyncBaseSkipsOccupiedRefNamespace(t *testing.T) {
+	root, _ := fixture(t)
+	mainTip := git(t, root, "rev-parse", "refs/heads/main")
+	git(t, root, "checkout", "--detach")
+	git(t, root, "branch", "-D", "main")
+	git(t, root, "branch", "main/topic", mainTip)
+	repo := open(t, root, kwtPolicy())
+
+	require.NoError(t, repo.WithLock(t.Context(), func(s *worktree.Scope) error {
+		return s.SyncBase(t.Context(), worktree.BaseSyncRequest{Branch: "main", SourceRef: mainTip, Managed: true, BackupPrefix: "refs/kenn-forge/base-backups/"})
+	}))
+
+	_, err := gitcmd.New().Output(t.Context(), root, "rev-parse", "--verify", "--quiet", "refs/heads/main")
+	require.Error(t, err)
+	require.Equal(t, mainTip, git(t, root, "rev-parse", "refs/heads/main/topic"))
+}
