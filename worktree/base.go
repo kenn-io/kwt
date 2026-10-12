@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	gitcmd "go.kenn.io/kit/git/cmd"
+	gitworktree "go.kenn.io/kit/git/worktree"
 )
 
 type BaseSyncRequest struct {
@@ -99,13 +100,18 @@ func (r *Repository) refOID(ctx context.Context, ref string) (string, bool, erro
 	return strings.TrimSpace(string(out)), err == nil, err
 }
 
+// branchCheckedOut reads Git's own worktree list. It needs only branch
+// names, so an unrelated worktree whose files cannot be read does not stop it.
 func (s *Scope) branchCheckedOut(ctx context.Context, branch string) (bool, error) {
-	entries, err := s.inspect(ctx, false)
-	if err != nil {
+	if err := s.check(ctx); err != nil {
 		return false, err
 	}
-	for _, entry := range entries.Entries {
-		if entry.Branch == branch && !entry.Detached {
+	out, err := s.repo.run(ctx, s.repo.path, "worktree", "list", "--porcelain")
+	if err != nil {
+		return false, fmt.Errorf("list worktrees: %w", err)
+	}
+	for _, entry := range gitworktree.ParsePorcelain(string(out)) {
+		if !entry.Bare && !entry.Detached && entry.Branch == branch {
 			return true, nil
 		}
 	}
