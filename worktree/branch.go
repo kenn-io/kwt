@@ -23,10 +23,14 @@ type BranchNameResult struct {
 }
 
 // SelectBranchName selects without creating a ref; the application persists its
-// own reservation before asynchronous setup.
-func (r *Repository) SelectBranchName(ctx context.Context, req BranchNameRequest) (result BranchNameResult, err error) {
-	err = r.WithLock(ctx, func(s *Scope) error { result, err = s.SelectBranchName(ctx, req); return err })
-	return result, err
+// own reservation before asynchronous setup. It reads refs without the
+// repository lock, like ObserveRegistration, so a long operation in another
+// Scope does not delay it. Creation re-checks the name under its held Scope.
+func (r *Repository) SelectBranchName(ctx context.Context, req BranchNameRequest) (BranchNameResult, error) {
+	if err := ctx.Err(); err != nil {
+		return BranchNameResult{}, err
+	}
+	return r.selectBranch(ctx, req)
 }
 
 func (s *Scope) SelectBranchName(ctx context.Context, req BranchNameRequest) (BranchNameResult, error) {
@@ -104,12 +108,26 @@ func (r *Repository) selectNumberedBranch(ctx context.Context, branch string) (s
 	return result.Branch, err
 }
 
+// BranchNameAvailable checks both exact names and parent/child ref conflicts
+// without the repository lock, like ObserveRegistration. The answer is
+// advisory: creation re-checks the name under its held Scope.
+func (r *Repository) BranchNameAvailable(ctx context.Context, branch string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return r.branchNameAvailable(ctx, branch)
+}
+
 // BranchNameAvailable checks both exact names and parent/child ref conflicts.
 func (s *Scope) BranchNameAvailable(ctx context.Context, branch string) (bool, error) {
 	if err := s.check(ctx); err != nil {
 		return false, err
 	}
-	refs, err := s.repo.branchRefs(ctx)
+	return s.repo.branchNameAvailable(ctx, branch)
+}
+
+func (r *Repository) branchNameAvailable(ctx context.Context, branch string) (bool, error) {
+	refs, err := r.branchRefs(ctx)
 	if err != nil {
 		return false, err
 	}

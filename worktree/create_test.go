@@ -395,3 +395,36 @@ func TestIsolatedCheckoutFailureCanRollbackBeforeIdentityFinalization(t *testing
 		return nil
 	}))
 }
+
+// Choosing a branch name only reads refs, so it must not wait for a scope
+// another caller holds, for example across a long fetch. Creation re-checks
+// the name under its own scope.
+func TestBranchNameReadsDoNotWaitForTheRepositoryLock(t *testing.T) {
+	require := require.New(t)
+	root, _ := fixture(t)
+	git(t, root, "branch", "feature")
+	repo := open(t, root, kwtPolicy())
+	held, release := make(chan struct{}), make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- repo.WithLock(t.Context(), func(*worktree.Scope) error {
+			close(held)
+			<-release
+			return nil
+		})
+	}()
+	<-held
+	defer func() {
+		close(release)
+		require.NoError(<-done)
+	}()
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	available, err := repo.BranchNameAvailable(ctx, "feature")
+	require.NoError(err)
+	require.False(available)
+	name, err := repo.SelectBranchName(ctx, worktree.BranchNameRequest{Branch: "feature", Suffixes: []string{"2", "3"}})
+	require.NoError(err)
+	require.Equal("feature-2", name.Branch)
+}
