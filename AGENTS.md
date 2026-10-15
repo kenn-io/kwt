@@ -56,6 +56,8 @@ removal preflights before stopping a runtime and revalidates before cleanup.
 Warm claims retain Kit acquisition evidence for the consumed checkout and any
 new branch. Keep that result for rollback; a preexisting branch remains outside
 cleanup authority, and an unknown move outcome must preserve its artifacts.
+An interrupted branch checkout that remains at the original spare must discard
+that spare and its unchanged new branch, so the next preparation can refill it.
 Warm preparation keeps the spare's native Git lock while reset runs without
 the repository lock, and unlocks only to publish it as ready. A missing spare's
 registration may be discarded only while it still carries spare evidence.

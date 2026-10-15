@@ -341,22 +341,32 @@ func (s *Scope) ClaimWarm(ctx context.Context, req WarmClaimRequest) (CreateResu
 			args = append(args, opts.Branch)
 		}
 		if _, err = s.repo.run(ctx, req.Warm.Path, args...); err != nil {
-			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer cancel()
-			branch, branchErr := s.currentBranch(cleanupCtx, req.Warm.Path)
-			if branchErr != nil {
-				return s.preservedWarmResult(req.Warm.Path, metadata, ""), true, errors.Join(err, branchErr)
-			}
-			removed, removeErr := managed.RemoveWorktreeFromDisk(cleanupCtx, managed.RemoveWorktreeOptions{ProjectRoot: s.repo.path, Path: req.Warm.Path, Branch: branch, Force: true, Runner: s.repo.runner, RunGit: s.repo.runGit})
-			return s.preservedWarmResult(removed.Remaining.Path, removed.Remaining.Registration, branch), true, errors.Join(err, removeErr)
+			return s.discardWarmCheckout(ctx, req.Warm.Path, metadata, managed.BranchRemoval{}, err)
 		}
 
 	}
 	move := managed.MoveWorktreeOptions{ProjectRoot: s.repo.path, Source: req.Warm.Path, Path: opts.Path, Runner: s.repo.runner, RunGit: s.repo.runGit}
 	if opts.Mode == managed.CheckoutNewBranch {
-		move.NewBranch, move.BaseRef = opts.Branch, opts.BaseRef
+		ref := opts.BaseRef
+		if ref == "" {
+			ref = "HEAD"
+		}
+		oid, exists, err := s.repo.refOID(ctx, ref)
+		if err != nil {
+			return CreateResult{}, false, err
+		}
+		if !exists {
+			return CreateResult{}, false, fmt.Errorf("warm checkout revision %q is missing", ref)
+		}
+		move.NewBranch, move.BaseRef = opts.Branch, oid
 	}
 	moved, moveErr := managed.MoveWorktreeOnDisk(ctx, move)
+	if moveErr != nil && pathKey(moved.Path) == pathKey(req.Warm.Path) {
+		// The clean spare was ours before checkout. Kit cannot grant acquisition
+		// evidence for an interrupted checkout; its uncertain move result instead
+		// names the destination and must stay outside this cleanup path.
+		return s.discardWarmCheckout(ctx, req.Warm.Path, metadata, managed.BranchRemoval{Name: moved.Branch, ExpectedOID: move.BaseRef, Force: true}, moveErr)
+	}
 	if moveErr != nil && moved.Path == "" {
 		if opts.Mode == managed.CheckoutNewBranch {
 			return CreateResult{}, false, moveErr
@@ -379,6 +389,33 @@ func (s *Scope) ClaimWarm(ctx context.Context, req WarmClaimRequest) (CreateResu
 	}
 	result, err = s.finalize(ctx, result)
 	return result, true, err
+}
+
+func (s *Scope) discardWarmCheckout(ctx context.Context, path, metadata string, ownedBranch managed.BranchRemoval, cause error) (CreateResult, bool, error) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	remaining := managed.RollbackResult{Path: path, Registration: metadata, Branch: ownedBranch.Name}
+	branch, err := s.currentBranch(cleanupCtx, path)
+	if err != nil {
+		return s.preservedWarmResult(remaining, ""), true, errors.Join(cause, err)
+	}
+	opts := managed.RemoveWorktreeOptions{ProjectRoot: s.repo.path, Path: path, Branch: branch, Force: true, Runner: s.repo.runner, RunGit: s.repo.runGit}
+	if ownedBranch.Name != "" {
+		_, exists, err := s.repo.refOID(cleanupCtx, "refs/heads/"+ownedBranch.Name)
+		if err != nil {
+			return s.preservedWarmResult(remaining, branch), true, errors.Join(cause, err)
+		}
+		if exists {
+			opts.Branches = []managed.BranchRemoval{ownedBranch}
+		} else {
+			remaining.Branch = ""
+		}
+	}
+	removed, err := managed.RemoveWorktreeFromDisk(cleanupCtx, opts)
+	if err != nil && !removed.CheckoutRemoved && !removed.RegistrationRemoved && removed.Remaining.Path == "" {
+		removed.Remaining = remaining
+	}
+	return s.preservedWarmResult(removed.Remaining, branch), true, errors.Join(cause, err)
 }
 
 func (s *Scope) currentBranch(ctx context.Context, path string) (string, error) {
@@ -462,6 +499,6 @@ func bareOverrideSet(file string) bool {
 }
 
 // Failed warm cleanup is a report, never new authority to remove the spare.
-func (s *Scope) preservedWarmResult(path, registration, branch string) CreateResult {
-	return CreateResult{Path: path, CommonDir: s.repo.commonDir, Branch: branch, acquired: &acquisition{repo: s.repo, git: managed.CreateWorktreeResult{Path: path, Branch: branch}, registration: registration, preserve: true}}
+func (s *Scope) preservedWarmResult(remaining managed.RollbackResult, branch string) CreateResult {
+	return CreateResult{Path: remaining.Path, CommonDir: s.repo.commonDir, Branch: branch, OwnedBranch: remaining.Branch, acquired: &acquisition{repo: s.repo, git: managed.CreateWorktreeResult{Path: remaining.Path, Branch: remaining.Branch, BranchCreated: remaining.Branch != ""}, registration: remaining.Registration, preserve: true}}
 }
