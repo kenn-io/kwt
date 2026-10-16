@@ -84,6 +84,7 @@ func IsCheckoutAbsent(err error) bool {
 	return strings.Contains(msg, "is not a working tree") ||
 		strings.Contains(msg, "is not a worktree") ||
 		strings.Contains(msg, "not a git repository") ||
+		strings.Contains(msg, "gitfile does not point to a valid repository") ||
 		strings.Contains(msg, "no such file or directory") ||
 		strings.Contains(msg, "invalid gitfile format") ||
 		strings.Contains(msg, "is not a .git file") ||

@@ -262,6 +262,7 @@ func TestIsCheckoutAbsentClassifiesGitErrors(t *testing.T) {
 	}{
 		"corrupt gitfile":            {fmt.Errorf("%w: %s", errors.New("exit status 128"), "fatal: invalid gitfile format: /tmp/wt/.git"), true},
 		"remove on corrupt gitfile":  {fmt.Errorf("%w: %s", errors.New("exit status 128"), "fatal: validation failed, cannot remove working tree: '/tmp/wt/.git' is not a .git file, error code 5"), true},
+		"gitfile to invalid repo":    {fmt.Errorf("%w: %s", errors.New("exit status 128"), "fatal: gitfile does not point to a valid repository: /tmp/wt/.git"), true},
 		"missing worktree":           {errors.New("fatal: '/tmp/wt' is not a working tree"), true},
 		"missing registration files": {fmt.Errorf("%w: %s", errors.New("exit status 128"), "fatal: failed to read worktrees/pr-1/commondir: Success"), true},
 		"unrelated git failure":      {fmt.Errorf("%w: %s", errors.New("exit status 128"), "fatal: could not read Username for 'https://example.com'"), false},
