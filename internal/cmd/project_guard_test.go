@@ -53,23 +53,34 @@ func TestGuardedProjectOperationRejectsRemovedRegistration(t *testing.T) {
 }
 
 func TestWorktreeSessionEstablishmentCancelsWhileWaitingForMutationLock(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	home := t.TempDir()
 	t.Setenv("KWT_HOME", home)
 	repoPath := newTUITestRepo(t)
 	generation, err := openSharedWorktrees(t, git.New(repoPath)).EnsureIdentity(t.Context(), repoPath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
-	require.NoError(t, err)
+	require.NoError(err)
 	lock := flock.New(filepath.Join(repoPath, ".git", "kwt-worktree.lock"))
-	require.NoError(t, lock.Lock())
-	defer func() { _ = lock.Unlock() }()
+	require.NoError(lock.Lock())
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	reachedGuard := make(chan struct{})
 	originalHook := beforeProjectGuardAcquire
 	beforeProjectGuardAcquire = func() { close(reachedGuard) }
 	t.Cleanup(func() { beforeProjectGuardAcquire = originalHook })
 	done := make(chan error, 1)
+	finished := make(chan struct{})
+	t.Cleanup(func() {
+		cancel()
+		assert.NoError(lock.Unlock())
+		select {
+		case <-finished:
+		case <-time.After(5 * time.Second):
+			assert.Fail("session establishment did not stop before fixture cleanup")
+		}
+	})
 	called := false
 	go func() {
+		defer close(finished)
 		_, establishErr := runWorktreeSessionEstablishment(
 			ctx,
 			repoPath,
@@ -84,18 +95,20 @@ func TestWorktreeSessionEstablishmentCancelsWhileWaitingForMutationLock(t *testi
 	}()
 	select {
 	case <-reachedGuard:
-	case <-time.After(time.Second):
-		t.Fatal("session establishment did not reach the project guard")
+	case <-time.After(5 * time.Second):
+		require.FailNow("session establishment did not reach the project guard")
 	}
 	time.Sleep(50 * time.Millisecond)
 	cancel()
 
+	// Keep the lock held until cancellation is observed. Git setup can still
+	// be running after the guard signal, so use a liveness timeout.
 	select {
 	case err := <-done:
-		assert.ErrorIs(t, err, context.Canceled)
-		assert.False(t, called)
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("session establishment did not honor cancellation while waiting for the mutation lock")
+		assert.ErrorIs(err, context.Canceled)
+		assert.False(called)
+	case <-time.After(5 * time.Second):
+		require.FailNow("session establishment did not honor cancellation while waiting for the mutation lock")
 	}
 }
 
