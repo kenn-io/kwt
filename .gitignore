@@ -32,3 +32,6 @@ go.work.sum
 .vercel
 .env*
 .kata.local.toml
+
+# Local scratch output
+/tmp/
