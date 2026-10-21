@@ -3,5 +3,11 @@
   "extends": ["config:recommended", "group:allNonMajor", "schedule:weekly"],
   "enabledManagers": ["gomod"],
   "minimumReleaseAge": "3 days",
-  "postUpdateOptions": ["gomodTidy"]
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {
+      "matchPackageNames": ["github.com/google/go-github/**"],
+      "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths"]
+    }
+  ]
 }
