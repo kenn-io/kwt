@@ -6,6 +6,14 @@ sync_script="$repo_root/docs/scripts/sync-assets.sh"
 scratch_root="$(mktemp -d "${TMPDIR:-/tmp}/kwt-docs-assets-test.XXXXXX")"
 trap 'rm -rf "$scratch_root"' EXIT
 
+# Keep fixture Git commands independent of the caller's repository and config.
+while IFS= read -r name; do
+  case "$name" in GIT_*) unset "$name" ;; esac
+done < <(compgen -e)
+export GIT_CONFIG_GLOBAL="$scratch_root/gitconfig"
+export GIT_CONFIG_NOSYSTEM=1
+: > "$GIT_CONFIG_GLOBAL"
+
 asset_repo="$scratch_root/assets"
 destination="$scratch_root/materialized"
 caller_git_dir="$(git -C "$repo_root" rev-parse --absolute-git-dir)"
