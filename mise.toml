@@ -1,5 +1,5 @@
 [tools]
 go = "1.27.3"
-prek = "latest"
+prek = "0.5.7"
 "golangci-lint" = "latest"
 "npm:oxfmt" = "latest"
