@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 
@@ -17,10 +18,13 @@ func TestManagerCreationReturnsSharedAcquisition(t *testing.T) {
 		t.Skip("setup diagnostic fixture uses POSIX shell commands")
 	}
 	t.Setenv("KWT_HOME", t.TempDir())
-	root := t.TempDir()
+	// The repository setting must match the path Git reports, which resolves
+	// the /var symlink above macOS temporary directories.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	runner := gitcmd.New().WithConfig("user.name", "Example").WithConfig("user.email", "example@example.com")
 	for _, args := range [][]string{{"init", "-b", "main"}, {"commit", "--allow-empty", "-m", "initial"}} {
-		_, err := runner.Output(t.Context(), root, args...)
+		_, err = runner.Output(t.Context(), root, args...)
 		require.NoError(t, err)
 	}
 	stderr, err := os.CreateTemp(t.TempDir(), "stderr-")
