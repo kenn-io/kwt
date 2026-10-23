@@ -129,8 +129,7 @@ func TestStripEnvMasksGlobalEnvForSessionOnly(t *testing.T) {
 	// The server inherits this environment at start time, so the canaries
 	// become part of the server-global environment table — exactly what
 	// -r (as opposed to -u) must keep out of this session's panes.
-	serverEnv := append(append([]string(nil), os.Environ()...),
-		canaryName+"="+canaryValue, canary2Name+"="+canary2Value, "SHELL=/bin/sh")
+	serverEnv := paneShellEnv(t, canaryName+"="+canaryValue, canary2Name+"="+canary2Value)
 
 	createCmd := BuildSessionCreateCommand(session, worktreeDir)
 	if _, err := runTmuxSocket(t, socket, serverEnv, createCmd...); err != nil {
@@ -195,8 +194,7 @@ func TestBootstrapMasksFirstAndLaterPanes(t *testing.T) {
 	t.Cleanup(func() { killPrivateTmuxServer(socket) })
 
 	worktreeDir := t.TempDir()
-	serverEnv := append(append([]string(nil), os.Environ()...),
-		canaryName+"="+canaryValue, "SHELL=/bin/sh")
+	serverEnv := paneShellEnv(t, canaryName+"="+canaryValue)
 
 	createCmd := BuildSessionCreateCommand(session, worktreeDir)
 	firstOut, err := runTmuxSocket(t, socket, serverEnv, createCmd...)
@@ -264,8 +262,7 @@ func TestFreshServerFirstPaneDoesNotInheritLauncherEditor(t *testing.T) {
 	t.Cleanup(func() { killPrivateTmuxServer(socket) })
 
 	worktreeDir := t.TempDir()
-	serverEnv := append(append([]string(nil), os.Environ()...),
-		"EDITOR=launcher-editor", "VISUAL=launcher-visual", "SHELL=/bin/sh")
+	serverEnv := paneShellEnv(t, "EDITOR=launcher-editor", "VISUAL=launcher-visual")
 
 	createCmd := BuildSessionCreateCommand(session, worktreeDir)
 	firstOut, err := runTmuxSocket(t, socket, serverEnv, createCmd...)
@@ -327,8 +324,7 @@ func TestStripMasksStaleServerGlobalVarNotInLauncherEnv(t *testing.T) {
 	worktreeDir := t.TempDir()
 
 	createCmd := BuildSessionCreateCommand(session, worktreeDir)
-	if _, err := runTmuxSocket(t, socket, append(append([]string(nil), os.Environ()...), "SHELL=/bin/sh"),
-		createCmd...); err != nil {
+	if _, err := runTmuxSocket(t, socket, paneShellEnv(t), createCmd...); err != nil {
 		t.Fatalf("tmux %v: %v", createCmd, err)
 	}
 
@@ -391,8 +387,7 @@ func TestSessionLocalPrefixVarMaskedOnRepair(t *testing.T) {
 	// directly with new-session -- kwt's create path never ran, so no
 	// bootstrap has been applied yet.
 	createCmd := BuildSessionCreateCommand(session, worktreeDir)
-	if _, err := runTmuxSocket(t, socket, append(append([]string(nil), os.Environ()...), "SHELL=/bin/sh"),
-		createCmd...); err != nil {
+	if _, err := runTmuxSocket(t, socket, paneShellEnv(t), createCmd...); err != nil {
 		t.Fatalf("tmux %v: %v", createCmd, err)
 	}
 
@@ -610,7 +605,7 @@ func TestSessionMarkerStripsEditorFromPaneEvenThoughServerExecKeepsIt(t *testing
 	t.Cleanup(func() { killPrivateTmuxServer(socket) })
 
 	worktreeDir := t.TempDir()
-	serverEnv := append(append([]string(nil), os.Environ()...), "EDITOR=vim", "SHELL=/bin/sh")
+	serverEnv := paneShellEnv(t, "EDITOR=vim")
 
 	createCmd := BuildSessionCreateCommand(session, worktreeDir)
 	if _, err := runTmuxSocket(t, socket, serverEnv, createCmd...); err != nil {
@@ -643,6 +638,24 @@ func paneEnvHasVar(dump, name string) bool {
 	return false
 }
 
+// paneShellEnv returns the test process environment plus extra, with SHELL
+// set to a shell that runs no startup files. tmux makes SHELL the server's
+// default-shell, and panes start it as a login shell, which would otherwise
+// read /etc/profile and ~/.profile. A variable one of those exports would
+// read back from the pane as a variable kwt failed to strip. The shell drops
+// the -l the first-pane respawn passes and execs a plain /bin/sh, so the pane
+// environment is exactly the one tmux handed it.
+func paneShellEnv(t *testing.T, extra ...string) []string {
+	t.Helper()
+	shell := filepath.Join(t.TempDir(), "pane-shell")
+	script := "#!/bin/sh\nif [ \"$1\" = \"-l\" ]; then\n  shift\nfi\nexec /bin/sh \"$@\"\n"
+	if err := os.WriteFile(shell, []byte(script), 0o755); err != nil {
+		t.Fatalf("writing pane shell: %v", err)
+	}
+	env := append(append([]string(nil), os.Environ()...), "SHELL="+shell)
+	return append(env, extra...)
+}
+
 func containsName(names []string, want string) bool {
 	for _, name := range names {
 		if name == want {
@@ -654,12 +667,15 @@ func containsName(names []string, want string) bool {
 
 // runTmuxSocket runs a tmux command against the given private socket with a
 // bounded context timeout. A nil env leaves the subprocess environment as
-// the test process's own.
+// the test process's own. The server starts with an empty configuration: a
+// developer's tmux.conf can set default-shell, which would replace the shell
+// each test chose through SHELL and run the developer's shell startup files
+// in every pane.
 func runTmuxSocket(t *testing.T, socket string, env []string, args ...string) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	full := append([]string{"-L", socket}, args...)
+	full := append([]string{"-f", os.DevNull, "-L", socket}, args...)
 	cmd := exec.CommandContext(ctx, "tmux", full...)
 	if env != nil {
 		cmd.Env = env
