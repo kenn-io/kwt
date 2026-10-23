@@ -1,5 +1,3 @@
-//go:build !windows
-
 package lifecycle
 
 import (
@@ -14,7 +12,6 @@ import (
 )
 
 func TestSystemProcessStatusReportsUnreapedChildAsZombie(t *testing.T) {
-	useHostProcessTable(t)
 	command := exec.Command("true")
 	require.NoError(t, command.Start())
 	t.Cleanup(func() { _ = command.Wait() })
@@ -27,7 +24,6 @@ func TestSystemProcessStatusReportsUnreapedChildAsZombie(t *testing.T) {
 }
 
 func TestSystemProcessStatusFailsForReapedProcess(t *testing.T) {
-	useHostProcessTable(t)
 	command := exec.Command("true")
 	require.NoError(t, command.Run())
 	candidate := systemWorktreeProcess{Process: &process.Process{Pid: int32(command.Process.Pid)}}
@@ -38,7 +34,6 @@ func TestSystemProcessStatusFailsForReapedProcess(t *testing.T) {
 }
 
 func TestSystemProcessStatusReadsOtherUsersProcesses(t *testing.T) {
-	useHostProcessTable(t)
 	processes, err := process.ProcessesWithContext(t.Context())
 	require.NoError(t, err)
 	currentUser, err := user.Current()
