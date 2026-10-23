@@ -19,6 +19,9 @@ jobs:
           - os: ubuntu-latest
             runner: namespace-profile-linux-8cpu
             packages: ./...
+          - os: macos-latest
+            runner: namespace-profile-mac-6cpu
+            packages: ./...
           - os: windows-latest
             runner: namespace-profile-windows-4cpu
             packages: &windows-packages >-
