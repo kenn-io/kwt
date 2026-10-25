@@ -10,21 +10,18 @@ permissions:
 
 jobs:
   test:
-    name: Go (${{ matrix.label || matrix.os }})
-    runs-on: ${{ github.repository == 'kenn-io/kwt' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && matrix.runner || matrix.os }}
+    name: Go (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            runner: namespace-profile-linux-8cpu
             packages: ./...
           - os: macos-latest
-            runner: namespace-profile-mac-6cpu
             packages: ./...
           - os: windows-latest
-            runner: namespace-profile-windows-4cpu
-            packages: &windows-packages >-
+            packages: >-
               ./cmd/kwt
               ./internal/cmd
               ./internal/command
@@ -46,12 +43,6 @@ jobs:
               ./internal/worktree
               ./pkg/models
               ./worktree
-          # Fork pull requests run only on GitHub-hosted runners, whose short
-          # temporary directory names and path limits differ from Namespace.
-          - os: windows-latest
-            runner: windows-latest
-            label: windows-latest, GitHub-hosted
-            packages: *windows-packages
 
     steps:
       - name: Checkout
@@ -63,7 +54,7 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
-          cache: ${{ contains(fromJSON('["ubuntu-latest","ubuntu-24.04","ubuntu-22.04"]'), matrix.os) && github.repository == 'kenn-io/kwt' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
+          cache: true
 
       - name: Test
         if: runner.os != 'Windows'
@@ -163,7 +154,7 @@ jobs:
 
   lint:
     name: Lint
-    runs-on: namespace-profile-linux-4cpu
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -175,17 +166,16 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.14.0
-          skip-cache: true
 
   docs:
     name: Docs
-    runs-on: namespace-profile-linux-4cpu
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
