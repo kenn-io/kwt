@@ -14,6 +14,20 @@ GO_PATH_FIRST := $(shell go env GOPATH | sed 's/;.*//')
 else
 GO_PATH_FIRST := $(shell go env GOPATH | sed 's/:.*//')
 endif
+
+# Compile without absolute source paths so every checkout and worktree shares
+# one Go build cache instead of each compiling its own copy of every package.
+# Read `go env` first so flags saved with `go env -w GOFLAGS=...` survive the
+# export. GOFLAGS=-trimpath=false opts out. Debuggers need a source mapping:
+# docs/development/contributing.md#shared-build-cache-and-debugging.
+ifeq ($(origin GOFLAGS),undefined)
+GOFLAGS := $(shell go env GOFLAGS)
+endif
+ifeq ($(filter -trimpath -trimpath=%,$(GOFLAGS)),)
+override GOFLAGS += -trimpath
+endif
+export GOFLAGS
+
 INSTALL_DIR ?= $(GO_PATH_FIRST)/bin
 VERCEL_SCOPE ?= kenn-software
 VERCEL_PROJECT ?= kwt-docs
@@ -23,6 +37,7 @@ TEST_CLEAN_ENV := env -i \
 	CGO_ENABLED="$(CGO_ENABLED)" \
 	COMSPEC="$(COMSPEC)" \
 	GOCACHE="$(GOCACHE)" \
+	GOFLAGS="$(GOFLAGS)" \
 	GOARCH="$(GOARCH)" \
 	GOMODCACHE="$(GOMODCACHE)" \
 	GOPATH="$(GOPATH)" \

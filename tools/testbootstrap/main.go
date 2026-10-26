@@ -21,6 +21,7 @@ var allowedEnvironment = map[string]struct{}{
 	"CGO_ENABLED":       {},
 	"COMSPEC":           {},
 	"GOCACHE":           {},
+	"GOFLAGS":           {},
 	"GOARCH":            {},
 	"GOMODCACHE":        {},
 	"GOPATH":            {},

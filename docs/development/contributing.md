@@ -77,6 +77,29 @@ custom transports, and subprocesses that replace the guarded environment are
 outside this boundary; it is not an operating-system network sandbox. Use the
 documented Make entrypoints rather than invoking the Go bootstrap directly.
 
+### Shared build cache and debugging
+
+`make` targets build and test Go code with `-trimpath`. Compiled code then
+records module-relative source paths instead of absolute ones, so every clone
+and git worktree shares one Go build cache. Without it, each checkout compiles
+and caches its own copy of every package. The test entrypoints pass `GOFLAGS`
+through the bootstrap so tests use the same flags.
+
+- To opt out for one command, run `make test GOFLAGS=-trimpath=false`.
+- To get the same sharing from plain `go` commands outside `make`, run
+  `go env -w GOFLAGS=-trimpath` once.
+
+Trimmed binaries do not record where their source lives, so Delve needs help
+finding it:
+
+- `dlv debug` and `dlv test` inherit `GOFLAGS`. Pass
+  `--build-flags=-trimpath=false` so Delve can show source. Debug builds turn
+  off optimizations, so they never shared cache entries anyway.
+- For `dlv exec` or `dlv attach` on a trimmed binary, start Delve from the
+  repository root and run `config substitute-path -guess` (Delve 1.24 or
+  newer). It maps the module path to your checkout, the standard library to
+  `GOROOT`, and dependencies to the module cache.
+
 ## OpenSSH projection maintenance
 
 Kwt's route identity retains every normalized `ssh -G` directive, but

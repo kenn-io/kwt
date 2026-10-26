@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # Module-relative source paths keep build cache entries independent of the checkout path.
+  GOFLAGS: -trimpath
+
 jobs:
   test:
     name: Go (${{ matrix.os }})
@@ -68,6 +72,7 @@ jobs:
             env -i
             "CGO_ENABLED=${CGO_ENABLED:-}"
             "GOCACHE=${GOCACHE:-}"
+            "GOFLAGS=${GOFLAGS:-}"
             "GOARCH=${GOARCH:-}"
             "GOMODCACHE=${GOMODCACHE:-}"
             "GOPATH=${GOPATH:-}"
@@ -112,7 +117,7 @@ jobs:
 
           $allowedNames = @(
             'APPDATA', 'CGO_ENABLED', 'COMSPEC', 'GOCACHE', 'GOARCH',
-            'GOMODCACHE', 'GOPATH', 'GOOS', 'GOROOT', 'HOME', 'HOMEDRIVE',
+            'GOFLAGS', 'GOMODCACHE', 'GOPATH', 'GOOS', 'GOROOT', 'HOME', 'HOMEDRIVE',
             'HOMEPATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'LOCALAPPDATA',
             'NIX_SSL_CERT_FILE', 'PATH', 'PATHEXT', 'PROGRAMDATA',
             'SSL_CERT_DIR', 'SSL_CERT_FILE', 'SYSTEMROOT', 'TEMP', 'TMP',

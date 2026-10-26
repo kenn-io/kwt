@@ -14,6 +14,7 @@
 - Documentation should move with behavior changes when practical: CLI flags, config keys, workflows, and user-facing contracts should be updated with the code.
 - Keep changes focused. Do not refactor unrelated code or rewrite user changes while completing a task.
 - Prefer the repo's commands for verification: `make test`, `make build`, and focused `go test ./path` runs while iterating.
+- Never locate files from a path returned by `runtime.Caller` or a stack trace; builds use `-trimpath`, so those paths are module-relative. Tests run from their package directory, so use paths relative to it.
 - Git prints forward-slash paths on Windows. Use `filepath.FromSlash` when tests compare Git path output with paths built by `filepath`; preserve assertions for empty paths.
 
 ## Worktree lifecycle

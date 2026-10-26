@@ -14,11 +14,11 @@ func TestMakeInstallUsesSharedGoBinByDefault(t *testing.T) {
 		t.Skip("Makefile installation integration test requires POSIX make")
 	}
 
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
+	// go test runs from this package's directory.
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repository root: %v", err)
 	}
-	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	scratch := t.TempDir()
 	firstGopath := filepath.Join(scratch, "gopath with spaces")
 	secondGopath := filepath.Join(scratch, "secondary-gopath")
