@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	pathpkg "path"
 	"path/filepath"
@@ -116,7 +117,7 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	if commandContext == nil {
 		commandContext = context.Background()
 	}
-	return ExecuteWithArgs(false, func(ctx *CommandContext, cmd *cobra.Command, args []string) error {
+	err = ExecuteWithArgs(false, func(ctx *CommandContext, cmd *cobra.Command, args []string) error {
 		// Try to get git context, but don't fail if we're not in a git repo
 		gitCtx, gitErr := NewGitCommandContext()
 		if gitErr == nil {
@@ -151,6 +152,33 @@ func runRemove(cmd *cobra.Command, args []string) error {
 			},
 		)
 	})(cmd, args)
+	var failures *removalFailures
+	if errors.As(err, &failures) {
+		cmd.Root().SilenceErrors = true
+	}
+	return err
+}
+
+// removalFailures reports the selected worktrees that were not fully removed.
+// Each failure is printed as it happens, so the command only sets the exit
+// status.
+type removalFailures struct {
+	errs []error
+}
+
+func (e *removalFailures) Error() string   { return errors.Join(e.errs...).Error() }
+func (e *removalFailures) Unwrap() []error { return e.errs }
+
+func (e *removalFailures) result() error {
+	if len(e.errs) == 0 {
+		return nil
+	}
+	return e
+}
+
+func (e *removalFailures) add(ctx *CommandContext, err error) {
+	ctx.Printer.PrintError(err)
+	e.errs = append(e.errs, err)
 }
 
 func requestedRemovalConditions(cmd *cobra.Command) (removalConditions, error) {
@@ -284,6 +312,7 @@ func removeLocalWorktree(
 	}
 
 	removed := 0
+	failures := &removalFailures{}
 	repositoryPath, err := ctx.Git.GetMainRepositoryPath()
 	if err != nil {
 		return 0, fmt.Errorf("failed to resolve main repository: %w", err)
@@ -307,7 +336,7 @@ func removeLocalWorktree(
 			if conditions.generation.specified {
 				return removed, removalErr
 			}
-			ctx.Printer.PrintError(fmt.Errorf("failed to remove %s: %v", wt.Branch, removalErr))
+			failures.add(ctx, fmt.Errorf("failed to remove %s: %w", wt.Branch, removalErr))
 			continue
 		}
 		ctx.Printer.PrintSuccess(fmt.Sprintf("Removed worktree: %s", wt.Branch))
@@ -316,7 +345,7 @@ func removeLocalWorktree(
 		}
 	}
 
-	return removed, nil
+	return removed, failures.result()
 }
 
 func filterNonMainWorktrees(worktrees []models.Worktree) []models.Worktree {
@@ -438,6 +467,7 @@ func removeGlobalWorktree(
 	}
 
 	removed := 0
+	failures := &removalFailures{}
 	for _, entry := range toRemove {
 		repoName := "unknown"
 		if entry.RepositoryInfo != nil {
@@ -445,8 +475,8 @@ func removeGlobalWorktree(
 		}
 		repoPath, resolveErr := git.NewWithContext(commandContext, entry.Path).GetMainRepositoryPath()
 		if resolveErr != nil {
-			ctx.Printer.PrintError(fmt.Errorf(
-				"failed to resolve repository for %s:%s: %v",
+			failures.add(ctx, fmt.Errorf(
+				"failed to resolve repository for %s:%s: %w",
 				repoName,
 				entry.Branch,
 				resolveErr,
@@ -471,7 +501,7 @@ func removeGlobalWorktree(
 			if conditions.generation.specified {
 				return removed, removalErr
 			}
-			ctx.Printer.PrintError(fmt.Errorf("failed to remove %s:%s: %v", repoName, entry.Branch, removalErr))
+			failures.add(ctx, fmt.Errorf("failed to remove %s:%s: %w", repoName, entry.Branch, removalErr))
 			continue
 		}
 		ctx.Printer.PrintSuccess(fmt.Sprintf("Removed worktree: %s:%s", repoName, entry.Branch))
@@ -480,7 +510,7 @@ func removeGlobalWorktree(
 		}
 	}
 
-	return removed, nil
+	return removed, failures.result()
 }
 
 func matchGlobalRemovalEntries(

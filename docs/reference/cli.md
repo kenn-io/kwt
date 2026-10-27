@@ -638,6 +638,10 @@ process owned by the current user, removal also fails closed with that PID.
 `--force` bypasses both process checks and Git's dirty-worktree refusal.
 The CLI and TUI retain selection, output, fleet publication, and tmux-session
 cleanup; stale inventory alone never authorizes deletion.
+When several worktrees are selected, kwt attempts each one and prints each
+failure as it happens. It exits `1` if any selected worktree was refused or not
+fully removed, including a removed worktree whose `-b` branch deletion failed
+and an indeterminate removal outcome.
 Automation that has confirmed terminal-session state can add
 `--if-session-name` with `--if-session-absent`.
 `--if-session-socket-directory` selects an explicit `TMUX_TMPDIR`.

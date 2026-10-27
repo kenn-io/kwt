@@ -103,7 +103,7 @@ func TestRemoveLocalPublishesForIndeterminateDaemonOutcome(t *testing.T) {
 	cmd, _, _ := fleetTestCommand()
 	err := runRemove(cmd, []string{"remove-local-indeterminate"})
 
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "worktree removal outcome is indeterminate")
 	assert.Equal(t, 1, calls)
 	assert.DirExists(t, worktreePath)
 }
@@ -369,7 +369,7 @@ func TestRemoveLocalDoesNotPublishWhenEveryRemovalFails(t *testing.T) {
 	cmd, _, _ := fleetTestCommand()
 	err := runRemove(cmd, []string{"task7/remove-local-dirty"})
 
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "contains modified or untracked files")
 	assert.Zero(t, calls)
 	assert.DirExists(t, worktreePath)
 }
@@ -414,6 +414,31 @@ func TestRemoveLocalPublishesWhenWorktreeRemovedButBranchDeleteFails(t *testing.
 	require.NoError(t, registryErr)
 	_, registered := refreshedRegistry.Get(worktreePath)
 	assert.False(t, registered)
+}
+
+func TestRemoveLocalFailsWhenBranchDeleteFailsWithoutGenerationGuard(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetRemoveCommandFlags(t)
+	repoPath := newTUITestRepo(t)
+	initCommandTestConfig(t, t.TempDir())
+	t.Chdir(repoPath)
+	deleteBranch = true
+	worktreePath := filepath.Join(t.TempDir(), "remove-local-unguarded-branch")
+	runTUITestGit(t, repoPath, "worktree", "add", "-b", "remove-local-unguarded-branch", worktreePath)
+	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, "change.txt"), []byte("change"), 0644))
+	runTUITestGit(t, worktreePath, "add", ".")
+	runTUITestGit(t, worktreePath, "commit", "-m", "unmerged worktree commit")
+	var calls int
+	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) {
+		calls++
+	}
+
+	cmd, _, _ := fleetTestCommand()
+	err := runRemove(cmd, []string{"remove-local-unguarded-branch"})
+
+	require.ErrorContains(t, err, "worktree removed but failed to delete branch")
+	assert.Equal(t, 1, calls)
+	assert.NoDirExists(t, worktreePath)
 }
 
 func TestRemoveGlobalPublishesOnceAfterSuccessfulRemoval(t *testing.T) {
@@ -553,7 +578,7 @@ func TestRemoveGlobalDoesNotPublishWhenEveryRemovalFails(t *testing.T) {
 	cmd, _, _ := fleetTestCommand()
 	err := runRemove(cmd, []string{"task7/remove-global-dirty"})
 
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "contains modified or untracked files")
 	assert.Zero(t, calls)
 	assert.DirExists(t, worktreePath)
 }
