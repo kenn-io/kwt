@@ -121,7 +121,7 @@ awk -v docs_dir="$tmp_docs_name" -v site_dir="$docs_output_dir" '
 assemble_site_root() {
   local entry
   for entry in index.html index.md guide guide.md 404.html favicon.svg \
-    assets styles scripts fonts; do
+    assets styles scripts; do
     if [[ ! -e "$docs_root/website/$entry" ]]; then
       printf 'missing website tier entry: %s\n' "$docs_root/website/$entry" >&2
       exit 1
@@ -162,6 +162,8 @@ case "$command_name" in
     (cd "$docs_root" && python3 scripts/copy_public_markdown_sources.py \
       --docs-dir "$tmp_docs_name" --site-dir "$docs_output_dir" --config "$tmp_config_name")
     assemble_site_root
+    (cd "$docs_root" && python3 scripts/prepare_first_paint.py --site-dir "$site_dir" \
+      --stylesheet styles/site.css --stylesheet docs/stylesheets/fonts.css)
     ;;
   serve)
     (cd "$docs_root" && "$zensical_bin" serve --config-file "$tmp_config_name" "$@")

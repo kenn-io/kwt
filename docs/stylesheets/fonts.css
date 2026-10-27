@@ -1,0 +1,32 @@
+/* The theme's own font loading is off (theme.font = false in zensical.toml)
+   because it fetched these faces from Google Fonts after first paint. These
+   are the same Latin subsets, self-hosted; the build embeds them as data
+   URLs. */
+@font-face {
+  font-family: "Inter";
+  src: url("../fonts/inter-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: fallback;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("../fonts/inter-italic-latin.woff2") format("woff2");
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: fallback;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../fonts/jetbrains-mono-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: fallback;
+}
+
+:root {
+  --md-text-font: "Inter";
+  --md-code-font: "JetBrains Mono";
+}

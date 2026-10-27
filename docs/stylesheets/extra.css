@@ -98,3 +98,11 @@ body {
     transition: none;
   }
 }
+
+/* hold-first-paint.js hides the page by setting visibility: hidden on <html>,
+   but the theme sets visibility: visible on nested navs, which would paint
+   through it before the fonts load. Keep everything hidden until the script
+   removes the style. */
+html[style*="visibility: hidden"] * {
+  visibility: hidden !important;
+}

@@ -4,10 +4,10 @@ import pathlib
 import sys
 import tomllib
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, NoReturn
 
 
-def fail(message: str) -> None:
+def fail(message: str) -> NoReturn:
     print(f"FAIL: {message}", file=sys.stderr)
     raise SystemExit(1)
 

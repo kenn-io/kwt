@@ -9,7 +9,7 @@ site_dir = "site"
 repo_url = "https://github.com/kenn-io/kwt"
 repo_name = "kenn-io/kwt"
 edit_uri = "edit/main/docs/"
-extra_css = ["stylesheets/extra.css"]
+extra_css = ["stylesheets/fonts.css", "stylesheets/extra.css"]
 nav = [
   { "Start" = [
     { "Overview" = "index.md" },
@@ -51,6 +51,8 @@ homepage = "/"
 [project.theme]
 variant = "modern"
 custom_dir = "overrides"
+# stylesheets/fonts.css self-hosts the theme's Inter and JetBrains Mono.
+font = false
 features = [
   "navigation.instant",
   "navigation.instant.progress",

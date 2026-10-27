@@ -1,48 +1,18 @@
+/* Google Fonts' Latin subsets of Inter 4.001 and JetBrains Mono 2.211, the
+   same files the docs theme loaded. The build embeds them as data URLs. */
 @font-face {
   font-family: "Inter";
-  src: url("/fonts/Inter-Regular.woff2") format("woff2");
+  src: url("/docs/fonts/inter-latin.woff2") format("woff2");
   font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Inter";
-  src: url("/fonts/Inter-Medium.woff2") format("woff2");
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Inter";
-  src: url("/fonts/Inter-SemiBold.woff2") format("woff2");
-  font-style: normal;
-  font-weight: 600;
+  font-weight: 100 900;
   font-display: swap;
 }
 
 @font-face {
   font-family: "JetBrains Mono";
-  src: url("/fonts/JetBrainsMono-Regular.woff2") format("woff2");
+  src: url("/docs/fonts/jetbrains-mono-latin.woff2") format("woff2");
   font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "JetBrains Mono";
-  src: url("/fonts/JetBrainsMono-SemiBold.woff2") format("woff2");
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "JetBrains Mono";
-  src: url("/fonts/JetBrainsMono-Bold.woff2") format("woff2");
-  font-style: normal;
-  font-weight: 700;
+  font-weight: 400 800;
   font-display: swap;
 }
 
