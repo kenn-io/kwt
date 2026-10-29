@@ -197,6 +197,6 @@ jobs:
         run: make docs-install docs-check
 
       - name: Check first paint
-        uses: kenn-io/actions/first-paint@ee1ddcce6a620e49ba96f613bb8d113e0193b4f6 # first-paint, kenn-io/actions#6
+        uses: kenn-io/actions/first-paint@b523fb403607f01de5eec5f4556c7668544c70fe # first-paint
         with:
           dist: docs/site

@@ -98,12 +98,3 @@ body {
     transition: none;
   }
 }
-
-/* hold-first-paint.js hides the page by setting visibility: hidden on <html>,
-   but the theme sets visibility: visible on nested navs, which would paint
-   through it before the fonts load. Hide the body with opacity while the hold
-   lasts: forcing the navs' visibility would replay their delayed visibility
-   transition when the hold ends, and they would appear after the page. */
-html[style*="visibility: hidden"] body {
-  opacity: 0;
-}

@@ -429,6 +429,13 @@ noninteractive and supports both plain directories and linked worktrees stored
 outside that base.
 Protected pull-request imports remain restricted to `kwt pr attach`.
 
+A new workspace stays alive through setup even when tmux has
+`destroy-unattached` enabled. Kwt temporarily disables that option for the new
+session and restores its captured value when the first client attaches or
+switches to it. Server defaults, existing sessions, and user attachment hooks
+remain intact. With `--start-session`, the new session waits for that first
+client; detaching afterward follows the restored policy.
+
 During rollout, a verified matching session on the default server is adopted
 instead of creating a parallel session. If matching sessions
 exist on both servers, the `kwt` server wins. Mixed old and new Kwt binaries can
@@ -502,6 +509,11 @@ repairs a session. This includes a retained session that exits before the open,
 because kwt would otherwise create a session under the current branch's name.
 When the flag matches the current branch's name, kwt creates that session if it
 is not running.
+For a registered directory, pass its exact path and `--expected-session` alone,
+using `session_name` from `kwt workspace list --json`. Kwt rejects a removed
+registration or a different resolved session before creating or repairing it.
+Git worktrees still require the complete repository, registration, generation,
+and session guard together.
 `kwt open` and dashboard open actions refuse protected pull-request imports
 and direct the user through `kwt pr attach`.
 `created_at` and `generation` are populated in both local and `-g` mode.
