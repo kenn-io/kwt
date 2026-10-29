@@ -509,6 +509,11 @@ repairs a session. This includes a retained session that exits before the open,
 because kwt would otherwise create a session under the current branch's name.
 When the flag matches the current branch's name, kwt creates that session if it
 is not running.
+For a registered directory, pass its exact path and `--expected-session` alone,
+using `session_name` from `kwt workspace list --json`. Kwt rejects a removed
+registration or a different resolved session before creating or repairing it.
+Git worktrees still require the complete repository, registration, generation,
+and session guard together.
 `kwt open` and dashboard open actions refuse protected pull-request imports
 and direct the user through `kwt pr attach`.
 `created_at` and `generation` are populated in both local and `-g` mode.
