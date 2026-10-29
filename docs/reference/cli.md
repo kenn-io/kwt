@@ -429,6 +429,13 @@ noninteractive and supports both plain directories and linked worktrees stored
 outside that base.
 Protected pull-request imports remain restricted to `kwt pr attach`.
 
+A new workspace stays alive through setup even when tmux has
+`destroy-unattached` enabled. Kwt temporarily disables that option for the new
+session and restores its captured value when the first client attaches or
+switches to it. Server defaults, existing sessions, and user attachment hooks
+remain intact. With `--start-session`, the new session waits for that first
+client; detaching afterward follows the restored policy.
+
 During rollout, a verified matching session on the default server is adopted
 instead of creating a parallel session. If matching sessions
 exist on both servers, the `kwt` server wins. Mixed old and new Kwt binaries can
