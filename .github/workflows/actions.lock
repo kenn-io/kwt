@@ -14,7 +14,7 @@ workflows:
         - 'kenn-io/actions@main'
     '.github/workflows/workflow-validation.yml':
         - 'actions/checkout@v7.0.1'
-        - 'jdx/jactionlint@v2.4.0'
+        - 'step-security/jactionlint@v2.2.0'
 dependencies:
     'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1':
         ref: 'v7.0.1'
@@ -46,18 +46,11 @@ dependencies:
         commit: 'sha1-07a047e608db84b3d8c06cd9a7c7dcc9c355c18e'
         owner_id: 115962839
         repo_id: 846733598
-    'github/codeql-action@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2':
-        ref: 'v4.38.2'
-        commit: 'sha1-2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2'
+    'github/codeql-action@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee':
+        ref: 'v4.39.0'
+        commit: 'sha1-6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee'
         owner_id: 9919
         repo_id: 259445878
-    'jdx/jactionlint@v2.4.0':
-        ref: 'v2.4.0'
-        commit: 'sha1-baa8d685e2b27ff5821558c9eeabb2051c1da61b'
-        owner_id: 216188
-        repo_id: 1404951382
-        uses:
-            - 'github/codeql-action@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2'
     'kenn-io/actions@main':
         ref: 'main'
         commit: 'sha1-dd712a31dea1a9573a033bc09c42fa00903e8c17'
@@ -72,3 +65,10 @@ dependencies:
         commit: 'sha1-2697867e9c204558ca23d0decdd0039dc21f2b93'
         owner_id: 88700172
         repo_id: 1230682818
+    'step-security/jactionlint@v2.2.0':
+        ref: 'v2.2.0'
+        commit: 'sha1-30b636b51bcfb8cd8404be70a661f28e5564466d'
+        owner_id: 88700172
+        repo_id: 1425176711
+        uses:
+            - 'github/codeql-action@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee'
