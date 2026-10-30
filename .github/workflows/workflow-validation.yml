@@ -4,9 +4,19 @@ on:
   pull_request:
     paths:
       - ".github/workflows/**"
+      - "**/action.yml"
+      - "**/action.yaml"
+      - ".github/actionlint.*"
+      - ".github/jactionlint.*"
+      - ".github/dependabot.yml"
+      - ".github/dependabot.yaml"
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-workflow-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   actionlint:
@@ -15,8 +25,9 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
+      - uses: jdx/jactionlint@baa8d685e2b27ff5821558c9eeabb2051c1da61b # v2.4.0
         with:
-          version: 1.7.12
-          shellcheck: false
-          pyflakes: false
+          version: 2.4.0
+          profile: default
+          online: "false"
+          args: "--shellcheck= --pyflakes="

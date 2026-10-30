@@ -12,6 +12,10 @@ env:
   # Module-relative source paths keep build cache entries independent of the checkout path.
   GOFLAGS: -trimpath
 
+concurrency:
+  group: ${{ github.workflow }}-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Go (${{ matrix.os }})
