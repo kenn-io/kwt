@@ -54,12 +54,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -167,18 +167,18 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: true
 
       - name: golangci-lint
-        uses: step-security/golangci-lint-action@2697867e9c204558ca23d0decdd0039dc21f2b93 # v9.3.0
+        uses: step-security/golangci-lint-action@v9.3.0
         with:
           version: v2.14.0
 
@@ -188,12 +188,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        uses: astral-sh/setup-uv@v10.3.2
         with:
           enable-cache: true
 
@@ -201,6 +201,6 @@ jobs:
         run: make docs-install docs-check
 
       - name: Check first paint
-        uses: kenn-io/actions/first-paint@b523fb403607f01de5eec5f4556c7668544c70fe # first-paint, kenn-io/actions#6
+        uses: kenn-io/actions/first-paint@main
         with:
           dist: docs/site

@@ -22,12 +22,28 @@ jobs:
   actionlint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/jactionlint@baa8d685e2b27ff5821558c9eeabb2051c1da61b # v2.4.0
+      - uses: step-security/jactionlint@v2.2.0
         with:
           version: 2.4.0
           profile: default
           online: "false"
           args: "--shellcheck= --pyflakes="
+
+  # The organization requires SHA-pinned actions. actions.lock pins every
+  # action, including ones that other actions call, so a stale lockfile fails
+  # jobs at setup.
+  actions-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify the workflow action lockfile
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: make actions-lock-check
