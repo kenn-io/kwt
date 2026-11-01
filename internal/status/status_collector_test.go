@@ -79,7 +79,7 @@ func TestCollectPorcelainUsesUAllForPerFileUntrackedCount(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "new", "two"), []byte("2"), 0o644))
 
 	got, err := NewStatusCollectorWithOptions(StatusCollectorOptions{}).
-		collectPorcelain(context.Background(), git.New(repo))
+		collectPorcelain(t.Context(), git.New(repo))
 
 	require.NoError(t, err)
 	assert.Equal(t, 2, got.GitStatus.Untracked)
@@ -113,7 +113,7 @@ exec "$KWT_TEST_REAL_GIT" "$@"
 		ProtectedNames: protectedNames,
 	})
 	protectedNames[0] = "MUTATED_AFTER_CONSTRUCTION"
-	_, err = collector.CollectAll(context.Background(), []*models.Worktree{{
+	_, err = collector.CollectAll(t.Context(), []*models.Worktree{{
 		Path: repo, Branch: "main",
 	}})
 
@@ -155,7 +155,7 @@ func TestCollectAllBoundsWorkersAndDegradesOneRow(t *testing.T) {
 		return &models.WorktreeStatus{Path: wt.Path, Status: models.WorktreeStatusClean}, nil
 	}
 
-	result, err := collectWorktrees(context.Background(), 2, []*models.Worktree{
+	result, err := collectWorktrees(t.Context(), 2, []*models.Worktree{
 		{Path: "/one"}, {Path: "/broken"}, {Path: "/three"},
 	}, collect)
 
@@ -177,7 +177,7 @@ func TestLastActivityUsesRootHeadAndChangedFilesOnly(t *testing.T) {
 	require.NoError(t, os.Chtimes(changed, changedTime, changedTime))
 
 	result, err := NewStatusCollectorWithOptions(StatusCollectorOptions{Workers: 1}).
-		CollectAll(context.Background(), []*models.Worktree{{Path: repo, Branch: "main"}})
+		CollectAll(t.Context(), []*models.Worktree{{Path: repo, Branch: "main"}})
 
 	require.NoError(t, err)
 	assert.Equal(t, changedTime, result.Statuses[0].LastActivity)
@@ -189,7 +189,7 @@ func TestLastActivityUsesNewWorktreeRootForCleanOldHead(t *testing.T) {
 	require.NoError(t, os.Chtimes(repo, rootTime, rootTime))
 
 	result, err := NewStatusCollectorWithOptions(StatusCollectorOptions{Workers: 1}).
-		CollectAll(context.Background(), []*models.Worktree{{Path: repo, Branch: "main"}})
+		CollectAll(t.Context(), []*models.Worktree{{Path: repo, Branch: "main"}})
 
 	require.NoError(t, err)
 	assert.Equal(t, rootTime, result.Statuses[0].LastActivity)
@@ -207,7 +207,7 @@ func TestLastActivityBoundsHeadLookup(t *testing.T) {
 	}
 
 	started := time.Now()
-	got, err := collector.lastActivity(context.Background(), root, nil)
+	got, err := collector.lastActivity(t.Context(), root, nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, rootInfo.ModTime().UTC(), got)
@@ -229,14 +229,14 @@ func TestLastActivityUsesParentDirectoryForDeletedNestedFile(t *testing.T) {
 	require.NoError(t, os.Chtimes(nested, recent, recent))
 
 	result, err := NewStatusCollectorWithOptions(StatusCollectorOptions{Workers: 1}).
-		CollectAll(context.Background(), []*models.Worktree{{Path: repo, Branch: "main"}})
+		CollectAll(t.Context(), []*models.Worktree{{Path: repo, Branch: "main"}})
 
 	require.NoError(t, err)
 	assert.Equal(t, recent, result.Statuses[0].LastActivity)
 }
 
 func TestCollectAllCanceledContextReturnsNoPartialCollection(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	result, err := NewStatusCollectorWithOptions(StatusCollectorOptions{Workers: 1}).
@@ -256,7 +256,7 @@ func TestCollectAllMarksCurrentPathByDirectoryBoundary(t *testing.T) {
 	changeDir(t, mainFixPath)
 
 	collector := NewStatusCollectorWithOptions(StatusCollectorOptions{})
-	result, err := collector.CollectAll(context.Background(), []*models.Worktree{
+	result, err := collector.CollectAll(t.Context(), []*models.Worktree{
 		{Path: mainPath, Branch: "main"},
 		{Path: mainFixPath, Branch: "main-fix"},
 	})
@@ -280,7 +280,7 @@ func TestCollectAllUsesRemoteFullPathForNestedRepository(t *testing.T) {
 	runStatusTestGit(t, worktreePath, "commit", "-m", "Initial commit")
 
 	collector := NewStatusCollectorWithOptions(StatusCollectorOptions{BaseDir: baseDir})
-	result, err := collector.CollectAll(context.Background(), []*models.Worktree{
+	result, err := collector.CollectAll(t.Context(), []*models.Worktree{
 		{Path: worktreePath, Branch: "feature/read-api"},
 	})
 
@@ -295,7 +295,7 @@ func TestCollectAllPrefersWorktreeRepository(t *testing.T) {
 	runStatusTestGit(t, worktreePath, "remote", "add", "origin", "https://github.com/fork/repo.git")
 
 	collector := NewStatusCollectorWithOptions(StatusCollectorOptions{})
-	result, err := collector.CollectAll(context.Background(), []*models.Worktree{
+	result, err := collector.CollectAll(t.Context(), []*models.Worktree{
 		{
 			Path:       worktreePath,
 			Branch:     "main",
@@ -327,7 +327,7 @@ func TestCollectAllRelativeDotlessRemoteFallsBackToPathIdentity(t *testing.T) {
 	runStatusTestGit(t, worktreePath, "commit", "-m", "Initial commit")
 
 	collector := NewStatusCollectorWithOptions(StatusCollectorOptions{BaseDir: baseDir})
-	result, err := collector.CollectAll(context.Background(), []*models.Worktree{
+	result, err := collector.CollectAll(t.Context(), []*models.Worktree{
 		{Path: worktreePath, Branch: "main"},
 	})
 
@@ -344,7 +344,7 @@ func TestRepositoryFullPathIdentityNormalizesWindowsSeparators(t *testing.T) {
 
 func TestGetLastActivityFallbackHonorsCanceledContext(t *testing.T) {
 	collector := NewStatusCollectorWithOptions(StatusCollectorOptions{})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err := collector.getLastActivityFallback(ctx, t.TempDir())
@@ -367,7 +367,7 @@ func changeDir(t *testing.T, dir string) {
 func runStatusTestGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -383,7 +383,7 @@ func newStatusTestRepositoryAt(t *testing.T, commitTime time.Time) string {
 	runStatusTestGit(t, repo, "config", "user.email", "test@example.com")
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "README.md"), []byte("initial\n"), 0o644))
 	runStatusTestGit(t, repo, "add", "README.md")
-	command := exec.Command("git", "commit", "-m", "initial")
+	command := exec.CommandContext(t.Context(), "git", "commit", "-m", "initial")
 	command.Dir = repo
 	stamp := commitTime.Format(time.RFC3339)
 	command.Env = append(os.Environ(), "GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp)

@@ -59,7 +59,7 @@ func TestFixerRepairsBeforePruningAndRegistryCleanup(t *testing.T) {
 		},
 	}}}
 
-	err := fixer.Fix(context.Background(), report)
+	err := fixer.Fix(t.Context(), report)
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"maintain", "unregister"}, calls)
@@ -86,7 +86,7 @@ func TestFixerSkipsRepositoryPruneWhenAnyMissingRecordIsNotFixable(t *testing.T)
 		},
 	}}}
 
-	err := fixer.Fix(context.Background(), report)
+	err := fixer.Fix(t.Context(), report)
 
 	require.NoError(t, err)
 	assert.Zero(t, mutationCalls)
@@ -128,7 +128,7 @@ func TestFixerSkipsBacklinkRepairButContinuesOtherSafeCleanup(t *testing.T) {
 		},
 	}}}
 
-	err := fixer.Fix(context.Background(), report)
+	err := fixer.Fix(t.Context(), report)
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"prune", "unregister"}, calls)
@@ -156,7 +156,7 @@ func TestFixerDeletesGenerationlessStaleRegistryEntryByFullEntryCAS(t *testing.T
 			PathExists:      func(string) (bool, error) { return false, nil },
 		}
 
-		err := fixer.Fix(context.Background(), report)
+		err := fixer.Fix(t.Context(), report)
 
 		require.NoError(t, err)
 		assert.True(t, removed)
@@ -175,7 +175,7 @@ func TestFixerDeletesGenerationlessStaleRegistryEntryByFullEntryCAS(t *testing.T
 			PathExists:      func(string) (bool, error) { return false, nil },
 		}
 
-		err := fixer.Fix(context.Background(), report)
+		err := fixer.Fix(t.Context(), report)
 
 		require.NoError(t, err)
 		assert.Equal(t, "replacement", current.Branch)
@@ -199,7 +199,7 @@ func TestFixerDeletesGenerationlessStaleRegistryEntryByFullEntryCAS(t *testing.T
 			PathExists:      func(string) (bool, error) { return false, nil },
 		}
 
-		err := fixer.Fix(context.Background(), report)
+		err := fixer.Fix(t.Context(), report)
 
 		require.NoError(t, err)
 		assert.False(t, compared)
@@ -233,7 +233,7 @@ func TestFixerCleansAbandonedCreationUnderPathLock(t *testing.T) {
 		Code: StaleRegistryEntry, Path: entry.Path, Fixable: true,
 	}}}}}
 
-	err := fixer.Fix(context.Background(), report)
+	err := fixer.Fix(t.Context(), report)
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"lock", "remove", "unlock"}, calls)
@@ -289,7 +289,7 @@ func TestFixerPreservesNonemptyRegistryGenerationMismatch(t *testing.T) {
 		},
 	}
 
-	err := fixer.Fix(context.Background(), report)
+	err := fixer.Fix(t.Context(), report)
 
 	require.NoError(t, err)
 	assert.False(t, swapped)
@@ -351,7 +351,7 @@ func TestFixerCollapsesOnlyCompleteEquivalentRegistryAliasGroup(t *testing.T) {
 		},
 	}}}}
 
-	err := fixer.Fix(context.Background(), report)
+	err := fixer.Fix(t.Context(), report)
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, aliasCalls)
@@ -406,7 +406,7 @@ func TestFixerRemovesCompleteMissingRegistryAliasGroup(t *testing.T) {
 		RegistryAliasRepair: condition,
 	}}}}}
 
-	err := fixer.Fix(context.Background(), report)
+	err := fixer.Fix(t.Context(), report)
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, aliasCalls)
@@ -441,7 +441,7 @@ func TestFixerPreservesMissingRegistryAliasGroupWhenPathReappears(t *testing.T) 
 		},
 	}}}}}
 
-	err := fixer.Fix(context.Background(), report)
+	err := fixer.Fix(t.Context(), report)
 
 	require.NoError(t, err)
 	assert.Zero(t, aliasCalls)
@@ -487,7 +487,7 @@ func TestFixerAdoptsGenerationlessRegistryEntryWithoutExpiration(t *testing.T) {
 		},
 	}
 
-	err := fixer.Fix(context.Background(), report)
+	err := fixer.Fix(t.Context(), report)
 
 	require.NoError(t, err)
 	assert.True(t, swapped)
@@ -520,7 +520,7 @@ func TestFixerDoesNotAdoptGenerationAfterWorktreeReplacement(t *testing.T) {
 		},
 	}
 
-	err := fixer.Fix(context.Background(), report)
+	err := fixer.Fix(t.Context(), report)
 
 	require.NoError(t, err)
 	assert.False(t, swapped)
@@ -538,7 +538,7 @@ func TestFixerIgnoresGenerationChangeFromRealGitAdapter(t *testing.T) {
 	require.NoError(t, err)
 	_, err = g.RunCommand("worktree", "add", worktreePath, "replacement")
 	require.NoError(t, err)
-	gitDir, err := shared.ReadWorktreeBacklink(context.Background(), worktreePath)
+	gitDir, err := shared.ReadWorktreeBacklink(t.Context(), worktreePath)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(
 		filepath.Join(gitDir, "kwt-generation"),
@@ -569,7 +569,7 @@ func TestFixerIgnoresGenerationChangeFromRealGitAdapter(t *testing.T) {
 		PathExists:      func(string) (bool, error) { return true, nil },
 	}
 
-	err = fixer.Fix(context.Background(), report)
+	err = fixer.Fix(t.Context(), report)
 
 	require.NoError(t, err)
 	assert.False(t, swapped)
@@ -615,7 +615,7 @@ func TestFixerAdoptsGenerationThroughSymlinkedRegistryPath(t *testing.T) {
 		},
 	}
 
-	err := fixer.Fix(context.Background(), report)
+	err := fixer.Fix(t.Context(), report)
 
 	require.NoError(t, err)
 	assert.True(t, swapped)
@@ -641,7 +641,7 @@ func TestFixerPreservesAmbiguousFinding(t *testing.T) {
 		}},
 	}}}
 
-	err := fixer.Fix(context.Background(), report)
+	err := fixer.Fix(t.Context(), report)
 
 	require.NoError(t, err)
 	assert.Zero(t, mutationCalls)
@@ -692,7 +692,7 @@ func TestFixerRepairsProjectAfterRegistryCleanup(t *testing.T) {
 		{Code: ProjectPathMoved, Path: "/old/widget", Fixable: true, ProjectRepair: condition},
 	}}}}
 
-	err := fixer.Fix(context.Background(), report)
+	err := fixer.Fix(t.Context(), report)
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"registry", "inspect", "project"}, calls)
@@ -741,7 +741,7 @@ func TestFixerRevalidatesProjectRepair(t *testing.T) {
 				ProjectRepair: &condition,
 			}}}}}
 
-			err := fixer.Fix(context.Background(), report)
+			err := fixer.Fix(t.Context(), report)
 
 			assert.Zero(t, mutations)
 			if tt.wantErr == "" {
@@ -769,7 +769,7 @@ func TestFixerRemovesOnlyFixableStaleProjectByCAS(t *testing.T) {
 		{Code: AmbiguousProjectRelocation, Path: "/other/widget", Fixable: false},
 	}}}}
 
-	err := fixer.Fix(context.Background(), report)
+	err := fixer.Fix(t.Context(), report)
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, calls)

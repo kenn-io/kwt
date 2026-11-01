@@ -20,7 +20,8 @@ func TestReplaceAttachProcessWaitsOnWindows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	helper := exec.Command(
+	helper := exec.CommandContext(
+		t.Context(),
 		executable,
 		"-test.run=^TestReplaceAttachProcessWaitsOnWindows$",
 	)

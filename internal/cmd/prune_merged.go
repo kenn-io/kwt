@@ -837,7 +837,7 @@ func defaultInspectPruneMergedCandidates(
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if target, backlinkErr := shared.ReadWorktreeBacklink(context.Background(), root.path); backlinkErr == nil && target != "" {
+		if target, backlinkErr := shared.ReadWorktreeBacklink(ctx, root.path); backlinkErr == nil && target != "" {
 			targetKey := utils.PathKey(target)
 			claimants := backlinkClaims[targetKey]
 			if claimants == nil {
@@ -944,7 +944,7 @@ func defaultInspectPruneMergedCandidates(
 			liveRepository := ""
 			if inspection.Exists && backlinkMatches {
 				liveRepository = repositoryIdentityFromGit(
-					git.New(inspection.Path),
+					git.NewWithContext(ctx, inspection.Path),
 					protectedNames,
 				)
 			}
@@ -994,7 +994,7 @@ func defaultInspectPruneMergedCandidates(
 			attachMergedRegistrySnapshot(&candidate, registryEntries)
 			attachMergedProvenance(&candidate, records)
 			if inspection.Exists && !inspection.IsMain && backlinkMatches {
-				upstream, upstreamErr := git.New(inspection.Path).
+				upstream, upstreamErr := git.NewWithContext(ctx, inspection.Path).
 					BranchUpstreamWithoutCredentials(inspection.Branch, protectedNames)
 				if upstreamErr == nil {
 					candidate.Policy.SourceBranch = upstream.Branch

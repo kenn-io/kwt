@@ -70,21 +70,21 @@ func TestServerRequiresExactHostAndBearerForStatus(t *testing.T) {
 	provider := &testStatusProvider{status: Status{Service: ServiceName, State: StateReady}}
 	handler := newTestHandler(t, "secret", "127.0.0.1:43210", provider)
 
-	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:43210/api/v1/status", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://127.0.0.1:43210/api/v1/status", nil)
 	request.Host = "127.0.0.1:43210"
 	request.Header.Set("Authorization", "Bearer secret")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	assert.Equal(t, http.StatusOK, response.Code)
 
-	request = httptest.NewRequest(http.MethodGet, "http://evil.invalid/api/v1/status", nil)
+	request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://evil.invalid/api/v1/status", nil)
 	request.Host = "evil.invalid"
 	request.Header.Set("Authorization", "Bearer secret")
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	assert.Equal(t, http.StatusBadRequest, response.Code)
 
-	request = httptest.NewRequest(http.MethodGet, "http://127.0.0.1:43210/api/v1/status", nil)
+	request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://127.0.0.1:43210/api/v1/status", nil)
 	request.Host = "127.0.0.1:43210"
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -95,7 +95,8 @@ func TestServerRejectsBrowserOriginAndOversizedBodies(t *testing.T) {
 	provider := &testStatusProvider{status: Status{Service: ServiceName, State: StateReady}}
 	handler := newTestHandler(t, "secret", "127.0.0.1:43210", provider)
 
-	request := httptest.NewRequest(
+	request := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet,
 		"http://127.0.0.1:43210/api/v1/status",
 		nil,
@@ -108,7 +109,8 @@ func TestServerRejectsBrowserOriginAndOversizedBodies(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, response.Code)
 	assert.Empty(t, response.Header().Get("Access-Control-Allow-Origin"))
 
-	request = httptest.NewRequest(
+	request = httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodPost,
 		"http://127.0.0.1:43210/api/v1/daemon/shutdown",
 		strings.NewReader(`{"reason":"stop","padding":"012345678901234567890123456789"}`),
@@ -143,7 +145,8 @@ func TestServerDefaultBodyLimitAccommodatesClientExpansionContext(t *testing.T) 
 		UntrustedConfig: kwt.IgnoreUntrustedConfig,
 	})
 	require.NoError(t, err)
-	request := httptest.NewRequest(
+	request := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodPost,
 		"http://127.0.0.1:43210/api/v1/inventory",
 		strings.NewReader(string(body)),
@@ -161,7 +164,8 @@ func TestServerDefaultBodyLimitAccommodatesClientExpansionContext(t *testing.T) 
 func TestServerPublishesOpenAPIWithoutAuthentication(t *testing.T) {
 	provider := &testStatusProvider{status: Status{Service: ServiceName, State: StateReady}}
 	handler := newTestHandler(t, "secret", "127.0.0.1:43210", provider)
-	request := httptest.NewRequest(
+	request := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet,
 		"http://127.0.0.1:43210/openapi.json",
 		nil,
@@ -191,7 +195,8 @@ func TestDrainingServerReturnsRetryableProblemWithDeadline(t *testing.T) {
 		DrainDeadline: &deadline,
 	}}
 	handler := newTestHandler(t, "secret", "127.0.0.1:43210", provider)
-	request := httptest.NewRequest(
+	request := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet,
 		"http://127.0.0.1:43210/api/v1/future-operation",
 		nil,
@@ -276,7 +281,7 @@ func TestProblemMakesUnknownOutcomeNonRetryable(t *testing.T) {
 }
 
 func TestOperationEventRouteReplaysThenStreamsLiveEvents(t *testing.T) {
-	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	hub := NewOperationHub(t.Context(), OperationHubOptions{})
 	replayed := make(chan struct{})
 	release := make(chan struct{})
 	operation, _, err := hub.Start(OperationStart{
@@ -298,7 +303,8 @@ func TestOperationEventRouteReplaysThenStreamsLiveEvents(t *testing.T) {
 
 	server := newOperationHTTPTestServer(t, hub)
 	defer server.Close()
-	request, err := http.NewRequest(
+	request, err := http.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet,
 		server.URL+"/api/v1/operations/"+operation.ID()+"/events?after_sequence=0",
 		nil,
@@ -323,7 +329,7 @@ func TestOperationEventRouteReplaysThenStreamsLiveEvents(t *testing.T) {
 }
 
 func TestOperationResponseRouteBindsCurrentPrompt(t *testing.T) {
-	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	hub := NewOperationHub(t.Context(), OperationHubOptions{})
 	operation, _, err := hub.Start(OperationStart{
 		ID: "operation-1", RequestDigest: "request-1",
 		Run: func(ctx context.Context, operation *Operation) (json.RawMessage, error) {
@@ -350,7 +356,8 @@ func TestOperationResponseRouteBindsCurrentPrompt(t *testing.T) {
 		Value:    "fleet secret",
 	})
 	require.NoError(t, err)
-	request, err := http.NewRequest(
+	request, err := http.NewRequestWithContext(
+		t.Context(),
 		http.MethodPost,
 		server.URL+"/api/v1/operations/"+operation.ID()+"/responses",
 		bytes.NewReader(body),
@@ -371,7 +378,7 @@ func TestOperationResponseRouteBindsCurrentPrompt(t *testing.T) {
 func TestOperationEventWriteDeadlineStopsStalledSubscriber(t *testing.T) {
 	releaseWorker := make(chan struct{})
 	replayReady := make(chan struct{})
-	hub := NewOperationHub(context.Background(), OperationHubOptions{
+	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		MaxSubscribersPerOperation: 1,
 		MaxSubscribers:             1,
 	})
@@ -394,8 +401,9 @@ func TestOperationEventWriteDeadlineStopsStalledSubscriber(t *testing.T) {
 		deadlineSet: make(chan struct{}),
 		release:     make(chan struct{}),
 	}
-	requestContext, cancelRequest := context.WithCancel(context.Background())
-	request := httptest.NewRequest(
+	requestContext, cancelRequest := context.WithCancel(t.Context())
+	request := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet,
 		"http://kwt.invalid/api/v1/operations/"+operation.ID()+"/events",
 		nil,
@@ -423,7 +431,7 @@ func TestOperationEventWriteDeadlineStopsStalledSubscriber(t *testing.T) {
 }
 
 func TestOperationCancelRouteCancelsWorker(t *testing.T) {
-	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	hub := NewOperationHub(t.Context(), OperationHubOptions{})
 	started := make(chan struct{})
 	canceled := make(chan struct{})
 	operation, _, err := hub.Start(OperationStart{
@@ -440,7 +448,8 @@ func TestOperationCancelRouteCancelsWorker(t *testing.T) {
 
 	server := newOperationHTTPTestServer(t, hub)
 	defer server.Close()
-	request, err := http.NewRequest(
+	request, err := http.NewRequestWithContext(
+		t.Context(),
 		http.MethodDelete,
 		server.URL+"/api/v1/operations/"+operation.ID(),
 		nil,
@@ -459,11 +468,12 @@ func TestOperationCancelRouteCancelsWorker(t *testing.T) {
 }
 
 func TestOperationRoutesRequireAuthenticationAndStableNotFoundProblem(t *testing.T) {
-	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	hub := NewOperationHub(t.Context(), OperationHubOptions{})
 	server := newOperationHTTPTestServer(t, hub)
 	defer server.Close()
 
-	request, err := http.NewRequest(
+	request, err := http.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet,
 		server.URL+"/api/v1/operations/missing/events",
 		nil,
@@ -474,7 +484,8 @@ func TestOperationRoutesRequireAuthenticationAndStableNotFoundProblem(t *testing
 	require.NoError(t, response.Body.Close())
 	assert.Equal(t, http.StatusUnauthorized, response.StatusCode)
 
-	request, err = http.NewRequest(
+	request, err = http.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet,
 		server.URL+"/api/v1/operations/missing/events",
 		nil,
@@ -491,7 +502,7 @@ func TestOperationRoutesRequireAuthenticationAndStableNotFoundProblem(t *testing
 }
 
 func TestDrainingServerKeepsExistingOperationControlReachable(t *testing.T) {
-	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	hub := NewOperationHub(t.Context(), OperationHubOptions{})
 	operation, _, err := hub.Start(OperationStart{
 		ID: "operation-1", RequestDigest: "request-1",
 		Run: func(_ context.Context, operation *Operation) (json.RawMessage, error) {
@@ -511,7 +522,8 @@ func TestDrainingServerKeepsExistingOperationControlReachable(t *testing.T) {
 	})
 	server.Start()
 	defer server.Close()
-	request, err := http.NewRequest(
+	request, err := http.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet,
 		server.URL+"/api/v1/operations/"+operation.ID()+"/events",
 		nil,

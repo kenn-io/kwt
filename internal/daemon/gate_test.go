@@ -32,7 +32,7 @@ func TestGateWaitsForReservationsOrDrainDeadline(t *testing.T) {
 	gate.BeginDrain(now.Add(time.Minute))
 
 	result := make(chan DrainResult, 1)
-	go func() { result <- gate.WaitForDrain(context.Background(), now) }()
+	go func() { result <- gate.WaitForDrain(t.Context(), now) }()
 	select {
 	case <-result:
 		require.FailNow(t, "drain completed while a lease was active")
@@ -48,7 +48,7 @@ func TestGateDeadlineInvalidatesReservations(t *testing.T) {
 	_, err := gate.Reserve(ReservationLease, now)
 	require.NoError(t, err)
 	gate.BeginDrain(now.Add(-time.Millisecond))
-	assert.Equal(t, DrainDeadline, gate.WaitForDrain(context.Background(), now))
+	assert.Equal(t, DrainDeadline, gate.WaitForDrain(t.Context(), now))
 }
 
 func TestGateWaitForReleaseContinuesAfterDrainDeadline(t *testing.T) {
@@ -57,9 +57,9 @@ func TestGateWaitForReleaseContinuesAfterDrainDeadline(t *testing.T) {
 	release, err := gate.Reserve(ReservationWork, now)
 	require.NoError(t, err)
 	gate.BeginDrain(now.Add(-time.Millisecond))
-	assert.Equal(t, DrainDeadline, gate.WaitForDrain(context.Background(), now))
+	assert.Equal(t, DrainDeadline, gate.WaitForDrain(t.Context(), now))
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	result := make(chan bool, 1)
 	go func() { result <- gate.WaitForRelease(ctx) }()

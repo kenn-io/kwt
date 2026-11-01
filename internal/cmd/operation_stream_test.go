@@ -48,7 +48,7 @@ func TestOperationCallbacksKeepMachineOutputSeparate(t *testing.T) {
 func TestOperationCallbacksRequireExplicitPromptHandler(t *testing.T) {
 	command := &cobra.Command{}
 	callbacks := operationCallbacks(command, nil)
-	_, err := callbacks.Prompt(context.Background(), service.OperationPrompt{
+	_, err := callbacks.Prompt(t.Context(), service.OperationPrompt{
 		ID: "prompt-1", Kind: "password", Message: "Password:", Sensitive: true,
 	})
 	assert.True(t, service.IsCode(err, service.InteractionRequired), err)
@@ -67,7 +67,7 @@ func TestOperationCallbacksNeverRenderPromptResponse(t *testing.T) {
 		return "fleet secret", nil
 	})
 
-	value, err := callbacks.Prompt(context.Background(), service.OperationPrompt{
+	value, err := callbacks.Prompt(t.Context(), service.OperationPrompt{
 		ID: "prompt-1", Kind: "password", Message: "Password:", Sensitive: true,
 	})
 	require.NoError(t, err)

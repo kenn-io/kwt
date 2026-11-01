@@ -23,7 +23,7 @@ import (
 )
 
 func TestRunBytesWithEnvironmentPreservesEmbeddedNUL(t *testing.T) {
-	g := NewForInventory(context.Background(), t.TempDir(), nil)
+	g := NewForInventory(t.Context(), t.TempDir(), nil)
 	g.executable = os.Args[0]
 
 	got, err := g.RunBytesWithEnvironment(
@@ -49,7 +49,7 @@ func TestRunBytesWithEnvironmentBoundsStdoutAndStderrIndependently(t *testing.T)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewForInventory(context.Background(), t.TempDir(), nil)
+			g := NewForInventory(t.Context(), t.TempDir(), nil)
 			g.executable = os.Args[0]
 
 			_, err := g.RunBytesWithEnvironment(
@@ -66,7 +66,7 @@ func TestRunBytesWithEnvironmentBoundsStdoutAndStderrIndependently(t *testing.T)
 }
 
 func TestRunBytesWithEnvironmentPreservesRunErrorWhenOutputLimitExceeded(t *testing.T) {
-	g := NewForInventory(context.Background(), t.TempDir(), nil)
+	g := NewForInventory(t.Context(), t.TempDir(), nil)
 	g.executable = os.Args[0]
 
 	_, err := g.RunBytesWithEnvironment(
@@ -84,7 +84,7 @@ func TestRunBytesWithEnvironmentPreservesRunErrorWhenOutputLimitExceeded(t *test
 }
 
 func TestRunBytesWithEnvironmentPreservesRunErrorOnNonZeroExit(t *testing.T) {
-	g := NewForInventory(context.Background(), t.TempDir(), nil)
+	g := NewForInventory(t.Context(), t.TempDir(), nil)
 	g.executable = os.Args[0]
 
 	_, err := g.RunBytesWithEnvironment(
@@ -103,7 +103,7 @@ func TestRunBytesWithEnvironmentPreservesRunErrorOnNonZeroExit(t *testing.T) {
 
 func TestRunBytesWithEnvironmentPreservesExecutableLookupError(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	g := NewForInventory(context.Background(), t.TempDir(), nil)
+	g := NewForInventory(t.Context(), t.TempDir(), nil)
 
 	_, err := g.RunBytesWithEnvironment(nil, "status")
 
@@ -114,7 +114,7 @@ func TestRunBytesWithEnvironmentPreservesExecutableLookupError(t *testing.T) {
 }
 
 func TestRunBytesWithEnvironmentHonorsCancellation(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 	g := NewForInventory(ctx, t.TempDir(), nil)
 	g.executable = os.Args[0]
@@ -148,7 +148,7 @@ func TestRunBytesWithEnvironmentBoundsRetainedOutputPipes(t *testing.T) {
 					_ = process.Kill()
 				}
 			})
-			g := NewForInventory(context.Background(), t.TempDir(), nil)
+			g := NewForInventory(t.Context(), t.TempDir(), nil)
 			g.executable = os.Args[0]
 
 			started := time.Now()
@@ -212,7 +212,7 @@ func TestRunBytesWithEnvironmentUsesInventoryEnvironmentAndOverrides(t *testing.
 	t.Setenv("GIT_DIR", "/tmp/redirected.git")
 	t.Setenv("KWT_TEST_SECRET", "secret")
 	g := NewForInventory(
-		context.Background(),
+		t.Context(),
 		t.TempDir(),
 		[]string{"KWT_TEST_SECRET"},
 	)
@@ -278,7 +278,8 @@ func TestGitByteRunnerHelperProcess(t *testing.T) {
 		time.Sleep(time.Minute)
 	case "retain-stdout", "retain-stderr":
 		descriptor := strings.TrimPrefix(os.Args[len(os.Args)-1], "retain-")
-		descendant := exec.Command(
+		descendant := exec.CommandContext(
+			t.Context(),
 			os.Args[0],
 			"-test.run=^TestGitByteRunnerHelperProcess$",
 		)
@@ -314,7 +315,7 @@ func TestGitByteRunnerHelperProcess(t *testing.T) {
 }
 
 func TestGitOperationsUseInstanceContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err := NewWithContext(ctx, t.TempDir()).RunCommand("version")
@@ -355,6 +356,7 @@ func TestInventoryEnvironmentRemovesGitRoutingAndCredentials(t *testing.T) {
 // TestRepository creates a test git repository
 type TestRepository struct {
 	Path string
+	t    *testing.T
 }
 
 // NewTestRepository creates a new test repository
@@ -362,7 +364,7 @@ func NewTestRepository(t *testing.T) *TestRepository {
 	t.Helper()
 
 	tmpDir := t.TempDir()
-	repo := &TestRepository{Path: tmpDir}
+	repo := &TestRepository{Path: tmpDir, t: t}
 
 	// Set environment variables for git if needed in CI
 	t.Setenv("GIT_AUTHOR_NAME", "Test User")
@@ -400,7 +402,7 @@ func NewTestRepository(t *testing.T) *TestRepository {
 
 // run executes a git command in the test repository
 func (r *TestRepository) run(args ...string) error {
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(r.t.Context(), "git", args...)
 	cmd.Dir = r.Path
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -438,7 +440,7 @@ func (r *TestRepository) CreateWorktree(t *testing.T, path, branch string) {
 }
 
 func (r *TestRepository) getCurrentBranch() (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd := exec.CommandContext(r.t.Context(), "git", "rev-parse", "--abbrev-ref", "HEAD")
 	cmd.Dir = r.Path
 	output, err := cmd.Output()
 	if err != nil {
@@ -449,7 +451,7 @@ func (r *TestRepository) getCurrentBranch() (string, error) {
 
 func gitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
 	if err != nil {

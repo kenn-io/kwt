@@ -18,10 +18,10 @@ import (
 
 func TestProjectFenceWaitHonorsCancellation(t *testing.T) {
 	home := t.TempDir()
-	release, err := acquireProjectFence(context.Background(), home, "github.com/acme/widget")
+	release, err := acquireProjectFence(t.Context(), home, "github.com/acme/widget")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, release()) }()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
 	defer cancel()
 
 	_, err = acquireProjectFence(ctx, home, "github.com/acme/widget")
@@ -32,11 +32,11 @@ func TestProjectFenceWaitHonorsCancellation(t *testing.T) {
 func TestProjectFenceRepositoryCaseVariantsContend(t *testing.T) {
 	home := t.TempDir()
 	release, err := acquireProjectFence(
-		context.Background(), home, "github.com/Acme/Widget",
+		t.Context(), home, "github.com/Acme/Widget",
 	)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, release()) }()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
 	defer cancel()
 
 	_, err = acquireProjectFence(ctx, home, "github.com/acme/widget")
@@ -65,15 +65,15 @@ func TestProjectClaimRejectsRegistrationRemovedWhileWaiting(t *testing.T) {
 		"[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'widget'\npath = '"+path+"'\n",
 	), 0o600))
 	expansion := testExpansion(t)
-	claim, err := ObserveProjectClaim(context.Background(), home, path, expansion)
+	claim, err := ObserveProjectClaim(t.Context(), home, path, expansion)
 	require.NoError(t, err)
 	require.NotNil(t, claim)
-	release, err := acquireProjectFence(context.Background(), home, claim.Identity)
+	release, err := acquireProjectFence(t.Context(), home, claim.Identity)
 	require.NoError(t, err)
 
 	done := make(chan error, 1)
 	go func() {
-		acquired, acquireErr := AcquireProjectClaim(context.Background(), home, claim)
+		acquired, acquireErr := AcquireProjectClaim(t.Context(), home, claim)
 		if acquired != nil {
 			_ = acquired()
 		}
@@ -95,7 +95,7 @@ func TestObserveProjectClaimUsesPathIdentityForUnregisteredRepository(t *testing
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), nil, 0o600))
 	path := t.TempDir()
 
-	claim, err := ObserveProjectClaim(context.Background(), home, path, testExpansion(t))
+	claim, err := ObserveProjectClaim(t.Context(), home, path, testExpansion(t))
 
 	require.NoError(t, err)
 	require.NotNil(t, claim)
@@ -110,12 +110,12 @@ func TestRequiredProjectClaimAcceptsUnchangedUnregisteredRepository(t *testing.T
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), nil, 0o600))
 	path := t.TempDir()
 	claim, err := ObserveProjectClaim(
-		context.Background(), home, path, testExpansion(t),
+		t.Context(), home, path, testExpansion(t),
 	)
 	require.NoError(t, err)
 
 	release, err := AcquireRequiredProjectClaim(
-		context.Background(), home, claim,
+		t.Context(), home, claim,
 	)
 
 	require.NoError(t, err)
@@ -131,15 +131,15 @@ func TestRegisteredProjectClaimAlsoLocksMainPathIdentity(t *testing.T) {
 		"[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'widget'\npath = '"+path+"'\n",
 	), 0o600))
 	claim, err := ObserveProjectClaim(
-		context.Background(), home, path, testExpansion(t),
+		t.Context(), home, path, testExpansion(t),
 	)
 	require.NoError(t, err)
-	release, err := AcquireRequiredProjectClaim(context.Background(), home, claim)
+	release, err := AcquireRequiredProjectClaim(t.Context(), home, claim)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, release()) }()
 	pathIdentity, err := pathLifecycleIdentity(path)
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
 	defer cancel()
 
 	unexpectedRelease, err := acquireProjectFence(ctx, home, pathIdentity)
@@ -163,14 +163,14 @@ func TestRegisteredProjectClaimRejectsRetargetedConfiguredSymlink(t *testing.T) 
 	), 0o600))
 	expansion := testExpansion(t)
 	claim, err := ObserveProjectClaim(
-		context.Background(), home, firstRepository, expansion,
+		t.Context(), home, firstRepository, expansion,
 	)
 	require.NoError(t, err)
 	require.True(t, claim.Registered)
 	require.NoError(t, os.Remove(configuredPath))
 	require.NoError(t, os.Symlink(secondRepository, configuredPath))
 
-	release, err := AcquireRequiredProjectClaim(context.Background(), home, claim)
+	release, err := AcquireRequiredProjectClaim(t.Context(), home, claim)
 	if release != nil {
 		require.NoError(t, release())
 	}
@@ -184,13 +184,13 @@ func TestUnregisteredClaimRejectsRegistrationAddedWhileWaiting(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), nil, 0o600))
 	path := t.TempDir()
 	expansion := testExpansion(t)
-	claim, err := ObserveProjectClaim(context.Background(), home, path, expansion)
+	claim, err := ObserveProjectClaim(t.Context(), home, path, expansion)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
 		"[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'widget'\npath = '"+path+"'\n",
 	), 0o600))
 
-	release, err := AcquireRequiredProjectClaim(context.Background(), home, claim)
+	release, err := AcquireRequiredProjectClaim(t.Context(), home, claim)
 	assert.Nil(t, release)
 	assert.True(t, service.IsCode(err, service.RegistrationChanged))
 }
@@ -200,9 +200,9 @@ func TestProjectRegistrationTransitionWaitsForUnregisteredPathClaim(t *testing.T
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), nil, 0o600))
 	path := t.TempDir()
 	expansion := testExpansion(t)
-	claim, err := ObserveProjectClaim(context.Background(), home, path, expansion)
+	claim, err := ObserveProjectClaim(t.Context(), home, path, expansion)
 	require.NoError(t, err)
-	release, err := AcquireRequiredProjectClaim(context.Background(), home, claim)
+	release, err := AcquireRequiredProjectClaim(t.Context(), home, claim)
 	require.NoError(t, err)
 
 	mutationStarted := make(chan struct{})
@@ -210,7 +210,7 @@ func TestProjectRegistrationTransitionWaitsForUnregisteredPathClaim(t *testing.T
 	project := models.Project{Repository: "github.com/acme/widget", Name: "widget", Path: path}
 	go func() {
 		done <- TransitionProjectRegistration(
-			context.Background(), home, expansion, project,
+			t.Context(), home, expansion, project,
 			func() error {
 				close(mutationStarted)
 				return nil
@@ -233,9 +233,9 @@ func TestProjectRegistrationTransitionWaitsForExistingIdentity(t *testing.T) {
 		"[[projects]]\nrepository = 'github.com/acme/old'\nname = 'repo'\npath = '"+path+"'\n",
 	), 0o600))
 	expansion := testExpansion(t)
-	claim, err := ObserveProjectClaim(context.Background(), home, path, expansion)
+	claim, err := ObserveProjectClaim(t.Context(), home, path, expansion)
 	require.NoError(t, err)
-	releaseOperation, err := AcquireRequiredProjectClaim(context.Background(), home, claim)
+	releaseOperation, err := AcquireRequiredProjectClaim(t.Context(), home, claim)
 	require.NoError(t, err)
 
 	mutationStarted := make(chan struct{})
@@ -245,7 +245,7 @@ func TestProjectRegistrationTransitionWaitsForExistingIdentity(t *testing.T) {
 	}
 	go func() {
 		done <- TransitionProjectRegistration(
-			context.Background(), home, expansion, replacement,
+			t.Context(), home, expansion, replacement,
 			func() error {
 				close(mutationStarted)
 				snapshot, loadErr := config.LoadGlobalSnapshotAtWithExpansion(
@@ -285,7 +285,7 @@ func TestProjectRegistrationTransitionReacquiresChangedIdentitySet(t *testing.T)
 		"[[projects]]\nrepository = 'github.com/acme/a'\nname = 'repo'\npath = '"+path+"'\n",
 	), 0o600))
 	expansion := testExpansion(t)
-	releaseA, err := acquireProjectFence(context.Background(), home, "github.com/acme/a")
+	releaseA, err := acquireProjectFence(t.Context(), home, "github.com/acme/a")
 	require.NoError(t, err)
 
 	mutationStarted := make(chan struct{})
@@ -295,7 +295,7 @@ func TestProjectRegistrationTransitionReacquiresChangedIdentitySet(t *testing.T)
 	}
 	go func() {
 		done <- TransitionProjectRegistration(
-			context.Background(), home, expansion, replacementB,
+			t.Context(), home, expansion, replacementB,
 			func() error {
 				close(mutationStarted)
 				snapshot, loadErr := config.LoadGlobalSnapshotAtWithExpansion(
@@ -316,7 +316,7 @@ func TestProjectRegistrationTransitionReacquiresChangedIdentitySet(t *testing.T)
 	}()
 
 	require.Eventually(t, func() bool {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Millisecond)
 		defer cancel()
 		release, lockErr := acquireProjectTransitionFence(ctx, home)
 		if lockErr != nil {
@@ -333,7 +333,7 @@ func TestProjectRegistrationTransitionReacquiresChangedIdentitySet(t *testing.T)
 	changed, err := config.CompareAndSwapProjectAt(home, snapshot.Projects[0], &replacementC)
 	require.NoError(t, err)
 	require.True(t, changed)
-	releaseC, err := acquireProjectFence(context.Background(), home, "github.com/acme/c")
+	releaseC, err := acquireProjectFence(t.Context(), home, "github.com/acme/c")
 	require.NoError(t, err)
 	require.NoError(t, releaseA())
 	select {
@@ -353,7 +353,7 @@ func TestProjectRegistrationTransitionDeduplicatesRepositoryCaseVariants(t *test
 	), 0o600))
 
 	identities, err := projectRegistrationTransitionIdentities(
-		context.Background(), home, testExpansion(t), models.Project{
+		t.Context(), home, testExpansion(t), models.Project{
 			Repository: "github.com/acme/widget", Name: "repo", Path: path,
 		},
 	)
@@ -375,7 +375,7 @@ func TestProjectRegistrationTransitionRepairsPathlessRepositoryEntry(t *testing.
 	), 0o600))
 
 	identities, err := projectRegistrationTransitionIdentities(
-		context.Background(), home, testExpansion(t), models.Project{
+		t.Context(), home, testExpansion(t), models.Project{
 			Repository: "github.com/acme/widget", Name: "widget", Path: path,
 		},
 	)

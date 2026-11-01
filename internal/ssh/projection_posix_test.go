@@ -34,7 +34,7 @@ func TestCompressionOverridesDestinationAcrossLeaseRevalidation(t *testing.T) {
 					return func(context.Context, []string) (int, error) { return 0, nil }, nil
 				},
 			})
-			t.Cleanup(func() { require.NoError(t, manager.Close(context.Background())) })
+			t.Cleanup(func() { require.NoError(t, manager.Close(context.WithoutCancel(t.Context()))) })
 			identities := make(map[string]string)
 			masters := make(map[string]string)
 			for _, override := range []struct {

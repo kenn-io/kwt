@@ -45,8 +45,8 @@ type denyProxy struct {
 	requests []string
 }
 
-func startDenyProxy() (*denyProxy, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+func startDenyProxy(ctx context.Context) (*denyProxy, error) {
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("listen for deny proxy: %w", err)
 	}
@@ -238,7 +238,7 @@ func runPrepared(
 		return 1
 	}
 
-	proxy, err := startDenyProxy()
+	proxy, err := startDenyProxy(ctx)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "start outbound deny proxy: %v\n", err)
 		return 1

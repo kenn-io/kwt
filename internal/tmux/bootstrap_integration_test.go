@@ -74,7 +74,7 @@ func TestWorkspaceOpenRejectsTmuxFormatPath(t *testing.T) {
 	command := NewTmuxCommandForSocketWithStripNames("tmux", socket, nil)
 	runner := NewWorkspaceRunner(command, nil)
 	err := runner.Ensure(
-		context.Background(),
+		t.Context(),
 		"kwt-format-test-session",
 		worktreeDir,
 		BlankLayout(),
@@ -673,7 +673,7 @@ func containsName(names []string, want string) bool {
 // in every pane.
 func runTmuxSocket(t *testing.T, socket string, env []string, args ...string) (string, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	full := append([]string{"-f", os.DevNull, "-L", socket}, args...)
 	cmd := exec.CommandContext(ctx, "tmux", full...)

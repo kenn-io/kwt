@@ -1,7 +1,6 @@
 package tmux
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"runtime"
@@ -19,7 +18,7 @@ func TestTmuxCommandAtomicallyTerminatesMatchingWorkspace(t *testing.T) {
 		t.Skip("tmux is not installed")
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	tempDir, err := os.MkdirTemp("/tmp", "kwt-cleanup-")
 	require.NoError(t, err)
 	command := NewTmuxCommandForSocketInTempDirWithStripNames(
@@ -61,7 +60,7 @@ func TestTmuxCommandTerminatesVerifiedPreCleanupMarkerWorkspace(t *testing.T) {
 		t.Skip("tmux is not installed")
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	tempDir, err := os.MkdirTemp("/tmp", "kwt-cleanup-")
 	require.NoError(t, err)
 	command := NewTmuxCommandForSocketInTempDirWithStripNames(

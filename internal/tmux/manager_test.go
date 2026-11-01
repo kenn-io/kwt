@@ -108,7 +108,7 @@ func TestSessionManagerCreatesOnlyOnKWTServer(t *testing.T) {
 	defaultServer := &recordingSessionManagerCommand{}
 	manager := newSessionManagerWithCommands(DefaultSessionConfig(), kwtServer, defaultServer)
 
-	session, err := manager.CreateSession(context.Background(), SessionOptions{
+	session, err := manager.CreateSession(t.Context(), SessionOptions{
 		Context: "run", Identifier: "test", WorkingDir: "/work",
 	})
 
@@ -124,7 +124,7 @@ func TestSessionManagerNormalizesDollarSignsInGeneratedSessionName(t *testing.T)
 		DefaultSessionConfig(), kwtServer, &recordingSessionManagerCommand{},
 	)
 
-	session, err := manager.CreateSession(context.Background(), SessionOptions{
+	session, err := manager.CreateSession(t.Context(), SessionOptions{
 		Context: "run$local", Identifier: "build$target", WorkingDir: "/work",
 	})
 
@@ -146,7 +146,7 @@ func TestSessionManagerRejectsWorkspaceNamespaceContexts(t *testing.T) {
 				DefaultSessionConfig(), kwtServer, &recordingSessionManagerCommand{},
 			)
 
-			_, err := manager.CreateSession(context.Background(), SessionOptions{
+			_, err := manager.CreateSession(t.Context(), SessionOptions{
 				Context: sessionContext, Identifier: "standalone", WorkingDir: "/work",
 			})
 
@@ -228,7 +228,7 @@ func TestSessionManagerStripsConfiguredCredentialFromEveryAttachPath(t *testing.
 		require.True(t, ok)
 		commands := map[string]*exec.Cmd{
 			"direct": command.attachSessionCmd("workspace"),
-			"nested": command.attachSessionNestedCmd(context.Background(), "workspace"),
+			"nested": command.attachSessionNestedCmd(t.Context(), "workspace"),
 			"switch": command.switchClientCmd("workspace"),
 		}
 		for path, attach := range commands {

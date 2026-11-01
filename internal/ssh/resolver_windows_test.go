@@ -21,7 +21,7 @@ func TestResolverWindowsInvokesOpenSSHDirectly(t *testing.T) {
 		},
 	})
 
-	observation, err := resolver.Resolve(context.Background(), ResolveRequest{Target: Target{
+	observation, err := resolver.Resolve(t.Context(), ResolveRequest{Target: Target{
 		User: "deploy", Hostname: "build.example.test", Port: 2200,
 	}})
 	require.NoError(t, err)

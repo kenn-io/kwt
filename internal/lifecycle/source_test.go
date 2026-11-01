@@ -23,7 +23,7 @@ import (
 )
 
 func TestPublishedProjectRegistrationsStopsWhenContextIsCanceled(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err := publishedProjectRegistrations(ctx, []config.ProjectRegistration{{
@@ -41,7 +41,7 @@ func TestSourceClassifiesInventoryFailuresWithActionableMessage(t *testing.T) {
 		0o600,
 	))
 
-	_, err := NewSource(SourceOptions{Home: home}).Load(context.Background(), Request{
+	_, err := NewSource(SourceOptions{Home: home}).Load(t.Context(), Request{
 		View: ViewProjects, Expansion: testExpansion(t), UntrustedConfig: IgnoreUntrustedConfig,
 	})
 
@@ -107,7 +107,7 @@ func TestScanRepositoriesBoundsConcurrencyAndPreservesOrder(t *testing.T) {
 	}
 	done := make(chan scanOutcome, 1)
 	go func() {
-		results, err := scanRepositories(context.Background(), paths, func(
+		results, err := scanRepositories(t.Context(), paths, func(
 			_ context.Context,
 			path string,
 		) ([]Entry, error) {
@@ -141,7 +141,7 @@ func TestScanRepositoriesBoundsConcurrencyAndPreservesOrder(t *testing.T) {
 }
 
 func TestScanRepositoriesPropagatesCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	started := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
@@ -176,14 +176,14 @@ func TestSourceProjectsRetainsInaccessibleRegistrations(t *testing.T) {
 	home := t.TempDir()
 	repository := filepath.Join(t.TempDir(), "repo")
 	require.NoError(t, os.Mkdir(repository, 0o755))
-	command := exec.Command("git", "init", repository)
+	command := exec.CommandContext(t.Context(), "git", "init", repository)
 	require.NoError(t, command.Run())
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
 		"[[projects]]\nrepository = 'github.com/acme/repo'\nname = 'repo'\npath = '"+repository+"'\n\n"+
 			"[[projects]]\nrepository = 'github.com/acme/missing'\nname = 'missing'\npath = '"+filepath.Join(t.TempDir(), "missing")+"'\n",
 	), 0o600))
 
-	result, err := NewSource(SourceOptions{Home: home}).Load(context.Background(), Request{
+	result, err := NewSource(SourceOptions{Home: home}).Load(t.Context(), Request{
 		View: ViewProjects, Expansion: testExpansion(t), UntrustedConfig: IgnoreUntrustedConfig,
 	})
 
@@ -204,7 +204,7 @@ func TestSourceProjectFingerprintChangesWithUnknownPersistedField(t *testing.T) 
 		), 0o600))
 	}
 	load := func(view View) InventoryProject {
-		result, err := NewSource(SourceOptions{Home: home}).Load(context.Background(), Request{
+		result, err := NewSource(SourceOptions{Home: home}).Load(t.Context(), Request{
 			View: view, Expansion: testExpansion(t), UntrustedConfig: IgnoreUntrustedConfig,
 		})
 		require.NoError(t, err)
@@ -232,7 +232,7 @@ func TestSourceProjectsUsesRequestExpansionForMissingLocalRegistration(t *testin
 	expansion := testExpansion(t)
 	expansion.Environment["PROJECT_ROOT"] = filepath.Join(t.TempDir(), "one")
 
-	result, err := NewSource(SourceOptions{Home: home}).Load(context.Background(), Request{
+	result, err := NewSource(SourceOptions{Home: home}).Load(t.Context(), Request{
 		View: ViewProjects, Expansion: expansion, UntrustedConfig: IgnoreUntrustedConfig,
 	})
 
@@ -254,7 +254,7 @@ func TestSourceSnapshotIncludesEffectiveGlobalConfig(t *testing.T) {
 		0o600,
 	))
 
-	result, err := NewSource(SourceOptions{Home: home}).Load(context.Background(), Request{
+	result, err := NewSource(SourceOptions{Home: home}).Load(t.Context(), Request{
 		View: ViewProjects, Expansion: testExpansion(t), UntrustedConfig: IgnoreUntrustedConfig,
 	})
 
@@ -271,7 +271,7 @@ func TestSourceRepositorySnapshotIncludesEffectiveGlobalConfig(t *testing.T) {
 		{"init", "-b", "main", repository},
 		{"-C", repository, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial"},
 	} {
-		command := exec.Command("git", args...)
+		command := exec.CommandContext(t.Context(), "git", args...)
 		require.NoError(t, command.Run())
 	}
 	require.NoError(t, os.WriteFile(
@@ -280,7 +280,7 @@ func TestSourceRepositorySnapshotIncludesEffectiveGlobalConfig(t *testing.T) {
 		0o600,
 	))
 
-	result, err := NewSource(SourceOptions{Home: home}).Load(context.Background(), Request{
+	result, err := NewSource(SourceOptions{Home: home}).Load(t.Context(), Request{
 		View: ViewRepository, WorkingDirectory: repository,
 		Expansion: testExpansion(t), UntrustedConfig: IgnoreUntrustedConfig,
 	})
@@ -291,7 +291,7 @@ func TestSourceRepositorySnapshotIncludesEffectiveGlobalConfig(t *testing.T) {
 }
 
 func TestSourceRejectsRelativeRepositoryDirectory(t *testing.T) {
-	_, err := NewSource(SourceOptions{Home: t.TempDir()}).Load(context.Background(), Request{
+	_, err := NewSource(SourceOptions{Home: t.TempDir()}).Load(t.Context(), Request{
 		View: ViewRepository, WorkingDirectory: "relative", Expansion: testExpansion(t),
 		UntrustedConfig: IgnoreUntrustedConfig,
 	})
@@ -299,7 +299,7 @@ func TestSourceRejectsRelativeRepositoryDirectory(t *testing.T) {
 }
 
 func TestSourceRejectsMissingPathExpansionContext(t *testing.T) {
-	_, err := NewSource(SourceOptions{Home: t.TempDir()}).Load(context.Background(), Request{
+	_, err := NewSource(SourceOptions{Home: t.TempDir()}).Load(t.Context(), Request{
 		View: ViewProjects, UntrustedConfig: IgnoreUntrustedConfig,
 	})
 
@@ -314,7 +314,7 @@ func TestSourcePropagatesRepositoryInventoryErrors(t *testing.T) {
 		0o600,
 	))
 
-	_, err := NewSource(SourceOptions{Home: t.TempDir()}).Load(context.Background(), Request{
+	_, err := NewSource(SourceOptions{Home: t.TempDir()}).Load(t.Context(), Request{
 		View: ViewRepository, WorkingDirectory: workingDirectory, UntrustedConfig: IgnoreUntrustedConfig,
 		Expansion: testExpansion(t),
 	})
@@ -328,7 +328,7 @@ func TestSourceRecognizesRepositoryThroughSymlinkedSubdirectory(t *testing.T) {
 		{"init", "-b", "main", repository},
 		{"-C", repository, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial"},
 	} {
-		command := exec.Command("git", args...)
+		command := exec.CommandContext(t.Context(), "git", args...)
 		require.NoError(t, command.Run())
 	}
 	subdirectory := filepath.Join(repository, "nested", "directory")
@@ -338,7 +338,7 @@ func TestSourceRecognizesRepositoryThroughSymlinkedSubdirectory(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	result, err := NewSource(SourceOptions{Home: t.TempDir()}).Load(context.Background(), Request{
+	result, err := NewSource(SourceOptions{Home: t.TempDir()}).Load(t.Context(), Request{
 		View: ViewRepository, WorkingDirectory: linkedDirectory,
 		UntrustedConfig: IgnoreUntrustedConfig, Expansion: testExpansion(t),
 	})
@@ -357,7 +357,7 @@ func TestSourceRepositoryInventoryIgnoresInheritedGitRouting(t *testing.T) {
 			{"init", "-b", "main", path},
 			{"-C", path, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial"},
 		} {
-			command := exec.Command("git", args...)
+			command := exec.CommandContext(t.Context(), "git", args...)
 			require.NoError(t, command.Run())
 		}
 	}
@@ -367,7 +367,7 @@ func TestSourceRepositoryInventoryIgnoresInheritedGitRouting(t *testing.T) {
 	createRepository(redirected)
 	t.Setenv("GIT_DIR", filepath.Join(redirected, ".git"))
 
-	result, err := NewSource(SourceOptions{Home: t.TempDir()}).Load(context.Background(), Request{
+	result, err := NewSource(SourceOptions{Home: t.TempDir()}).Load(t.Context(), Request{
 		View: ViewRepository, WorkingDirectory: target,
 		UntrustedConfig: IgnoreUntrustedConfig, Expansion: testExpansion(t),
 	})
@@ -388,12 +388,12 @@ func TestSourceRequiresValidProvenanceForProtectedClassification(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(home, "pull-requests.json"), []byte("{"), 0o600))
 	source := NewSource(SourceOptions{Home: home})
 
-	_, err := source.Load(context.Background(), Request{
+	_, err := source.Load(t.Context(), Request{
 		View: ViewDashboard, Expansion: testExpansion(t), UntrustedConfig: IgnoreUntrustedConfig,
 	})
 	require.ErrorContains(t, err, "failed to read pull-request provenance")
 
-	_, err = source.Load(context.Background(), Request{
+	_, err = source.Load(t.Context(), Request{
 		View: ViewDashboard, Expansion: testExpansion(t), UntrustedConfig: IgnoreUntrustedConfig,
 		IncludeProtectedSockets: true,
 	})
@@ -441,7 +441,7 @@ func TestAnnotateProtectedSocketsPreservesVerifiedPersistedEndpoint(t *testing.T
 			}
 			require.NoError(t, pullrequest.NewFileStore(
 				filepath.Join(home, "pull-requests.json"),
-			).Update(context.Background(), func(records map[string]pullrequest.Provenance) error {
+			).Update(t.Context(), func(records map[string]pullrequest.Provenance) error {
 				records["github:github.com/acme/widget#1"] = record
 				return nil
 			}))
@@ -453,7 +453,7 @@ func TestAnnotateProtectedSocketsPreservesVerifiedPersistedEndpoint(t *testing.T
 			}}
 
 			err := (&currentSource{home: home}).annotateProtectedSockets(
-				context.Background(), true, entries,
+				t.Context(), true, entries,
 			)
 
 			require.NoError(t, err)
@@ -476,7 +476,7 @@ func TestSourceDashboardLaunchEntryRetainsProtectedPolicy(t *testing.T) {
 			"commit", "--allow-empty", "-m", "initial"},
 		{"-C", repository, "remote", "add", "origin", "https://github.com/acme/widget.git"},
 	} {
-		command := exec.Command("git", args...)
+		command := exec.CommandContext(t.Context(), "git", args...)
 		require.NoError(t, command.Run())
 	}
 	var err error
@@ -492,7 +492,7 @@ func TestSourceDashboardLaunchEntryRetainsProtectedPolicy(t *testing.T) {
 	sessionName := "kwt-wt-widget-main-" + template.ShortHash(repository)
 	require.NoError(t, pullrequest.NewFileStore(
 		filepath.Join(home, "pull-requests.json"),
-	).Update(context.Background(), func(records map[string]pullrequest.Provenance) error {
+	).Update(t.Context(), func(records map[string]pullrequest.Provenance) error {
 		records["github:github.com/acme/widget#1"] = pullrequest.Provenance{
 			Repository: "github.com/acme/widget",
 			Project:    pullrequest.Project{Identity: "github.com/acme/widget"},
@@ -524,7 +524,7 @@ func TestSourceDashboardLaunchEntryRetainsProtectedPolicy(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			result, err := source.Load(context.Background(), Request{
+			result, err := source.Load(t.Context(), Request{
 				View: ViewDashboard, LaunchDirectory: repository,
 				IncludeProtectedSockets: test.includeProtectedSockets,
 				Expansion:               testExpansion(t),
@@ -563,7 +563,7 @@ func TestAnnotateWorkspaceEndpointsUsesCanonicalStateWhenTmuxIsUnavailable(t *te
 	}}
 
 	_, err := source.annotateWorkspaceEndpoints(
-		context.Background(), testExpansion(t), nil, entries, nil,
+		t.Context(), testExpansion(t), nil, entries, nil,
 	)
 
 	require.NoError(t, err)
@@ -600,7 +600,7 @@ func TestAnnotateWorkspaceEndpointsPublishesCanonicalAndAdoptedState(t *testing.
 	}
 
 	_, err := source.annotateWorkspaceEndpoints(
-		context.Background(), testExpansion(t), nil, entries, nil,
+		t.Context(), testExpansion(t), nil, entries, nil,
 	)
 
 	require.NoError(t, err)
@@ -642,7 +642,7 @@ func TestAnnotateWorkspaceEndpointsDegradesOnlyUnsafeEntry(t *testing.T) {
 	}
 
 	notes, err := source.annotateWorkspaceEndpoints(
-		context.Background(), testExpansion(t), nil, entries, nil,
+		t.Context(), testExpansion(t), nil, entries, nil,
 	)
 
 	require.NoError(t, err)
@@ -676,7 +676,7 @@ func TestAnnotateWorkspaceEndpointsPublishesResolverDiagnostic(t *testing.T) {
 	entries := []Entry{{Path: "/work/widget", SessionName: "workspace"}}
 
 	notes, err := source.annotateWorkspaceEndpoints(
-		context.Background(), testExpansion(t), nil, entries, nil,
+		t.Context(), testExpansion(t), nil, entries, nil,
 	)
 
 	require.NoError(t, err)
@@ -708,7 +708,7 @@ func TestAnnotateWorkspaceEndpointsTreatsRequestTempDirAsExplicitlyUnset(t *test
 	entries := []Entry{{Path: "/work/widget", SessionName: "workspace"}}
 
 	_, err := source.annotateWorkspaceEndpoints(
-		context.Background(), expansion, nil, entries, nil,
+		t.Context(), expansion, nil, entries, nil,
 	)
 
 	require.NoError(t, err)
@@ -723,12 +723,12 @@ func TestSourceSeparatesLaunchInventoryFromDashboardEntries(t *testing.T) {
 		{"-C", launchDirectory, "remote", "add", "origin", "https://github.com/acme/launch.git"},
 		{"-C", launchDirectory, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial"},
 	} {
-		command := exec.Command("git", args...)
+		command := exec.CommandContext(t.Context(), "git", args...)
 		require.NoError(t, command.Run())
 	}
 	source := &currentSource{}
 
-	entries, launchEntries, err := source.loadDashboard(context.Background(), Request{
+	entries, launchEntries, err := source.loadDashboard(t.Context(), Request{
 		LaunchDirectory: launchDirectory,
 	}, &models.Config{Worktree: models.WorktreeConfig{BaseDir: t.TempDir()}})
 
@@ -749,7 +749,7 @@ func TestDashboardLaunchInventoryPropagatesRefreshDeadline(t *testing.T) {
 		{"init", "-b", "main", launchDirectory},
 		{"-C", launchDirectory, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial"},
 	} {
-		command := exec.Command("git", args...)
+		command := exec.CommandContext(t.Context(), "git", args...)
 		require.NoError(t, command.Run())
 	}
 	lock := flock.New(
@@ -758,7 +758,7 @@ func TestDashboardLaunchInventoryPropagatesRefreshDeadline(t *testing.T) {
 	)
 	require.NoError(t, lock.Lock())
 	t.Cleanup(func() { _ = lock.Unlock() })
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 
 	_, _, err := (&currentSource{}).loadDashboard(ctx, Request{

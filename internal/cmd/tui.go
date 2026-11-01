@@ -61,7 +61,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	if !ok {
 		return nil
 	}
-	return executeTUIHandoff(backend, finalModel.Handoff())
+	return executeTUIHandoff(commandContext(cmd), backend, finalModel.Handoff())
 }
 
 func newTUIModel(ctx context.Context, backend *tuiBackend) dashboard.Model {
@@ -77,15 +77,15 @@ func newTUIModel(ctx context.Context, backend *tuiBackend) dashboard.Model {
 	return model
 }
 
-func executeTUIHandoff(backend *tuiBackend, handoff dashboard.Handoff) error {
+func executeTUIHandoff(ctx context.Context, backend *tuiBackend, handoff dashboard.Handoff) error {
 	switch handoff.Kind {
 	case dashboard.HandoffAttach:
 		if handoff.ExistingOnly {
-			return backend.AttachExistingOutsideTmux(handoff.Row)
+			return backend.AttachExistingOutsideTmux(ctx, handoff.Row)
 		}
-		return backend.AttachOutsideTmux(handoff.Row, handoff.LayoutName)
+		return backend.AttachOutsideTmux(ctx, handoff.Row, handoff.LayoutName)
 	case dashboard.HandoffShell:
-		return LaunchShell(rowPathForHandoff(handoff.Row))
+		return LaunchShell(ctx, rowPathForHandoff(handoff.Row))
 	default:
 		return nil
 	}

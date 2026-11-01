@@ -30,10 +30,10 @@ func TestRemovalSessionGuardRejectsLiveSessionWithoutChangingIt(t *testing.T) {
 	command := NewTmuxCommandInTempDir("tmux", tempDir)
 	const session = "kwt-removal-quiesce-test"
 	require.NoError(t, command.RunCommandContext(
-		context.Background(), "new-session", "-d", "-s", session,
+		t.Context(), "new-session", "-d", "-s", session,
 		"/bin/sh", scriptPath, outputPath,
 	))
-	t.Cleanup(func() { _ = command.RunCommandContext(context.Background(), "kill-server") })
+	t.Cleanup(func() { _ = command.RunCommandContext(context.WithoutCancel(t.Context()), "kill-server") })
 	require.Eventually(t, func() bool {
 		info, err := os.Stat(outputPath)
 		return err == nil && info.Size() > 2
@@ -41,7 +41,7 @@ func TestRemovalSessionGuardRejectsLiveSessionWithoutChangingIt(t *testing.T) {
 	condition := removalConditionForTest(t, command, session, tempDir)
 
 	lease, err := NewRemovalSessionGuard("tmux").Quiesce(
-		context.Background(), condition,
+		t.Context(), condition,
 	)
 
 	assert.Nil(t, lease)
@@ -90,11 +90,11 @@ func TestRemovalSessionGuardRejectsDelimiterBearingWorkspaceMarker(t *testing.T)
 	command := NewTmuxCommandInTempDir("tmux", tempDir)
 	const session = "kwt-removal-marker-test"
 	require.NoError(t, command.RunCommandContext(
-		context.Background(), "new-session", "-d", "-s", session, "sleep", "30",
+		t.Context(), "new-session", "-d", "-s", session, "sleep", "30",
 	))
-	t.Cleanup(func() { _ = command.RunCommandContext(context.Background(), "kill-server") })
+	t.Cleanup(func() { _ = command.RunCommandContext(context.WithoutCancel(t.Context()), "kill-server") })
 	require.NoError(t, command.RunCommandContext(
-		context.Background(),
+		t.Context(),
 		"set-option",
 		"-t",
 		session,
@@ -103,7 +103,7 @@ func TestRemovalSessionGuardRejectsDelimiterBearingWorkspaceMarker(t *testing.T)
 	))
 
 	lease, err := isolatedRemovalSessionGuard(tempDir).Quiesce(
-		context.Background(),
+		t.Context(),
 		RemovalSessionCondition{
 			SessionName:         "different-session",
 			WorkspacePath:       "/worktrees/topic",
@@ -161,7 +161,7 @@ func removalConditionForTest(
 ) RemovalSessionCondition {
 	t.Helper()
 	output, err := command.RunCommandOutputContext(
-		context.Background(), "list-sessions", "-F",
+		t.Context(), "list-sessions", "-F",
 		"#{pid}|#{session_id}|#{session_created}|#{session_name}",
 	)
 	require.NoError(t, err)

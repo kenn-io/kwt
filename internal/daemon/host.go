@@ -357,14 +357,16 @@ func runHost(
 	drain := gate.BeginDrain(opts.Now().Add(opts.Config.ReplacementGrace))
 	operations.BeginDrain(drain.DrainDeadline)
 	logLifecycle(logger, "draining", status.Status(opts.Now()), runErr)
-	drainResult := gate.WaitForDrain(context.Background(), opts.Now())
+	// Shutdown runs after ctx ends. Each wait below has its own deadline.
+	shutdownCtx := context.WithoutCancel(ctx)
+	drainResult := gate.WaitForDrain(shutdownCtx, opts.Now())
 	if drainResult != DrainReleased {
 		operations.CancelActiveForDrain()
 		cancelOperations()
 	}
 	shutdownErr := shutdownHTTPServer(httpServer, drain.DrainDeadline, drainResult)
 	sshCleanupCtx, cancelSSHCleanup := context.WithTimeout(
-		context.Background(), forcedDrainCleanup,
+		shutdownCtx, forcedDrainCleanup,
 	)
 	sshCleanupErr := errors.Join(
 		sshLeases.close(sshCleanupCtx),
@@ -373,7 +375,7 @@ func runHost(
 	cancelSSHCleanup()
 	var cleanupErr error
 	if drainResult != DrainReleased {
-		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), forcedDrainCleanup)
+		cleanupCtx, cancelCleanup := context.WithTimeout(shutdownCtx, forcedDrainCleanup)
 		if !gate.WaitForRelease(cleanupCtx) {
 			cleanupErr = errors.New("daemon cleanup deadline expired")
 		}

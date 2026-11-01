@@ -29,6 +29,11 @@ endif
 export GOFLAGS
 
 INSTALL_DIR ?= $(GO_PATH_FIRST)/bin
+# .custom-gcl.yml owns the golangci-lint and kit plugin versions.
+GOLANGCI_LINT_VERSION := $(shell sed -n 's/^version: //p' .custom-gcl.yml)
+KIT_LINT_VERSION := $(shell sed -nE 's/^[[:space:]]+version: "(.*)"$$/\1/p' .custom-gcl.yml)
+CUSTOM_GCL := ./custom-gcl
+KENNLINT := go run go.kenn.io/kit/cmd/kennlint@$(KIT_LINT_VERSION)
 VERCEL_SCOPE ?= kenn-software
 VERCEL_PROJECT ?= kwt-docs
 TEST_PACKAGES ?= ./...
@@ -75,7 +80,7 @@ TEST_CLEAN_ENV := env -i \
 GO_TEST_BOOTSTRAP := $(TEST_CLEAN_ENV) go -C tools/testbootstrap test ./...
 GO_TEST_RUNNER := $(TEST_CLEAN_ENV) KWT_HOME="$(KWT_HOME)" go -C tools/testbootstrap run . --
 
-.PHONY: all build clean test test-verbose test-coverage lint fmt vet install help docs-install docs-assets docs-assets-test docs-build docs-serve docs-preview docs-screenshot docs-check docs-deploy
+.PHONY: all build clean test test-verbose test-coverage lint lint-config lint-config-check custom-gcl fmt vet install help docs-install docs-assets docs-assets-test docs-build docs-serve docs-preview docs-screenshot docs-check docs-deploy
 
 # Default target
 all: clean build
@@ -176,14 +181,23 @@ docs-check: docs-assets-test docs-build
 docs-deploy: docs-check
 	@vercel deploy --prod --yes --cwd docs/site --scope "$(VERCEL_SCOPE)" --project "$(VERCEL_PROJECT)"
 
-## lint: Run golangci-lint
-lint:
+## lint: Run golangci-lint with kit's shared policy
+lint: lint-config-check custom-gcl
 	@echo "Running golangci-lint..."
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run ./...; \
-	else \
-		echo "golangci-lint not installed. Install with: brew install golangci-lint"; \
-	fi
+	@$(CUSTOM_GCL) run ./...
+
+## lint-config: Render .golangci.yml from kit's canonical config and the overlay
+lint-config:
+	@$(KENNLINT) config
+
+## lint-config-check: Fail when .golangci.yml does not match the overlay
+lint-config-check:
+	@$(KENNLINT) config -check
+
+## custom-gcl: Build golangci-lint with the kit analyzers in .custom-gcl.yml
+custom-gcl:
+	@go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) custom \
+		--destination . --name custom-gcl --version $(GOLANGCI_LINT_VERSION)
 
 ## fmt: Format code
 fmt:

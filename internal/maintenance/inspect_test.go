@@ -1,7 +1,6 @@
 package maintenance
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -188,7 +187,7 @@ func TestInspectorClassifiesLocalFindings(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			inspector := fakeInspector(tt.projects, tt.registry, tt.snapshots, tt.inspectErr, tt.global, tt.targets, tt.exists)
 
-			report, err := inspector.Inspect(context.Background())
+			report, err := inspector.Inspect(t.Context())
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, findingCodes(report))
@@ -216,7 +215,7 @@ func TestInspectorReportsGitDirInspectionAmbiguity(t *testing.T) {
 		nil, nil, nil, map[string]bool{path: true},
 	)
 
-	report, err := inspector.Inspect(context.Background())
+	report, err := inspector.Inspect(t.Context())
 
 	require.NoError(t, err)
 	require.Len(t, report.Repositories, 1)
@@ -234,7 +233,7 @@ func TestInspectorTreatsDanglingSymlinksAsUnreachable(t *testing.T) {
 			Name: "widget", Repository: "github.com/acme/widget", Path: path,
 		}}}, nil, nil)
 
-		report, err := inspector.Inspect(context.Background())
+		report, err := inspector.Inspect(t.Context())
 
 		require.NoError(t, err)
 		assert.Contains(t, findingCodes(report), ProjectUnreachable)
@@ -252,7 +251,7 @@ func TestInspectorTreatsDanglingSymlinksAsUnreachable(t *testing.T) {
 			nil,
 		)
 
-		report, err := inspector.Inspect(context.Background())
+		report, err := inspector.Inspect(t.Context())
 
 		require.NoError(t, err)
 		assert.Contains(t, findingCodes(report), ProjectUnreachable)
@@ -277,7 +276,7 @@ func TestInspectorTreatsDanglingSymlinksAsUnreachable(t *testing.T) {
 			},
 		}
 
-		report, err := inspector.Inspect(context.Background())
+		report, err := inspector.Inspect(t.Context())
 
 		require.NoError(t, err)
 		assert.Contains(t, findingCodes(report), ProjectUnreachable)
@@ -325,7 +324,7 @@ func TestInspectorOnlyAutoFixesGenerationlessRegistryMismatch(t *testing.T) {
 				map[string]bool{"/worktrees/topic": true},
 			)
 
-			report, err := inspector.Inspect(context.Background())
+			report, err := inspector.Inspect(t.Context())
 
 			require.NoError(t, err)
 			require.Len(t, report.Repositories, 1)
@@ -368,7 +367,7 @@ func TestInspectorReportsExistingUnverifiedRegistryPath(t *testing.T) {
 		map[string]bool{repositoryRoot: true, registryPath: true},
 	)
 
-	report, err := inspector.Inspect(context.Background())
+	report, err := inspector.Inspect(t.Context())
 
 	require.NoError(t, err)
 	assert.Contains(t, findingCodes(report), UnverifiedRegistryEntry)
@@ -447,7 +446,7 @@ func TestInspectorClassifiesDuplicateRegistryAliases(t *testing.T) {
 				map[string]bool{worktreePath: true, aliasPath: true},
 			)
 
-			report, err := inspector.Inspect(context.Background())
+			report, err := inspector.Inspect(t.Context())
 
 			require.NoError(t, err)
 			var duplicates []Finding
@@ -527,7 +526,7 @@ func TestInspectorClassifiesMissingDuplicateRegistryAliases(t *testing.T) {
 				map[string]bool{worktreePath: false, aliasPath: false},
 			)
 
-			report, err := inspector.Inspect(context.Background())
+			report, err := inspector.Inspect(t.Context())
 
 			require.NoError(t, err)
 			var duplicates []Finding
@@ -581,7 +580,7 @@ func TestInspectorCanonicalizesLegacyRegistryRepositoryURL(t *testing.T) {
 		map[string]bool{"/worktrees/topic": true},
 	)
 
-	report, err := inspector.Inspect(context.Background())
+	report, err := inspector.Inspect(t.Context())
 
 	require.NoError(t, err)
 	assert.Empty(t, findingCodes(report))
@@ -616,7 +615,7 @@ func TestInspectorAcceptsOriginBasedExpirationForConfiguredUpstream(t *testing.T
 		nil,
 	)
 
-	report, err := inspector.Inspect(context.Background())
+	report, err := inspector.Inspect(t.Context())
 
 	require.NoError(t, err)
 	assert.NotContains(t, findingCodes(report), RepositoryIdentityMismatch)
@@ -637,7 +636,7 @@ func TestInspectorRedactsUnparseableRegistryRepository(t *testing.T) {
 			map[string]bool{"/worktrees/stale": false},
 		)
 
-		report, err := inspector.Inspect(context.Background())
+		report, err := inspector.Inspect(t.Context())
 
 		require.NoError(t, err)
 		encoded, err := json.Marshal(report)
@@ -662,7 +661,7 @@ func TestInspectorRedactsUnparseableRegistryRepository(t *testing.T) {
 			map[string]bool{"/worktrees/topic": true},
 		)
 
-		report, err := inspector.Inspect(context.Background())
+		report, err := inspector.Inspect(t.Context())
 
 		require.NoError(t, err)
 		require.Len(t, report.Repositories, 1)
@@ -686,7 +685,7 @@ func TestInspectorSanitizesConfiguredRepositoryIdentity(t *testing.T) {
 			Repository: "https://user:" + secret + "@github.com/acme/widget.git",
 		}}}, nil, nil)
 
-		report, err := inspector.Inspect(context.Background())
+		report, err := inspector.Inspect(t.Context())
 
 		require.NoError(t, err)
 		require.Len(t, report.Repositories, 1)
@@ -701,7 +700,7 @@ func TestInspectorSanitizesConfiguredRepositoryIdentity(t *testing.T) {
 			Repository: "ext::command --token=" + secret,
 		}}}, nil, nil)
 
-		report, err := inspector.Inspect(context.Background())
+		report, err := inspector.Inspect(t.Context())
 
 		require.NoError(t, err)
 		require.Len(t, report.Repositories, 1)
@@ -720,7 +719,7 @@ func TestInspectorSanitizesConfiguredRepositoryIdentity(t *testing.T) {
 			nil, nil, nil,
 		)
 
-		report, err := inspector.Inspect(context.Background())
+		report, err := inspector.Inspect(t.Context())
 
 		require.NoError(t, err)
 		require.Len(t, report.Repositories, 1)
@@ -789,7 +788,7 @@ func TestInspectorReportsConfiguredRepositoryIdentityClaims(t *testing.T) {
 				nil, nil, nil, nil,
 			)
 
-			report, err := inspector.Inspect(context.Background())
+			report, err := inspector.Inspect(t.Context())
 
 			require.NoError(t, err)
 			require.Len(t, report.Repositories, 1)
@@ -908,7 +907,7 @@ func TestInspectorDeduplicatesProjectsByCommonDirectory(t *testing.T) {
 		nil,
 	)
 
-	report, err := inspector.Inspect(context.Background())
+	report, err := inspector.Inspect(t.Context())
 
 	require.NoError(t, err)
 	require.Len(t, report.Repositories, 1)
@@ -934,7 +933,7 @@ func TestInspectorInventoriesRepositoryFromGlobalLinkedWorktree(t *testing.T) {
 		map[string]bool{linkedPath: true},
 	)
 
-	report, err := inspector.Inspect(context.Background())
+	report, err := inspector.Inspect(t.Context())
 
 	require.NoError(t, err)
 	require.Len(t, report.Repositories, 1)
@@ -954,7 +953,7 @@ func TestInspectorReportsUninspectableGlobalLinkedWorktree(t *testing.T) {
 		map[string]bool{linkedPath: true},
 	)
 
-	report, err := inspector.Inspect(context.Background())
+	report, err := inspector.Inspect(t.Context())
 
 	require.NoError(t, err)
 	require.Len(t, report.Repositories, 1)
@@ -981,7 +980,7 @@ func TestInspectorReportsUnreadableGlobalDotGit(t *testing.T) {
 		PathExists: func(string) (bool, error) { return true, nil },
 	}
 
-	report, err := inspector.Inspect(context.Background())
+	report, err := inspector.Inspect(t.Context())
 
 	require.NoError(t, err)
 	require.Len(t, report.Repositories, 1)

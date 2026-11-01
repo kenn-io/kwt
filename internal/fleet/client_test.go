@@ -71,7 +71,7 @@ func TestClientUsesBearerTokenAndTimeout(t *testing.T) {
 
 	client := NewClient(ClientOptions{HubURL: server.URL, Token: "secret", Timeout: 2 * time.Second})
 	manifest := testManifest("host-a", "Host-A", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa")
-	err := client.Publish(context.Background(), manifest)
+	err := client.Publish(t.Context(), manifest)
 	require.NoError(t, err)
 	assert.Equal(t, "Bearer secret", gotAuth)
 }
@@ -92,7 +92,7 @@ func TestClientRejectsPlaintextNonLoopbackHubURL(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			client := NewClient(ClientOptions{HubURL: tt.hubURL, Token: "secret"})
 
-			req, err := client.newRequest(context.Background(), http.MethodGet, "/api/v1/fleet/state", nil)
+			req, err := client.newRequest(t.Context(), http.MethodGet, "/api/v1/fleet/state", nil)
 
 			require.Error(t, err)
 			assert.Nil(t, req)
@@ -104,7 +104,7 @@ func TestClientRejectsPlaintextNonLoopbackHubURL(t *testing.T) {
 func TestClientAllowsPlaintextLoopbackHubURL(t *testing.T) {
 	client := NewClient(ClientOptions{HubURL: "http://127.0.0.1:8787", Token: "secret"})
 
-	req, err := client.newRequest(context.Background(), http.MethodGet, "/api/v1/fleet/state", nil)
+	req, err := client.newRequest(t.Context(), http.MethodGet, "/api/v1/fleet/state", nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, "Bearer secret", req.Header.Get("Authorization"))
@@ -113,7 +113,7 @@ func TestClientAllowsPlaintextLoopbackHubURL(t *testing.T) {
 func TestClientAllowsHTTPSHubURL(t *testing.T) {
 	client := NewClient(ClientOptions{HubURL: "https://hub.example.test", Token: "secret"})
 
-	req, err := client.newRequest(context.Background(), http.MethodGet, "/api/v1/fleet/state", nil)
+	req, err := client.newRequest(t.Context(), http.MethodGet, "/api/v1/fleet/state", nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, "Bearer secret", req.Header.Get("Authorization"))
@@ -149,7 +149,7 @@ func TestClientRejectsPlaintextRedirectToUnverifiedHost(t *testing.T) {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
-	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec -- test server certificate
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // Test server certificate.
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, splitErr := net.SplitHostPort(address)
 		if splitErr == nil && host == "hub.example.test" {
@@ -163,7 +163,7 @@ func TestClientRejectsPlaintextRedirectToUnverifiedHost(t *testing.T) {
 		Token:  "secret",
 	})
 	client.httpClient.Transport = transport
-	_, _, _, err = client.State(context.Background(), "")
+	_, _, _, err = client.State(t.Context(), "")
 
 	assert.Error(t, err)
 	if err != nil {
@@ -178,7 +178,7 @@ func TestClientRejectsPlaintextRedirectToUnverifiedHost(t *testing.T) {
 func TestClientRejectsPlaintextTailnetBeforeEnvironmentProxy(t *testing.T) {
 	if os.Getenv("KWT_TEST_PROXY_HELPER") == "1" {
 		client := NewClient(ClientOptions{HubURL: "http://100.64.1.2:8787", Token: "secret"})
-		_, _, _, err := client.State(context.Background(), "")
+		_, _, _, err := client.State(t.Context(), "")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "only allowed for loopback")
 		return
@@ -203,7 +203,7 @@ func TestClientRejectsPlaintextTailnetBeforeEnvironmentProxy(t *testing.T) {
 		}
 		baseEnv = append(baseEnv, env)
 	}
-	cmd := exec.Command(os.Args[0], "-test.run=^TestClientRejectsPlaintextTailnetBeforeEnvironmentProxy$")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestClientRejectsPlaintextTailnetBeforeEnvironmentProxy$")
 	cmd.Env = append(baseEnv,
 		"HTTP_PROXY="+proxy.URL,
 		"http_proxy="+proxy.URL,
@@ -227,7 +227,7 @@ func TestClientHonorsTimeout(t *testing.T) {
 
 	client := NewClient(ClientOptions{HubURL: server.URL, Token: "secret", Timeout: 10 * time.Millisecond})
 	start := time.Now()
-	err := client.Publish(context.Background(), testManifest("host-a", "Host-A", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa"))
+	err := client.Publish(t.Context(), testManifest("host-a", "Host-A", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa"))
 
 	require.Error(t, err)
 	assert.Less(t, time.Since(start), 150*time.Millisecond)
@@ -257,13 +257,13 @@ func TestClientStateReturnsStateETagAndNotModified(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(ClientOptions{HubURL: server.URL, Token: "secret"})
-	gotState, gotETag, notModified, err := client.State(context.Background(), "")
+	gotState, gotETag, notModified, err := client.State(t.Context(), "")
 	require.NoError(t, err)
 	assert.False(t, notModified)
 	assert.Equal(t, `"state-1"`, gotETag)
 	assert.Equal(t, wantState, gotState)
 
-	gotState, gotETag, notModified, err = client.State(context.Background(), gotETag)
+	gotState, gotETag, notModified, err = client.State(t.Context(), gotETag)
 	require.NoError(t, err)
 	assert.True(t, notModified)
 	assert.Equal(t, `"state-1"`, gotETag)
@@ -283,7 +283,7 @@ func TestClientForgetSendsDeleteWithBearerToken(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(ClientOptions{HubURL: server.URL, Token: "secret"})
-	err := client.Forget(context.Background(), "host-a")
+	err := client.Forget(t.Context(), "host-a")
 
 	require.NoError(t, err)
 	assert.Equal(t, http.MethodDelete, gotMethod)
@@ -315,7 +315,7 @@ func TestPublishBestEffortWarnsAndReturnsNilOnUnreachableHub(t *testing.T) {
 	}
 	var warn bytes.Buffer
 
-	err := PublishBestEffort(context.Background(), &models.Config{
+	err := PublishBestEffort(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{
 			Enabled:  true,
 			HubURL:   hubURL,
@@ -336,7 +336,7 @@ func TestPublishBestEffortSkipsManifestBuildWhenHubURLInvalid(t *testing.T) {
 	}
 	var warn bytes.Buffer
 
-	err := PublishBestEffort(context.Background(), &models.Config{
+	err := PublishBestEffort(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{
 			Enabled:  true,
 			HubURL:   "http://192.0.2.10:8787",
@@ -356,7 +356,7 @@ func TestPublishBestEffortNoopWhenFleetDisabled(t *testing.T) {
 	}
 	var warn bytes.Buffer
 
-	err := PublishBestEffort(context.Background(), &models.Config{Fleet: models.FleetConfig{Enabled: false}}, builder, &warn)
+	err := PublishBestEffort(t.Context(), &models.Config{Fleet: models.FleetConfig{Enabled: false}}, builder, &warn)
 
 	require.NoError(t, err)
 	assert.Zero(t, builder.calls)
@@ -368,7 +368,7 @@ func TestPublishBestEffortWarnsOnBuilderFailure(t *testing.T) {
 	builder := &stubFleetManifestBuilder{err: errors.New("build failed")}
 	var warn bytes.Buffer
 
-	err := PublishBestEffort(context.Background(), &models.Config{
+	err := PublishBestEffort(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{
 			Enabled:  true,
 			HubURL:   "http://127.0.0.1:1",
@@ -386,7 +386,7 @@ func TestPublishBestEffortReturnsOnCallerDeadlineWhenBuilderIgnoresContext(t *te
 	t.Setenv("KWT_FLEET_TOKEN", "secret")
 	builder := &sleepingFleetManifestBuilder{sleep: 120 * time.Millisecond}
 	var warn bytes.Buffer
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	defer cancel()
 
 	start := time.Now()

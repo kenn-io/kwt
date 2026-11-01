@@ -386,7 +386,7 @@ func registerWorktreeExpiration(
 	branch string,
 	expiresAt *time.Time,
 ) error {
-	remote, _ := git.New(worktreePath).GetRepositoryURL()
+	remote, _ := git.NewWithContext(ctx, worktreePath).GetRepositoryURL()
 	repository, _ := url.CanonicalRepositoryIdentityFromRemote(remote)
 	repo, err := g.WorktreeRepository(ctx, nil)
 	if err != nil {

@@ -15,7 +15,7 @@ import (
 
 func TestRemovalSessionGuardRequiresLiveSessionToBeStoppedFirst(t *testing.T) {
 	lease, err := NewRemovalSessionGuard("missing-tmux-for-live-removal").Quiesce(
-		context.Background(),
+		t.Context(),
 		RemovalSessionCondition{
 			SessionName: "topic",
 			ServerPID:   "41",
@@ -40,7 +40,7 @@ func TestRemovalSessionInspectionPreservesCancellation(t *testing.T) {
 		{
 			name: "canceled",
 			ctx: func() (context.Context, context.CancelFunc) {
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
 				return ctx, cancel
 			},
@@ -49,7 +49,7 @@ func TestRemovalSessionInspectionPreservesCancellation(t *testing.T) {
 		{
 			name: "deadline",
 			ctx: func() (context.Context, context.CancelFunc) {
-				return context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+				return context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
 			},
 			want: context.DeadlineExceeded,
 		},
@@ -82,7 +82,7 @@ func TestRemovalSessionInspectionFailsClosedWhenListedSessionDisappears(t *testi
 		},
 	}
 
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+	lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName: "topic",
 		Absent:      true,
 	})
@@ -114,7 +114,7 @@ func TestSharedServerNamedSocketRemovalUsesSharedServerScan(t *testing.T) {
 		},
 	}
 
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+	lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName:     "expected",
 		SocketName:      KWTServerSocketName,
 		SocketDirectory: "/srv/tmux",
@@ -143,7 +143,7 @@ func TestSharedServerRemovalProbesKWTThenDefaultServerEndpoints(t *testing.T) {
 		},
 	}
 
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+	lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName: "workspace", SocketName: KWTServerSocketName, Absent: true,
 	})
 
@@ -163,7 +163,7 @@ func TestSharedServerRemovalDoesNotInheritAmbientDefaultTempDir(t *testing.T) {
 		) (string, string, error) {
 			if command.socketName == "" {
 				defaultEnvironment = command.newCmd(
-					context.Background(),
+					t.Context(),
 					[]string{"list-sessions"},
 				).Env
 			}
@@ -171,7 +171,7 @@ func TestSharedServerRemovalDoesNotInheritAmbientDefaultTempDir(t *testing.T) {
 		},
 	}
 
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+	lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName: "workspace", SocketName: KWTServerSocketName, Absent: true,
 	})
 
@@ -196,7 +196,7 @@ func TestSharedServerRemovalRejectsLiveDefaultServerSessionAfterKWTAbsence(t *te
 		},
 	}
 
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+	lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName: "workspace", SocketName: KWTServerSocketName, Absent: true,
 	})
 
@@ -217,7 +217,7 @@ func TestRemovalFailsClosedOnMalformedWorkspaceInventory(t *testing.T) {
 		},
 	}
 
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+	lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName:   "expected",
 		WorkspacePath: "/worktrees/topic",
 		Absent:        true,
@@ -243,7 +243,7 @@ func TestRemovalFailsClosedWhenWorkspaceMarkerContainsDelimiter(t *testing.T) {
 		},
 	}
 
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+	lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName:         "expected",
 		WorkspacePath:       "/worktrees/topic",
 		WorkspaceGeneration: "0123456789abcdef0123456789abcdef",
@@ -270,7 +270,7 @@ func TestRemovalRejectsDifferentNamedSessionForWorkspacePath(t *testing.T) {
 		},
 	}
 
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+	lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName:   "kwt-workspace-new-branch",
 		WorkspacePath: workspacePath,
 		Absent:        true,
@@ -298,7 +298,7 @@ func TestRemovalPreservesDelimiterInWorkspaceSessionName(t *testing.T) {
 		},
 	}
 
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+	lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName:   "kwt-wt-repo-feature|topic-deadbeef",
 		WorkspacePath: workspacePath,
 		Absent:        true,
@@ -325,7 +325,7 @@ func TestRemovalRejectsUnmarkedLegacySessionAfterBranchChange(t *testing.T) {
 		},
 	}
 
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+	lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName:   "kwt-wt-kwt-new-branch-9cc4e551",
 		WorkspacePath: workspacePath,
 		Absent:        true,
@@ -354,7 +354,7 @@ func TestRemovalRejectsGenerationMarkedSessionAfterWorktreeMove(t *testing.T) {
 		},
 	}
 
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+	lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName:         "kwt-wt-kwt-topic-newhash",
 		WorkspacePath:       "/worktrees/moved-topic",
 		WorkspaceGeneration: generation,
@@ -396,7 +396,7 @@ func TestProtectedRemovalRejectsSharedServerGenerationMarkedSessionAfterWorktree
 		},
 	}
 
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+	lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName:             "kwt-wt-repo-topic-newhash",
 		WorkspacePath:           "/worktrees/moved-topic",
 		WorkspaceGeneration:     generation,
@@ -425,7 +425,7 @@ func TestRemovalFailsClosedOnUnmarkedKWTSessionAfterWorktreeMove(t *testing.T) {
 		},
 	}
 
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+	lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName:         "kwt-wt-kwt-topic-newhash",
 		WorkspacePath:       "/worktrees/moved-topic",
 		WorkspaceGeneration: "0123456789abcdef0123456789abcdef",
@@ -452,7 +452,7 @@ func TestRemovalFailsClosedOnUnmarkedLegacyDirHostSessionAfterMove(t *testing.T)
 		},
 	}
 
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+	lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName:         "kwt-workspace-dir-owner-repo-topic-newhash",
 		WorkspacePath:       "/worktrees/moved-topic",
 		WorkspaceGeneration: "0123456789abcdef0123456789abcdef",
@@ -490,7 +490,7 @@ func TestRemovalRequiresMarkersToExemptUnrelatedDirectoryWorkspaceSession(t *tes
 				},
 			}
 
-			lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+			lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 				SessionName:         "kwt-wt-repo-topic-deadbeef",
 				WorkspacePath:       "/worktrees/topic",
 				WorkspaceGeneration: "0123456789abcdef0123456789abcdef",
@@ -524,7 +524,7 @@ func TestProtectedRemovalFailsClosedOnUnexpectedCanonicalTopology(t *testing.T) 
 		},
 	}
 
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+	lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName:             "expected",
 		SocketName:              "kwt-pr-protected",
 		SocketDirectory:         "/tmp/legacy-tmux",
@@ -551,7 +551,7 @@ func TestProtectedRemovalCommandsStripRequestProtectedNames(t *testing.T) {
 			_ string,
 		) (ProtectedSessionState, error) {
 			inspections++
-			cmd := command.newCmd(context.Background(), []string{"list-sessions"})
+			cmd := command.newCmd(t.Context(), []string{"list-sessions"})
 			for _, entry := range cmd.Env {
 				if hasEnvName(entry, "CUSTOM_FLEET_TOKEN") {
 					t.Fatalf("protected removal command retained configured credential: %v", cmd.Env)
@@ -561,7 +561,7 @@ func TestProtectedRemovalCommandsStripRequestProtectedNames(t *testing.T) {
 		},
 	}
 
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+	lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName:             "protected",
 		SocketName:              "protected-socket",
 		SocketDirectory:         "/legacy/tmux",
@@ -593,7 +593,7 @@ func TestProtectedRemovalChecksCurrentBeforePriorSocketDirectory(t *testing.T) {
 		},
 	}
 
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+	lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName:             "expected",
 		SocketName:              "kwt-pr-protected",
 		SocketDirectory:         "/tmp/legacy-tmux",
@@ -628,7 +628,7 @@ func TestProtectedRemovalPreservesPriorSharedServerSocketDirectory(t *testing.T)
 		},
 	}
 
-	lease, err := guard.Quiesce(context.Background(), RemovalSessionCondition{
+	lease, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName:             "expected",
 		SocketName:              "kwt-pr-protected",
 		SocketDirectory:         "/tmp/legacy-tmux",

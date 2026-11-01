@@ -28,7 +28,7 @@ func TestDiscoverGlobalWorktreesContextCancelsBlockedRepositorySnapshot(t *testi
 	lock := flock.New(filepath.Join(repo.Path, ".git", "kwt-worktree.lock"))
 	require.NoError(t, lock.Lock())
 	t.Cleanup(func() { _ = lock.Unlock() })
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 
 	done := make(chan error, 1)
@@ -51,7 +51,7 @@ func TestDiscoverGlobalWorktreesContextStopsFilesystemTraversal(t *testing.T) {
 	require.NoError(t, err)
 	originalWalk := walkGlobalWorktreePaths
 	t.Cleanup(func() { walkGlobalWorktreePaths = originalWalk })
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	walkGlobalWorktreePaths = func(
 		root string,
 		visit filepath.WalkFunc,
@@ -767,7 +767,7 @@ func TestExtractWorktreeCandidatesRunsConcurrentlyAndPreservesOrder(t *testing.T
 
 	go func() {
 		entries, err := extractWorktreeCandidates(
-			context.Background(),
+			t.Context(),
 			candidates,
 			nil,
 			func(

@@ -237,7 +237,7 @@ func TestManagerAcquiresProxyJumpRouteAsOneCompositeLease(t *testing.T) {
 	})
 	snapshot := proxyJumpSnapshot("proxy-route")
 	lease, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: snapshot},
 		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
 	)
@@ -256,7 +256,7 @@ func TestManagerAcquiresProxyJumpRouteAsOneCompositeLease(t *testing.T) {
 	require.Len(t, identities, 2)
 	assert.NotEqual(t, identities[0], identities[1])
 	assert.Equal(t, uint64(41), lease.Generation())
-	arguments, err := lease.Arguments(context.Background())
+	arguments, err := lease.Arguments(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, []string{
 		"-F", os.DevNull,
@@ -265,7 +265,7 @@ func TestManagerAcquiresProxyJumpRouteAsOneCompositeLease(t *testing.T) {
 		"-o", "ProxyCommand=" + proxyFailureCommand(),
 	}, arguments)
 	require.NoError(t, lease.Touch())
-	require.NoError(t, lease.Release(context.Background()))
+	require.NoError(t, lease.Release(t.Context()))
 	assert.Equal(t, []string{identities[1], identities[0]}, persistent.disconnectedIdentities())
 }
 
@@ -298,13 +298,13 @@ func TestMultiplexedLeaseRetainsReviewedSessionProjection(t *testing.T) {
 	}
 
 	lease, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: snapshot},
 		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
 	)
 	require.NoError(t, err)
 
-	arguments, err := lease.Arguments(context.Background())
+	arguments, err := lease.Arguments(t.Context())
 	require.NoError(t, err)
 	assert.Contains(t, arguments, "ForwardAgent=yes")
 	assert.Contains(t, arguments, "SendEnv=LANG")
@@ -319,7 +319,7 @@ func TestMultiplexedLeaseRetainsReviewedSessionProjection(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "SetEnv \"CHANNEL=alpha beta\"\n", string(config))
 
-	require.NoError(t, lease.Release(context.Background()))
+	require.NoError(t, lease.Release(t.Context()))
 	_, err = os.Stat(configPath)
 	assert.ErrorIs(t, err, os.ErrNotExist)
 }
@@ -334,14 +334,14 @@ func TestManagerCloseDisconnectsProxyRouteDownstreamFirst(t *testing.T) {
 	})
 	snapshot := proxyJumpSnapshot("proxy-close-order")
 	_, err := manager.Acquire(
-		context.Background(), LeaseRequest{Snapshot: snapshot},
+		t.Context(), LeaseRequest{Snapshot: snapshot},
 		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
 	)
 	require.NoError(t, err)
 	identities := persistent.identities()
 	require.Len(t, identities, 2)
 
-	require.NoError(t, manager.Close(context.Background()))
+	require.NoError(t, manager.Close(t.Context()))
 	assert.Equal(t, []string{identities[1], identities[0]}, persistent.disconnectedIdentities())
 }
 
@@ -362,13 +362,13 @@ func TestManagerIdleCleanupWaitsForDownstreamProxyTeardown(t *testing.T) {
 	})
 	snapshot := proxyJumpSnapshot("proxy-idle-order")
 	lease, err := manager.Acquire(
-		context.Background(), LeaseRequest{Snapshot: snapshot},
+		t.Context(), LeaseRequest{Snapshot: snapshot},
 		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
 	)
 	require.NoError(t, err)
 	identities := persistent.identities()
 	require.Len(t, identities, 2)
-	require.NoError(t, lease.Release(context.Background()))
+	require.NoError(t, lease.Release(t.Context()))
 
 	select {
 	case <-disconnectStarted:
@@ -398,11 +398,11 @@ func TestManagerPartitionsEveryProxyHopByForwardedAgentChain(t *testing.T) {
 	snapshot.Targets[0].ForwardAgent = true
 	resolve := func(context.Context) (RouteSnapshot, error) { return snapshot, nil }
 
-	first, err := manager.Acquire(context.Background(), LeaseRequest{
+	first, err := manager.Acquire(t.Context(), LeaseRequest{
 		Snapshot: snapshot, Environment: []string{"SSH_AUTH_SOCK=/tmp/agent-one"},
 	}, resolve)
 	require.NoError(t, err)
-	second, err := manager.Acquire(context.Background(), LeaseRequest{
+	second, err := manager.Acquire(t.Context(), LeaseRequest{
 		Snapshot: snapshot, Environment: []string{"SSH_AUTH_SOCK=/tmp/agent-two"},
 	}, resolve)
 	require.NoError(t, err)
@@ -411,8 +411,8 @@ func TestManagerPartitionsEveryProxyHopByForwardedAgentChain(t *testing.T) {
 	require.Len(t, identities, 4)
 	assert.NotEqual(t, identities[0], identities[2])
 	assert.NotEqual(t, identities[1], identities[3])
-	require.NoError(t, first.Release(context.Background()))
-	require.NoError(t, second.Release(context.Background()))
+	require.NoError(t, first.Release(t.Context()))
+	require.NoError(t, second.Release(t.Context()))
 }
 
 func TestManagerSharesGenerationUntilFinalLeaseRelease(t *testing.T) {
@@ -426,15 +426,15 @@ func TestManagerSharesGenerationUntilFinalLeaseRelease(t *testing.T) {
 	snapshot := directSnapshot("route-one")
 	resolve := func(context.Context) (RouteSnapshot, error) { return snapshot, nil }
 
-	first, err := manager.Acquire(context.Background(), LeaseRequest{Snapshot: snapshot}, resolve)
+	first, err := manager.Acquire(t.Context(), LeaseRequest{Snapshot: snapshot}, resolve)
 	require.NoError(t, err)
 	assert.Equal(t, LeaseModeMultiplexed, first.Mode())
-	second, err := manager.Acquire(context.Background(), LeaseRequest{Snapshot: snapshot}, resolve)
+	second, err := manager.Acquire(t.Context(), LeaseRequest{Snapshot: snapshot}, resolve)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(11), first.Generation())
 	assert.Equal(t, first.Generation(), second.Generation())
 
-	arguments, err := first.Arguments(context.Background())
+	arguments, err := first.Arguments(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, []string{
 		"-F", os.DevNull,
@@ -443,10 +443,10 @@ func TestManagerSharesGenerationUntilFinalLeaseRelease(t *testing.T) {
 		"-o", "ProxyCommand=" + proxyFailureCommand(),
 	}, arguments)
 	require.NoError(t, first.Touch())
-	require.NoError(t, first.Release(context.Background()))
+	require.NoError(t, first.Release(t.Context()))
 	_, _, _, disconnects := persistent.counts()
 	assert.Equal(t, 0, disconnects)
-	require.NoError(t, second.Release(context.Background()))
+	require.NoError(t, second.Release(t.Context()))
 	connects, argumentCalls, touches, disconnects := persistent.counts()
 	assert.Equal(t, 2, connects)
 	assert.Equal(t, 1, argumentCalls)
@@ -465,13 +465,13 @@ func TestManagerKeepsFinalLeaseWarmUntilIdleTimeout(t *testing.T) {
 	})
 	snapshot := directSnapshot("route-one")
 	lease, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: snapshot},
 		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
 	)
 	require.NoError(t, err)
 
-	require.NoError(t, lease.Release(context.Background()))
+	require.NoError(t, lease.Release(t.Context()))
 	_, _, _, disconnects := persistent.counts()
 	assert.Equal(t, 0, disconnects)
 	assert.Eventually(t, func() bool {
@@ -492,13 +492,13 @@ func TestManagerDisconnectsForwardAgentRouteOnFinalRelease(t *testing.T) {
 	snapshot := directSnapshot("forwarded-agent-route")
 	snapshot.Targets[0].ForwardAgent = true
 	lease, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: snapshot},
 		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
 	)
 	require.NoError(t, err)
 
-	require.NoError(t, lease.Release(context.Background()))
+	require.NoError(t, lease.Release(t.Context()))
 	_, _, _, disconnects := persistent.counts()
 	assert.Equal(t, 1, disconnects)
 }
@@ -517,7 +517,7 @@ func TestManagerPartitionsForwardAgentRoutesByExecutionEnvironment(t *testing.T)
 	resolve := func(context.Context) (RouteSnapshot, error) { return snapshot, nil }
 
 	first, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{
 			Snapshot: snapshot,
 			Environment: []string{
@@ -529,7 +529,7 @@ func TestManagerPartitionsForwardAgentRoutesByExecutionEnvironment(t *testing.T)
 	)
 	require.NoError(t, err)
 	second, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{
 			Snapshot: snapshot,
 			Environment: []string{
@@ -544,8 +544,8 @@ func TestManagerPartitionsForwardAgentRoutesByExecutionEnvironment(t *testing.T)
 	identities := persistent.identities()
 	require.Len(t, identities, 2)
 	assert.NotEqual(t, identities[0], identities[1])
-	require.NoError(t, first.Release(context.Background()))
-	require.NoError(t, second.Release(context.Background()))
+	require.NoError(t, first.Release(t.Context()))
+	require.NoError(t, second.Release(t.Context()))
 	_, _, _, disconnects := persistent.counts()
 	assert.Equal(t, 2, disconnects)
 }
@@ -562,7 +562,7 @@ func TestManagerRefreshesOpenSSHPersistenceWhileRouteIsTracked(t *testing.T) {
 	})
 	snapshot := directSnapshot("persistent-route")
 	lease, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: snapshot},
 		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
 	)
@@ -576,13 +576,13 @@ func TestManagerRefreshesOpenSSHPersistenceWhileRouteIsTracked(t *testing.T) {
 	persistent.mu.Lock()
 	activeHeartbeats := persistent.aliveCalls
 	persistent.mu.Unlock()
-	require.NoError(t, lease.Release(context.Background()))
+	require.NoError(t, lease.Release(t.Context()))
 	assert.Eventually(t, func() bool {
 		persistent.mu.Lock()
 		defer persistent.mu.Unlock()
 		return persistent.aliveCalls > activeHeartbeats
 	}, time.Second, 5*time.Millisecond)
-	require.NoError(t, manager.Close(context.Background()))
+	require.NoError(t, manager.Close(t.Context()))
 }
 
 func TestManagerWaitsForPersistenceHeartbeatBeforeTeardown(t *testing.T) {
@@ -591,10 +591,10 @@ func TestManagerWaitsForPersistenceHeartbeatBeforeTeardown(t *testing.T) {
 		stop func(*Manager, Lease) error
 	}{
 		{name: "final release", stop: func(_ *Manager, lease Lease) error {
-			return lease.Release(context.Background())
+			return lease.Release(t.Context())
 		}},
 		{name: "manager close", stop: func(manager *Manager, _ Lease) error {
-			return manager.Close(context.Background())
+			return manager.Close(t.Context())
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -618,7 +618,7 @@ func TestManagerWaitsForPersistenceHeartbeatBeforeTeardown(t *testing.T) {
 			})
 			snapshot := directSnapshot("route-with-active-heartbeat")
 			lease, err := manager.Acquire(
-				context.Background(),
+				t.Context(),
 				LeaseRequest{Snapshot: snapshot},
 				func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
 			)
@@ -682,13 +682,13 @@ func TestManagerRetriesFailedFinalAndIdleCleanupOnClose(t *testing.T) {
 			})
 			snapshot := directSnapshot("route-with-failed-cleanup")
 			lease, err := manager.Acquire(
-				context.Background(),
+				t.Context(),
 				LeaseRequest{Snapshot: snapshot},
 				func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
 			)
 			require.NoError(t, err)
 
-			releaseErr := lease.Release(context.Background())
+			releaseErr := lease.Release(t.Context())
 			if test.idleTimeout == 0 {
 				require.Error(t, releaseErr)
 			} else {
@@ -702,7 +702,7 @@ func TestManagerRetriesFailedFinalAndIdleCleanupOnClose(t *testing.T) {
 			persistent.disconnectErr = nil
 			persistent.mu.Unlock()
 
-			require.NoError(t, manager.Close(context.Background()))
+			require.NoError(t, manager.Close(t.Context()))
 			_, _, _, disconnects := persistent.counts()
 			assert.Equal(t, 2, disconnects)
 		})
@@ -730,17 +730,17 @@ func TestLeaseReleaseRetriesFailedDisconnect(t *testing.T) {
 				},
 			})
 			lease, err := manager.Acquire(
-				context.Background(),
+				t.Context(),
 				LeaseRequest{Snapshot: test.snapshot},
 				func(context.Context) (RouteSnapshot, error) { return test.snapshot, nil },
 			)
 			require.NoError(t, err)
 
-			require.Error(t, lease.Release(context.Background()))
+			require.Error(t, lease.Release(t.Context()))
 			persistent.mu.Lock()
 			persistent.disconnectErr = nil
 			persistent.mu.Unlock()
-			require.NoError(t, lease.Release(context.Background()))
+			require.NoError(t, lease.Release(t.Context()))
 
 			_, _, _, disconnects := persistent.counts()
 			assert.Equal(t, 2*test.hops, disconnects)
@@ -765,7 +765,7 @@ func TestProxyAcquireCancellationReleasesEarlierHops(t *testing.T) {
 		},
 	})
 	snapshot := proxyJumpSnapshot("proxy-cancel-rollback")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	acquireDone := make(chan error, 1)
 	go func() {
 		_, err := manager.Acquire(
@@ -804,22 +804,22 @@ func TestLeaseReleaseCompletesAfterFailedRouteIsReplaced(t *testing.T) {
 	snapshot := directSnapshot("release-after-replacement")
 	resolve := func(context.Context) (RouteSnapshot, error) { return snapshot, nil }
 	oldLease, err := manager.Acquire(
-		context.Background(), LeaseRequest{Snapshot: snapshot}, resolve,
+		t.Context(), LeaseRequest{Snapshot: snapshot}, resolve,
 	)
 	require.NoError(t, err)
-	require.Error(t, oldLease.Release(context.Background()))
+	require.Error(t, oldLease.Release(t.Context()))
 
 	persistent.mu.Lock()
 	persistent.generation = 18
 	persistent.disconnectErr = nil
 	persistent.mu.Unlock()
 	newLease, err := manager.Acquire(
-		context.Background(), LeaseRequest{Snapshot: snapshot}, resolve,
+		t.Context(), LeaseRequest{Snapshot: snapshot}, resolve,
 	)
 	require.NoError(t, err)
 
-	require.NoError(t, oldLease.Release(context.Background()))
-	require.NoError(t, newLease.Release(context.Background()))
+	require.NoError(t, oldLease.Release(t.Context()))
+	require.NoError(t, newLease.Release(t.Context()))
 }
 
 func TestStaleLeaseFirstReleaseCompletesAfterRouteGenerationIsReplaced(t *testing.T) {
@@ -833,7 +833,7 @@ func TestStaleLeaseFirstReleaseCompletesAfterRouteGenerationIsReplaced(t *testin
 	snapshot := directSnapshot("release-stale-generation")
 	resolve := func(context.Context) (RouteSnapshot, error) { return snapshot, nil }
 	oldLease, err := manager.Acquire(
-		context.Background(), LeaseRequest{Snapshot: snapshot}, resolve,
+		t.Context(), LeaseRequest{Snapshot: snapshot}, resolve,
 	)
 	require.NoError(t, err)
 
@@ -841,12 +841,12 @@ func TestStaleLeaseFirstReleaseCompletesAfterRouteGenerationIsReplaced(t *testin
 	persistent.generation = 18
 	persistent.mu.Unlock()
 	newLease, err := manager.Acquire(
-		context.Background(), LeaseRequest{Snapshot: snapshot}, resolve,
+		t.Context(), LeaseRequest{Snapshot: snapshot}, resolve,
 	)
 	require.NoError(t, err)
 
-	require.NoError(t, oldLease.Release(context.Background()))
-	require.NoError(t, newLease.Release(context.Background()))
+	require.NoError(t, oldLease.Release(t.Context()))
+	require.NoError(t, newLease.Release(t.Context()))
 	_, _, _, disconnects := persistent.counts()
 	assert.Equal(t, 1, disconnects)
 }
@@ -888,14 +888,14 @@ func TestManagerSerializesAcquireWithFinalAndIdleDisconnect(t *testing.T) {
 			snapshot := directSnapshot("route-one")
 			resolve := func(context.Context) (RouteSnapshot, error) { return snapshot, nil }
 			lease, err := manager.Acquire(
-				context.Background(),
+				t.Context(),
 				LeaseRequest{Snapshot: snapshot},
 				resolve,
 			)
 			require.NoError(t, err)
 
 			releaseDone := make(chan error, 1)
-			go func() { releaseDone <- lease.Release(context.Background()) }()
+			go func() { releaseDone <- lease.Release(t.Context()) }()
 			select {
 			case <-disconnectStarted:
 			case <-time.After(time.Second):
@@ -905,7 +905,7 @@ func TestManagerSerializesAcquireWithFinalAndIdleDisconnect(t *testing.T) {
 			acquireDone := make(chan error, 1)
 			go func() {
 				_, acquireErr := manager.Acquire(
-					context.Background(),
+					t.Context(),
 					LeaseRequest{Snapshot: snapshot},
 					resolve,
 				)
@@ -939,20 +939,20 @@ func TestManagerCloseDisconnectsRoutesAndRejectsNewAcquires(t *testing.T) {
 	snapshot := directSnapshot("route-one")
 	resolve := func(context.Context) (RouteSnapshot, error) { return snapshot, nil }
 	lease, err := manager.Acquire(
-		context.Background(), LeaseRequest{Snapshot: snapshot}, resolve,
+		t.Context(), LeaseRequest{Snapshot: snapshot}, resolve,
 	)
 	require.NoError(t, err)
 
-	require.NoError(t, manager.Close(context.Background()))
+	require.NoError(t, manager.Close(t.Context()))
 	_, err = manager.Acquire(
-		context.Background(), LeaseRequest{Snapshot: snapshot}, resolve,
+		t.Context(), LeaseRequest{Snapshot: snapshot}, resolve,
 	)
 
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.SSHConnectionChanged))
 	_, _, _, disconnects := persistent.counts()
 	assert.Equal(t, 1, disconnects)
-	require.NoError(t, lease.Release(context.Background()))
+	require.NoError(t, lease.Release(t.Context()))
 }
 
 func TestManagerCloseSerializesWithFinalLeaseRelease(t *testing.T) {
@@ -973,7 +973,7 @@ func TestManagerCloseSerializesWithFinalLeaseRelease(t *testing.T) {
 	})
 	snapshot := directSnapshot("route-one")
 	lease, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: snapshot},
 		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
 	)
@@ -981,7 +981,7 @@ func TestManagerCloseSerializesWithFinalLeaseRelease(t *testing.T) {
 	identity := managerIdentity(snapshot)
 
 	closeDone := make(chan error, 1)
-	go func() { closeDone <- manager.Close(context.Background()) }()
+	go func() { closeDone <- manager.Close(t.Context()) }()
 	select {
 	case <-disconnectStarted:
 	case <-time.After(time.Second):
@@ -1012,7 +1012,7 @@ func TestManagerCloseSerializesWithFinalLeaseRelease(t *testing.T) {
 	manager.mu.Unlock()
 
 	require.NoError(t, <-closeDone)
-	require.NoError(t, lease.Release(context.Background()))
+	require.NoError(t, lease.Release(t.Context()))
 	_, _, _, disconnects := persistent.counts()
 	assert.Equal(t, 1, disconnects)
 }
@@ -1041,7 +1041,7 @@ func TestManagerCloseHonorsContextWhileAcquireOwnsIdentity(t *testing.T) {
 	acquireDone := make(chan error, 1)
 	go func() {
 		_, err := manager.Acquire(
-			context.Background(), LeaseRequest{Snapshot: snapshot}, resolve,
+			t.Context(), LeaseRequest{Snapshot: snapshot}, resolve,
 		)
 		acquireDone <- err
 	}()
@@ -1051,7 +1051,7 @@ func TestManagerCloseHonorsContextWhileAcquireOwnsIdentity(t *testing.T) {
 		t.Fatal("connection preparation did not start")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 	closeDone := make(chan error, 1)
 	go func() { closeDone <- manager.Close(ctx) }()
@@ -1090,7 +1090,7 @@ func TestManagerCloseCleansEstablishedRoutesBeforeWaitingOnOperations(t *testing
 		},
 	})
 	establishedLease, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: established},
 		func(context.Context) (RouteSnapshot, error) { return established, nil },
 	)
@@ -1098,7 +1098,7 @@ func TestManagerCloseCleansEstablishedRoutesBeforeWaitingOnOperations(t *testing
 	blockedDone := make(chan error, 1)
 	go func() {
 		_, acquireErr := manager.Acquire(
-			context.Background(),
+			t.Context(),
 			LeaseRequest{Snapshot: blocked},
 			func(context.Context) (RouteSnapshot, error) { return blocked, nil },
 		)
@@ -1110,7 +1110,7 @@ func TestManagerCloseCleansEstablishedRoutesBeforeWaitingOnOperations(t *testing
 		t.Fatal("blocked connection preparation did not start")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 	require.ErrorIs(t, manager.Close(ctx), context.DeadlineExceeded)
 	_, _, _, disconnects := persistent.counts()
@@ -1118,8 +1118,8 @@ func TestManagerCloseCleansEstablishedRoutesBeforeWaitingOnOperations(t *testing
 
 	unblockConnect()
 	assert.True(t, service.IsCode(<-blockedDone, service.SSHConnectionChanged))
-	require.NoError(t, manager.Close(context.Background()))
-	require.NoError(t, establishedLease.Release(context.Background()))
+	require.NoError(t, manager.Close(t.Context()))
+	require.NoError(t, establishedLease.Release(t.Context()))
 }
 
 func TestManagerPreservesTypedPromptFailure(t *testing.T) {
@@ -1142,7 +1142,7 @@ func TestManagerPreservesTypedPromptFailure(t *testing.T) {
 	snapshot := directSnapshot("route-one")
 
 	_, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: snapshot},
 		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
 	)
@@ -1172,10 +1172,10 @@ func TestManagerEventCallbackCanAcquireSameRoute(t *testing.T) {
 			}
 			callbackOnce.Do(func() {
 				lease, err := manager.Acquire(
-					context.Background(), LeaseRequest{Snapshot: snapshot}, resolve,
+					t.Context(), LeaseRequest{Snapshot: snapshot}, resolve,
 				)
 				if err == nil {
-					err = lease.Release(context.Background())
+					err = lease.Release(t.Context())
 				}
 				callbackDone <- err
 			})
@@ -1184,7 +1184,7 @@ func TestManagerEventCallbackCanAcquireSameRoute(t *testing.T) {
 	acquireDone := make(chan error, 1)
 	go func() {
 		_, err := manager.Acquire(
-			context.Background(), LeaseRequest{Snapshot: snapshot}, resolve,
+			t.Context(), LeaseRequest{Snapshot: snapshot}, resolve,
 		)
 		acquireDone <- err
 	}()
@@ -1217,12 +1217,12 @@ func TestManagerReportsIdleCleanupFailure(t *testing.T) {
 	})
 	snapshot := directSnapshot("route-one")
 	lease, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: snapshot},
 		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
 	)
 	require.NoError(t, err)
-	require.NoError(t, lease.Release(context.Background()))
+	require.NoError(t, lease.Release(t.Context()))
 
 	assert.Eventually(t, func() bool {
 		select {
@@ -1251,7 +1251,7 @@ func TestManagerRejectsRouteChangeAfterConnectionPreparation(t *testing.T) {
 	resolveCalls := 0
 
 	_, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: expected},
 		func(context.Context) (RouteSnapshot, error) {
 			resolveCalls++
@@ -1283,16 +1283,16 @@ func TestManagerFullyTearsDownWarmRouteAfterPostConnectChange(t *testing.T) {
 	})
 	expected := directSnapshot("route-one")
 	lease, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: expected},
 		func(context.Context) (RouteSnapshot, error) { return expected, nil },
 	)
 	require.NoError(t, err)
-	require.NoError(t, lease.Release(context.Background()))
+	require.NoError(t, lease.Release(t.Context()))
 
 	resolveCalls := 0
 	_, err = manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: expected},
 		func(context.Context) (RouteSnapshot, error) {
 			resolveCalls++
@@ -1310,7 +1310,7 @@ func TestManagerFullyTearsDownWarmRouteAfterPostConnectChange(t *testing.T) {
 	_, tracked := manager.routes[identity]
 	manager.mu.Unlock()
 	assert.False(t, tracked)
-	require.NoError(t, manager.Close(context.Background()))
+	require.NoError(t, manager.Close(t.Context()))
 	_, _, _, disconnects := persistent.counts()
 	assert.Equal(t, 1, disconnects)
 
@@ -1345,7 +1345,7 @@ func TestManagerExecutesFreshResolvedSnapshotInsteadOfCallerFields(t *testing.T)
 	})
 
 	lease, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: caller},
 		func(context.Context) (RouteSnapshot, error) { return current, nil },
 	)
@@ -1373,7 +1373,7 @@ func TestManagerReportsCleanupFailureAfterRouteChange(t *testing.T) {
 	resolveCalls := 0
 
 	_, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: expected},
 		func(context.Context) (RouteSnapshot, error) {
 			resolveCalls++
@@ -1394,7 +1394,7 @@ func TestManagerReportsCleanupFailureAfterRouteChange(t *testing.T) {
 	persistent.mu.Lock()
 	persistent.disconnectErr = nil
 	persistent.mu.Unlock()
-	require.NoError(t, manager.Close(context.Background()))
+	require.NoError(t, manager.Close(t.Context()))
 	_, _, _, disconnects := persistent.counts()
 	assert.Equal(t, 2, disconnects)
 }
@@ -1409,14 +1409,14 @@ func TestManagerDoesNotDisconnectSharedMasterWhenSecondLeaseChanges(t *testing.T
 	})
 	expected := directSnapshot("route-one")
 	first, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: expected},
 		func(context.Context) (RouteSnapshot, error) { return expected, nil },
 	)
 	require.NoError(t, err)
 
 	_, err = manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: expected},
 		func(context.Context) (RouteSnapshot, error) {
 			return directSnapshot("route-two"), nil
@@ -1427,7 +1427,7 @@ func TestManagerDoesNotDisconnectSharedMasterWhenSecondLeaseChanges(t *testing.T
 	assert.True(t, service.IsCode(err, service.SSHConfigurationChanged))
 	_, _, _, disconnects := persistent.counts()
 	assert.Equal(t, 0, disconnects)
-	require.NoError(t, first.Release(context.Background()))
+	require.NoError(t, first.Release(t.Context()))
 }
 
 func TestManagerReturnsMasterlessLeaseWhenPersistenceIsUnsupported(t *testing.T) {
@@ -1442,14 +1442,14 @@ func TestManagerReturnsMasterlessLeaseWhenPersistenceIsUnsupported(t *testing.T)
 	snapshot.Targets[0].StrictHostKeyChecking = "yes"
 
 	lease, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: snapshot},
 		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
 	)
 
 	require.NoError(t, err)
 	assert.Equal(t, LeaseModeMasterless, lease.Mode())
-	arguments, err := lease.Arguments(context.Background())
+	arguments, err := lease.Arguments(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, []string{
 		"-F", os.DevNull, "-o", "HostName=build.internal",
@@ -1457,7 +1457,7 @@ func TestManagerReturnsMasterlessLeaseWhenPersistenceIsUnsupported(t *testing.T)
 		"-o", "ControlMaster=no", "-o", "ControlPersist=no", "-S", "none",
 	}, arguments)
 	require.NoError(t, lease.Touch())
-	require.NoError(t, lease.Release(context.Background()))
+	require.NoError(t, lease.Release(t.Context()))
 	_, _, _, disconnects := persistent.counts()
 	assert.Equal(t, 0, disconnects)
 }
@@ -1486,14 +1486,14 @@ func TestManagerAppliesLeaseHostKeyPolicyBeforeConnecting(t *testing.T) {
 			snapshot.Targets[0].StrictHostKeyChecking = "accept-new"
 
 			lease, err := manager.Acquire(
-				context.Background(),
+				t.Context(),
 				LeaseRequest{Snapshot: snapshot, HostKeyPolicy: test.policy},
 				func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
 			)
 
 			require.NoError(t, err)
 			assert.Equal(t, test.want, runnerTarget.StrictHostKeyChecking)
-			require.NoError(t, lease.Release(context.Background()))
+			require.NoError(t, lease.Release(t.Context()))
 		})
 	}
 }
@@ -1511,13 +1511,13 @@ func TestManagerSeparatesReviewAndStrictHostKeyPolicies(t *testing.T) {
 	resolve := func(context.Context) (RouteSnapshot, error) { return snapshot, nil }
 
 	review, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: snapshot, HostKeyPolicy: HostKeyPolicyReview},
 		resolve,
 	)
 	require.NoError(t, err)
 	strict, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: snapshot, HostKeyPolicy: HostKeyPolicyStrict},
 		resolve,
 	)
@@ -1528,8 +1528,8 @@ func TestManagerSeparatesReviewAndStrictHostKeyPolicies(t *testing.T) {
 	identities := persistent.identities()
 	require.Len(t, identities, 2)
 	assert.NotEqual(t, identities[0], identities[1])
-	require.NoError(t, review.Release(context.Background()))
-	require.NoError(t, strict.Release(context.Background()))
+	require.NoError(t, review.Release(t.Context()))
+	require.NoError(t, strict.Release(t.Context()))
 }
 
 func TestManagerRejectsMasterlessRouteChangeAfterProjectionPreparation(t *testing.T) {
@@ -1547,7 +1547,7 @@ func TestManagerRejectsMasterlessRouteChangeAfterProjectionPreparation(t *testin
 	resolveCalls := 0
 
 	lease, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: expected},
 		func(context.Context) (RouteSnapshot, error) {
 			resolveCalls++
@@ -1580,12 +1580,12 @@ func TestMasterlessLeaseRetainsPrivateProjectionUntilRelease(t *testing.T) {
 	snapshot.Targets[0].Projection.PrivateConfig = []string{`IdentityFile "C:/keys/build"`}
 
 	lease, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: snapshot},
 		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
 	)
 	require.NoError(t, err)
-	arguments, err := lease.Arguments(context.Background())
+	arguments, err := lease.Arguments(t.Context())
 	require.NoError(t, err)
 	configPath := arguments[1]
 	assert.NotEqual(t, os.DevNull, configPath)
@@ -1594,7 +1594,7 @@ func TestMasterlessLeaseRetainsPrivateProjectionUntilRelease(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, `IdentityFile "C:/keys/build"`+"\n", string(contents))
 
-	require.NoError(t, lease.Release(context.Background()))
+	require.NoError(t, lease.Release(t.Context()))
 	assert.NoFileExists(t, configPath)
 }
 
@@ -1611,20 +1611,20 @@ func TestManagerCloseCleansMasterlessPrivateProjection(t *testing.T) {
 	snapshot := directSnapshot("route-one")
 	snapshot.Targets[0].Projection.PrivateConfig = []string{`IdentityFile "C:/keys/build"`}
 	lease, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: snapshot},
 		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
 	)
 	require.NoError(t, err)
-	arguments, err := lease.Arguments(context.Background())
+	arguments, err := lease.Arguments(t.Context())
 	require.NoError(t, err)
 	configPath := arguments[1]
 	require.FileExists(t, configPath)
 
-	require.NoError(t, manager.Close(context.Background()))
+	require.NoError(t, manager.Close(t.Context()))
 
 	assert.NoFileExists(t, configPath)
-	_, err = lease.Arguments(context.Background())
+	_, err = lease.Arguments(t.Context())
 	assert.True(t, service.IsCode(err, service.SSHConnectionChanged))
 }
 
@@ -1645,8 +1645,8 @@ func TestMasterlessLeaseRetriesFailedCleanupOnClose(t *testing.T) {
 	}
 	manager.masterless[lease.generation] = lease
 
-	require.Error(t, lease.Release(context.Background()))
-	require.NoError(t, manager.Close(context.Background()))
+	require.Error(t, lease.Release(t.Context()))
+	require.NoError(t, manager.Close(t.Context()))
 	assert.Equal(t, 2, cleanupCalls)
 }
 
@@ -1671,14 +1671,14 @@ func TestMasterlessReleaseAndCloseShareOneCleanupAttempt(t *testing.T) {
 	manager.masterless[lease.generation] = lease
 
 	releaseDone := make(chan error, 1)
-	go func() { releaseDone <- lease.Release(context.Background()) }()
+	go func() { releaseDone <- lease.Release(t.Context()) }()
 	select {
 	case <-cleanupStarted:
 	case <-time.After(time.Second):
 		t.Fatal("lease release did not begin cleanup")
 	}
 	closeDone := make(chan error, 1)
-	go func() { closeDone <- manager.Close(context.Background()) }()
+	go func() { closeDone <- manager.Close(t.Context()) }()
 	assert.Never(t, func() bool { return cleanupCalls.Load() > 1 }, 20*time.Millisecond, time.Millisecond)
 	close(allowCleanup)
 
@@ -1709,13 +1709,13 @@ func TestManagerMapsConnectionGenerationChanges(t *testing.T) {
 	snapshot := directSnapshot("route-one")
 
 	lease, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: snapshot},
 		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
 	)
 
 	require.NoError(t, err)
-	_, err = lease.Arguments(context.Background())
+	_, err = lease.Arguments(t.Context())
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.SSHConnectionChanged))
 }

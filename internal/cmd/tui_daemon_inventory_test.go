@@ -74,7 +74,7 @@ func TestTUILaunchRepositoryBeforeGlobalInventory(t *testing.T) {
 				return inventory.Query(ctx, request)
 			}
 
-			model := newTUIModel(context.Background(), backend)
+			model := newTUIModel(t.Context(), backend)
 			next, background := model.Update(model.Init()())
 			require.NotNil(t, background)
 			require.Len(t, requests, 1)
@@ -115,7 +115,7 @@ func TestTUILaunchOutsideRepositoryUsesCachedDashboard(t *testing.T) {
 		assert.False(t, request.RequireCurrent)
 		return kwt.Result{Freshness: kwt.Stale, ObservedAt: time.Now()}, nil
 	}
-	model := newTUIModel(context.Background(), backend)
+	model := newTUIModel(t.Context(), backend)
 	next, _ := model.Update(model.Init()())
 	assert.Contains(t, next.View().Content, "project:notes")
 }
@@ -137,9 +137,9 @@ func TestTUIBackendInventoryModesSeparateCurrencyAndStatus(t *testing.T) {
 		}}, nil
 	}
 
-	_, _ = backend.LoadInventory(context.Background(), dashboard.InventoryRequest{Scope: dashboard.InventoryCachedDashboard})
-	_, _ = backend.LoadInventory(context.Background(), dashboard.InventoryRequest{Scope: dashboard.InventoryCurrentDashboard})
-	_, _ = backend.LoadInventory(context.Background(), dashboard.InventoryRequest{Scope: dashboard.InventoryCurrentDashboard, CollectStatuses: true})
+	_, _ = backend.LoadInventory(t.Context(), dashboard.InventoryRequest{Scope: dashboard.InventoryCachedDashboard})
+	_, _ = backend.LoadInventory(t.Context(), dashboard.InventoryRequest{Scope: dashboard.InventoryCurrentDashboard})
+	_, _ = backend.LoadInventory(t.Context(), dashboard.InventoryRequest{Scope: dashboard.InventoryCurrentDashboard, CollectStatuses: true})
 
 	require.Len(t, requests, 3)
 	assert.False(t, requests[0].RequireCurrent)
@@ -164,7 +164,7 @@ func TestCurrentDashboardWithoutStatusStillAppliesConfigAndLaunchRegistration(t 
 			LaunchEntries: []kwt.Entry{{Path: "/launch", IsMain: true, Repository: kwt.Repository{URL: "https://github.com/acme/widget.git", FullPath: "github.com/acme/widget"}}},
 		}}, nil
 	}
-	_, err := backend.LoadInventory(context.Background(), dashboard.InventoryRequest{Scope: dashboard.InventoryCurrentDashboard})
+	_, err := backend.LoadInventory(t.Context(), dashboard.InventoryRequest{Scope: dashboard.InventoryCurrentDashboard})
 	require.NoError(t, err)
 	assert.Equal(t, "/fresh-base", backend.cfg.Worktree.BaseDir)
 	assert.Equal(t, []string{"/launch"}, registered)
@@ -181,7 +181,7 @@ func TestInventoryQueryDoesNotHoldBackendConfigurationLock(t *testing.T) {
 	}
 	done := make(chan struct{})
 	go func() {
-		_, _ = backend.LoadInventory(context.Background(), dashboard.InventoryRequest{Scope: dashboard.InventoryCurrentDashboard})
+		_, _ = backend.LoadInventory(t.Context(), dashboard.InventoryRequest{Scope: dashboard.InventoryCurrentDashboard})
 		close(done)
 	}()
 	<-entered
@@ -207,7 +207,7 @@ func TestRepositoryInventoryRejectsGlobalFallback(t *testing.T) {
 			{Path: "/other", IsMain: true, Repository: kwt.Repository{FullPath: "github.com/acme/other"}},
 		}}}, nil
 	}
-	_, err := backend.LoadInventory(context.Background(), dashboard.InventoryRequest{
+	_, err := backend.LoadInventory(t.Context(), dashboard.InventoryRequest{
 		Scope: dashboard.InventoryCurrentRepository, WorkingDirectory: workingDirectory,
 		ProjectIdentity: "github.com/acme/expected", CollectStatuses: true,
 	})
@@ -221,7 +221,7 @@ func TestRepositoryInventoryRejectsEmptyResult(t *testing.T) {
 	backend.queryInventory = func(context.Context, kwt.Request, bool, io.Writer) (kwt.Result, error) {
 		return kwt.Result{Freshness: kwt.Fresh}, nil
 	}
-	_, err := backend.LoadInventory(context.Background(), dashboard.InventoryRequest{
+	_, err := backend.LoadInventory(t.Context(), dashboard.InventoryRequest{
 		Scope: dashboard.InventoryCurrentRepository, WorkingDirectory: workingDirectory,
 		ProjectIdentity: "github.com/acme/expected",
 	})
@@ -237,7 +237,7 @@ func TestRepositoryInventoryRejectsDeletedWorkingDirectoryBeforeQuery(t *testing
 		queried = true
 		return kwt.Result{}, nil
 	}
-	_, err := backend.LoadInventory(context.Background(), dashboard.InventoryRequest{
+	_, err := backend.LoadInventory(t.Context(), dashboard.InventoryRequest{
 		Scope: dashboard.InventoryCurrentRepository, WorkingDirectory: workingDirectory,
 		ProjectIdentity: "github.com/acme/expected",
 	})
@@ -282,7 +282,7 @@ exec "$KWT_TEST_REAL_GIT" "$@"
 	t.Setenv("KWT_TEST_REAL_GIT", realGit)
 	t.Setenv("NEW_FLEET_TOKEN", "must-not-reach-git")
 
-	_, err = backend.LoadInventory(context.Background(), dashboard.InventoryRequest{
+	_, err = backend.LoadInventory(t.Context(), dashboard.InventoryRequest{
 		Scope: dashboard.InventoryCurrentRepository, WorkingDirectory: repository,
 		ProjectIdentity: "github.com/acme/widget", CollectStatuses: true,
 	})
@@ -311,7 +311,7 @@ func TestTUIBackendApplyInventoryConfigRewiresCleanupResolver(t *testing.T) {
 	err := backend.applyInventoryConfig(&models.Config{})
 	require.NoError(t, err)
 	endpoints, err := backend.liveEndpoints(
-		context.Background(),
+		t.Context(),
 		tmux.WorkspaceEndpointRequest{SessionName: "workspace", WorkspacePath: "/work"},
 	)
 
@@ -361,7 +361,7 @@ func TestTUIBackendMutationUsesLatestDaemonConfiguration(t *testing.T) {
 		}, nil
 	}
 
-	rows, _, err := backend.List(context.Background())
+	rows, _, err := backend.List(t.Context())
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	planned, err := backend.PreviewWorktree(rows[0], "feature/refreshed")
@@ -432,12 +432,12 @@ func TestTUIBackendDaemonInventoryUsesCacheThenCurrent(t *testing.T) {
 		}, nil
 	}
 
-	fast, _, err := backend.ListFast(context.Background())
+	fast, _, err := backend.ListFast(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, "/live", cfg.Projects[0].Path)
 	assert.Equal(t, "/live/workspace", cfg.Workspaces[0].Path)
 	assert.Equal(t, "/cached/workspace", fast[1].Workspace.Path)
-	current, _, err := backend.List(context.Background())
+	current, _, err := backend.List(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, "/cached", fast[0].Entry.Path)
 	assert.Equal(t, "/fresh", current[0].Entry.Path)
@@ -480,7 +480,7 @@ func TestTUIBackendDaemonInventoryRetainsProtectedEndpoint(t *testing.T) {
 		}}}}, nil
 	}
 
-	rows, _, err := backend.ListFast(context.Background())
+	rows, _, err := backend.ListFast(t.Context())
 
 	require.NoError(t, err)
 	assert.True(t, request.IncludeProtectedSockets)
@@ -516,7 +516,7 @@ func TestTUIBackendDaemonInventoryReusesPublishedDirectSession(t *testing.T) {
 		}}}}, nil
 	}
 
-	rows, _, err := backend.ListFast(context.Background())
+	rows, _, err := backend.ListFast(t.Context())
 
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
@@ -571,10 +571,10 @@ func TestTUIBackendRegistersOnlyCurrentLaunchInventory(t *testing.T) {
 		}, nil
 	}
 
-	_, _, err := backend.ListFast(context.Background())
+	_, _, err := backend.ListFast(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, registered, "stale inventory must not mutate launch registration")
-	_, _, err = backend.List(context.Background())
+	_, _, err = backend.List(t.Context())
 	require.NoError(t, err)
 
 	require.Len(t, registered, 1)
@@ -607,7 +607,7 @@ func TestTUIBackendCurrentInventoryIncludesNewLaunchWorkspace(t *testing.T) {
 		}, nil
 	}
 
-	rows, _, err := backend.List(context.Background())
+	rows, _, err := backend.List(t.Context())
 
 	require.NoError(t, err)
 	require.Len(t, rows, 1)

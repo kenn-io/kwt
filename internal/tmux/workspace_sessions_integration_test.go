@@ -42,7 +42,7 @@ func newRealWorkspaceSessionsFixture(t *testing.T) *realWorkspaceSessionsFixture
 		DefaultServerTempDir: tempDir,
 	})
 	fixture := &realWorkspaceSessionsFixture{
-		ctx:        context.Background(),
+		ctx:        t.Context(),
 		tempDir:    tempDir,
 		workspace:  workspace,
 		session:    "kwt-wt-integration-main-01234567",

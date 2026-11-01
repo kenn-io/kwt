@@ -19,7 +19,9 @@ import (
 var terminalForegroundMu sync.Mutex
 
 func newClientCommand(_ context.Context, executable string, arguments ...string) *exec.Cmd {
-	return exec.Command(executable, arguments...)
+	// runClientCommand owns cancellation: it kills the whole process group and
+	// may reap the client with wait4, which exec.CommandContext cannot track.
+	return exec.Command(executable, arguments...) //nolint:forbidigo,noctx // See above.
 }
 
 func runResolverCommand(command *exec.Cmd) error {

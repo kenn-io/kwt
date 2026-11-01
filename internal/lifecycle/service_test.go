@@ -93,10 +93,10 @@ func TestServiceCachedDashboardReportsRefreshState(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _ = service.Query(context.Background(), Request{View: ViewDashboard, RequireCurrent: true})
+		_, _ = service.Query(t.Context(), Request{View: ViewDashboard, RequireCurrent: true})
 	}()
 	<-source.started
-	got, err := service.Query(context.Background(), Request{View: ViewDashboard})
+	got, err := service.Query(t.Context(), Request{View: ViewDashboard})
 	require.NoError(t, err)
 	assert.Equal(t, Refreshing, got.Freshness)
 	assert.Equal(t, "/old", got.Snapshot.Entries[0].Path)
@@ -116,7 +116,7 @@ func TestServiceCurrentRefreshIsSingleFlight(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			_, err := service.Query(context.Background(), Request{View: ViewDashboard, RequireCurrent: true})
+			_, err := service.Query(t.Context(), Request{View: ViewDashboard, RequireCurrent: true})
 			errorsOut <- err
 		}()
 	}
@@ -137,7 +137,7 @@ func TestServiceCallerCancellationDoesNotCancelSharedRefresh(t *testing.T) {
 		result: Result{Snapshot: Snapshot{Entries: []Entry{{Path: "/fresh"}}}},
 	}
 	service := NewInventoryService(InventoryServiceOptions{Source: source, Cache: &testCache{}})
-	firstContext, cancelFirst := context.WithCancel(context.Background())
+	firstContext, cancelFirst := context.WithCancel(t.Context())
 	firstDone := make(chan error, 1)
 	go func() {
 		_, err := service.Query(firstContext, Request{View: ViewDashboard, RequireCurrent: true})
@@ -145,7 +145,7 @@ func TestServiceCallerCancellationDoesNotCancelSharedRefresh(t *testing.T) {
 	}()
 	<-source.started
 	secondContext := &observedDoneContext{
-		Context: context.Background(), observed: make(chan struct{}),
+		Context: t.Context(), observed: make(chan struct{}),
 	}
 	secondDone := make(chan error, 1)
 	go func() {
@@ -169,11 +169,11 @@ func TestServiceCanceledWaiterReturnsBeforeSharedRefreshFinishes(t *testing.T) {
 	service := NewInventoryService(InventoryServiceOptions{Source: source, Cache: &testCache{}})
 	firstDone := make(chan error, 1)
 	go func() {
-		_, err := service.Query(context.Background(), Request{View: ViewDashboard, RequireCurrent: true})
+		_, err := service.Query(t.Context(), Request{View: ViewDashboard, RequireCurrent: true})
 		firstDone <- err
 	}()
 	<-source.started
-	waiterBase, cancelWaiter := context.WithCancel(context.Background())
+	waiterBase, cancelWaiter := context.WithCancel(t.Context())
 	waiterContext := &observedDoneContext{
 		Context: waiterBase, observed: make(chan struct{}),
 	}
@@ -208,7 +208,7 @@ func TestServiceFailedRefreshKeepsLastKnownGood(t *testing.T) {
 		Now: func() time.Time { return time.Unix(10, 0) },
 	})
 
-	_, err := service.Query(context.Background(), Request{View: ViewDashboard, RequireCurrent: true})
+	_, err := service.Query(t.Context(), Request{View: ViewDashboard, RequireCurrent: true})
 	require.Error(t, err)
 	cached, ok := cache.Current()
 	require.True(t, ok)
@@ -222,7 +222,7 @@ func TestServiceNormalizesUnexpectedCustomSourceError(t *testing.T) {
 		Source: &testSource{err: cause},
 	})
 
-	_, err := inventory.Query(context.Background(), Request{View: ViewProjects})
+	_, err := inventory.Query(t.Context(), Request{View: ViewProjects})
 
 	require.Error(t, err)
 	var typed *servicecontract.Error
@@ -241,7 +241,7 @@ func TestServiceFreshDashboardSurvivesCacheWriteFailure(t *testing.T) {
 		Now:    func() time.Time { return time.Unix(10, 0) },
 	})
 
-	result, err := service.Query(context.Background(), Request{
+	result, err := service.Query(t.Context(), Request{
 		View: ViewDashboard, RequireCurrent: true, IncludeProtectedSockets: true,
 	})
 
@@ -266,14 +266,14 @@ func TestServiceDoesNotCacheDashboardWithoutProtectedSockets(t *testing.T) {
 	cache := &testCache{}
 	service := NewInventoryService(InventoryServiceOptions{Source: source, Cache: cache})
 
-	_, err := service.Query(context.Background(), Request{
+	_, err := service.Query(t.Context(), Request{
 		View: ViewDashboard, RequireCurrent: true,
 	})
 	require.NoError(t, err)
 	_, ok := cache.Current()
 	assert.False(t, ok)
 
-	result, err := service.Query(context.Background(), Request{
+	result, err := service.Query(t.Context(), Request{
 		View: ViewDashboard, IncludeProtectedSockets: true,
 	})
 	require.NoError(t, err)
@@ -295,7 +295,7 @@ func TestServiceResultsDoNotShareEffectiveConfig(t *testing.T) {
 		Cache: cache,
 	})
 
-	result, err := service.Query(context.Background(), Request{
+	result, err := service.Query(t.Context(), Request{
 		View: ViewDashboard, RequireCurrent: true, IncludeProtectedSockets: true,
 	})
 	require.NoError(t, err)
@@ -331,7 +331,7 @@ func TestServiceNewestDashboardRefreshOwnsSharedCache(t *testing.T) {
 	service := NewInventoryService(InventoryServiceOptions{Source: source, Cache: cache})
 	oldDone, newDone := make(chan error, 1), make(chan error, 1)
 	go func() {
-		_, err := service.Query(context.Background(), Request{
+		_, err := service.Query(t.Context(), Request{
 			View: ViewDashboard, LaunchDirectory: "/old", RequireCurrent: true,
 			IncludeProtectedSockets: true,
 		})
@@ -339,7 +339,7 @@ func TestServiceNewestDashboardRefreshOwnsSharedCache(t *testing.T) {
 	}()
 	<-oldStarted
 	go func() {
-		_, err := service.Query(context.Background(), Request{
+		_, err := service.Query(t.Context(), Request{
 			View: ViewDashboard, LaunchDirectory: "/new", RequireCurrent: true,
 			IncludeProtectedSockets: true,
 		})
@@ -377,14 +377,14 @@ func TestServiceReportsRefreshingUntilEveryDashboardRefreshFinishes(t *testing.T
 	service := NewInventoryService(InventoryServiceOptions{Source: source, Cache: cache})
 	oneDone, twoDone := make(chan error, 1), make(chan error, 1)
 	go func() {
-		_, err := service.Query(context.Background(), Request{
+		_, err := service.Query(t.Context(), Request{
 			View: ViewDashboard, LaunchDirectory: "/one", RequireCurrent: true,
 		})
 		oneDone <- err
 	}()
 	<-oneStarted
 	go func() {
-		_, err := service.Query(context.Background(), Request{
+		_, err := service.Query(t.Context(), Request{
 			View: ViewDashboard, LaunchDirectory: "/two", RequireCurrent: true,
 		})
 		twoDone <- err
@@ -393,7 +393,7 @@ func TestServiceReportsRefreshingUntilEveryDashboardRefreshFinishes(t *testing.T
 
 	close(twoRelease)
 	require.NoError(t, <-twoDone)
-	cached, err := service.Query(context.Background(), Request{View: ViewDashboard})
+	cached, err := service.Query(t.Context(), Request{View: ViewDashboard})
 	require.NoError(t, err)
 	assert.Equal(t, Refreshing, cached.Freshness)
 

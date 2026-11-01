@@ -86,7 +86,7 @@ func TestServiceBuildsSnapshotFromCompletePrivateObservation(t *testing.T) {
 		Now:      func() time.Time { return observedAt },
 	})
 
-	snapshot, err := service.Resolve(context.Background(), ResolveRequest{
+	snapshot, err := service.Resolve(t.Context(), ResolveRequest{
 		Target: Target{User: "deploy", Hostname: "build.example.test", Port: 22},
 	})
 	require.NoError(t, err)
@@ -111,7 +111,7 @@ func TestServiceMarksProjectedAgentForwarding(t *testing.T) {
 	}}}}
 	service := NewService(ServiceOptions{Resolver: resolver})
 
-	snapshot, err := service.Resolve(context.Background(), ResolveRequest{
+	snapshot, err := service.Resolve(t.Context(), ResolveRequest{
 		Target: Target{Hostname: "build.example.test"},
 	})
 
@@ -132,7 +132,7 @@ func TestServiceFullObservationChangesRouteIdentity(t *testing.T) {
 		service := NewService(ServiceOptions{
 			Resolver: &fixedObservationResolver{observation: routeObservation{route: route}},
 		})
-		snapshot, err := service.Resolve(context.Background(), ResolveRequest{
+		snapshot, err := service.Resolve(t.Context(), ResolveRequest{
 			Target: Target{Hostname: "build.example.test"},
 		})
 		require.NoError(t, err)
@@ -161,7 +161,7 @@ func TestServiceOrderedConfiguredIdentitiesChangeRouteIdentity(t *testing.T) {
 				},
 			}},
 		})
-		snapshot, err := service.Resolve(context.Background(), ResolveRequest{
+		snapshot, err := service.Resolve(t.Context(), ResolveRequest{
 			Target: Target{Hostname: "build.example.test"},
 		})
 		require.NoError(t, err)
@@ -176,7 +176,7 @@ func TestServiceOrderedConfiguredIdentitiesChangeRouteIdentity(t *testing.T) {
 func TestServicePreservesResolverCancellation(t *testing.T) {
 	resolver := &fixedObservationResolver{err: resolutionFailed(context.Canceled)}
 	service := NewService(ServiceOptions{Resolver: resolver})
-	_, err := service.Resolve(context.Background(), ResolveRequest{
+	_, err := service.Resolve(t.Context(), ResolveRequest{
 		Target: Target{Hostname: "build.example.test"},
 	})
 	require.Error(t, err)
@@ -184,7 +184,7 @@ func TestServicePreservesResolverCancellation(t *testing.T) {
 
 	private := errors.New("private")
 	resolver.err = private
-	_, err = service.Resolve(context.Background(), ResolveRequest{
+	_, err = service.Resolve(t.Context(), ResolveRequest{
 		Target: Target{Hostname: "build.example.test"},
 	})
 	require.Error(t, err)
@@ -199,13 +199,13 @@ func TestServiceRejectsChangedRouteBeforeAcquiringLease(t *testing.T) {
 	}}}}
 	provider := &fixedLeaseProvider{lease: fixedLease{}}
 	service := NewService(ServiceOptions{Resolver: resolver, Leases: provider})
-	snapshot, err := service.Resolve(context.Background(), ResolveRequest{
+	snapshot, err := service.Resolve(t.Context(), ResolveRequest{
 		Target: Target{Hostname: "build.example.test"},
 	})
 	require.NoError(t, err)
 	resolver.observation.route[0].Config.Hostname = "second.internal"
 
-	_, err = service.Acquire(context.Background(), LeaseRequest{Snapshot: snapshot})
+	_, err = service.Acquire(t.Context(), LeaseRequest{Snapshot: snapshot})
 
 	require.Error(t, err)
 	assert.Equal(t, 0, provider.calls)
@@ -219,12 +219,12 @@ func TestServiceAcquiresLeaseForCurrentRoute(t *testing.T) {
 	}}}}
 	provider := &fixedLeaseProvider{lease: fixedLease{}}
 	service := NewService(ServiceOptions{Resolver: resolver, Leases: provider})
-	snapshot, err := service.Resolve(context.Background(), ResolveRequest{
+	snapshot, err := service.Resolve(t.Context(), ResolveRequest{
 		Target: Target{Hostname: "build.example.test"},
 	})
 	require.NoError(t, err)
 
-	lease, err := service.Acquire(context.Background(), LeaseRequest{Snapshot: snapshot})
+	lease, err := service.Acquire(t.Context(), LeaseRequest{Snapshot: snapshot})
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, provider.calls)

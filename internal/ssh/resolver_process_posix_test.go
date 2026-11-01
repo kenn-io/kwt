@@ -24,7 +24,7 @@ func TestRunOutputCancellationTerminatesDescendantProcessGroup(t *testing.T) {
 		`(exec >/dev/null 2>&1; sleep 30) & child=$!; printf '%%s' "$child" > %s; wait`,
 		shellQuote(pidPath),
 	)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	result := make(chan error, 1)
 	go func() {
 		_, _, _, err := runOutput(
@@ -83,7 +83,7 @@ func TestRunOutputResolvesExecutableWithInvocationEnvironment(t *testing.T) {
 	t.Setenv("PATH", daemonDir)
 
 	stdout, _, _, err := runOutput(
-		context.Background(),
+		t.Context(),
 		[]string{executable},
 		t.TempDir(),
 		[]string{"PATH=" + invocationDir},
@@ -96,7 +96,7 @@ func TestRunOutputResolvesExecutableWithInvocationEnvironment(t *testing.T) {
 func TestRunOutputUsesInvocationWorkingDirectory(t *testing.T) {
 	workingDirectory := t.TempDir()
 	stdout, _, _, err := runOutput(
-		context.Background(),
+		t.Context(),
 		[]string{"/bin/pwd"},
 		workingDirectory,
 		[]string{"PATH=/usr/bin:/bin"},
@@ -128,7 +128,7 @@ func TestRunOutputBoundsOutputAndCancelsResolverProcess(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			defer cancel()
 			started := time.Now()
 			stdout, stderr, _, err := runOutput(
@@ -146,7 +146,7 @@ func TestRunOutputBoundsOutputAndCancelsResolverProcess(t *testing.T) {
 }
 
 func TestAccountLoginShellHonorsCanceledContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err := accountLoginShell(ctx)
 	assert.ErrorIs(t, err, context.Canceled)

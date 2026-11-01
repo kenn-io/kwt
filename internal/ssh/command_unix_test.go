@@ -45,7 +45,7 @@ func TestClientWaitErrorPreservesSignalExitStatus(t *testing.T) {
 
 func TestRunClientProcessPreservesInteractiveTerminalJobControl(t *testing.T) {
 	resultPath := t.TempDir() + "/result"
-	command := exec.Command(os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
+	command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
 	command.Env = append(
 		os.Environ(),
 		interactiveClientProcessHelper+"=parent",
@@ -86,7 +86,7 @@ func TestRunClientProcessPreservesInteractiveTerminalJobControl(t *testing.T) {
 
 func TestRunClientProcessSuspendsPipelineSiblings(t *testing.T) {
 	resultPath := t.TempDir() + "/pipeline"
-	command := exec.Command(os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
+	command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
 	command.Env = append(
 		os.Environ(),
 		interactiveClientProcessHelper+"=pipeline-parent",
@@ -126,7 +126,7 @@ func TestRunClientProcessSuspendsPipelineSiblings(t *testing.T) {
 
 func TestRunClientProcessCancellationTerminatesInteractiveDescendants(t *testing.T) {
 	resultPath := t.TempDir() + "/cancel"
-	command := exec.Command(os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
+	command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
 	command.Env = append(
 		os.Environ(),
 		interactiveClientProcessHelper+"=cancel-parent",
@@ -174,7 +174,7 @@ func TestRunClientProcessDoesNotStealTerminalWhenStartedInBackground(t *testing.
 }
 
 func TestRunClientCommandRestoresTerminalAfterStartFailure(t *testing.T) {
-	command := exec.Command(os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
+	command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
 	command.Env = append(
 		os.Environ(),
 		interactiveClientProcessHelper+"=start-failure",
@@ -192,7 +192,7 @@ func testRunClientProcessTerminalOutputWithNonterminalInput(
 ) {
 	t.Helper()
 	resultPath := t.TempDir() + "/nonterminal"
-	command := exec.Command(os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
+	command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
 	command.Env = append(
 		os.Environ(),
 		interactiveClientProcessHelper+"=nonterminal-parent",
@@ -294,7 +294,7 @@ func TestSSHInteractiveClientProcessHelper(t *testing.T) {
 			`sleep 30 & child=$!; printf '%%s' "$child" > %s; wait`,
 			shellQuote(pidPath),
 		)
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		go func() {
 			for {
@@ -327,11 +327,11 @@ func TestSSHInteractiveClientProcessHelper(t *testing.T) {
 			_, _ = fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		command := exec.Command("/path/that/does/not/exist")
+		command := exec.CommandContext(t.Context(), "/path/that/does/not/exist")
 		command.Stdin = os.Stdin
 		command.Stdout = os.Stdout
 		command.Stderr = os.Stderr
-		started, startErr := runClientCommand(context.Background(), command)
+		started, startErr := runClientCommand(t.Context(), command)
 		if started || startErr == nil {
 			_, _ = fmt.Fprintln(os.Stderr, "invalid start result")
 			os.Exit(1)
@@ -376,7 +376,7 @@ func TestSSHInteractiveClientProcessHelper(t *testing.T) {
 		}
 	}
 	if mode == "nonterminal-parent" {
-		shell := exec.Command(os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
+		shell := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
 		shell.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		shell.Env = append(
 			os.Environ(),
@@ -413,7 +413,7 @@ func TestSSHInteractiveClientProcessHelper(t *testing.T) {
 			os.Exit(1)
 		}
 		exitCode, _, err := RunClientProcess(
-			context.Background(),
+			t.Context(),
 			os.Args[0],
 			[]string{"-test.run=^TestSSHInteractiveClientProcessHelper$"},
 			"",
@@ -467,7 +467,7 @@ func TestSSHInteractiveClientProcessHelper(t *testing.T) {
 	}
 	var pipelineSibling *exec.Cmd
 	if mode == "pipeline-parent" {
-		pipelineSibling = exec.Command(os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
+		pipelineSibling = exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestSSHInteractiveClientProcessHelper$")
 		pipelineSibling.Env = append(
 			os.Environ(),
 			interactiveClientProcessHelper+"=pipeline-sibling",
@@ -490,7 +490,7 @@ func TestSSHInteractiveClientProcessHelper(t *testing.T) {
 		os.Exit(1)
 	}
 	exitCode, _, err := RunClientProcess(
-		context.Background(),
+		t.Context(),
 		os.Args[0],
 		[]string{"-test.run=^TestSSHInteractiveClientProcessHelper$"},
 		"",

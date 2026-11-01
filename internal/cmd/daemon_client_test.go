@@ -68,7 +68,7 @@ func TestAcquireSSHLeaseDoesNotRetryDrainAfterExposingOperation(t *testing.T) {
 			events := 0
 			prompts := 0
 			_, _, err := acquireSSHLeaseViaDaemon(
-				context.Background(),
+				t.Context(),
 				kwt.SSHLeaseRequest{},
 				kwtdaemon.OperationCallbacks{
 					Event: func(service.OperationEvent) error {
@@ -247,7 +247,7 @@ func TestConditionalRemovalRejectsVersionOneDaemonBeforeMutation(t *testing.T) {
 	for name, request := range requests {
 		t.Run(name, func(t *testing.T) {
 			mutated = false
-			_, err := removeWorktreeThroughDaemon(context.Background(), request)
+			_, err := removeWorktreeThroughDaemon(t.Context(), request)
 
 			require.Error(t, err)
 			assert.True(t, service.IsCode(err, service.DaemonIncompatible))

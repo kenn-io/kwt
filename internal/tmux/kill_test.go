@@ -19,7 +19,7 @@ func TestKillSessionIfPresentDoesNotPrefixMatchReplacement(t *testing.T) {
 		t.Skip("tmux is not installed")
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	tempDir, err := os.MkdirTemp("/tmp", "kwt-kill-")
 	require.NoError(t, err)
 	command := NewTmuxCommandForSocketInTempDirWithStripNames(
@@ -77,7 +77,7 @@ exit "$KWT_TEST_TMUX_EXIT"
 			command := NewTmuxCommand(fixture)
 
 			err := command.KillSessionIfPresentContext(
-				context.Background(),
+				t.Context(),
 				"workspace",
 			)
 
@@ -91,7 +91,7 @@ exit "$KWT_TEST_TMUX_EXIT"
 }
 
 func TestKillSessionIfPresentPreservesCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	err := NewTmuxCommand("tmux").KillSessionIfPresentContext(ctx, "workspace")

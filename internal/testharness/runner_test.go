@@ -157,7 +157,7 @@ func TestProtectedEnvironmentNamesIncludeConfiguredFleetToken(t *testing.T) {
 }
 
 func TestDenyProxyRecordsAndRejectsHTTPAndConnect(t *testing.T) {
-	proxy, err := startDenyProxy()
+	proxy, err := startDenyProxy(t.Context())
 	if err != nil {
 		t.Fatalf("startDenyProxy: %v", err)
 	}
@@ -172,7 +172,11 @@ func TestDenyProxyRecordsAndRejectsHTTPAndConnect(t *testing.T) {
 		t.Fatalf("parse proxy URL: %v", err)
 	}
 	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
-	response, err := client.Get("http://external.example/path")
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://external.example/path", nil)
+	if err != nil {
+		t.Fatalf("build GET request: %v", err)
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		t.Fatalf("GET through deny proxy: %v", err)
 	}
@@ -183,7 +187,7 @@ func TestDenyProxyRecordsAndRejectsHTTPAndConnect(t *testing.T) {
 		t.Fatalf("close GET response: %v", closeErr)
 	}
 
-	connection, err := net.Dial("tcp", proxy.Address())
+	connection, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", proxy.Address())
 	if err != nil {
 		t.Fatalf("connect to deny proxy: %v", err)
 	}
@@ -226,7 +230,7 @@ func TestRunRejectsGitOlderThan232BeforeGoCommands(t *testing.T) {
 	var stderr bytes.Buffer
 
 	exitCode := runWith(
-		context.Background(),
+		t.Context(),
 		[]string{"./..."},
 		io.Discard,
 		&stderr,
@@ -273,7 +277,7 @@ func TestRunDoesNotForwardProtectedEnvironment(t *testing.T) {
 	var stderr bytes.Buffer
 
 	exitCode := runWith(
-		context.Background(),
+		t.Context(),
 		[]string{"./internal/example"},
 		io.Discard,
 		&stderr,
@@ -298,7 +302,7 @@ func TestRunDoesNotForwardProtectedEnvironment(t *testing.T) {
 func TestRunFailsAfterSuccessfulTestsAttemptOutboundHTTP(t *testing.T) {
 	var commands []string
 	execute := func(
-		_ context.Context,
+		ctx context.Context,
 		environment []string,
 		_, _ io.Writer,
 		name string,
@@ -318,7 +322,11 @@ func TestRunFailsAfterSuccessfulTestsAttemptOutboundHTTP(t *testing.T) {
 				return "", err
 			}
 			client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
-			response, err := client.Get("http://missed-fixture.example/path")
+			request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://missed-fixture.example/path", nil)
+			if err != nil {
+				return "", err
+			}
+			response, err := client.Do(request)
 			if err != nil {
 				return "", err
 			}
@@ -331,7 +339,7 @@ func TestRunFailsAfterSuccessfulTestsAttemptOutboundHTTP(t *testing.T) {
 	var stderr bytes.Buffer
 
 	exitCode := runWith(
-		context.Background(),
+		t.Context(),
 		[]string{"./internal/example"},
 		io.Discard,
 		&stderr,
@@ -376,7 +384,7 @@ func TestRunFailsWhenTestsUseSharedHarnessKwtHome(t *testing.T) {
 	var stderr bytes.Buffer
 
 	exitCode := runWith(
-		context.Background(),
+		t.Context(),
 		[]string{"./internal/example"},
 		io.Discard,
 		&stderr,
