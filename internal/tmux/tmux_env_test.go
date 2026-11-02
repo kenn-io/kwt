@@ -6,28 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strings"
 	"testing"
-)
 
-func newRemovalTmuxCommand(command string, condition RemovalSessionCondition) *TmuxCommand {
-	stripNames := removalStripNames(condition)
-	if condition.SocketName != "" {
-		if condition.SocketDirectory != "" {
-			return NewTmuxCommandForSocketInTempDirWithStripNames(
-				command,
-				condition.SocketName,
-				condition.SocketDirectory,
-				stripNames,
-			)
-		}
-		return NewTmuxCommandForSocketWithStripNames(
-			command, condition.SocketName, stripNames,
-		)
-	}
-	tmuxCommand := NewTmuxCommandWithStripNames(command, stripNames)
-	tmuxCommand.socketTempDir = condition.SocketDirectory
-	return tmuxCommand
-}
+	"github.com/stretchr/testify/require"
+)
 
 // TestNewCmdSanitizesEnvironment pins the exec seam every TmuxCommand method
 // funnels through (newCmd): the *exec.Cmd it builds carries a sanitized copy
@@ -154,58 +137,117 @@ func TestDefaultSocketCommandUsesExplicitTempDirectory(t *testing.T) {
 func TestUnqualifiedRemovalGuardUsesCanonicalDefaultSocket(t *testing.T) {
 	t.Setenv("TMUX_TMPDIR", "/ambient/tmux")
 	t.Setenv("TMUX", "/ambient/tmux/named,123,0")
-	command := newRemovalTmuxCommand("tmux", RemovalSessionCondition{
+	var inspected [][]string
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspect: func(ctx context.Context, command *TmuxCommand) (string, string, error) {
+			cmd := command.newCmd(ctx, []string{"list-sessions"})
+			inspected = append(inspected, cmd.Args)
+			for _, entry := range cmd.Env {
+				if hasEnvName(entry, "TMUX") || hasEnvName(entry, "TMUX_TMPDIR") {
+					t.Fatalf("unqualified removal inherited ambient socket selector: %v", cmd.Env)
+				}
+			}
+			return "", "no server running on test socket", errors.New("exit status 1")
+		},
+	}
+
+	_, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName: "workspace",
 		Absent:      true,
 	})
 
-	cmd := command.newCmd(t.Context(), []string{"list-sessions"})
-	for _, entry := range cmd.Env {
-		if hasEnvName(entry, "TMUX") || hasEnvName(entry, "TMUX_TMPDIR") {
-			t.Fatalf("unqualified removal inherited ambient socket selector: %v", cmd.Env)
-		}
-	}
+	require.NoError(t, err)
+	require.Equal(t, [][]string{
+		{"tmux", "-L", "kwt", "list-sessions"},
+		{"tmux", "list-sessions"},
+	}, inspected)
 }
 
 func TestRemovalCommandsStripRequestProtectedNames(t *testing.T) {
 	t.Setenv("CUSTOM_FLEET_TOKEN", "secret")
-	condition := RemovalSessionCondition{
-		SessionName:    "workspace",
-		Absent:         true,
-		ProtectedNames: []string{"CUSTOM_FLEET_TOKEN"},
-	}
-
+	t.Setenv("TMUX_TMPDIR", "/ambient/tmux")
+	t.Setenv("TMUX", "/ambient/tmux/named,123,0")
 	for _, test := range []struct {
-		name      string
-		condition RemovalSessionCondition
+		name            string
+		socket          string
+		directory       string
+		wantArgs        [][]string
+		wantDirectories []string
 	}{
-		{name: "default socket", condition: condition},
 		{
-			name: "named socket",
-			condition: func() RemovalSessionCondition {
-				value := condition
-				value.SocketName = "protected"
-				return value
-			}(),
+			name: "shared sockets",
+			wantArgs: [][]string{
+				{"tmux", "-L", "kwt", "list-sessions"},
+				{"tmux", "list-sessions"},
+			},
+			wantDirectories: []string{"", ""},
 		},
 		{
-			name: "named socket in explicit directory",
-			condition: func() RemovalSessionCondition {
-				value := condition
-				value.SocketName = "protected"
-				value.SocketDirectory = "/run/user/1000/tmux"
-				return value
-			}(),
+			name:   "protected socket",
+			socket: "protected",
+			wantArgs: [][]string{
+				{"tmux", "-L", "kwt", "list-sessions"},
+				{"tmux", "list-sessions"},
+				{"tmux", "-L", "protected", "list-sessions"},
+			},
+			wantDirectories: []string{"", "", ""},
+		},
+		{
+			name:      "protected socket with legacy directory",
+			socket:    "protected",
+			directory: "/chosen/tmux",
+			wantArgs: [][]string{
+				{"tmux", "-L", "kwt", "list-sessions"},
+				{"tmux", "list-sessions"},
+				{"tmux", "-L", "protected", "list-sessions"},
+				{"tmux", "-L", "protected", "list-sessions"},
+			},
+			wantDirectories: []string{"", "/chosen/tmux", "", "/chosen/tmux"},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			command := newRemovalTmuxCommand("tmux", test.condition)
-			cmd := command.newCmd(t.Context(), []string{"list-sessions"})
-			for _, entry := range cmd.Env {
-				if hasEnvName(entry, "CUSTOM_FLEET_TOKEN") {
-					t.Fatalf("removal command retained configured credential: %v", cmd.Env)
+			var inspected [][]string
+			var directories []string
+			inspect := func(ctx context.Context, command *TmuxCommand) {
+				cmd := command.newCmd(ctx, []string{"list-sessions"})
+				inspected = append(inspected, cmd.Args)
+				directory := ""
+				for _, entry := range cmd.Env {
+					if hasEnvName(entry, "CUSTOM_FLEET_TOKEN") || hasEnvName(entry, "TMUX") {
+						t.Fatalf("removal command retained credential or ambient selector: %v", cmd.Env)
+					}
+					if value, ok := strings.CutPrefix(entry, "TMUX_TMPDIR="); ok {
+						directory = value
+					}
 				}
+				directories = append(directories, directory)
 			}
+			guard := &removalSessionGuard{
+				command: "tmux",
+				inspect: func(ctx context.Context, command *TmuxCommand) (string, string, error) {
+					inspect(ctx, command)
+					return "", "no server running on test socket", errors.New("exit status 1")
+				},
+				inspectProtected: func(ctx context.Context, command *TmuxCommand, session string) (ProtectedSessionState, error) {
+					require.Equal(t, "workspace", session)
+					inspect(ctx, command)
+					return ProtectedSessionAbsent, nil
+				},
+			}
+
+			_, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
+				SessionName:             "workspace",
+				Absent:                  true,
+				ProtectedNames:          []string{"CUSTOM_FLEET_TOKEN"},
+				SocketName:              test.socket,
+				SocketDirectory:         test.directory,
+				ProtectedSocketTopology: test.socket != "",
+			})
+
+			require.NoError(t, err)
+			require.Equal(t, test.wantArgs, inspected)
+			require.Equal(t, test.wantDirectories, directories)
 		})
 	}
 }

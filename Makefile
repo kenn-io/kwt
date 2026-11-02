@@ -31,9 +31,9 @@ export GOFLAGS
 INSTALL_DIR ?= $(GO_PATH_FIRST)/bin
 # .custom-gcl.yml owns the golangci-lint and kit plugin versions.
 GOLANGCI_LINT_VERSION := $(shell sed -n 's/^version: //p' .custom-gcl.yml)
-KIT_LINT_VERSION := $(shell sed -nE 's/^[[:space:]]+version: "(.*)"$$/\1/p' .custom-gcl.yml)
 CUSTOM_GCL := ./custom-gcl
-KENNLINT := go run go.kenn.io/kit/cmd/kennlint@$(KIT_LINT_VERSION)
+# Keep the renderer pin explicit so the sibling-pins check can validate it.
+KENNLINT := go run go.kenn.io/kit/cmd/kennlint@v0.47.3
 VERCEL_SCOPE ?= kenn-software
 VERCEL_PROJECT ?= kwt-docs
 TEST_PACKAGES ?= ./...

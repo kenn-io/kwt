@@ -261,65 +261,6 @@ func TestStandardExecutor_CancelledContext(t *testing.T) {
 	}
 }
 
-// Mock executor for testing interface compliance
-type MockExecutor struct {
-	executeFunc func(ctx context.Context, name string, args ...string) error
-	outputFunc  func(ctx context.Context, name string, args ...string) (string, error)
-}
-
-func (m *MockExecutor) Execute(ctx context.Context, name string, args ...string) error {
-	if m.executeFunc != nil {
-		return m.executeFunc(ctx, name, args...)
-	}
-	return nil
-}
-
-func (m *MockExecutor) ExecuteWithOutput(ctx context.Context, name string, args ...string) (string, error) {
-	if m.outputFunc != nil {
-		return m.outputFunc(ctx, name, args...)
-	}
-	return "mock output", nil
-}
-
-func (m *MockExecutor) ExecuteInDir(ctx context.Context, dir, name string, args ...string) error {
-	return m.Execute(ctx, name, args...)
-}
-
-func (m *MockExecutor) ExecuteInDirWithOutput(ctx context.Context, dir, name string, args ...string) (string, error) {
-	return m.ExecuteWithOutput(ctx, name, args...)
-}
-
-func (m *MockExecutor) ExecuteWithStreams(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, name string, args ...string) error {
-	return m.Execute(ctx, name, args...)
-}
-
-func (m *MockExecutor) ExecuteWithEnv(ctx context.Context, env []string, name string, args ...string) error {
-	return m.Execute(ctx, name, args...)
-}
-
-func (m *MockExecutor) ExecuteWithEnvInDir(ctx context.Context, env []string, dir, name string, args ...string) error {
-	return m.Execute(ctx, name, args...)
-}
-
-func TestCommandExecutorInterface(t *testing.T) {
-	// Test that MockExecutor implements CommandExecutor interface
-	var executor CommandExecutor = &MockExecutor{}
-	ctx := t.Context()
-
-	err := executor.Execute(ctx, "test")
-	if err != nil {
-		t.Errorf("Interface implementation failed: %v", err)
-	}
-
-	output, err := executor.ExecuteWithOutput(ctx, "test")
-	if err != nil {
-		t.Errorf("Interface implementation failed: %v", err)
-	}
-	if output != "mock output" {
-		t.Errorf("Expected 'mock output', got %v", output)
-	}
-}
-
 func TestAdvancedCommandExecutorInterface(t *testing.T) {
 	// Test that StandardExecutor implements AdvancedCommandExecutor interface
 	var executor AdvancedCommandExecutor = NewStandardExecutor()

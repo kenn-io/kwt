@@ -1,10 +1,12 @@
 package tmux
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,7 +27,10 @@ func TestTmuxCommandAtomicallyTerminatesMatchingWorkspace(t *testing.T) {
 		"tmux", KWTServerSocketName, tempDir, nil,
 	)
 	t.Cleanup(func() {
-		_ = command.RunCommandContext(ctx, "kill-server")
+		// Test contexts are canceled before cleanup runs.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer cancel()
+		_ = command.RunCommandContext(cleanupCtx, "kill-server")
 		require.NoError(t, os.RemoveAll(tempDir))
 	})
 
@@ -67,7 +72,10 @@ func TestTmuxCommandTerminatesVerifiedPreCleanupMarkerWorkspace(t *testing.T) {
 		"tmux", KWTServerSocketName, tempDir, nil,
 	)
 	t.Cleanup(func() {
-		_ = command.RunCommandContext(ctx, "kill-server")
+		// Test contexts are canceled before cleanup runs.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer cancel()
+		_ = command.RunCommandContext(cleanupCtx, "kill-server")
 		require.NoError(t, os.RemoveAll(tempDir))
 	})
 

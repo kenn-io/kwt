@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,8 +56,11 @@ func newRealWorkspaceSessionsFixture(t *testing.T) *realWorkspaceSessionsFixture
 		}),
 	}
 	t.Cleanup(func() {
-		_ = fixture.servers.kwtServer().RunCommandContext(fixture.ctx, "kill-server")
-		_ = fixture.servers.defaultServer().RunCommandContext(fixture.ctx, "kill-server")
+		// Test contexts are canceled before cleanup runs.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer cancel()
+		_ = fixture.servers.kwtServer().RunCommandContext(cleanupCtx, "kill-server")
+		_ = fixture.servers.defaultServer().RunCommandContext(cleanupCtx, "kill-server")
 		require.NoError(t, os.RemoveAll(workspace))
 		require.NoError(t, os.RemoveAll(tempDir))
 	})
@@ -292,7 +296,10 @@ func TestProtectedWorkspaceStillUsesUniqueSocket(t *testing.T) {
 		nil,
 	)
 	t.Cleanup(func() {
-		_ = protected.RunCommandContext(fixture.ctx, "kill-server")
+		// Test contexts are canceled before cleanup runs.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer cancel()
+		_ = protected.RunCommandContext(cleanupCtx, "kill-server")
 	})
 
 	require.NoError(t, NewProtectedWorkspaceRunner(protected, nil).Ensure(

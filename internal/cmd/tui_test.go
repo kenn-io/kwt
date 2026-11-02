@@ -2140,8 +2140,11 @@ func TestTUIBackendProtectedCleanupTerminatesCanonicalAndLegacySessions(t *testi
 		"tmux", socketName, tempDir, nil,
 	)
 	t.Cleanup(func() {
-		_ = canonical.RunCommandContext(ctx, "kill-server")
-		_ = legacy.RunCommandContext(ctx, "kill-server")
+		// Test contexts are canceled before cleanup runs.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer cancel()
+		_ = canonical.RunCommandContext(cleanupCtx, "kill-server")
+		_ = legacy.RunCommandContext(cleanupCtx, "kill-server")
 		require.NoError(t, os.RemoveAll(tempDir))
 	})
 	for _, command := range []*tmux.TmuxCommand{canonical, legacy} {

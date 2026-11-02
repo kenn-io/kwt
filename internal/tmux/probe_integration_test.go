@@ -25,8 +25,8 @@ func TestProbeProtectedSessionAgainstRealTmux(t *testing.T) {
 	}
 	socket := fmt.Sprintf("kwt-probe-%d", time.Now().UnixNano())
 	session := "expected"
-	runTmux := func(args ...string) (string, error) {
-		command := exec.CommandContext(t.Context(), "tmux", append([]string{"-L", socket}, args...)...)
+	runTmux := func(ctx context.Context, args ...string) (string, error) {
+		command := exec.CommandContext(ctx, "tmux", append([]string{"-L", socket}, args...)...)
 		command.Env = filteredEnviron(os.Environ(), func(name string) bool {
 			return strings.EqualFold(name, "TMUX_TMPDIR")
 		})
@@ -39,7 +39,12 @@ func TestProbeProtectedSessionAgainstRealTmux(t *testing.T) {
 		t.Context(), "new-session", "-d", "-s", session, "sleep", "60",
 	)
 	require.NoError(t, err)
-	t.Cleanup(func() { _, _ = runTmux("kill-server") })
+	t.Cleanup(func() {
+		// Test contexts are canceled before cleanup runs.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer cancel()
+		_, _ = runTmux(cleanupCtx, "kill-server")
+	})
 
 	t.Setenv("TMUX_TMPDIR", filepath.Join(t.TempDir(), "probe"))
 	state, err := ProbeProtectedSession(t.Context(), socket, session, nil, "")
@@ -64,14 +69,14 @@ func TestProbeProtectedSessionAgainstRealTmux(t *testing.T) {
 		_ = attach.Wait()
 	})
 	require.Eventually(t, func() bool {
-		output, listErr := runTmux("list-sessions", "-F", "#{session_attached}")
+		output, listErr := runTmux(t.Context(), "list-sessions", "-F", "#{session_attached}")
 		return listErr == nil && strings.TrimSpace(output) == "1"
 	}, 2*time.Second, 10*time.Millisecond)
 	state, err = ProbeProtectedSession(t.Context(), socket, session, nil, "")
 	require.NoError(t, err)
 	assert.Equal(t, ProtectedSessionLive, state, "attached session")
 
-	_, err = runTmux("kill-server")
+	_, err = runTmux(t.Context(), "kill-server")
 	require.NoError(t, err)
 	cancelAttach()
 	require.Eventually(t, func() bool {
