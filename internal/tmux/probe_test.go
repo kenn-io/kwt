@@ -20,7 +20,7 @@ func TestProbeProtectedSessionTreatsMissingTmuxAsIndeterminate(t *testing.T) {
 	t.Setenv("PATH", filepath.Join(t.TempDir(), "missing"))
 
 	state, err := ProbeProtectedSession(
-		context.Background(),
+		t.Context(),
 		"kwt-pr-0123456789abcdef",
 		"kwt-wt-widget-main-01234567",
 		nil,

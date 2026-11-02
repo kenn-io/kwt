@@ -73,7 +73,7 @@ func TestInspectionServiceRejectsInvalidRequestBeforeInventory(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := inspector.Inspect(context.Background(), tt.request)
+			_, err := inspector.Inspect(t.Context(), tt.request)
 
 			require.Error(t, err)
 			assert.True(t, service.IsCode(err, service.InvalidRequest))
@@ -116,7 +116,7 @@ func TestInspectionServiceRequiresOneExactInventoryEntry(t *testing.T) {
 
 			_, err := NewInspectionService(InspectionServiceOptions{
 				Inventory: inventory,
-			}).Inspect(context.Background(), InspectionRequest{Path: path})
+			}).Inspect(t.Context(), InspectionRequest{Path: path})
 
 			require.Error(t, err)
 			assert.True(t, service.IsCode(err, tt.code))
@@ -155,7 +155,7 @@ func TestInspectionServiceRejectsExpectedIdentityDrift(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := inspector.Inspect(context.Background(), tt.request)
+			_, err := inspector.Inspect(t.Context(), tt.request)
 
 			require.Error(t, err)
 			assert.True(t, service.IsCode(err, service.RegistrationChanged))
@@ -210,7 +210,7 @@ func TestInspectionServiceRejectsIncompleteInventoryIdentity(t *testing.T) {
 
 			_, err := NewInspectionService(InspectionServiceOptions{
 				Inventory: inventory,
-			}).Inspect(context.Background(), InspectionRequest{Path: path})
+			}).Inspect(t.Context(), InspectionRequest{Path: path})
 
 			require.Error(t, err)
 			assert.True(t, service.IsCode(err, service.InspectionFailed))
@@ -236,7 +236,7 @@ func TestInspectionServicePreservesTypedInventoryError(t *testing.T) {
 
 	_, err := NewInspectionService(InspectionServiceOptions{
 		Inventory: inventory,
-	}).Inspect(context.Background(), InspectionRequest{Path: t.TempDir()})
+	}).Inspect(t.Context(), InspectionRequest{Path: t.TempDir()})
 
 	require.Error(t, err)
 	assert.Same(t, want, err)
@@ -253,7 +253,7 @@ func TestInspectionServiceHidesUnexpectedInventoryError(t *testing.T) {
 
 	_, err := NewInspectionService(InspectionServiceOptions{
 		Inventory: inventory,
-	}).Inspect(context.Background(), InspectionRequest{Path: t.TempDir()})
+	}).Inspect(t.Context(), InspectionRequest{Path: t.TempDir()})
 
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.InspectionFailed))
@@ -292,7 +292,7 @@ func TestInspectionServiceReturnsOnlyDoubleCheckedGeneration(t *testing.T) {
 		func() time.Time { return observedAt },
 	)
 
-	got, err := inspector.Inspect(context.Background(), InspectionRequest{
+	got, err := inspector.Inspect(t.Context(), InspectionRequest{
 		Path:               path,
 		ExpectedRepository: "github.com/acme/widget",
 		ExpectedGeneration: inspectionTestGeneration,
@@ -357,7 +357,7 @@ func TestInspectionServiceProductionInventoryCarriesConfiguredProtectedNames(t *
 		return ChangeSet{State: ChangeStateClean, Files: []FileChange{}}, nil
 	}
 
-	_, err = inspector.Inspect(context.Background(), InspectionRequest{Path: repository})
+	_, err = inspector.Inspect(t.Context(), InspectionRequest{Path: repository})
 
 	require.NoError(t, err)
 	require.Len(t, observed, 3)
@@ -391,7 +391,7 @@ func TestInspectionServiceRejectsMissingInventoryConfigBeforeGit(t *testing.T) {
 	)
 
 	got, err := inspector.Inspect(
-		context.Background(),
+		t.Context(),
 		InspectionRequest{Path: path},
 	)
 
@@ -417,7 +417,7 @@ func TestInspectionServiceRejectsGenerationDriftBeforeCollection(t *testing.T) {
 		time.Now,
 	)
 
-	_, err := inspector.Inspect(context.Background(), InspectionRequest{Path: path})
+	_, err := inspector.Inspect(t.Context(), InspectionRequest{Path: path})
 
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.RegistrationChanged))
@@ -447,7 +447,7 @@ func TestInspectionServiceDiscardsChangesWhenGenerationDriftsAfterCollection(t *
 		time.Now,
 	)
 
-	got, err := inspector.Inspect(context.Background(), InspectionRequest{Path: path})
+	got, err := inspector.Inspect(t.Context(), InspectionRequest{Path: path})
 
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.RegistrationChanged))
@@ -524,7 +524,7 @@ func TestInspectionServiceClassifiesReadAndCollectionFailures(t *testing.T) {
 			)
 
 			got, err := inspector.Inspect(
-				context.Background(),
+				t.Context(),
 				InspectionRequest{Path: path},
 			)
 
@@ -554,7 +554,7 @@ func TestInspectionServiceReportsOversizedChangeList(t *testing.T) {
 	)
 
 	got, err := inspector.Inspect(
-		context.Background(),
+		t.Context(),
 		InspectionRequest{Path: path},
 	)
 
@@ -600,7 +600,7 @@ func TestInspectionServiceRechecksGenerationAfterCollectionFailure(t *testing.T)
 			)
 
 			got, err := inspector.Inspect(
-				context.Background(),
+				t.Context(),
 				InspectionRequest{Path: path},
 			)
 
@@ -622,7 +622,7 @@ func TestInspectionServiceStopsBeforeInventoryWhenCanceled(t *testing.T) {
 	) (lifecycle.Result, error) {
 		return lifecycle.Result{}, private
 	}}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err := NewInspectionService(InspectionServiceOptions{
@@ -659,7 +659,7 @@ func TestInspectionServicePreservesCancellationAfterInventoryReturns(t *testing.
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			inventory := &inspectionTestInventory{query: func(
 				context.Context,
 				lifecycle.Request,
@@ -682,7 +682,7 @@ func TestInspectionServicePreservesCancellationDuringGitInspection(t *testing.T)
 	for _, stage := range []string{"generation pre-read", "collection", "generation post-read"} {
 		t.Run(stage, func(t *testing.T) {
 			path := t.TempDir()
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			reads := 0
 			readGeneration := func(
 				context.Context,
@@ -726,7 +726,7 @@ func TestInspectionServicePreservesCancellationDuringGitInspection(t *testing.T)
 
 func TestInspectionServicePreservesCallerDeadlineDuringGitInspection(t *testing.T) {
 	path := t.TempDir()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	defer cancel()
 	inspector := inspectionServiceForTest(
 		inspectionInventoryWithConfig(path, ""),
@@ -790,7 +790,7 @@ func TestInspectionServiceClassifiesOwnGitBudgetTimeoutAsRetryable(t *testing.T)
 			inspector.gitBudget = 10 * time.Millisecond
 
 			got, err := inspector.Inspect(
-				context.Background(),
+				t.Context(),
 				InspectionRequest{Path: path},
 			)
 
@@ -840,7 +840,7 @@ func TestInspectionServiceRejectsSuccessfulStageAfterOwnGitBudgetExpires(t *test
 			inspector.gitBudget = 10 * time.Millisecond
 
 			got, err := inspector.Inspect(
-				context.Background(),
+				t.Context(),
 				InspectionRequest{Path: path},
 			)
 
@@ -857,7 +857,7 @@ func TestInspectionServiceRejectsSuccessfulStageAfterOwnGitBudgetExpires(t *test
 func TestInspectionServiceRejectsMissingInventoryDependency(t *testing.T) {
 	assert.NotPanics(t, func() {
 		_, err := NewInspectionService(InspectionServiceOptions{}).Inspect(
-			context.Background(),
+			t.Context(),
 			InspectionRequest{Path: t.TempDir()},
 		)
 
@@ -906,11 +906,11 @@ func TestInspectionServiceInspectsRealPrimaryAndLinkedWorktrees(t *testing.T) {
 	}}
 	inspector := NewInspectionService(InspectionServiceOptions{Inventory: inventory})
 
-	primaryResult, err := inspector.Inspect(context.Background(), InspectionRequest{
+	primaryResult, err := inspector.Inspect(t.Context(), InspectionRequest{
 		Path: requestPath, ExpectedGeneration: primaryGeneration,
 	})
 	require.NoError(t, err)
-	linkedResult, err := inspector.Inspect(context.Background(), InspectionRequest{
+	linkedResult, err := inspector.Inspect(t.Context(), InspectionRequest{
 		Path: linked, ExpectedGeneration: linkedGeneration,
 	})
 	require.NoError(t, err)
@@ -986,7 +986,7 @@ func TestInspectionServiceRejectsRealGenerationReplacementOrRemoval(t *testing.T
 			}
 
 			got, err := serviceImpl.Inspect(
-				context.Background(),
+				t.Context(),
 				InspectionRequest{Path: primary, ExpectedGeneration: generation},
 			)
 
@@ -1038,7 +1038,7 @@ func TestInspectionServiceClassifiesRemovedWorktreeAroundGenerationFence(
 			}
 
 			got, err := serviceImpl.Inspect(
-				context.Background(),
+				t.Context(),
 				InspectionRequest{Path: linked, ExpectedGeneration: generation},
 			)
 

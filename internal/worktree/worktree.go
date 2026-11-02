@@ -269,9 +269,14 @@ func newRegistryCreationToken() (string, error) {
 	return hex.EncodeToString(tokenBytes), nil
 }
 
-// List returns all worktrees.
+// List returns all worktrees. Prefer ListContext when a context is available.
 func (m *Manager) List() ([]models.Worktree, error) {
-	return m.listGit(context.Background())
+	return m.ListContext(context.Background())
+}
+
+// ListContext returns all worktrees and stops its Git commands when ctx ends.
+func (m *Manager) ListContext(ctx context.Context) ([]models.Worktree, error) {
+	return m.listGit(ctx)
 }
 
 // GetWorktreePath returns the path for a worktree by pattern matching.

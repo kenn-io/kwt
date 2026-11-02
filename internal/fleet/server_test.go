@@ -16,7 +16,7 @@ import (
 
 func TestServerRejectsMissingBearerToken(t *testing.T) {
 	srv := NewServer(ServerOptions{Store: NewMemoryStoreForTest(), Token: "secret"})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/fleet/state", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/fleet/state", nil)
 	rec := httptest.NewRecorder()
 
 	srv.ServeHTTP(rec, req)
@@ -32,7 +32,7 @@ func TestServerPingUnauthenticated(t *testing.T) {
 		Version: "test-version",
 		PID:     123,
 	})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/ping", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/ping", nil)
 	rec := httptest.NewRecorder()
 
 	srv.ServeHTTP(rec, req)
@@ -49,7 +49,7 @@ func TestServerPingUnauthenticated(t *testing.T) {
 
 func TestServerPingDefaultsToSyncService(t *testing.T) {
 	srv := NewServer(ServerOptions{})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/ping", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/ping", nil)
 	rec := httptest.NewRecorder()
 
 	srv.ServeHTTP(rec, req)
@@ -63,13 +63,13 @@ func TestServerPingDefaultsToSyncService(t *testing.T) {
 func TestServerStoresManifestAndReturnsGroupedStateWithETag(t *testing.T) {
 	srv := NewServer(ServerOptions{Store: NewFileStore(filepath.Join(t.TempDir(), "state.json")), Token: "secret"})
 	body := encodeJSON(t, testManifest("host-a", "Host-A", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa"))
-	post := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/hosts/host-a/manifest", bytes.NewReader(body))
+	post := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/fleet/hosts/host-a/manifest", bytes.NewReader(body))
 	post.Header.Set("Authorization", "Bearer secret")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, post)
 	require.Equal(t, http.StatusNoContent, rec.Code)
 
-	get := httptest.NewRequest(http.MethodGet, "/api/v1/fleet/state", nil)
+	get := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/fleet/state", nil)
 	get.Header.Set("Authorization", "Bearer secret")
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, get)
@@ -82,7 +82,7 @@ func TestServerStoresManifestAndReturnsGroupedStateWithETag(t *testing.T) {
 	assert.Equal(t, "github.com/kenn-io/kwt", state.Rows[0].ProjectIdentity)
 	assert.Equal(t, `"`+state.StateVersion+`"`, rec.Header().Get("ETag"))
 
-	get304 := httptest.NewRequest(http.MethodGet, "/api/v1/fleet/state", nil)
+	get304 := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/fleet/state", nil)
 	get304.Header.Set("Authorization", "Bearer secret")
 	get304.Header.Set("If-None-Match", rec.Header().Get("ETag"))
 	rec304 := httptest.NewRecorder()
@@ -94,19 +94,19 @@ func TestServerStoresManifestAndReturnsGroupedStateWithETag(t *testing.T) {
 func TestServerDeletesHost(t *testing.T) {
 	srv := NewServer(ServerOptions{Store: NewMemoryStoreForTest(), Token: "secret"})
 	body := encodeJSON(t, testManifest("host-a", "Host-A", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa"))
-	post := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/hosts/host-a/manifest", bytes.NewReader(body))
+	post := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/fleet/hosts/host-a/manifest", bytes.NewReader(body))
 	post.Header.Set("Authorization", "Bearer secret")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, post)
 	require.Equal(t, http.StatusNoContent, rec.Code)
 
-	del := httptest.NewRequest(http.MethodDelete, "/api/v1/fleet/hosts/host-a", nil)
+	del := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/fleet/hosts/host-a", nil)
 	del.Header.Set("Authorization", "Bearer secret")
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, del)
 	require.Equal(t, http.StatusNoContent, rec.Code)
 
-	get := httptest.NewRequest(http.MethodGet, "/api/v1/fleet/state", nil)
+	get := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/fleet/state", nil)
 	get.Header.Set("Authorization", "Bearer secret")
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, get)
@@ -119,7 +119,7 @@ func TestServerDeletesHost(t *testing.T) {
 
 func TestServerRejectsInvalidFleetPath(t *testing.T) {
 	srv := NewServer(ServerOptions{Store: NewMemoryStoreForTest(), Token: "secret"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/hosts/host-a/manifest/extra", strings.NewReader("{}"))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/fleet/hosts/host-a/manifest/extra", strings.NewReader("{}"))
 	req.Header.Set("Authorization", "Bearer secret")
 	rec := httptest.NewRecorder()
 
@@ -131,7 +131,7 @@ func TestServerRejectsInvalidFleetPath(t *testing.T) {
 func TestServerRejectsBodyHostMismatch(t *testing.T) {
 	srv := NewServer(ServerOptions{Store: NewMemoryStoreForTest(), Token: "secret"})
 	body := encodeJSON(t, testManifest("host-b", "Host-B", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa"))
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/hosts/host-a/manifest", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/fleet/hosts/host-a/manifest", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer secret")
 	rec := httptest.NewRecorder()
 
@@ -143,7 +143,7 @@ func TestServerRejectsBodyHostMismatch(t *testing.T) {
 func TestServerRejectsInvalidHostIDPath(t *testing.T) {
 	srv := NewServer(ServerOptions{Store: NewMemoryStoreForTest(), Token: "secret"})
 	body := encodeJSON(t, testManifest("bad$id", "bad", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa"))
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/hosts/bad$id/manifest", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/fleet/hosts/bad$id/manifest", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer secret")
 	rec := httptest.NewRecorder()
 
@@ -156,14 +156,14 @@ func TestServerRejectsEscapedSlashInManifestHostIDPath(t *testing.T) {
 	store := NewMemoryStoreForTest()
 	srv := NewServer(ServerOptions{Store: store, Token: "secret"})
 	body := encodeJSON(t, testManifest("foo", "foo", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa"))
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/hosts/foo%2Fmanifest", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/fleet/hosts/foo%2Fmanifest", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer secret")
 	rec := httptest.NewRecorder()
 
 	srv.ServeHTTP(rec, req)
 
 	assertEscapedSlashRejected(t, rec.Code)
-	state, err := store.State(context.Background())
+	state, err := store.State(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, state.Hosts)
 	assert.Empty(t, state.Rows)
@@ -171,16 +171,16 @@ func TestServerRejectsEscapedSlashInManifestHostIDPath(t *testing.T) {
 
 func TestServerRejectsEscapedSlashInDeleteHostIDPath(t *testing.T) {
 	store := NewMemoryStoreForTest()
-	require.NoError(t, store.Put(context.Background(), testManifest("foo", "foo", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa")))
+	require.NoError(t, store.Put(t.Context(), testManifest("foo", "foo", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa")))
 	srv := NewServer(ServerOptions{Store: store, Token: "secret"})
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/fleet/hosts/foo%2Fbar", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/fleet/hosts/foo%2Fbar", nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	rec := httptest.NewRecorder()
 
 	srv.ServeHTTP(rec, req)
 
 	assertEscapedSlashRejected(t, rec.Code)
-	state, err := store.State(context.Background())
+	state, err := store.State(t.Context())
 	require.NoError(t, err)
 	require.Len(t, state.Hosts, 1)
 	assert.Equal(t, "foo", state.Hosts[0].HostID)
@@ -190,7 +190,7 @@ func TestServerRejectsUnknownManifestSchemaVersion(t *testing.T) {
 	srv := NewServer(ServerOptions{Store: NewMemoryStoreForTest(), Token: "secret"})
 	manifest := testManifest("host-a", "Host-A", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa")
 	manifest.SchemaVersion = 99
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/hosts/host-a/manifest", bytes.NewReader(encodeJSON(t, manifest)))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/fleet/hosts/host-a/manifest", bytes.NewReader(encodeJSON(t, manifest)))
 	req.Header.Set("Authorization", "Bearer secret")
 	rec := httptest.NewRecorder()
 
@@ -201,7 +201,7 @@ func TestServerRejectsUnknownManifestSchemaVersion(t *testing.T) {
 
 func TestServerRejectsManifestBodyOverOneMiB(t *testing.T) {
 	srv := NewServer(ServerOptions{Store: NewMemoryStoreForTest(), Token: "secret"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/hosts/host-a/manifest", strings.NewReader(strings.Repeat("x", 1<<20+1)))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/fleet/hosts/host-a/manifest", strings.NewReader(strings.Repeat("x", 1<<20+1)))
 	req.Header.Set("Authorization", "Bearer secret")
 	rec := httptest.NewRecorder()
 
@@ -225,7 +225,7 @@ func TestServerUnsupportedMethodsReturnMethodNotAllowed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			srv := NewServer(ServerOptions{Store: NewMemoryStoreForTest(), Token: "secret"})
-			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.path, nil)
 			req.Header.Set("Authorization", "Bearer secret")
 			rec := httptest.NewRecorder()
 

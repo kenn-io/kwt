@@ -47,7 +47,7 @@ func TestHTTPServerBoundsUnauthenticatedRequests(t *testing.T) {
 }
 
 func TestHostOperationContextSurvivesInitialShutdown(t *testing.T) {
-	hostContext, cancelHost := context.WithCancel(context.Background())
+	hostContext, cancelHost := context.WithCancel(t.Context())
 	operationContext, cancelOperations := newHostOperationContext(hostContext)
 	t.Cleanup(cancelOperations)
 
@@ -67,7 +67,7 @@ func TestHostOperationContextSurvivesInitialShutdown(t *testing.T) {
 }
 
 func TestHTTPServerClosesUnauthenticatedStalledBody(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	handler := NewServer(ServerOptions{
 		Token:        "secret",
@@ -77,7 +77,7 @@ func TestHTTPServerClosesUnauthenticatedStalledBody(t *testing.T) {
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
 
-	conn, err := net.Dial("tcp", listener.Addr().String())
+	conn, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", listener.Addr().String())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 	_, err = fmt.Fprintf(
@@ -120,7 +120,7 @@ func TestShutdownHTTPServerHonorsAbsoluteDrainDeadline(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 			require.NoError(t, err)
 			started := make(chan struct{})
 			canceled := make(chan struct{})
@@ -138,7 +138,15 @@ func TestShutdownHTTPServerHonorsAbsoluteDrainDeadline(t *testing.T) {
 			client := &http.Client{Transport: &http.Transport{Proxy: nil}}
 			requestDone := make(chan error, 1)
 			go func() {
-				_, err := client.Get("http://" + listener.Addr().String())
+				request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+listener.Addr().String(), nil)
+				if err != nil {
+					requestDone <- err
+					return
+				}
+				response, err := client.Do(request)
+				if err == nil {
+					err = response.Body.Close()
+				}
 				requestDone <- err
 			}()
 			<-started
@@ -161,7 +169,7 @@ func waitForRuntime(t *testing.T, home string) Observation {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		observation, err := Inspect(context.Background(), RuntimeStore(home), home)
+		observation, err := Inspect(t.Context(), RuntimeStore(home), home)
 		if err == nil && (observation.State == RuntimeReady ||
 			observation.State == RuntimeDraining) {
 			return observation
@@ -182,7 +190,7 @@ func runtimeFiles(t *testing.T, home string) []string {
 func TestServePublishesReadyRuntimeAndRemovesItOnShutdown(t *testing.T) {
 	home := t.TempDir()
 	sshResolver := &closingSSHResolver{closed: make(chan struct{})}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
 	go func() {
@@ -207,7 +215,7 @@ func TestServePublishesReadyRuntimeAndRemovesItOnShutdown(t *testing.T) {
 	assert.Contains(t, observation.Status.Capabilities, CapabilityOperationStream)
 	assert.True(t, slices.IsSorted(observation.Status.Capabilities))
 
-	_, err := observation.Client.Shutdown(context.Background(), "stop")
+	_, err := observation.Client.Shutdown(t.Context(), "stop")
 	require.NoError(t, err)
 	require.NoError(t, <-done)
 	assert.Empty(t, runtimeFiles(t, home))
@@ -222,7 +230,7 @@ func TestServePublishesReadyRuntimeAndRemovesItOnShutdown(t *testing.T) {
 func TestServeContinuesWithoutDisposableInventoryCache(t *testing.T) {
 	home := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(home, "cache"), []byte("blocked"), 0o600))
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
 	go func() {
@@ -244,22 +252,22 @@ func TestServeContinuesWithoutDisposableInventoryCache(t *testing.T) {
 	}
 
 	observation := waitForRuntime(t, home)
-	result, err := observation.Client.Inventory(context.Background(), kwt.Request{
+	result, err := observation.Client.Inventory(t.Context(), kwt.Request{
 		View: kwt.ViewProjects, UntrustedConfig: kwt.IgnoreUntrustedConfig,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, kwt.Fresh, result.Freshness)
-	result, err = observation.Client.Inventory(context.Background(), kwt.Request{
+	result, err = observation.Client.Inventory(t.Context(), kwt.Request{
 		View: kwt.ViewDashboard, UntrustedConfig: kwt.IgnoreUntrustedConfig,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, kwt.Fresh, result.Freshness)
-	status, err := observation.Client.Status(context.Background())
+	status, err := observation.Client.Status(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, status.LastError)
 	assert.Contains(t, status.LastError.Message, "inventory cache")
 
-	_, err = observation.Client.Shutdown(context.Background(), "stop")
+	_, err = observation.Client.Shutdown(t.Context(), "stop")
 	require.NoError(t, err)
 	require.NoError(t, <-done)
 }
@@ -280,7 +288,7 @@ func TestServeRedactsInvocationSecretsChangedAfterStartup(t *testing.T) {
 	t.Setenv(passwordName, "")
 	t.Setenv(fleetName, "")
 	cause := errors.New("credentials " + passwordValue + " and " + fleetValue)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
 	go func() {
@@ -298,11 +306,11 @@ func TestServeRedactsInvocationSecretsChangedAfterStartup(t *testing.T) {
 	observation := waitForRuntime(t, home)
 	require.NoError(t, os.Setenv(passwordName, passwordValue))
 	require.NoError(t, os.Setenv(fleetName, fleetValue))
-	_, err := observation.Client.Inventory(context.Background(), kwt.Request{
+	_, err := observation.Client.Inventory(t.Context(), kwt.Request{
 		View: kwt.ViewProjects, UntrustedConfig: kwt.IgnoreUntrustedConfig,
 	})
 	require.Error(t, err)
-	_, err = observation.Client.Shutdown(context.Background(), "stop")
+	_, err = observation.Client.Shutdown(t.Context(), "stop")
 	require.NoError(t, err)
 	require.NoError(t, <-done)
 
@@ -326,7 +334,7 @@ func TestServeRedactsConfiguredFleetTokenWithoutRequestExpansion(t *testing.T) {
 	))
 	t.Setenv(fleetName, fleetValue)
 	cause := errors.New("removal credential " + fleetValue)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
 	go func() {
@@ -343,11 +351,11 @@ func TestServeRedactsConfiguredFleetTokenWithoutRequestExpansion(t *testing.T) {
 
 	observation := waitForRuntime(t, home)
 	_, err := observation.Client.RemoveWorktree(
-		context.Background(),
+		t.Context(),
 		kwt.RemovalRequest{Path: "/worktrees/topic"},
 	)
 	require.Error(t, err)
-	_, err = observation.Client.Shutdown(context.Background(), "stop")
+	_, err = observation.Client.Shutdown(t.Context(), "stop")
 	require.NoError(t, err)
 	require.NoError(t, <-done)
 
@@ -365,7 +373,7 @@ func TestServeRedactsRemovalSecretsChangedAfterStartup(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv(secretName, "")
 	cause := errors.New("removal credential " + secretValue)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
 	go func() {
@@ -383,11 +391,11 @@ func TestServeRedactsRemovalSecretsChangedAfterStartup(t *testing.T) {
 	observation := waitForRuntime(t, home)
 	require.NoError(t, os.Setenv(secretName, secretValue))
 	_, err := observation.Client.RemoveWorktree(
-		context.Background(),
+		t.Context(),
 		kwt.RemovalRequest{Path: "/worktrees/topic"},
 	)
 	require.Error(t, err)
-	_, err = observation.Client.Shutdown(context.Background(), "stop")
+	_, err = observation.Client.Shutdown(t.Context(), "stop")
 	require.NoError(t, err)
 	require.NoError(t, <-done)
 
@@ -400,11 +408,11 @@ func TestServeRedactsRemovalSecretsChangedAfterStartup(t *testing.T) {
 func TestServeRefusesASecondWritableOwner(t *testing.T) {
 	home := t.TempDir()
 	store := RuntimeStore(home)
-	release, err := store.AcquireOwnerLock(context.Background())
+	release, err := store.AcquireOwnerLock(t.Context())
 	require.NoError(t, err)
 	defer release()
 
-	err = Serve(context.Background(), ServeOptions{
+	err = Serve(t.Context(), ServeOptions{
 		Home:       home,
 		Build:      Build{Version: "v1"},
 		Config:     models.DaemonConfig{ReplacementGrace: time.Second},
@@ -418,7 +426,7 @@ func TestBackgroundServeStopsAfterIdleButForegroundServeDoesNot(t *testing.T) {
 	backgroundHome := t.TempDir()
 	backgroundDone := make(chan error, 1)
 	go func() {
-		backgroundDone <- Serve(context.Background(), ServeOptions{
+		backgroundDone <- Serve(t.Context(), ServeOptions{
 			Home:  backgroundHome,
 			Build: Build{Version: "v1"},
 			Config: models.DaemonConfig{
@@ -439,7 +447,7 @@ func TestBackgroundServeStopsAfterIdleButForegroundServeDoesNot(t *testing.T) {
 	foregroundHome := t.TempDir()
 	foregroundDone := make(chan error, 1)
 	go func() {
-		foregroundDone <- Serve(context.Background(), ServeOptions{
+		foregroundDone <- Serve(t.Context(), ServeOptions{
 			Home:  foregroundHome,
 			Build: Build{Version: "v1"},
 			Config: models.DaemonConfig{
@@ -457,7 +465,7 @@ func TestBackgroundServeStopsAfterIdleButForegroundServeDoesNot(t *testing.T) {
 		require.FailNow(t, "foreground daemon exited for idle", err)
 	case <-time.After(60 * time.Millisecond):
 	}
-	_, err := observation.Client.Shutdown(context.Background(), "stop")
+	_, err := observation.Client.Shutdown(t.Context(), "stop")
 	require.NoError(t, err)
 	require.NoError(t, <-foregroundDone)
 }

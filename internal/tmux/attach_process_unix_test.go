@@ -14,7 +14,8 @@ const unixAttachProcessHelper = "KWT_TEST_UNIX_ATTACH_PROCESS"
 
 func TestReplaceAttachProcessReplacesUnixProcess(t *testing.T) {
 	if os.Getenv(unixAttachProcessHelper) == "1" {
-		cmd := exec.Command(
+		cmd := exec.CommandContext(
+			t.Context(),
 			"sh",
 			"-c",
 			`test "$$" = "$KWT_TEST_UNIX_ATTACH_PID" && printf replaced`,
@@ -35,7 +36,8 @@ func TestReplaceAttachProcessReplacesUnixProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	helper := exec.Command(
+	helper := exec.CommandContext(
+		t.Context(),
 		executable,
 		"-test.run=^TestReplaceAttachProcessReplacesUnixProcess$",
 	)

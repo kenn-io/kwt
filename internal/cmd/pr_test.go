@@ -257,7 +257,7 @@ func TestPreparePRServiceLoadsSelectedTargetConfiguration(t *testing.T) {
 
 	project, err := preparePRProject()
 	require.NoError(t, err)
-	_, _, _, err = preparePRService(context.Background(), project)
+	_, _, _, err = preparePRService(t.Context(), project)
 
 	require.NoError(t, err)
 	assert.Equal(t, "/repos/widget", loadedPath)
@@ -266,7 +266,7 @@ func TestPreparePRServiceLoadsSelectedTargetConfiguration(t *testing.T) {
 
 func TestPreparePRServiceRejectsPathOutsideMainRepositoryRootBeforeLoadingConfig(t *testing.T) {
 	repo := t.TempDir()
-	cmd := exec.Command("git", "init", "-b", "main", repo)
+	cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", repo)
 	require.NoError(t, cmd.Run())
 	subdir := filepath.Join(repo, "nested")
 	require.NoError(t, os.Mkdir(subdir, 0o755))
@@ -284,7 +284,7 @@ func TestPreparePRServiceRejectsPathOutsideMainRepositoryRootBeforeLoadingConfig
 		return testPRConfig(), nil
 	}
 
-	_, _, _, err := preparePRService(context.Background(), pullrequest.Project{
+	_, _, _, err := preparePRService(t.Context(), pullrequest.Project{
 		Identity: "github.com/acme/widget", Name: "widget", Path: subdir,
 	})
 
@@ -324,7 +324,7 @@ func TestPRConfigInitializationFailureUsesJSONContract(t *testing.T) {
 
 	kwtHome := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(kwtHome, "config.toml"), []byte("invalid = [\n"), 0o600))
-	cmd := exec.Command(os.Args[0], "-test.run=^TestPRConfigInitializationFailureUsesJSONContract$")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestPRConfigInitializationFailureUsesJSONContract$")
 	cmd.Env = append(os.Environ(),
 		"KWT_TEST_PR_CONFIG_INIT_FAILURE=1",
 		"KWT_HOME="+kwtHome,
@@ -469,7 +469,7 @@ func TestDefaultNewPRServiceResolvesTransferredRepository(t *testing.T) {
 	}
 
 	service, resolved, err := defaultNewPRService(
-		context.Background(),
+		t.Context(),
 		&models.Config{},
 		project,
 	)
@@ -489,7 +489,7 @@ func TestDefaultNewPRServiceRejectsNestedRepositoryIdentity(t *testing.T) {
 	}
 
 	_, _, err := defaultNewPRService(
-		context.Background(),
+		t.Context(),
 		&models.Config{},
 		pullrequest.Project{
 			Identity: "github.com/acme/team/widget",
@@ -984,7 +984,7 @@ func TestRunPRAttachUsesPersistedWorkspaceIdentity(t *testing.T) {
 		Path:     "/repos/widget",
 	}
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["pr-32"] = pullrequest.Provenance{
 				Project:   project,
@@ -1040,7 +1040,7 @@ func TestRunPRAttachPreservesLegacyGenerationForUnguardedSession(t *testing.T) {
 		Path:     "/repos/widget",
 	}
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records[recorded.Branch] = pullrequest.Provenance{
 				Project: project, Workspace: recorded,
@@ -1106,7 +1106,7 @@ func TestRunPRAttachGuardUsesVerifiedLiveWorkspaceIdentity(t *testing.T) {
 		recorded.Path,
 	)
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["pr-verified"] = pullrequest.Provenance{
 				Project: project, Workspace: recorded,
@@ -1187,7 +1187,7 @@ func TestRunPRAttachRejectsStaleGuardBeforeEnsuringSession(t *testing.T) {
 		TmuxSocketName: "kwt-pr-protected",
 	}
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["pr-guarded"] = pullrequest.Provenance{
 				Project: project, Workspace: workspace,
@@ -1259,7 +1259,7 @@ func TestRunPRAttachRejectsRemovedRegistrationBeforeEnsuringSession(t *testing.T
 		Path:     "/repos/widget",
 	}
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["pr-removed"] = pullrequest.Provenance{
 				Project: project, Workspace: workspace,
@@ -1332,7 +1332,7 @@ func TestRunPRAttachRejectsProvenanceReplacementWhileWaitingForProjectFence(t *t
 	recordB.Project = projectB
 	recordB.Workspace.Repository = projectB.Identity
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["reused"] = recordA
 			return nil
@@ -1355,7 +1355,7 @@ func TestRunPRAttachRejectsProvenanceReplacementWhileWaitingForProjectFence(t *t
 	t.Cleanup(func() { beforeProjectGuardAcquire = oldBeforeAcquire })
 	beforeProjectGuardAcquire = func() {
 		require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-			context.Background(),
+			t.Context(),
 			func(records map[string]pullrequest.Provenance) error {
 				records["reused"] = recordB
 				return nil
@@ -1410,7 +1410,7 @@ func TestRunPRAttachClassifiesDisappearanceWhileWaitingAsRegistrationChanged(t *
 		),
 	}
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["pr-disappeared"] = pullrequest.Provenance{
 				Project: project, Workspace: workspace,
@@ -1510,7 +1510,7 @@ func TestRunPRAttachClassifiesDeletedWorkspaceAsRegistrationChanged(t *testing.T
 		SessionName: "kwt-workspace-pr-deleted",
 	}
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records[branch] = pullrequest.Provenance{
 				Project: project, Workspace: workspace,
@@ -1586,7 +1586,7 @@ func TestRunPRAttachClassifiesDeletedProjectCheckoutAsChanged(t *testing.T) {
 		SessionName: "kwt-workspace-pr-project-deleted",
 	}
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records[branch] = pullrequest.Provenance{
 				Project: project, Workspace: workspace,
@@ -1662,7 +1662,7 @@ func TestRunPRAttachClassifiesReplacedProjectRegistrationAsChanged(t *testing.T)
 		SessionName: "kwt-workspace-pr-replaced-registration",
 	}
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records[branch] = pullrequest.Provenance{
 				Project: project, Workspace: workspace,
@@ -1746,7 +1746,7 @@ func TestRunPRAttachHoldsWorktreeGenerationThroughSessionEstablishment(t *testin
 		SessionName: "kwt-workspace-pr-attach-removal-race",
 	}
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records[branch] = pullrequest.Provenance{
 				Project: project, Workspace: workspace,
@@ -1858,7 +1858,7 @@ func TestImportedWorkspaceProvenanceEvaluatesEachCandidateProject(t *testing.T) 
 		},
 	}
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["current"] = current
 			records["stale"] = stale
@@ -1889,7 +1889,7 @@ func TestImportedWorkspaceProvenanceEvaluatesEachCandidateProject(t *testing.T) 
 	}
 
 	verified, err := importedWorkspaceProvenance(
-		context.Background(),
+		t.Context(),
 		workspacePath,
 	)
 
@@ -1948,7 +1948,7 @@ func TestImportedWorkspaceProvenanceInitializesOwnedLegacyGeneration(
 		},
 	}
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records[branch] = record
 			return nil
@@ -1970,7 +1970,7 @@ func TestImportedWorkspaceProvenanceInitializesOwnedLegacyGeneration(
 	}
 
 	verified, err := importedWorkspaceProvenance(
-		context.Background(),
+		t.Context(),
 		worktreePath,
 	)
 
@@ -2033,7 +2033,7 @@ func testImportedWorkspaceProvenanceDiscardsAnotherRepositoryOwner(
 		},
 	}
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["stale"] = stale
 			records["current"] = current
@@ -2051,7 +2051,7 @@ func testImportedWorkspaceProvenanceDiscardsAnotherRepositoryOwner(
 	}
 
 	verified, err := importedWorkspaceProvenance(
-		context.Background(),
+		t.Context(),
 		worktreePath,
 	)
 
@@ -2082,7 +2082,7 @@ func TestProtectedAttachReleasesFenceBeforeBlockingClient(t *testing.T) {
 		0o600,
 	))
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["pr-34"] = pullrequest.Provenance{
 				Project: project, Workspace: workspace,
@@ -2129,11 +2129,11 @@ func TestProtectedAttachReleasesFenceBeforeBlockingClient(t *testing.T) {
 	expansion, err := kwt.CaptureExpansionContext()
 	require.NoError(t, err)
 	claim, err := lifecycle.ObserveProjectClaim(
-		context.Background(), home, projectPath, expansion,
+		t.Context(), home, projectPath, expansion,
 	)
 	require.NoError(t, err)
 	releaseFence, err := lifecycle.AcquireProjectClaim(
-		context.Background(), home, claim,
+		t.Context(), home, claim,
 	)
 	require.NoError(t, err)
 	require.NoError(t, releaseFence())
@@ -2167,7 +2167,7 @@ func TestProtectedAttachEstablishesSessionBeforeRemovalProbes(t *testing.T) {
 		0o600,
 	))
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["pr-guarded"] = pullrequest.Provenance{
 				Repository: project.Identity,
@@ -2191,7 +2191,7 @@ func TestProtectedAttachEstablishesSessionBeforeRemovalProbes(t *testing.T) {
 		workspace.SessionName, workspace.Path,
 	)
 	t.Cleanup(func() {
-		_ = exec.Command("tmux", "-L", socketName, "kill-server").Run()
+		_ = exec.CommandContext(context.WithoutCancel(t.Context()), "tmux", "-L", socketName, "kill-server").Run()
 	})
 	established := make(chan struct{})
 	finishEnsure := make(chan struct{})
@@ -2200,7 +2200,8 @@ func TestProtectedAttachEstablishesSessionBeforeRemovalProbes(t *testing.T) {
 		pullrequest.Workspace,
 		*models.Config,
 	) (string, error) {
-		command := exec.Command(
+		command := exec.CommandContext(
+			t.Context(),
 			"tmux", "-L", socketName, "new-session", "-d",
 			"-s", workspace.SessionName, "sleep", "60",
 		)
@@ -2236,7 +2237,7 @@ func TestProtectedAttachEstablishesSessionBeforeRemovalProbes(t *testing.T) {
 	removeDone := make(chan error, 1)
 	go func() {
 		_, removeErr := remover.RemoveProject(
-			context.Background(),
+			t.Context(),
 			kwt.ProjectRemovalRequest{
 				Path: projectPath, ExpectedRepository: project.Identity,
 				ExpectedRegistration: fingerprint, Expansion: expansion,
@@ -2291,7 +2292,7 @@ func TestRunPRAttachUsesTransferredProvenanceAliasHistory(t *testing.T) {
 		},
 	}
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records[record.PullRequestID] = record
 			return nil
@@ -2355,7 +2356,7 @@ func TestRunPRAttachRejectsStaleProvenanceAgainstLiveInventory(t *testing.T) {
 		Path:     "/repos/widget",
 	}
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["pr-32"] = pullrequest.Provenance{
 				Project: project, Workspace: recorded,
@@ -2405,7 +2406,7 @@ func TestRunPRAttachIgnoresStaleGenerationBeforeCounting(t *testing.T) {
 	stale.Generation = "fedcba9876543210fedcba9876543210"
 	record := pullrequest.Provenance{Project: project, Workspace: live}
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["current"] = record
 			records["stale"] = pullrequest.Provenance{Project: project, Workspace: stale}
@@ -2448,7 +2449,7 @@ func TestImportedWorkspaceProvenanceRejectsUnreadableLiveGeneration(t *testing.T
 		Generation: "0123456789abcdef0123456789abcdef",
 	}
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["record"] = pullrequest.Provenance{Workspace: workspace}
 			return nil
@@ -2460,7 +2461,7 @@ func TestImportedWorkspaceProvenanceRejectsUnreadableLiveGeneration(t *testing.T
 		return "", errors.New("generation unavailable")
 	}
 
-	_, err := importedWorkspaceProvenance(context.Background(), workspace.Path)
+	_, err := importedWorkspaceProvenance(t.Context(), workspace.Path)
 
 	assertPRCode(t, err, pullrequest.CodeWorkspaceCreation)
 	assert.Contains(t, err.Error(), "generation")
@@ -2493,7 +2494,7 @@ func TestProtectedWorkspaceOpenMatchesGeneration(t *testing.T) {
 			t.Setenv("KWT_HOME", t.TempDir())
 			path := "/worktrees/reused"
 			require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-				context.Background(),
+				t.Context(),
 				func(records map[string]pullrequest.Provenance) error {
 					records["record"] = pullrequest.Provenance{Workspace: pullrequest.Workspace{
 						Path: path, Generation: tt.recordedGeneration,
@@ -2510,7 +2511,7 @@ func TestProtectedWorkspaceOpenMatchesGeneration(t *testing.T) {
 				return tt.liveGeneration, nil
 			}
 
-			err := rejectProtectedWorkspaceOpen(context.Background(), path, "")
+			err := rejectProtectedWorkspaceOpen(t.Context(), path, "")
 
 			if tt.wantProtected {
 				assert.Error(t, err)
@@ -2527,7 +2528,7 @@ func TestProtectedWorkspaceOpenFailsClosedWhenLiveGenerationIsUnavailable(t *tes
 	path := "/worktrees/protected"
 	recordedGeneration := "0123456789abcdef0123456789abcdef"
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["record"] = pullrequest.Provenance{Workspace: pullrequest.Workspace{
 				Path: path, Generation: recordedGeneration,
@@ -2541,7 +2542,7 @@ func TestProtectedWorkspaceOpenFailsClosedWhenLiveGenerationIsUnavailable(t *tes
 		return "", errors.New("generation unavailable")
 	}
 
-	err := rejectProtectedWorkspaceOpen(context.Background(), path, "")
+	err := rejectProtectedWorkspaceOpen(t.Context(), path, "")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "live generation")
@@ -2556,7 +2557,7 @@ func TestProtectedWorkspaceOpenUsesPlatformPathIdentity(t *testing.T) {
 	recordedPath := strings.ToUpper(path)
 	generation := "0123456789abcdef0123456789abcdef"
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["record"] = pullrequest.Provenance{Workspace: pullrequest.Workspace{
 				Path: recordedPath, Generation: generation,
@@ -2571,7 +2572,7 @@ func TestProtectedWorkspaceOpenUsesPlatformPathIdentity(t *testing.T) {
 		return generation, nil
 	}
 
-	err := rejectProtectedWorkspaceOpen(context.Background(), path, "")
+	err := rejectProtectedWorkspaceOpen(t.Context(), path, "")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "protected pull-request workspace")
@@ -2583,7 +2584,7 @@ func TestProtectedWorkspaceOpenRecognizesMovedWorkspaceByGeneration(t *testing.T
 	movedPath := "/worktrees/moved"
 	generation := "0123456789abcdef0123456789abcdef"
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["record"] = pullrequest.Provenance{Workspace: pullrequest.Workspace{
 				Path: originalPath, Generation: generation,
@@ -2597,7 +2598,7 @@ func TestProtectedWorkspaceOpenRecognizesMovedWorkspaceByGeneration(t *testing.T
 		return "", fmt.Errorf("unexpected generation read for %s", gotPath)
 	}
 
-	err := rejectProtectedWorkspaceOpen(context.Background(), movedPath, generation)
+	err := rejectProtectedWorkspaceOpen(t.Context(), movedPath, generation)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "kwt pr attach")
@@ -2614,7 +2615,7 @@ func TestProtectedWorkspaceOpenSkipsGenerationReadWithoutProvenance(t *testing.T
 	}
 
 	err := rejectProtectedWorkspaceOpen(
-		context.Background(),
+		t.Context(),
 		"/worktrees/ordinary",
 		"",
 	)
@@ -2651,7 +2652,7 @@ func TestInspectPRProjectCloneUsesRegisteredIdentityOverForkOrigin(
 	}
 
 	project, workspaces, err := defaultInspectPRProjectClone(
-		context.Background(),
+		t.Context(),
 		pullrequest.Provenance{
 			Repository: recorded.Identity,
 			Project:    recorded,
@@ -2701,7 +2702,7 @@ func TestInspectPRProjectCloneAcceptsTransferredRegisteredAlias(
 	}
 
 	project, workspaces, err := defaultInspectPRProjectClone(
-		context.Background(),
+		t.Context(),
 		recorded,
 	)
 
@@ -2809,7 +2810,7 @@ func TestInspectPRProjectCloneUsesLiveIdentityWithoutRegistration(
 	}
 
 	project, workspaces, err := defaultInspectPRProjectClone(
-		context.Background(),
+		t.Context(),
 		pullrequest.Provenance{
 			Repository: recorded.Identity,
 			Project:    recorded,
@@ -2842,7 +2843,7 @@ func TestInspectPRProjectCloneRejectsConflictingRegistration(
 	}
 
 	_, _, err := defaultInspectPRProjectClone(
-		context.Background(),
+		t.Context(),
 		pullrequest.Provenance{
 			Repository: recorded.Identity,
 			Project:    recorded,
@@ -2880,7 +2881,7 @@ func TestInspectPRProjectCloneRejectsAmbiguousRegistrations(
 	}
 
 	_, _, err := defaultInspectPRProjectClone(
-		context.Background(),
+		t.Context(),
 		pullrequest.Provenance{
 			Repository: recorded.Identity,
 			Project:    recorded,
@@ -2950,7 +2951,7 @@ func runPRInspectionGit(
 	args ...string,
 ) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", output)

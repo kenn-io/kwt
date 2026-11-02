@@ -74,7 +74,7 @@ func TestSSHResolveRouteRoundTripsSnapshotAndReusesService(t *testing.T) {
 		User: "deploy", Hostname: "build.example.test",
 	}}
 	for range 2 {
-		result, err := client.ResolveSSH(context.Background(), request)
+		result, err := client.ResolveSSH(t.Context(), request)
 		require.NoError(t, err)
 		assert.Equal(t, resolver.result, result)
 	}
@@ -100,7 +100,7 @@ func TestSSHResolveRouteAcceptsSnapshotAboveControlResponseLimit(t *testing.T) {
 	client, closeServer := newSSHResolutionTestClient(t, resolver, NewGate(time.Now()))
 	defer closeServer()
 
-	result, err := client.ResolveSSH(context.Background(), kwt.SSHResolveRequest{
+	result, err := client.ResolveSSH(t.Context(), kwt.SSHResolveRequest{
 		Target: kwt.SSHTarget{Hostname: "build.example.test"},
 	})
 	require.NoError(t, err)
@@ -121,7 +121,7 @@ func TestSSHResolveRouteRejectsSnapshotAboveEndpointLimit(t *testing.T) {
 	client, closeServer := newSSHResolutionTestClient(t, resolver, NewGate(time.Now()))
 	defer closeServer()
 
-	_, err := client.ResolveSSH(context.Background(), kwt.SSHResolveRequest{
+	_, err := client.ResolveSSH(t.Context(), kwt.SSHResolveRequest{
 		Target: kwt.SSHTarget{Hostname: "build.example.test"},
 	})
 	require.Error(t, err)
@@ -144,10 +144,10 @@ func TestSSHResolveRouteUsesFreshSanitizedInvocationEnvironment(t *testing.T) {
 	client, closeServer := newSSHResolutionTestClient(t, resolver, NewGate(time.Now()))
 	defer closeServer()
 	request := kwt.SSHResolveRequest{Target: kwt.SSHTarget{Hostname: "build.example.test"}}
-	_, err := client.ResolveSSH(context.Background(), request)
+	_, err := client.ResolveSSH(t.Context(), request)
 	require.NoError(t, err)
 	t.Setenv("KWT_SSH_INVOCATION_CONTEXT", "second")
-	_, err = client.ResolveSSH(context.Background(), request)
+	_, err = client.ResolveSSH(t.Context(), request)
 	require.NoError(t, err)
 
 	resolver.mu.Lock()
@@ -173,7 +173,7 @@ func TestSSHResolveRoutePreservesStableFailures(t *testing.T) {
 	client, closeServer := newSSHResolutionTestClient(t, resolver, NewGate(time.Now()))
 	defer closeServer()
 
-	_, err := client.ResolveSSH(context.Background(), kwt.SSHResolveRequest{
+	_, err := client.ResolveSSH(t.Context(), kwt.SSHResolveRequest{
 		Target: kwt.SSHTarget{Hostname: "build.example.test"},
 	})
 	require.Error(t, err)
@@ -187,7 +187,7 @@ func TestSSHResolveRouteReservesDaemonWorkAndHonorsCancellation(t *testing.T) {
 	client, closeServer := newSSHResolutionTestClient(t, resolver, gate)
 	defer closeServer()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
 		_, err := client.ResolveSSH(ctx, kwt.SSHResolveRequest{
@@ -238,7 +238,7 @@ func TestSSHResolveResponseDoesNotPublishCanonicalOptions(t *testing.T) {
 		Environment:      []string{},
 	})
 	require.NoError(t, err)
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:43210/api/v1/ssh/resolve", strings.NewReader(string(body)))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1:43210/api/v1/ssh/resolve", strings.NewReader(string(body)))
 	request.Host = "127.0.0.1:43210"
 	request.Header.Set("Authorization", "Bearer secret")
 	request.Header.Set("Content-Type", "application/json")
@@ -275,7 +275,8 @@ func TestSSHResolveRouteRejectsMissingInvocationEnvironment(t *testing.T) {
 			})
 			body, err := json.Marshal(test.request)
 			require.NoError(t, err)
-			request := httptest.NewRequest(
+			request := httptest.NewRequestWithContext(
+				t.Context(),
 				http.MethodPost,
 				"http://127.0.0.1:43210/api/v1/ssh/resolve",
 				strings.NewReader(string(body)),

@@ -148,7 +148,7 @@ func (s *fakeDaemonSSHLifecycle) Acquire(
 
 func TestServerAcquiresTouchesAndReleasesSSHLease(t *testing.T) {
 	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
-	hub := NewOperationHub(context.Background(), OperationHubOptions{
+	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		IDSource: func() (string, error) { return "operation-1", nil },
 	})
 	gate := NewGate(now)
@@ -177,6 +177,7 @@ func TestServerAcquiresTouchesAndReleasesSSHLease(t *testing.T) {
 	})
 	require.NoError(t, err)
 	response := serveSSHRequest(
+		t,
 		handler, http.MethodPost, "/api/v1/ssh/leases", requestBody,
 	)
 	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
@@ -203,15 +204,18 @@ func TestServerAcquiresTouchesAndReleasesSSHLease(t *testing.T) {
 	deadline := now.Add(time.Minute)
 	provider.status = Status{State: StateDraining, DrainDeadline: &deadline}
 	response = serveSSHRequest(
+		t,
 		handler, http.MethodPost, "/api/v1/ssh/leases", requestBody,
 	)
 	assert.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
 
 	response = serveSSHRequest(
+		t,
 		handler, http.MethodPost, "/api/v1/ssh/leases/"+result.LeaseID+"/touch", nil,
 	)
 	assert.Equal(t, http.StatusNoContent, response.Code, response.Body.String())
 	response = serveSSHRequest(
+		t,
 		handler, http.MethodDelete, "/api/v1/ssh/leases/"+result.LeaseID, nil,
 	)
 	assert.Equal(t, http.StatusNoContent, response.Code, response.Body.String())
@@ -223,7 +227,7 @@ func TestServerAcquiresTouchesAndReleasesSSHLease(t *testing.T) {
 }
 
 func TestServerRejectsMasterlessSSHLease(t *testing.T) {
-	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	hub := NewOperationHub(t.Context(), OperationHubOptions{})
 	gate := NewGate(time.Now())
 	lease := &fakeDaemonSSHLease{mode: kwt.SSHLeaseModeMasterless}
 	handler := NewServer(ServerOptions{
@@ -243,7 +247,7 @@ func TestServerRejectsMasterlessSSHLease(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	response := serveSSHRequest(handler, http.MethodPost, sshLeaseRoute, requestBody)
+	response := serveSSHRequest(t, handler, http.MethodPost, sshLeaseRoute, requestBody)
 	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
 	subscription, err := hub.Subscribe("masterless-operation", 0)
 	require.NoError(t, err)
@@ -273,7 +277,7 @@ func TestClientFollowsSSHLeaseOperationAndReleasesLease(t *testing.T) {
 	defer closeServer()
 	var events []service.OperationEventKind
 	result, err := client.AcquireSSH(
-		context.Background(),
+		t.Context(),
 		kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{
 			LogicalTarget: kwt.SSHTarget{Hostname: "build.example.test"},
 			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
@@ -288,13 +292,13 @@ func TestClientFollowsSSHLeaseOperationAndReleasesLease(t *testing.T) {
 	assert.Equal(t, []string{"-S", "/private/control"}, result.Arguments)
 	assert.Contains(t, events, service.OperationEventProgress)
 	assert.Contains(t, events, service.OperationEventComplete)
-	holdContext, cancelHold := context.WithCancel(context.Background())
+	holdContext, cancelHold := context.WithCancel(t.Context())
 	hold, err := client.HoldSSHLease(holdContext, result.LeaseID)
 	require.NoError(t, err)
 	cancelHold()
 	require.NoError(t, hold.Close())
-	require.NoError(t, client.TouchSSHLease(context.Background(), result.LeaseID))
-	require.NoError(t, client.ReleaseSSHLease(context.Background(), result.LeaseID))
+	require.NoError(t, client.TouchSSHLease(t.Context(), result.LeaseID))
+	require.NoError(t, client.ReleaseSSHLease(t.Context(), result.LeaseID))
 
 	lifecycle.mu.Lock()
 	require.Len(t, lifecycle.requests, 1)
@@ -358,7 +362,7 @@ func TestClientPrefersTerminalSSHFailureAfterLostStartResponse(t *testing.T) {
 	client := clientForUnverifiedServer(t, server, "secret")
 
 	_, err := client.AcquireSSH(
-		context.Background(),
+		t.Context(),
 		kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{
 			LogicalTarget: kwt.SSHTarget{Hostname: "build.example.test"},
 			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
@@ -379,7 +383,7 @@ func TestClientReturnsSSHLeaseResultWithTerminalCallbackFailure(t *testing.T) {
 	defer closeServer()
 	writeErr := errors.New("output closed")
 	result, err := client.AcquireSSH(
-		context.Background(),
+		t.Context(),
 		kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{
 			LogicalTarget: kwt.SSHTarget{Hostname: "build.example.test"},
 			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
@@ -393,7 +397,7 @@ func TestClientReturnsSSHLeaseResultWithTerminalCallbackFailure(t *testing.T) {
 	)
 	assert.ErrorIs(t, err, writeErr)
 	assert.NotEmpty(t, result.LeaseID)
-	require.NoError(t, client.ReleaseSSHLease(context.Background(), result.LeaseID))
+	require.NoError(t, client.ReleaseSSHLease(t.Context(), result.LeaseID))
 }
 
 func TestClientRoundTripsSSHLeaseControlErrors(t *testing.T) {
@@ -403,7 +407,7 @@ func TestClientRoundTripsSSHLeaseControlErrors(t *testing.T) {
 	)
 	defer closeServer()
 	result, err := client.AcquireSSH(
-		context.Background(),
+		t.Context(),
 		kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{
 			LogicalTarget: kwt.SSHTarget{Hostname: "build.example.test"},
 			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
@@ -417,21 +421,21 @@ func TestClientRoundTripsSSHLeaseControlErrors(t *testing.T) {
 		service.SSHConnectionChanged, "SSH connection changed", false, nil, nil,
 	)
 	lease.mu.Unlock()
-	err = client.TouchSSHLease(context.Background(), result.LeaseID)
+	err = client.TouchSSHLease(t.Context(), result.LeaseID)
 	assert.True(t, service.IsCode(err, service.SSHConnectionChanged), err)
 
 	lease.mu.Lock()
 	lease.touchErr = nil
 	lease.releaseErr = context.DeadlineExceeded
 	lease.mu.Unlock()
-	err = client.ReleaseSSHLease(context.Background(), result.LeaseID)
+	err = client.ReleaseSSHLease(t.Context(), result.LeaseID)
 	assert.True(t, service.IsCode(err, service.SSHCleanupFailed), err)
 	assert.True(t, service.AsError(err).Retryable)
 
 	lease.mu.Lock()
 	lease.releaseErr = nil
 	lease.mu.Unlock()
-	require.NoError(t, client.ReleaseSSHLease(context.Background(), result.LeaseID))
+	require.NoError(t, client.ReleaseSSHLease(t.Context(), result.LeaseID))
 }
 
 func TestClientCarriesMultipleBoundSSHPromptRounds(t *testing.T) {
@@ -441,7 +445,7 @@ func TestClientCarriesMultipleBoundSSHPromptRounds(t *testing.T) {
 	defer closeServer()
 	responses := []string{"secret", "123456"}
 	result, err := client.AcquireSSH(
-		context.Background(),
+		t.Context(),
 		kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{
 			LogicalTarget: kwt.SSHTarget{Hostname: "build.example.test"},
 			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
@@ -457,7 +461,7 @@ func TestClientCarriesMultipleBoundSSHPromptRounds(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"secret", "123456"}, lifecycle.answers)
-	require.NoError(t, client.ReleaseSSHLease(context.Background(), result.LeaseID))
+	require.NoError(t, client.ReleaseSSHLease(t.Context(), result.LeaseID))
 }
 
 func TestClientCancelsSSHOperationWithoutPromptHandler(t *testing.T) {
@@ -475,7 +479,7 @@ func TestClientCancelsSSHOperationWithoutPromptHandler(t *testing.T) {
 			defer closeServer()
 
 			_, err := client.AcquireSSH(
-				context.Background(),
+				t.Context(),
 				kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{
 					LogicalTarget: kwt.SSHTarget{Hostname: "build.example.test"},
 					RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
@@ -495,7 +499,7 @@ func TestClientCancelsSSHOperationWithoutPromptHandler(t *testing.T) {
 
 func TestServerExpiresSSHLeaseWhenClientStopsTouching(t *testing.T) {
 	now := time.Now()
-	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	hub := NewOperationHub(t.Context(), OperationHubOptions{})
 	gate := NewGate(now)
 	lease := &fakeDaemonSSHLease{}
 	handler := NewServer(ServerOptions{
@@ -516,7 +520,7 @@ func TestServerExpiresSSHLeaseWhenClientStopsTouching(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	response := serveSSHRequest(handler, http.MethodPost, sshLeaseRoute, requestBody)
+	response := serveSSHRequest(t, handler, http.MethodPost, sshLeaseRoute, requestBody)
 	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
 	subscription, err := hub.Subscribe("expiry-operation", 0)
 	require.NoError(t, err)
@@ -544,7 +548,7 @@ func TestSSHLeaseRegistryCloseInvalidatesEveryDaemonLease(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, gate.Snapshot().ActiveLeases)
 
-	require.NoError(t, registry.close(context.Background()))
+	require.NoError(t, registry.close(t.Context()))
 	assert.Equal(t, 0, gate.Snapshot().ActiveLeases)
 }
 
@@ -559,10 +563,10 @@ func TestSSHLeaseRegistryCloseDoesNotWaitForBlockedLeaseRelease(t *testing.T) {
 	leaseID, err := registry.add(lease)
 	require.NoError(t, err)
 	releaseDone := make(chan error, 1)
-	go func() { releaseDone <- registry.release(context.Background(), leaseID) }()
+	go func() { releaseDone <- registry.release(t.Context(), leaseID) }()
 	<-lease.started
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 	closeDone := make(chan error, 1)
 	go func() { closeDone <- registry.close(ctx) }()
@@ -586,7 +590,7 @@ func TestSSHLeaseReleaseDeadlineLeavesCleanupRetryable(t *testing.T) {
 	leaseID, err := registry.add(lease)
 	require.NoError(t, err)
 	releaseDone := make(chan error, 1)
-	go func() { releaseDone <- registry.release(context.Background(), leaseID) }()
+	go func() { releaseDone <- registry.release(t.Context(), leaseID) }()
 	<-lease.started
 
 	select {
@@ -601,7 +605,7 @@ func TestSSHLeaseReleaseDeadlineLeavesCleanupRetryable(t *testing.T) {
 	}
 	assert.Equal(t, 1, gate.Snapshot().ActiveLeases)
 	close(lease.unblock)
-	require.NoError(t, registry.release(context.Background(), leaseID))
+	require.NoError(t, registry.release(t.Context(), leaseID))
 	assert.Equal(t, 0, gate.Snapshot().ActiveLeases)
 }
 
@@ -610,7 +614,7 @@ func TestServeDrainsActiveSSHLeaseThenClosesLifecycleOwner(t *testing.T) {
 	owner := &hostDaemonSSHLifecycle{
 		lease: &fakeDaemonSSHLease{}, closed: make(chan struct{}),
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
 	go func() {
@@ -628,7 +632,7 @@ func TestServeDrainsActiveSSHLeaseThenClosesLifecycleOwner(t *testing.T) {
 	assert.Contains(t, observation.Status.Capabilities, CapabilitySSHLifecycle)
 	assert.Contains(t, observation.Status.Capabilities, CapabilitySSHLeaseHold)
 	result, err := observation.Client.AcquireSSH(
-		context.Background(),
+		t.Context(),
 		kwt.SSHLeaseRequest{Snapshot: kwt.SSHRouteSnapshot{
 			LogicalTarget: kwt.SSHTarget{Hostname: "build.example.test"},
 			RouteIdentity: "route-one", ProjectionPolicy: kwt.SSHProjectionPolicyV2,
@@ -637,7 +641,7 @@ func TestServeDrainsActiveSSHLeaseThenClosesLifecycleOwner(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.NotEmpty(t, result.LeaseID)
-	status, err := observation.Client.Shutdown(context.Background(), "replacement")
+	status, err := observation.Client.Shutdown(t.Context(), "replacement")
 	require.NoError(t, err)
 	assert.Equal(t, StateDraining, status.Status.State)
 	assert.Equal(t, 1, status.Status.ActiveLeases)
@@ -658,7 +662,7 @@ func TestServeClosesDistinctSSHResolverAndLifecycleOwners(t *testing.T) {
 	lifecycle := &hostDaemonSSHLifecycle{
 		lease: &fakeDaemonSSHLease{}, closed: make(chan struct{}),
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
 	go func() {
@@ -673,7 +677,7 @@ func TestServeClosesDistinctSSHResolverAndLifecycleOwners(t *testing.T) {
 		})
 	}()
 	observation := waitForRuntime(t, home)
-	_, err := observation.Client.Shutdown(context.Background(), "replacement")
+	_, err := observation.Client.Shutdown(t.Context(), "replacement")
 	require.NoError(t, err)
 	require.NoError(t, <-done)
 	select {
@@ -695,7 +699,7 @@ func newSSHLifecycleTestClient(
 	t.Helper()
 	provider := &testStatusProvider{status: Status{State: StateReady}}
 	gate := NewGate(time.Now())
-	hubContext, cancelHub := context.WithCancel(context.Background())
+	hubContext, cancelHub := context.WithCancel(t.Context())
 	hub := NewOperationHub(hubContext, OperationHubOptions{
 		Reserve: func() (func(), error) {
 			return gate.Reserve(ReservationWork, time.Now())
@@ -722,12 +726,14 @@ func newSSHLifecycleTestClient(
 }
 
 func serveSSHRequest(
+	t *testing.T,
 	handler http.Handler,
 	method string,
 	path string,
 	body []byte,
 ) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(method, "http://127.0.0.1:43210"+path, bytes.NewReader(body))
+	t.Helper()
+	request := httptest.NewRequestWithContext(t.Context(), method, "http://127.0.0.1:43210"+path, bytes.NewReader(body))
 	request.Host = "127.0.0.1:43210"
 	request.Header.Set("Authorization", "Bearer secret")
 	request.Header.Set("Content-Type", "application/json")

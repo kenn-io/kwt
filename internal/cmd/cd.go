@@ -108,5 +108,5 @@ Or, to use the old behavior (launching a new shell), run:
 	}
 
 	// Default behavior: launch a new shell
-	return LaunchShell(worktreePath)
+	return LaunchShell(commandContext(cmd), worktreePath)
 }

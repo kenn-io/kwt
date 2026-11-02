@@ -1,7 +1,6 @@
 package worktree
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -52,7 +51,7 @@ func TestRunPostWorktreeSetup_RendersTemplateVariables(t *testing.T) {
 	m := buildManagerWithRepoSetting(git, setting)
 
 	exec := newRecordingExecutor()
-	results := m.runPostWorktreeSetupWithExecutor(context.Background(), exec, "feature/new-ui", "/tmp/worktrees/kwt/feature-new-ui")
+	results := m.runPostWorktreeSetupWithExecutor(t.Context(), exec, "feature/new-ui", "/tmp/worktrees/kwt/feature-new-ui")
 
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
@@ -87,7 +86,7 @@ func TestRunPostWorktreeSetup_FallbackWhenRemoteUnavailable(t *testing.T) {
 	m := buildManagerWithRepoSetting(git, setting)
 
 	exec := newRecordingExecutor()
-	results := m.runPostWorktreeSetupWithExecutor(context.Background(), exec, "topic", "/wt/topic")
+	results := m.runPostWorktreeSetupWithExecutor(t.Context(), exec, "topic", "/wt/topic")
 
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
@@ -123,7 +122,7 @@ func TestRunPostWorktreeSetup_TemplateErrorSkipsOnlyFailing(t *testing.T) {
 	m := buildManagerWithRepoSetting(git, setting)
 
 	exec := newRecordingExecutor()
-	results := m.runPostWorktreeSetupWithExecutor(context.Background(), exec, "br", "/wt/br")
+	results := m.runPostWorktreeSetupWithExecutor(t.Context(), exec, "br", "/wt/br")
 
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results (bad skipped), got %d", len(results))
@@ -149,7 +148,7 @@ func TestRunPostWorktreeSetup_NoMatchingRepoSetting(t *testing.T) {
 	m := buildManagerWithRepoSetting(git, setting)
 
 	exec := newRecordingExecutor()
-	results := m.runPostWorktreeSetupWithExecutor(context.Background(), exec, "br", "/wt/br")
+	results := m.runPostWorktreeSetupWithExecutor(t.Context(), exec, "br", "/wt/br")
 
 	if len(results) != 0 {
 		t.Errorf("expected no results when repo does not match, got %d", len(results))

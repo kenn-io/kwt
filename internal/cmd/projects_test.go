@@ -41,7 +41,7 @@ func withProjectsConfig(t *testing.T, projects []models.Project) {
 		published := make([]kwt.Project, 0, len(projects))
 		for _, project := range projects {
 			identity, err := lifecycle.ResolveProjectRegistrationIdentity(
-				context.Background(),
+				t.Context(),
 				config.ProjectRegistration{Persisted: project, Effective: project},
 			)
 			if err != nil {
@@ -789,7 +789,7 @@ func TestProjectsAddUnknownFlagBeforeJSONUsesStructuredError(t *testing.T) {
 		return
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestProjectsAddUnknownFlagBeforeJSONUsesStructuredError$")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestProjectsAddUnknownFlagBeforeJSONUsesStructuredError$")
 	cmd.Env = append(os.Environ(), "KWT_TEST_PROJECTS_UNKNOWN_FLAG=1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -817,7 +817,7 @@ func TestProjectsConfigInitializationFailureUsesJSONContract(t *testing.T) {
 
 	kwtHome := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(kwtHome, "config.toml"), []byte("invalid = [\n"), 0o600))
-	cmd := exec.Command(os.Args[0], "-test.run=^TestProjectsConfigInitializationFailureUsesJSONContract$")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestProjectsConfigInitializationFailureUsesJSONContract$")
 	cmd.Env = append(os.Environ(),
 		"KWT_TEST_PROJECTS_CONFIG_INIT_FAILURE=1",
 		"KWT_HOME="+kwtHome,

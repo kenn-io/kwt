@@ -64,7 +64,7 @@ func TestSSHRunnerUsesAccountLoginShellAndInvocationDirectory(t *testing.T) {
 	var capturedEnvironment []string
 
 	exitCode, err := runSSHProcessWith(
-		context.Background(),
+		t.Context(),
 		[]string{"-MNf", "--", "deploy@build.internal"},
 		workingDirectory,
 		[]string{"PATH=" + bin, "SSH_AUTH_SOCK=/tmp/agent"},
@@ -107,7 +107,7 @@ func TestSSHRunnerPreservesProcessDiagnosticForClients(t *testing.T) {
 		"#!/bin/sh\nprintf '%s\\n' '"+diagnostic+"' >&2\nexit 255\n",
 	), 0o700))
 
-	status, err := runSSHProcessWith(context.Background(), nil, directory,
+	status, err := runSSHProcessWith(t.Context(), nil, directory,
 		[]string{"PATH=" + directory}, runOutput,
 		func(context.Context) (string, error) { return "/bin/sh", nil },
 	)

@@ -20,7 +20,7 @@ func TestTerminalPasswordCancellationRestoresEcho(t *testing.T) {
 		_ = terminal.Close()
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	result := make(chan error, 1)
 	go func() {
 		_, readErr := readTerminalPassword(ctx, terminal)

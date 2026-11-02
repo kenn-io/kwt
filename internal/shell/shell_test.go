@@ -92,7 +92,7 @@ func TestBashSyntaxValid(t *testing.T) {
 	if err := WriteWrapper(&buf, "bash", TemplateData{CommandName: "kwt"}); err != nil {
 		t.Fatalf("WriteWrapper() error = %v", err)
 	}
-	cmd := exec.Command("bash", "-n", "-c", buf.String())
+	cmd := exec.CommandContext(t.Context(), "bash", "-n", "-c", buf.String())
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Errorf("bash syntax check failed: %v\n%s", err, output)
 	}
@@ -106,7 +106,7 @@ func TestZshSyntaxValid(t *testing.T) {
 	if err := WriteWrapper(&buf, "zsh", TemplateData{CommandName: "kwt"}); err != nil {
 		t.Fatalf("WriteWrapper() error = %v", err)
 	}
-	cmd := exec.Command("zsh", "-n", "-c", buf.String())
+	cmd := exec.CommandContext(t.Context(), "zsh", "-n", "-c", buf.String())
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Errorf("zsh syntax check failed: %v\n%s", err, output)
 	}
@@ -120,7 +120,7 @@ func TestFishSyntaxValid(t *testing.T) {
 	if err := WriteWrapper(&buf, "fish", TemplateData{CommandName: "kwt"}); err != nil {
 		t.Fatalf("WriteWrapper() error = %v", err)
 	}
-	cmd := exec.Command("fish", "--no-execute", "-c", buf.String())
+	cmd := exec.CommandContext(t.Context(), "fish", "--no-execute", "-c", buf.String())
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Errorf("fish syntax check failed: %v\n%s", err, output)
 	}

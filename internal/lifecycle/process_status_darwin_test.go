@@ -12,7 +12,7 @@ import (
 )
 
 func TestSystemProcessStatusReportsUnreapedChildAsZombie(t *testing.T) {
-	command := exec.Command("true")
+	command := exec.CommandContext(t.Context(), "true")
 	require.NoError(t, command.Start())
 	t.Cleanup(func() { _ = command.Wait() })
 	candidate := systemWorktreeProcess{Process: &process.Process{Pid: int32(command.Process.Pid)}}
@@ -24,7 +24,7 @@ func TestSystemProcessStatusReportsUnreapedChildAsZombie(t *testing.T) {
 }
 
 func TestSystemProcessStatusFailsForReapedProcess(t *testing.T) {
-	command := exec.Command("true")
+	command := exec.CommandContext(t.Context(), "true")
 	require.NoError(t, command.Run())
 	candidate := systemWorktreeProcess{Process: &process.Process{Pid: int32(command.Process.Pid)}}
 

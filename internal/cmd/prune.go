@@ -182,7 +182,7 @@ func runPruneExpired(cmd *cobra.Command, _ []string) error {
 				candidate.outcome.Remediation = "Restore filesystem access and retry."
 				break
 			}
-			candidate.git = git.New(entry.Path)
+			candidate.git = git.NewWithContext(cmd.Context(), entry.Path)
 			expectedGitDir, gitDirErr := expiredWorktreeGitDir(candidate.git, entry.Path)
 			if gitDirErr != nil {
 				candidate.outcome = pruneOutcomeForError(entry.Path, entry.Branch, gitDirErr)

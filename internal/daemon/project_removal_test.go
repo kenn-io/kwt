@@ -42,7 +42,7 @@ func TestProjectRemovalClientRoundTripsExactRequest(t *testing.T) {
 		Expansion:            kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home/user"},
 	}
 
-	result, err := client.RemoveProject(context.Background(), request)
+	result, err := client.RemoveProject(t.Context(), request)
 
 	require.NoError(t, err)
 	assert.Equal(t, remover.result, result)
@@ -64,7 +64,7 @@ func TestProjectRemovalClientPreservesSafeLiveDetails(t *testing.T) {
 	client, closeServer := projectRemovalTestClient(t, remover)
 	defer closeServer()
 
-	_, err := client.RemoveProject(context.Background(), kwt.ProjectRemovalRequest{})
+	_, err := client.RemoveProject(t.Context(), kwt.ProjectRemovalRequest{})
 
 	typed := service.AsError(err)
 	assert.Equal(t, service.ProtectedSessionLive, typed.Code)
@@ -101,7 +101,7 @@ func TestProjectRemovalClientReconcilesLostSuccessfulResponse(t *testing.T) {
 		Expansion:            expansion,
 	}
 
-	result, err := client.RemoveProject(context.Background(), request)
+	result, err := client.RemoveProject(t.Context(), request)
 
 	require.NoError(t, err)
 	assert.Equal(t, "/repo ", result.Project.Path)
@@ -116,7 +116,7 @@ func TestProjectRemovalClientPreservesLostResponseWhenRegistrationRemains(t *tes
 	}}, false)
 	defer closeServer()
 
-	_, err := client.RemoveProject(context.Background(), kwt.ProjectRemovalRequest{
+	_, err := client.RemoveProject(t.Context(), kwt.ProjectRemovalRequest{
 		Path: "/repo ", ExpectedRepository: "github.com/acme/widget",
 		ExpectedRegistration: "v1:1111111111111111111111111111111111111111111111111111111111111111",
 		Expansion:            kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
@@ -133,7 +133,7 @@ func TestProjectRemovalClientReconcilesEquivalentRepositoryCase(t *testing.T) {
 	}}, false)
 	defer closeServer()
 
-	_, err := client.RemoveProject(context.Background(), kwt.ProjectRemovalRequest{
+	_, err := client.RemoveProject(t.Context(), kwt.ProjectRemovalRequest{
 		Path: "/repo ", ExpectedRepository: "github.com/acme/widget",
 		ExpectedRegistration: "v1:1111111111111111111111111111111111111111111111111111111111111111",
 		Expansion:            kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
@@ -150,7 +150,7 @@ func TestProjectRemovalClientDistinguishesLocalIdentityTrailingWhitespace(t *tes
 	}}, false)
 	defer closeServer()
 
-	_, err := client.RemoveProject(context.Background(), kwt.ProjectRemovalRequest{
+	_, err := client.RemoveProject(t.Context(), kwt.ProjectRemovalRequest{
 		Path: "/repo ", ExpectedRepository: "local/repo ",
 		ExpectedRegistration: "v1:1111111111111111111111111111111111111111111111111111111111111111",
 		Expansion:            kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
@@ -166,7 +166,7 @@ func TestProjectRemovalClientReportsReplacementAfterLostResponse(t *testing.T) {
 	}}, false)
 	defer closeServer()
 
-	_, err := client.RemoveProject(context.Background(), kwt.ProjectRemovalRequest{
+	_, err := client.RemoveProject(t.Context(), kwt.ProjectRemovalRequest{
 		Path: "/repo ", ExpectedRepository: "github.com/acme/widget",
 		ExpectedRegistration: "v1:1111111111111111111111111111111111111111111111111111111111111111",
 		Expansion:            kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
@@ -182,7 +182,7 @@ func TestProjectRemovalClientReportsSameRepositoryReplacementAfterLostResponse(t
 	}}, false)
 	defer closeServer()
 
-	_, err := client.RemoveProject(context.Background(), kwt.ProjectRemovalRequest{
+	_, err := client.RemoveProject(t.Context(), kwt.ProjectRemovalRequest{
 		Path: "/repo ", ExpectedRepository: "github.com/acme/widget",
 		ExpectedRegistration: "v1:1111111111111111111111111111111111111111111111111111111111111111",
 		Expansion:            kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
@@ -199,7 +199,7 @@ func TestProjectRemovalClientRequiresRefreshForAmbiguousReconciliation(t *testin
 	client, closeServer := lostProjectRemovalClient(t, []kwt.Project{project, project}, false)
 	defer closeServer()
 
-	_, err := client.RemoveProject(context.Background(), kwt.ProjectRemovalRequest{
+	_, err := client.RemoveProject(t.Context(), kwt.ProjectRemovalRequest{
 		Path: "/repo ", ExpectedRepository: "github.com/acme/widget",
 		ExpectedRegistration: project.RegistrationFingerprint,
 		Expansion:            kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},
@@ -213,7 +213,7 @@ func TestProjectRemovalClientMarksUnreconciledResponseLossForRefresh(t *testing.
 	client, closeServer := lostProjectRemovalClient(t, nil, true)
 	defer closeServer()
 
-	_, err := client.RemoveProject(context.Background(), kwt.ProjectRemovalRequest{
+	_, err := client.RemoveProject(t.Context(), kwt.ProjectRemovalRequest{
 		Path: "/repo ", ExpectedRepository: "github.com/acme/widget",
 		ExpectedRegistration: "v1:1111111111111111111111111111111111111111111111111111111111111111",
 		Expansion:            kwt.ExpansionContext{WorkingDirectory: "/work", HomeDirectory: "/home"},

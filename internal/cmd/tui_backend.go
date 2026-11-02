@@ -1428,7 +1428,7 @@ func observeTUIProjectGuard(
 	required bool,
 	expectedIdentities []string,
 ) (*guardedProjectOperation, error) {
-	mainPath, err := git.New(repositoryPath).GetMainRepositoryPath()
+	mainPath, err := git.NewWithContext(ctx, repositoryPath).GetMainRepositoryPath()
 	if err != nil {
 		return nil, fmt.Errorf("resolve selected repository root: %w", err)
 	}
@@ -2109,19 +2109,18 @@ func (b *tuiBackend) OpenExistingInTmux(
 	return prepare(ctx, endpoint)
 }
 
-func (b *tuiBackend) AttachOutsideTmux(row dashboard.Row, layoutName string) error {
+func (b *tuiBackend) AttachOutsideTmux(ctx context.Context, row dashboard.Row, layoutName string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.attachWorkspace(context.Background(), row, layoutName, config.StdinInteractive())
+	return b.attachWorkspace(ctx, row, layoutName, config.StdinInteractive())
 }
 
-func (b *tuiBackend) AttachExistingOutsideTmux(row dashboard.Row) error {
+func (b *tuiBackend) AttachExistingOutsideTmux(ctx context.Context, row dashboard.Row) error {
 	b.mu.Lock()
 	resolveLive := b.resolveLive
 	acknowledge := b.acknowledgeRemoteSource
 	attach := b.attachSession
 	b.mu.Unlock()
-	ctx := context.Background()
 	endpoint, err := resolveExistingWorkspaceEndpoint(ctx, row, resolveLive, acknowledge)
 	if err != nil {
 		return err

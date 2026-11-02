@@ -1,7 +1,6 @@
 package tmux
 
 import (
-	"context"
 	"reflect"
 	"slices"
 	"testing"
@@ -63,11 +62,11 @@ func TestServerCommandsSeparateKWTAndDefaultEnvironmentPolicy(t *testing.T) {
 	})
 
 	kwtServer := servers.kwtServer().newCmd(
-		context.Background(),
+		t.Context(),
 		[]string{"list-sessions"},
 	)
 	defaultServer := servers.defaultServer().newCmd(
-		context.Background(),
+		t.Context(),
 		[]string{"list-sessions"},
 	)
 
@@ -98,7 +97,7 @@ func TestServerCommandsExplicitlyUnsetDefaultTempDir(t *testing.T) {
 	})
 
 	command := servers.defaultServer().newCmd(
-		context.Background(),
+		t.Context(),
 		[]string{"list-sessions"},
 	)
 
@@ -126,7 +125,7 @@ func TestDefaultServerProbeStripsParentIdentityWithoutExtraNames(t *testing.T) {
 	t.Setenv("TMUX_PANE", "%7")
 
 	command := newServerCommands(WorkspaceSessionsOptions{Command: "tmux"}).defaultServer().newCmd(
-		context.Background(),
+		t.Context(),
 		[]string{"list-sessions"},
 	)
 

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,16 +19,16 @@ func TestCollectWorktreeStatusesGlobalPreservesRegisteredRepository(t *testing.T
 	baseDir := t.TempDir()
 	repoDir := filepath.Join(baseDir, "repo")
 	require.NoError(t, os.MkdirAll(repoDir, 0755))
-	require.NoError(t, cmdStatusTestGit(repoDir, "init", "-b", "main"))
-	require.NoError(t, cmdStatusTestGit(repoDir, "remote", "add", "origin", "https://github.com/fork/repo.git"))
-	require.NoError(t, cmdStatusTestGit(repoDir, "config", "user.name", "Test User"))
-	require.NoError(t, cmdStatusTestGit(repoDir, "config", "user.email", "test@example.com"))
-	require.NoError(t, cmdStatusTestGit(repoDir, "commit", "--allow-empty", "-m", "initial"))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "init", "-b", "main"))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "remote", "add", "origin", "https://github.com/fork/repo.git"))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "config", "user.name", "Test User"))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "config", "user.email", "test@example.com"))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "commit", "--allow-empty", "-m", "initial"))
 
 	resetStatusTestFlags(t)
 	statusGlobal = true
 	statusNoFetch = true
-	statuses, err := collectWorktreeStatuses(context.Background(), &models.Config{
+	statuses, err := collectWorktreeStatuses(t.Context(), &models.Config{
 		Worktree: models.WorktreeConfig{BaseDir: baseDir},
 		Projects: []models.Project{{
 			Path:       repoDir,
@@ -46,17 +45,17 @@ func TestCollectWorktreeStatusesLocalUsesCanonicalLocalRepository(t *testing.T) 
 	baseDir := t.TempDir()
 	repoDir := filepath.Join(baseDir, "repo")
 	require.NoError(t, os.MkdirAll(repoDir, 0755))
-	require.NoError(t, cmdStatusTestGit(repoDir, "init", "-b", "main"))
-	require.NoError(t, cmdStatusTestGit(repoDir, "config", "user.name", "Test User"))
-	require.NoError(t, cmdStatusTestGit(repoDir, "config", "user.email", "test@example.com"))
-	require.NoError(t, cmdStatusTestGit(repoDir, "commit", "--allow-empty", "-m", "initial"))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "init", "-b", "main"))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "config", "user.name", "Test User"))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "config", "user.email", "test@example.com"))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "commit", "--allow-empty", "-m", "initial"))
 	changeDir(t, repoDir)
 
 	want, err := worktree.RepositoryInfoFromLocalPath(repoDir)
 	require.NoError(t, err)
 	resetStatusTestFlags(t)
 	statusNoFetch = true
-	statuses, err := collectWorktreeStatuses(context.Background(), &models.Config{
+	statuses, err := collectWorktreeStatuses(t.Context(), &models.Config{
 		Worktree: models.WorktreeConfig{BaseDir: baseDir},
 	}, ui.New(&models.UIConfig{}))
 
@@ -67,18 +66,18 @@ func TestCollectWorktreeStatusesLocalUsesCanonicalLocalRepository(t *testing.T) 
 
 func TestCollectWorktreeStatusesReturnsPerWorktreeFailure(t *testing.T) {
 	repoDir := t.TempDir()
-	require.NoError(t, cmdStatusTestGit(repoDir, "init", "-b", "main"))
-	require.NoError(t, cmdStatusTestGit(repoDir, "config", "user.name", "Test User"))
-	require.NoError(t, cmdStatusTestGit(repoDir, "config", "user.email", "test@example.com"))
-	require.NoError(t, cmdStatusTestGit(repoDir, "commit", "--allow-empty", "-m", "initial"))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "init", "-b", "main"))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "config", "user.name", "Test User"))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "config", "user.email", "test@example.com"))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "commit", "--allow-empty", "-m", "initial"))
 	linked := filepath.Join(t.TempDir(), "missing-linked-worktree")
-	require.NoError(t, cmdStatusTestGit(repoDir, "worktree", "add", "-b", "topic", linked))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "worktree", "add", "-b", "topic", linked))
 	require.NoError(t, os.RemoveAll(linked))
 	changeDir(t, repoDir)
 	resetStatusTestFlags(t)
 	statusNoFetch = true
 
-	statuses, err := collectWorktreeStatuses(context.Background(), &models.Config{}, ui.New(&models.UIConfig{}))
+	statuses, err := collectWorktreeStatuses(t.Context(), &models.Config{}, ui.New(&models.UIConfig{}))
 
 	assert.Nil(t, statuses)
 	require.Error(t, err)
@@ -92,16 +91,16 @@ func TestImportedWorktreeReceivesAutomaticStatusAndFleetInspection(t *testing.T)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	repoDir := t.TempDir()
-	require.NoError(t, cmdStatusTestGit(repoDir, "init", "-b", "main"))
-	require.NoError(t, cmdStatusTestGit(repoDir, "config", "user.name", "Test User"))
-	require.NoError(t, cmdStatusTestGit(repoDir, "config", "user.email", "test@example.com"))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "init", "-b", "main"))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "config", "user.name", "Test User"))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "config", "user.email", "test@example.com"))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(repoDir, "README.md"),
 		[]byte("# remote\n"),
 		0644,
 	))
-	require.NoError(t, cmdStatusTestGit(repoDir, "add", "."))
-	require.NoError(t, cmdStatusTestGit(repoDir, "commit", "-m", "Initial commit"))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "add", "."))
+	require.NoError(t, cmdStatusTestGit(t, repoDir, "commit", "-m", "Initial commit"))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(repoDir, "README.md"),
 		[]byte("# changed\n"),
@@ -126,7 +125,7 @@ func TestImportedWorktreeReceivesAutomaticStatusAndFleetInspection(t *testing.T)
 	}
 
 	statuses, err := collectWorktreeStatuses(
-		context.Background(),
+		t.Context(),
 		cfg,
 		ui.New(&models.UIConfig{}),
 	)
@@ -135,7 +134,7 @@ func TestImportedWorktreeReceivesAutomaticStatusAndFleetInspection(t *testing.T)
 	require.Equal(t, models.WorktreeStatusModified, statuses[0].Status)
 	require.Equal(t, 1, statuses[0].GitStatus.Modified)
 
-	manifest, err := builder.Build(context.Background(), cfg)
+	manifest, err := builder.Build(t.Context(), cfg)
 	require.NoError(t, err)
 	require.Len(t, manifest.Worktrees, 1)
 	require.Equal(t, 1, manifest.Worktrees[0].Status.Modified)
@@ -152,8 +151,9 @@ func resetStatusTestFlags(t *testing.T) {
 	statusStaleDays = 14
 }
 
-func cmdStatusTestGit(dir string, args ...string) error {
-	cmd := exec.Command("git", args...)
+func cmdStatusTestGit(t *testing.T, dir string, args ...string) error {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	return cmd.Run()
 }

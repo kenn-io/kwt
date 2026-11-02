@@ -18,9 +18,9 @@ func TestStorePutLatestAndBuildStateGroupsRows(t *testing.T) {
 	first := testManifest("host-a", "Host-A", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa")
 	second := testManifest("host-b", "Host-B", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "bbb")
 
-	require.NoError(t, store.Put(context.Background(), first))
-	require.NoError(t, store.Put(context.Background(), second))
-	state, err := store.State(context.Background())
+	require.NoError(t, store.Put(t.Context(), first))
+	require.NoError(t, store.Put(t.Context(), second))
+	state, err := store.State(t.Context())
 
 	require.NoError(t, err)
 	require.Len(t, state.Rows, 1)
@@ -41,9 +41,9 @@ func TestStoreGroupsRowsAcrossProjectIdentityCasing(t *testing.T) {
 	first := testManifest("host-a", "Host-A", "darwin/arm64", "github.com/kenn-io/KWT", "branch", "feature/fleet", "aaa")
 	second := testManifest("host-b", "Host-B", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "bbb")
 
-	require.NoError(t, store.Put(context.Background(), first))
-	require.NoError(t, store.Put(context.Background(), second))
-	state, err := store.State(context.Background())
+	require.NoError(t, store.Put(t.Context(), first))
+	require.NoError(t, store.Put(t.Context(), second))
+	state, err := store.State(t.Context())
 
 	require.NoError(t, err)
 	require.Len(t, state.Rows, 1,
@@ -59,9 +59,9 @@ func TestStoreKeepsCaseSensitiveHostIdentitiesSeparate(t *testing.T) {
 	first := testManifest("host-a", "Host-A", "darwin/arm64", "git.example.com/srv/KWT", "branch", "feature/fleet", "aaa")
 	second := testManifest("host-b", "Host-B", "darwin/arm64", "git.example.com/srv/kwt", "branch", "feature/fleet", "bbb")
 
-	require.NoError(t, store.Put(context.Background(), first))
-	require.NoError(t, store.Put(context.Background(), second))
-	state, err := store.State(context.Background())
+	require.NoError(t, store.Put(t.Context(), first))
+	require.NoError(t, store.Put(t.Context(), second))
+	state, err := store.State(t.Context())
 
 	require.NoError(t, err)
 	require.Len(t, state.Rows, 2,
@@ -78,11 +78,11 @@ func TestStoreGroupsRowsAcrossProjectIdentityCasingRegardlessOfOrder(t *testing.
 		if lowerFirst {
 			a, b = b, a
 		}
-		require.NoError(t, store.Put(context.Background(),
+		require.NoError(t, store.Put(t.Context(),
 			testManifest("host-a", "Host-A", "darwin/arm64", a, "branch", "feature/fleet", "aaa")))
-		require.NoError(t, store.Put(context.Background(),
+		require.NoError(t, store.Put(t.Context(),
 			testManifest("host-b", "Host-B", "darwin/arm64", b, "branch", "feature/fleet", "bbb")))
-		state, err := store.State(context.Background())
+		state, err := store.State(t.Context())
 		require.NoError(t, err)
 		require.Len(t, state.Rows, 1)
 		return state.Rows[0].ProjectIdentity
@@ -94,7 +94,7 @@ func TestStoreGroupsRowsAcrossProjectIdentityCasingRegardlessOfOrder(t *testing.
 }
 
 func TestStoreProjectNameUsesLaterMatchingProjectManifest(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewFileStore(filepath.Join(t.TempDir(), "state.json"))
 	first := testManifest("alpha", "alpha", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa")
 	first.Projects = nil
@@ -110,7 +110,7 @@ func TestStoreProjectNameUsesLaterMatchingProjectManifest(t *testing.T) {
 }
 
 func TestStoreHostCollisionWarning(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewFileStore(filepath.Join(t.TempDir(), "state.json"))
 	require.NoError(t, store.Put(ctx, testManifestWithHost("same", "one", "darwin/arm64")))
 	require.NoError(t, store.Put(ctx, testManifestWithHost("same", "two", "linux/amd64")))
@@ -122,7 +122,7 @@ func TestStoreHostCollisionWarning(t *testing.T) {
 }
 
 func TestStorePutReplacesLatestManifestForHost(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewFileStore(filepath.Join(t.TempDir(), "state.json"))
 	first := testManifest("host-a", "Host-A", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa")
 	second := testManifest("host-a", "Host-A", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "bbb")
@@ -141,7 +141,7 @@ func TestStorePutReplacesLatestManifestForHost(t *testing.T) {
 }
 
 func TestStoreDeleteRemovesHostAndChangesStateVersion(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewFileStore(filepath.Join(t.TempDir(), "state.json"))
 	require.NoError(t, store.Put(ctx, testManifest("host-a", "Host-A", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa")))
 	require.NoError(t, store.Put(ctx, testManifest("host-b", "Host-B", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "bbb")))
@@ -162,9 +162,9 @@ func TestStoreDeleteRemovesHostAndChangesStateVersion(t *testing.T) {
 func TestStoreMissingFileReturnsEmptyDeterministicState(t *testing.T) {
 	store := NewFileStore(filepath.Join(t.TempDir(), "missing", "state.json"))
 
-	first, err := store.State(context.Background())
+	first, err := store.State(t.Context())
 	require.NoError(t, err)
-	second, err := store.State(context.Background())
+	second, err := store.State(t.Context())
 	require.NoError(t, err)
 
 	assert.Equal(t, StateSchemaVersion, first.SchemaVersion)
@@ -254,7 +254,7 @@ func TestStorePutRejectsInvalidManifest(t *testing.T) {
 			manifest := testManifest("host-a", "Host-A", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa")
 			tt.change(&manifest)
 
-			err := store.Put(context.Background(), manifest)
+			err := store.Put(t.Context(), manifest)
 
 			require.Error(t, err)
 		})
@@ -266,7 +266,7 @@ func TestStorePutIdentityErrorDoesNotEchoSubmittedValue(t *testing.T) {
 	manifest := testManifest("host-a", "Host-A", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa")
 	manifest.Projects[0].Identity = "https://user:sekret-token@github.com/kenn-io/kwt.git"
 
-	err := store.Put(context.Background(), manifest)
+	err := store.Put(t.Context(), manifest)
 
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "sekret-token",
@@ -278,13 +278,13 @@ func TestStorePutAcceptsCanonicalIdentityWithExplicitPort(t *testing.T) {
 	identity := "github.com:2222/kenn-io/kwt"
 	manifest := testManifest("host-a", "Host-A", "darwin/arm64", identity, "branch", "feature/fleet", "aaa")
 
-	err := store.Put(context.Background(), manifest)
+	err := store.Put(t.Context(), manifest)
 
 	require.NoError(t, err)
 }
 
 func TestStoreStateVersionDeterministicRegardlessOfWriteOrder(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	first := testManifest("host-a", "Host-A", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa")
 	second := testManifest("host-b", "Host-B", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "bbb")
 
@@ -307,7 +307,7 @@ func TestStoreStateVersionDeterministicRegardlessOfWriteOrder(t *testing.T) {
 }
 
 func TestStoreAtomicPersistenceCreatesPrivateParentAndReloads(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "nested", "fleet", "state.json")
 	store := NewFileStore(path)
 	require.NoError(t, store.Put(ctx, testManifest("host-a", "Host-A", "darwin/arm64", "github.com/kenn-io/kwt", "branch", "feature/fleet", "aaa")))
@@ -330,7 +330,7 @@ func TestStoreAtomicPersistenceCreatesPrivateParentAndReloads(t *testing.T) {
 }
 
 func TestStoreCanceledContextReturnsContextErrorAndDoesNotWrite(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	path := filepath.Join(t.TempDir(), "state.json")
 	store := NewFileStore(path)

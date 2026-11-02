@@ -31,7 +31,7 @@ const (
 	maxAskpassConnections     = 8
 )
 
-var askpassProtocolMagic = [6]byte{'K', 'W', 'T', 'A', 'P', '2'} //nolint:gochecknoglobals
+var askpassProtocolMagic = [6]byte{'K', 'W', 'T', 'A', 'P', '2'}
 
 type InteractiveVersionPolicy interface {
 	RequireInteractive(context.Context) error
@@ -117,7 +117,7 @@ func NewAskpass(
 		cleanupDirectory()
 		return nil, err
 	}
-	listener, endpoint, cleanupEndpoint, err := listenAskpass(directory)
+	listener, endpoint, cleanupEndpoint, err := listenAskpass(ctx, directory)
 	if err != nil {
 		cleanupDirectory()
 		return nil, err
@@ -230,7 +230,7 @@ func (a *Askpass) serve() {
 }
 
 func (a *Askpass) handleConnection(connection net.Conn) {
-	defer connection.Close() //nolint:errcheck // The protocol result is already complete.
+	defer connection.Close() // The protocol result is already complete.
 	_ = connection.SetReadDeadline(time.Now().Add(askpassIOTimeout))
 	magic := make([]byte, len(askpassProtocolMagic))
 	if _, err := io.ReadFull(connection, magic); err != nil || !bytesEqual(magic, askpassProtocolMagic[:]) {
@@ -337,11 +337,12 @@ func RunAskpassHelper(arguments, environment []string, output io.Writer) (int, b
 	if err != nil {
 		return 1, true
 	}
-	connection, err := dialAskpass(handle, askpassIOTimeout)
+	// The helper runs as its own process from Execute, which has no context.
+	connection, err := dialAskpass(context.Background(), handle, askpassIOTimeout)
 	if err != nil {
 		return 1, true
 	}
-	defer connection.Close() //nolint:errcheck // Helper is exiting.
+	defer connection.Close() // Helper is exiting.
 	_ = connection.SetDeadline(time.Now().Add(askpassHelperTimeout))
 	if _, err := connection.Write(askpassProtocolMagic[:]); err != nil {
 		return 1, true

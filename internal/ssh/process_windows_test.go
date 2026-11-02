@@ -30,7 +30,7 @@ func TestRunOutputCancellationTerminatesWindowsProcessTree(t *testing.T) {
 		"KWT_RESOLVER_CHILD_PID_PATH="+childPIDPath,
 	)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
 		_, _, _, err := runOutput(
@@ -89,7 +89,7 @@ func TestRunOutputCancellationTerminatesWindowsProcessTree(t *testing.T) {
 	defer func() {
 		_ = windows.CloseHandle(handle)
 	}()
-	defer windows.TerminateProcess(handle, 1) //nolint:errcheck // Cleanup after a failed assertion.
+	defer windows.TerminateProcess(handle, 1) // Cleanup after a failed assertion.
 
 	cancel()
 	select {
@@ -133,7 +133,7 @@ func TestRunOutputResolvesExecutableWithInvocationEnvironment(t *testing.T) {
 	)
 
 	stdout, _, _, err := runOutput(
-		context.Background(),
+		t.Context(),
 		[]string{"kwt-ssh-path-test", "-test.run=^TestResolverWindowsProcessHelper$"},
 		t.TempDir(),
 		environment,
@@ -166,7 +166,7 @@ func TestResolverWindowsProcessHelper(t *testing.T) {
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-		child := exec.Command(os.Args[0], "-test.run=^TestResolverWindowsProcessHelper$")
+		child := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestResolverWindowsProcessHelper$")
 		child.Env = append(os.Environ(), resolverProcessHelperRole+"=child")
 		child.Stdout = os.Stdout
 		child.Stderr = os.Stderr

@@ -99,11 +99,11 @@ func (r *recordingWorkspaceAttachCommand) AttachSessionNested(
 }
 
 func (r *recordingWorkspaceAttachCommand) AttachSessionNestedCommand(
-	_ context.Context,
+	ctx context.Context,
 	session string,
 ) *exec.Cmd {
 	r.preparedSession = session
-	return exec.Command(os.Args[0], "attach-session", "-t", session)
+	return exec.CommandContext(ctx, os.Args[0], "attach-session", "-t", session)
 }
 
 func TestWorkspaceSessionsEstablishesOnResolvedCanonicalEndpoint(t *testing.T) {
@@ -120,7 +120,7 @@ func TestWorkspaceSessionsEstablishesOnResolvedCanonicalEndpoint(t *testing.T) {
 	}
 
 	got, err := runner.EstablishWithGeneration(
-		context.Background(),
+		t.Context(),
 		"workspace",
 		"/work/widget",
 		resolverTestGeneration,
@@ -148,7 +148,7 @@ func TestWorkspaceSessionsEstablishesOnResolvedAdoptedEndpoint(t *testing.T) {
 	}
 
 	got, err := runner.Establish(
-		context.Background(),
+		t.Context(),
 		"workspace",
 		"/work/widget",
 		BlankLayout(),
@@ -191,7 +191,7 @@ func TestWorkspaceSessionsRepairsResolvedSessionName(t *testing.T) {
 			}
 
 			got, err := runner.establish(
-				context.Background(),
+				t.Context(),
 				"requested-session",
 				"/work/widget",
 				test.generation,
@@ -250,7 +250,7 @@ func TestWorkspaceSessionsNeverCreatesReplacementOnExitedResolvedEndpoint(t *tes
 			}
 
 			got, err := runner.establish(
-				context.Background(),
+				t.Context(),
 				"workspace",
 				"/work/widget",
 				test.generation,
@@ -303,7 +303,7 @@ func TestWorkspaceSessionsRoutesAttachmentByClientMembership(t *testing.T) {
 			}
 			endpoint := canonicalEndpoint("workspace")
 
-			err := runner.Attach(context.Background(), endpoint)
+			err := runner.Attach(t.Context(), endpoint)
 
 			require.NoError(t, err)
 			assert.Equal(t, test.wantVerb, command.verb)
@@ -344,7 +344,7 @@ func TestWorkspaceSessionsPreparesCrossServerAttachForResidentUI(t *testing.T) {
 			}
 
 			process, err := runner.PrepareResidentAttach(
-				context.Background(), canonicalEndpoint("workspace"),
+				t.Context(), canonicalEndpoint("workspace"),
 			)
 
 			require.NoError(t, err)
@@ -390,7 +390,7 @@ func TestWorkspaceSessionsExpectedEstablishmentNeverRepairsOrCreatesOtherSession
 			}
 
 			_, err := runner.EstablishExpectedWithGeneration(
-				context.Background(),
+				t.Context(),
 				"current",
 				"retained",
 				"/work/widget",
@@ -432,7 +432,7 @@ func TestWorkspaceSessionsExpectedEstablishmentRejectsReplacementAfterRetainedSe
 	}
 
 	_, err := runner.EstablishExpectedWithGeneration(
-		context.Background(),
+		t.Context(),
 		"current",
 		"retained",
 		"/work/widget",
@@ -464,7 +464,7 @@ func TestWorkspaceSessionsExpectedEstablishmentRepairsRetainedSession(t *testing
 	}
 
 	got, err := runner.EstablishExpectedWithGeneration(
-		context.Background(),
+		t.Context(),
 		"current",
 		"retained",
 		"/work/widget",

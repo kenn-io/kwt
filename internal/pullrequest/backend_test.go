@@ -21,7 +21,7 @@ import (
 
 func runGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"GIT_AUTHOR_NAME=Test User", "GIT_AUTHOR_EMAIL=test@example.com",
@@ -79,7 +79,7 @@ func TestGitBackendCoordinatesCreationForResolvedWorkspacePath(t *testing.T) {
 	activeDuringOperation := false
 
 	release, err := backend.AcquireWorkspaceCreation(
-		context.Background(),
+		t.Context(),
 		"pr-17-feature-widgets",
 	)
 
@@ -206,10 +206,10 @@ func TestGitBackendImportedWorktreePreservesMergeConflictContents(t *testing.T) 
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_ = backend.Rollback(t.Context(), workspace)
+		_ = backend.Rollback(context.WithoutCancel(t.Context()), workspace)
 	})
 
-	merge := exec.Command("git", "merge", "--no-edit", mainSHA)
+	merge := exec.CommandContext(t.Context(), "git", "merge", "--no-edit", mainSHA)
 	merge.Dir = workspace.Path
 	merge.Env = append(os.Environ(),
 		"GIT_AUTHOR_NAME=Test User",
@@ -439,7 +439,7 @@ func TestGitBackendListWorkspacesOmitsMissingRegistrations(t *testing.T) {
 	runGit(t, repo, "worktree", "add", "-b", "missing-worktree", path)
 	require.NoError(t, os.RemoveAll(path))
 
-	workspaces, err := backend.ListWorkspaces(context.Background())
+	workspaces, err := backend.ListWorkspaces(t.Context())
 
 	require.NoError(t, err)
 	for _, candidate := range workspaces {

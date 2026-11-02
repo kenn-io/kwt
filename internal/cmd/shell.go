@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -44,7 +45,7 @@ func updateEnvVar(env []string, key, value string) []string {
 
 // LaunchShell launches an interactive shell in the specified directory.
 // Used by the cd command and by exec with the --stay flag.
-func LaunchShell(dir string) error {
+func LaunchShell(ctx context.Context, dir string) error {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/sh"
@@ -62,7 +63,7 @@ func LaunchShell(dir string) error {
 	fmt.Printf("Launching shell in: %s\n", dir)
 	fmt.Println("Type 'exit' to return to the previous directory")
 
-	shellCmd := exec.Command(shell)
+	shellCmd := exec.CommandContext(ctx, shell)
 	shellCmd.Dir = dir
 
 	// Copy current environment and update depth

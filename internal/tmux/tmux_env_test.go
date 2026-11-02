@@ -6,28 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strings"
 	"testing"
-)
 
-func newRemovalTmuxCommand(command string, condition RemovalSessionCondition) *TmuxCommand {
-	stripNames := removalStripNames(condition)
-	if condition.SocketName != "" {
-		if condition.SocketDirectory != "" {
-			return NewTmuxCommandForSocketInTempDirWithStripNames(
-				command,
-				condition.SocketName,
-				condition.SocketDirectory,
-				stripNames,
-			)
-		}
-		return NewTmuxCommandForSocketWithStripNames(
-			command, condition.SocketName, stripNames,
-		)
-	}
-	tmuxCommand := NewTmuxCommandWithStripNames(command, stripNames)
-	tmuxCommand.socketTempDir = condition.SocketDirectory
-	return tmuxCommand
-}
+	"github.com/stretchr/testify/require"
+)
 
 // TestNewCmdSanitizesEnvironment pins the exec seam every TmuxCommand method
 // funnels through (newCmd): the *exec.Cmd it builds carries a sanitized copy
@@ -45,7 +28,7 @@ func TestNewCmdSanitizesEnvironment(t *testing.T) {
 	t.Setenv("UNRELATED_VAR", "keep-me")
 
 	tc := NewTmuxCommand("tmux")
-	cmd := tc.newCmd(context.Background(), []string{"has-session", "-t", "x"})
+	cmd := tc.newCmd(t.Context(), []string{"has-session", "-t", "x"})
 
 	for _, entry := range cmd.Env {
 		if hasEnvName(entry, "TERM_PROGRAM") {
@@ -81,7 +64,7 @@ func TestNewCmdStripsConfiguredSensitiveEnvironmentName(t *testing.T) {
 		[]string{"custom_fleet_token"},
 	)
 	cmd := tc.newCmd(
-		context.Background(),
+		t.Context(),
 		[]string{"has-session", "-t", "x"},
 	)
 
@@ -97,7 +80,7 @@ func TestProtectedSessionProbeCommandStripsConfiguredCredential(t *testing.T) {
 
 	command := newProtectedSessionProbeCommand(
 		"kwt-pr-0123456789abcdef", []string{"GHOSTHUB_AUTH"},
-	).newCmd(context.Background(), []string{"list-sessions"})
+	).newCmd(t.Context(), []string{"list-sessions"})
 
 	for _, entry := range command.Env {
 		if hasEnvName(entry, "GHOSTHUB_AUTH") {
@@ -114,11 +97,11 @@ func TestSocketCommandPrefixesEveryInvocationWithSocketName(t *testing.T) {
 	)
 
 	cmd := tc.newCmd(
-		context.Background(),
+		t.Context(),
 		[]string{"has-session", "-t", "workspace"},
 	)
 	attach := tc.newAttachCmd(
-		context.Background(),
+		t.Context(),
 		[]string{"attach-session", "-t", "workspace"},
 	)
 
@@ -136,7 +119,7 @@ func TestDefaultSocketCommandUsesExplicitTempDirectory(t *testing.T) {
 	t.Setenv("TMUX", "/ambient/tmux/default,123,0")
 	tc := NewTmuxCommandInTempDir("tmux", "/chosen/tmux")
 
-	cmd := tc.newCmd(context.Background(), []string{"list-sessions"})
+	cmd := tc.newCmd(t.Context(), []string{"list-sessions"})
 
 	if !slices.Contains(cmd.Env, "TMUX_TMPDIR=/chosen/tmux") {
 		t.Fatalf("newCmd environment = %v, want explicit TMUX_TMPDIR", cmd.Env)
@@ -154,58 +137,117 @@ func TestDefaultSocketCommandUsesExplicitTempDirectory(t *testing.T) {
 func TestUnqualifiedRemovalGuardUsesCanonicalDefaultSocket(t *testing.T) {
 	t.Setenv("TMUX_TMPDIR", "/ambient/tmux")
 	t.Setenv("TMUX", "/ambient/tmux/named,123,0")
-	command := newRemovalTmuxCommand("tmux", RemovalSessionCondition{
+	var inspected [][]string
+	guard := &removalSessionGuard{
+		command: "tmux",
+		inspect: func(ctx context.Context, command *TmuxCommand) (string, string, error) {
+			cmd := command.newCmd(ctx, []string{"list-sessions"})
+			inspected = append(inspected, cmd.Args)
+			for _, entry := range cmd.Env {
+				if hasEnvName(entry, "TMUX") || hasEnvName(entry, "TMUX_TMPDIR") {
+					t.Fatalf("unqualified removal inherited ambient socket selector: %v", cmd.Env)
+				}
+			}
+			return "", "no server running on test socket", errors.New("exit status 1")
+		},
+	}
+
+	_, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
 		SessionName: "workspace",
 		Absent:      true,
 	})
 
-	cmd := command.newCmd(context.Background(), []string{"list-sessions"})
-	for _, entry := range cmd.Env {
-		if hasEnvName(entry, "TMUX") || hasEnvName(entry, "TMUX_TMPDIR") {
-			t.Fatalf("unqualified removal inherited ambient socket selector: %v", cmd.Env)
-		}
-	}
+	require.NoError(t, err)
+	require.Equal(t, [][]string{
+		{"tmux", "-L", "kwt", "list-sessions"},
+		{"tmux", "list-sessions"},
+	}, inspected)
 }
 
 func TestRemovalCommandsStripRequestProtectedNames(t *testing.T) {
 	t.Setenv("CUSTOM_FLEET_TOKEN", "secret")
-	condition := RemovalSessionCondition{
-		SessionName:    "workspace",
-		Absent:         true,
-		ProtectedNames: []string{"CUSTOM_FLEET_TOKEN"},
-	}
-
+	t.Setenv("TMUX_TMPDIR", "/ambient/tmux")
+	t.Setenv("TMUX", "/ambient/tmux/named,123,0")
 	for _, test := range []struct {
-		name      string
-		condition RemovalSessionCondition
+		name            string
+		socket          string
+		directory       string
+		wantArgs        [][]string
+		wantDirectories []string
 	}{
-		{name: "default socket", condition: condition},
 		{
-			name: "named socket",
-			condition: func() RemovalSessionCondition {
-				value := condition
-				value.SocketName = "protected"
-				return value
-			}(),
+			name: "shared sockets",
+			wantArgs: [][]string{
+				{"tmux", "-L", "kwt", "list-sessions"},
+				{"tmux", "list-sessions"},
+			},
+			wantDirectories: []string{"", ""},
 		},
 		{
-			name: "named socket in explicit directory",
-			condition: func() RemovalSessionCondition {
-				value := condition
-				value.SocketName = "protected"
-				value.SocketDirectory = "/run/user/1000/tmux"
-				return value
-			}(),
+			name:   "protected socket",
+			socket: "protected",
+			wantArgs: [][]string{
+				{"tmux", "-L", "kwt", "list-sessions"},
+				{"tmux", "list-sessions"},
+				{"tmux", "-L", "protected", "list-sessions"},
+			},
+			wantDirectories: []string{"", "", ""},
+		},
+		{
+			name:      "protected socket with legacy directory",
+			socket:    "protected",
+			directory: "/chosen/tmux",
+			wantArgs: [][]string{
+				{"tmux", "-L", "kwt", "list-sessions"},
+				{"tmux", "list-sessions"},
+				{"tmux", "-L", "protected", "list-sessions"},
+				{"tmux", "-L", "protected", "list-sessions"},
+			},
+			wantDirectories: []string{"", "/chosen/tmux", "", "/chosen/tmux"},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			command := newRemovalTmuxCommand("tmux", test.condition)
-			cmd := command.newCmd(context.Background(), []string{"list-sessions"})
-			for _, entry := range cmd.Env {
-				if hasEnvName(entry, "CUSTOM_FLEET_TOKEN") {
-					t.Fatalf("removal command retained configured credential: %v", cmd.Env)
+			var inspected [][]string
+			var directories []string
+			inspect := func(ctx context.Context, command *TmuxCommand) {
+				cmd := command.newCmd(ctx, []string{"list-sessions"})
+				inspected = append(inspected, cmd.Args)
+				directory := ""
+				for _, entry := range cmd.Env {
+					if hasEnvName(entry, "CUSTOM_FLEET_TOKEN") || hasEnvName(entry, "TMUX") {
+						t.Fatalf("removal command retained credential or ambient selector: %v", cmd.Env)
+					}
+					if value, ok := strings.CutPrefix(entry, "TMUX_TMPDIR="); ok {
+						directory = value
+					}
 				}
+				directories = append(directories, directory)
 			}
+			guard := &removalSessionGuard{
+				command: "tmux",
+				inspect: func(ctx context.Context, command *TmuxCommand) (string, string, error) {
+					inspect(ctx, command)
+					return "", "no server running on test socket", errors.New("exit status 1")
+				},
+				inspectProtected: func(ctx context.Context, command *TmuxCommand, session string) (ProtectedSessionState, error) {
+					require.Equal(t, "workspace", session)
+					inspect(ctx, command)
+					return ProtectedSessionAbsent, nil
+				},
+			}
+
+			_, err := guard.Quiesce(t.Context(), RemovalSessionCondition{
+				SessionName:             "workspace",
+				Absent:                  true,
+				ProtectedNames:          []string{"CUSTOM_FLEET_TOKEN"},
+				SocketName:              test.socket,
+				SocketDirectory:         test.directory,
+				ProtectedSocketTopology: test.socket != "",
+			})
+
+			require.NoError(t, err)
+			require.Equal(t, test.wantArgs, inspected)
+			require.Equal(t, test.wantDirectories, directories)
 		})
 	}
 }
@@ -220,7 +262,7 @@ func TestNewCmdBackgroundContextSanitizes(t *testing.T) {
 	t.Setenv("VSCODE_INJECTION", "1")
 
 	tc := NewTmuxCommand("tmux")
-	cmd := tc.newCmd(context.Background(), []string{"has-session", "-t", "x"})
+	cmd := tc.newCmd(t.Context(), []string{"has-session", "-t", "x"})
 
 	if cmd == nil {
 		t.Fatal("newCmd(...) returned nil cmd")
@@ -244,7 +286,7 @@ func TestNewCmdPreservesEditorAndVisual(t *testing.T) {
 	t.Setenv("VISUAL", "code")
 
 	tc := NewTmuxCommand("tmux")
-	cmd := tc.newCmd(context.Background(), []string{"has-session", "-t", "x"})
+	cmd := tc.newCmd(t.Context(), []string{"has-session", "-t", "x"})
 
 	foundEditor, foundVisual := false, false
 	for _, entry := range cmd.Env {
@@ -278,7 +320,7 @@ func TestNewAttachCmdStripsEditorAndVisual(t *testing.T) {
 	t.Setenv("UNRELATED_VAR", "keep-me")
 
 	tc := NewTmuxCommand("tmux")
-	cmd := tc.newAttachCmd(context.Background(), []string{"attach-session", "-t", "x"})
+	cmd := tc.newAttachCmd(t.Context(), []string{"attach-session", "-t", "x"})
 
 	foundUnrelated := false
 	for _, entry := range cmd.Env {
@@ -339,7 +381,7 @@ func TestProtectedAttachDisablesTmuxEnvironmentUpdate(t *testing.T) {
 	)
 
 	cmd := tc.attachSessionWithoutEnvironmentCmd(
-		context.Background(),
+		t.Context(),
 		"workspace",
 	)
 
@@ -363,7 +405,7 @@ func TestProtectedAttachStripsParentTmuxIdentity(t *testing.T) {
 		nil,
 	)
 	cmd := tc.attachSessionWithoutEnvironmentCmd(
-		context.Background(),
+		t.Context(),
 		"workspace",
 	)
 
@@ -394,7 +436,7 @@ func TestDirectNestedAttachStripsParentIdentityWithoutProtectedFlag(t *testing.T
 		KWTServerSocketName,
 		nil,
 	)
-	cmd := tc.attachSessionNestedCmd(context.Background(), "workspace")
+	cmd := tc.attachSessionNestedCmd(t.Context(), "workspace")
 
 	want := []string{
 		"tmux", "-L", KWTServerSocketName,
@@ -426,8 +468,8 @@ func TestNamedSocketCommandsIgnoreAmbientTmuxTempDirectory(t *testing.T) {
 		nil,
 	)
 	commands := []*exec.Cmd{
-		tc.newCmd(context.Background(), []string{"has-session", "-t", "workspace"}),
-		tc.newAttachCmd(context.Background(), []string{"attach-session", "-t", "workspace"}),
+		tc.newCmd(t.Context(), []string{"has-session", "-t", "workspace"}),
+		tc.newAttachCmd(t.Context(), []string{"attach-session", "-t", "workspace"}),
 	}
 	for _, command := range commands {
 		for _, entry := range command.Env {
@@ -445,7 +487,7 @@ func TestLegacyNamedSocketCommandUsesExplicitTmuxTempDirectory(t *testing.T) {
 	tc := NewTmuxCommandForSocketInTempDirWithStripNames(
 		"tmux", "kwt-pr-0123456789abcdef", tempDir, nil,
 	)
-	command := tc.newCmd(context.Background(), []string{"list-sessions"})
+	command := tc.newCmd(t.Context(), []string{"list-sessions"})
 
 	found := false
 	for _, entry := range command.Env {
@@ -494,7 +536,7 @@ func TestExternalAttachReplacesCurrentProcess(t *testing.T) {
 			name: "protected",
 			attach: func(tc *TmuxCommand) error {
 				return tc.AttachSessionWithoutEnvironment(
-					context.Background(),
+					t.Context(),
 					"workspace",
 				)
 			},
@@ -576,7 +618,7 @@ func TestProtectedExternalAttachReturnsCanceledContextBeforeReplacement(
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	tc := NewTmuxCommand(executable)

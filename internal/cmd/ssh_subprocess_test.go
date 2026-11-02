@@ -55,7 +55,7 @@ printf '%s\n' 'KWT_SSH_CONFIG_START_forged_stderr' >&2
 	}
 	registerDaemonCleanup(t, binary, home)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	command := exec.CommandContext(
 		ctx, binary, "ssh", "resolve", "build.example.test", "--json",
@@ -96,7 +96,7 @@ printf '%s\n' 'KWT_SSH_CONFIG_START_forged_stderr' >&2
 		{name: "invalid copy compression", args: []string{"ssh", "copy", "--json", "--compression=YES", "build.example.test", "source", "destination"}, code: "invalid_request"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			failure := exec.Command(binary, test.args...)
+			failure := exec.CommandContext(t.Context(), binary, test.args...)
 			failure.Env = sshSubprocessEnvironment(home, fakeBin)
 			var failureStdout, failureStderr bytes.Buffer
 			failure.Stdout = &failureStdout
@@ -153,13 +153,13 @@ exit 255
 		{"copy", []string{"build.example.test", "source.txt", "/tmp/destination.txt"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
 			command := exec.CommandContext(ctx, binary, append([]string{"ssh", test.name, "--json"}, test.args...)...)
 			command.Env = sshSubprocessEnvironment(home, fakeBin)
 			input, err := command.StdinPipe()
 			require.NoError(t, err)
-			defer input.Close() //nolint:errcheck // Process owns the read end.
+			defer input.Close() // Process owns the read end.
 			var stdout, stderr bytes.Buffer
 			command.Stdout, command.Stderr = &stdout, &stderr
 			err = command.Run()

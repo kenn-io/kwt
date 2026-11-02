@@ -1,0 +1,59 @@
+# Repository additions merged into the canonical kit config by `kennlint config`.
+linters:
+  enable:
+    # Contexts derived inside loops and closures must not nest across
+    # iterations.
+    - fatcontext
+  disable:
+    # Backlog from adopting the shared policy. Remove an entry once its
+    # findings are fixed.
+    - errchkjson
+    - errname
+    - errorlint
+    - exhaustive
+    - gocritic
+    - intrange
+    - modernize
+    - nilerr
+    - perfsprint
+    - predeclared
+    - recvcheck
+    - testifylint
+    - thelper
+    - unconvert
+    - wastedassign
+  settings:
+    usetesting:
+      # Unix-socket and tmux fixtures need short /tmp roots; t.TempDir() is
+      # too long for a socket path.
+      os-mkdir-temp: false
+      os-temp-dir: false
+      # Backlog: tests that set process-wide variables and directories
+      # predate the shared policy.
+      os-setenv: false
+      os-chdir: false
+    custom:
+      kennlint:
+        settings:
+          # Backlog from adopting the shared policy.
+          disable: [sleeptest, deadlinetest, nohttpmux, errtext]
+  exclusions:
+    rules:
+      # Backlog from adopting the shared policy: these forbidigo patterns
+      # predate it. The exec.Command and HTTP client patterns stay enforced.
+      - linters:
+          - forbidigo
+        text: Use testify assert/require helpers in tests.
+      - linters:
+          - forbidigo
+        text: Use errors.AsType\[E\] for typed error extraction.
+      - linters:
+          - forbidigo
+        text: Use atomicfile.Replace from go.kenn.io/kit
+      - linters:
+          - forbidigo
+        text: Pass explicit paths or use cmd.Dir
+formatters:
+  disable:
+    # Backlog: gofumpt rewrites 59 files. gofmt stays enforced.
+    - gofumpt

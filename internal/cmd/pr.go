@@ -856,7 +856,7 @@ func defaultInspectPRProjectClone(
 			errImportedPRWorkspaceChanged,
 		)
 	}
-	g := gitadapter.New(project.Path)
+	g := gitadapter.NewWithContext(ctx, project.Path)
 	info, err := worktree.RepositoryInfoWithProjects(
 		g,
 		registered,
@@ -867,7 +867,7 @@ func defaultInspectPRProjectClone(
 			err,
 		)
 	}
-	live, err := worktree.New(g, nil).List()
+	live, err := worktree.New(g, nil).ListContext(ctx)
 	if err != nil {
 		return pullrequest.Project{}, nil, fmt.Errorf(
 			"list recorded project worktrees: %w",

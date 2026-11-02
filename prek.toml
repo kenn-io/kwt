@@ -6,6 +6,7 @@ default_stages = ["pre-commit"]
 repo = "local"
 hooks = [
   { id = "golangci-lint", name = "make lint", entry = "make lint", language = "system", stages = ["pre-push"], types_or = ["go", "go-mod", "go-sum"], pass_filenames = false },
+  { id = "kennlint-config", name = "kennlint config drift", entry = "make lint-config-check", language = "system", stages = ["pre-push"], files = "^(\\.golangci\\.yml|\\.golangci\\.overlay\\.yml|\\.custom-gcl\\.yml)$", pass_filenames = false },
   { id = "golangci-lint-fmt", name = "golangci-lint fmt", entry = "golangci-lint fmt -d ./...", language = "system", stages = ["pre-push"], types_or = ["go"], pass_filenames = false },
   { id = "oxfmt", name = "oxfmt --check", entry = "oxfmt --check", language = "system", stages = ["pre-push"], types = ["markdown"], pass_filenames = true },
 ]

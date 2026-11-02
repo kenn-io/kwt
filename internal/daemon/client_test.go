@@ -59,7 +59,7 @@ func TestNewVerifiedClientProvesEndpointBeforeBearerUse(t *testing.T) {
 	defer server.Close()
 	rec := runtimeRecordForServer(t, server, token)
 
-	_, err := NewVerifiedClient(context.Background(), rec, token)
+	_, err := NewVerifiedClient(t.Context(), rec, token)
 	require.Error(t, err, "server did not return a valid proof")
 	assert.False(t, authorizationSeen)
 }
@@ -81,7 +81,7 @@ func TestClientDecodesDrainingProblem(t *testing.T) {
 	defer server.Close()
 
 	client := clientForUnverifiedServer(t, server, "secret")
-	_, err := client.Status(context.Background())
+	_, err := client.Status(t.Context())
 	var typed *service.Error
 	require.ErrorAs(t, err, &typed)
 	assert.Equal(t, service.DaemonDraining, typed.Code)
@@ -103,7 +103,7 @@ func TestClientDecodesLegacyDeadlineBearingBusyAsDrain(t *testing.T) {
 	defer server.Close()
 
 	client := clientForUnverifiedServer(t, server, "secret")
-	_, err := client.Status(context.Background())
+	_, err := client.Status(t.Context())
 	typed := service.AsError(err)
 	assert.Equal(t, service.Busy, typed.Code)
 	assert.Equal(t, deadline, typed.Details["drain_deadline"])
@@ -159,9 +159,9 @@ func TestVerifiedClientUsesBearerAfterSuccessfulProof(t *testing.T) {
 		})
 	})
 
-	client, err := NewVerifiedClient(context.Background(), rec, token)
+	client, err := NewVerifiedClient(t.Context(), rec, token)
 	require.NoError(t, err)
-	status, err := client.Status(context.Background())
+	status, err := client.Status(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, APISchemaMajor, status.SchemaMajor)
 }
@@ -182,9 +182,9 @@ func TestVerifiedClientAllowsInventoryDiscoveryBeforeHeaders(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"freshness": "fresh"})
 	})
 
-	client, err := NewVerifiedClient(context.Background(), rec, token)
+	client, err := NewVerifiedClient(t.Context(), rec, token)
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	_, err = client.Inventory(ctx, kwt.Request{View: kwt.ViewDashboard})
 
@@ -211,9 +211,9 @@ func TestVerifiedClientBoundsControlPlaneResponseWait(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(Status{State: StateReady})
 	})
 
-	client, err := NewVerifiedClient(context.Background(), rec, token)
+	client, err := NewVerifiedClient(t.Context(), rec, token)
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
 	defer cancel()
 	_, err = client.Status(ctx)
 
@@ -233,7 +233,7 @@ func TestClientAllowsInventoryResponseLargerThanControlPlaneLimit(t *testing.T) 
 	defer server.Close()
 
 	client := clientForUnverifiedServer(t, server, "secret")
-	result, err := client.Inventory(context.Background(), kwt.Request{
+	result, err := client.Inventory(t.Context(), kwt.Request{
 		View: kwt.ViewDashboard,
 	})
 
@@ -273,7 +273,7 @@ func TestClientRejectsUnknownInventoryAttachModes(t *testing.T) {
 			defer server.Close()
 			client := clientForUnverifiedServer(t, server, "secret")
 
-			_, err := client.Inventory(context.Background(), kwt.Request{View: kwt.ViewDashboard})
+			_, err := client.Inventory(t.Context(), kwt.Request{View: kwt.ViewDashboard})
 
 			require.Error(t, err)
 			assert.True(t, service.IsCode(err, service.DaemonIncompatible), err)
@@ -295,7 +295,7 @@ func TestClientAcceptsKnownInventoryAttachModes(t *testing.T) {
 	defer server.Close()
 	client := clientForUnverifiedServer(t, server, "secret")
 
-	result, err := client.Inventory(context.Background(), kwt.Request{View: kwt.ViewDashboard})
+	result, err := client.Inventory(t.Context(), kwt.Request{View: kwt.ViewDashboard})
 
 	require.NoError(t, err)
 	require.Len(t, result.Snapshot.Entries, 2)
@@ -310,7 +310,7 @@ func TestClientReportsEndpointSpecificResponseLimit(t *testing.T) {
 	client := clientForUnverifiedServer(t, server, "secret")
 
 	err := client.doWith(
-		context.Background(),
+		t.Context(),
 		client.inventoryHTTP,
 		8,
 		http.MethodGet,
@@ -339,7 +339,7 @@ func TestUnguardedRemovalContinuesWhenExpansionCaptureFails(t *testing.T) {
 	defer server.Close()
 	client := clientForUnverifiedServer(t, server, "secret")
 
-	result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{
+	result, err := client.RemoveWorktree(t.Context(), kwt.RemovalRequest{
 		RepositoryPath: "/repo", Path: "/repo/topic",
 		ExpectedGeneration: "0123456789abcdef0123456789abcdef",
 	})
@@ -380,7 +380,7 @@ func TestVersionOneUnguardedRemovalPreservesLegacyPayload(t *testing.T) {
 	defer server.Close()
 	client := clientForUnverifiedServer(t, server, "secret")
 
-	result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{
+	result, err := client.RemoveWorktree(t.Context(), kwt.RemovalRequest{
 		RepositoryPath: "/repo", Path: "/repo/topic",
 		ExpectedGeneration: "0123456789abcdef0123456789abcdef",
 	})
@@ -410,7 +410,7 @@ func TestVersionTwoUnguardedRemovalIncludesExpansionContext(t *testing.T) {
 	client := clientForUnverifiedServer(t, server, "secret")
 	client.capabilities = []string{CapabilityRemoval, CapabilityGuardedRemoval}
 
-	result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{
+	result, err := client.RemoveWorktree(t.Context(), kwt.RemovalRequest{
 		RepositoryPath: "/repo", Path: "/repo/topic",
 		ExpectedGeneration: "0123456789abcdef0123456789abcdef",
 		ExpectedBranch:     "topic",
@@ -433,7 +433,7 @@ func TestGuardedRemovalRequiresExpansionCapture(t *testing.T) {
 	t.Cleanup(func() { captureRemovalExpansionContext = original })
 	client := &Client{}
 
-	_, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{
+	_, err := client.RemoveWorktree(t.Context(), kwt.RemovalRequest{
 		Session: &kwt.RemovalSessionCondition{SessionName: "topic", Absent: true},
 	})
 

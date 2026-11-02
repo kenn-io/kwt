@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -156,7 +157,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 	}
 
 	// Execute the command in the worktree directory
-	return executeInWorktree(worktreePath, parsedArgs.commandArgs, parsedArgs.stay)
+	return executeInWorktree(commandContext(cmd), worktreePath, parsedArgs.commandArgs, parsedArgs.stay)
 }
 
 func getLocalWorktreePathForExec(cfg *models.Config, pattern string) (string, error) {
@@ -276,8 +277,8 @@ func getGlobalWorktreePathForExec(cfg *models.Config, pattern string) (string, e
 	return selected.Path, nil
 }
 
-func executeInWorktree(worktreePath string, commandArgs []string, stay bool) error {
-	cmd := exec.Command(commandArgs[0], commandArgs[1:]...)
+func executeInWorktree(ctx context.Context, worktreePath string, commandArgs []string, stay bool) error {
+	cmd := exec.CommandContext(ctx, commandArgs[0], commandArgs[1:]...)
 
 	cmd.Dir = worktreePath
 	cmd.Env = os.Environ()
@@ -290,7 +291,7 @@ func executeInWorktree(worktreePath string, commandArgs []string, stay bool) err
 	if stay {
 		// Launch a new shell in the worktree directory after command execution
 		// Run the shell regardless of the original command's exit status
-		_ = LaunchShell(worktreePath)
+		_ = LaunchShell(ctx, worktreePath)
 	}
 
 	return err

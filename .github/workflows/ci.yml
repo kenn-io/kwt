@@ -177,10 +177,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Check lint config
+        run: make lint-config-check
+
+      # The action builds the kit analyzers from .custom-gcl.yml.
       - name: golangci-lint
         uses: step-security/golangci-lint-action@v9.3.0
         with:
-          version: v2.14.0
+          version: v2.15.0
 
   docs:
     name: Docs

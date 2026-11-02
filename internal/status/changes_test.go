@@ -190,7 +190,7 @@ func TestCollectChangesFromRealRepository(t *testing.T) {
 		0o644,
 	))
 
-	got, err := CollectChanges(context.Background(), repo, nil)
+	got, err := CollectChanges(t.Context(), repo, nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, ChangeStateStaged, got.State)
@@ -220,7 +220,7 @@ func TestCollectChangesCoalescesStagedDeletionRecreatedAsUntracked(t *testing.T)
 		0o644,
 	))
 
-	got, err := CollectChanges(context.Background(), repo, nil)
+	got, err := CollectChanges(t.Context(), repo, nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, ChangeStateStaged, got.State)
@@ -233,7 +233,7 @@ func TestCollectChangesCoalescesStagedDeletionRecreatedAsUntracked(t *testing.T)
 func TestCollectChangesCleanRepositoryHasPresentEmptyFiles(t *testing.T) {
 	repo := newChangesTestRepository(t)
 
-	got, err := CollectChanges(context.Background(), repo, nil)
+	got, err := CollectChanges(t.Context(), repo, nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, ChangeStateClean, got.State)
@@ -270,7 +270,7 @@ exec "$KWT_TEST_REAL_GIT" "$@"
 	t.Setenv("CUSTOM_CHANGE_TOKEN", "custom-secret")
 
 	_, err = CollectChanges(
-		context.Background(),
+		t.Context(),
 		repo,
 		[]string{"CUSTOM_CHANGE_TOKEN"},
 	)
@@ -301,7 +301,7 @@ func TestCollectChangesAppliesFiveSecondBudget(t *testing.T) {
 	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	started := time.Now()
 
-	_, err := CollectChanges(context.Background(), t.TempDir(), nil)
+	_, err := CollectChanges(t.Context(), t.TempDir(), nil)
 	elapsed := time.Since(started)
 
 	require.Error(t, err)
@@ -322,7 +322,7 @@ func TestCollectChangesKeepsOversizedDiagnosticsBounded(t *testing.T) {
 	))
 	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	_, err := CollectChanges(context.Background(), t.TempDir(), nil)
+	_, err := CollectChanges(t.Context(), t.TempDir(), nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, gitpkg.ErrStderrLimitExceeded)

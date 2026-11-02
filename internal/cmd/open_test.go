@@ -269,7 +269,7 @@ func TestOpenSelectedDirectoryWorkspaceEnsuresOrAttaches(t *testing.T) {
 			})
 
 			err := openSelectedDirectoryWorkspace(
-				context.Background(),
+				t.Context(),
 				&CommandContext{Config: &models.Config{}},
 				workspace,
 				func([]models.Layout) (models.Layout, error) {
@@ -311,7 +311,7 @@ func TestOpenSelectedDirectoryWorkspaceRequestsCanonicalSession(t *testing.T) {
 	})
 
 	err := openSelectedDirectoryWorkspace(
-		context.Background(),
+		t.Context(),
 		&CommandContext{Config: &models.Config{}},
 		workspace,
 		nil,
@@ -349,7 +349,7 @@ func TestOpenAttachesToEndpointReturnedByEstablishment(t *testing.T) {
 	})
 
 	err := openSelectedDirectoryWorkspace(
-		context.Background(),
+		t.Context(),
 		&CommandContext{Config: &models.Config{}},
 		workspace,
 		nil,
@@ -386,7 +386,7 @@ func TestOpenStartSessionJSONWritesEstablishedEndpointOnly(t *testing.T) {
 	command.SetOut(&stdout)
 
 	err := openSelectedDirectoryWorkspaceWithResult(
-		context.Background(),
+		t.Context(),
 		&CommandContext{Config: &models.Config{}},
 		workspace,
 		nil,
@@ -438,7 +438,7 @@ func TestOpenSelectedDirectoryWorkspaceUsesDirectoryLayoutDefault(t *testing.T) 
 	})
 
 	err = openSelectedDirectoryWorkspace(
-		context.Background(),
+		t.Context(),
 		&CommandContext{Config: &models.Config{
 			Layouts: models.LayoutsConfig{Presets: []models.Layout{{
 				Name: "focus", Panes: []string{""},
@@ -480,7 +480,7 @@ func TestRunOpenWithContextChoosesRegisteredDirectory(t *testing.T) {
 			})
 
 			cmd, _, _ := fleetTestCommand()
-			cmd.SetContext(context.Background())
+			cmd.SetContext(t.Context())
 			err := runOpenWithContext(
 				cmd,
 				[]string{workspace.Path},
@@ -522,7 +522,7 @@ func TestRunOpenWithContextRejectsGuardedDirectoryWorkspace(t *testing.T) {
 		"expected-generation",
 		"expected-session",
 	)
-	cmd.SetContext(context.Background())
+	cmd.SetContext(t.Context())
 
 	err := runOpenWithContext(
 		cmd,
@@ -547,7 +547,7 @@ func TestRunOpenWithContextRejectsExplicitEmptyExpectedFlags(t *testing.T) {
 		"expected-generation",
 		"expected-session",
 	)
-	cmd.SetContext(context.Background())
+	cmd.SetContext(t.Context())
 
 	err := runOpenWithContext(
 		cmd,
@@ -577,7 +577,7 @@ func TestRunOpenWithContextWithoutArgumentsUsesPickerFlow(t *testing.T) {
 	openExpectedGeneration = ""
 	openExpectedSession = ""
 	cmd, _, _ := fleetTestCommand()
-	cmd.SetContext(context.Background())
+	cmd.SetContext(t.Context())
 
 	err := runOpenWithContext(
 		cmd,
@@ -628,7 +628,7 @@ func TestRunOpenWithContextReportsGuardedDisappearanceAsRegistrationChanged(
 				"expected-generation",
 				"expected-session",
 			)
-			cmd.SetContext(context.Background())
+			cmd.SetContext(t.Context())
 
 			err := runOpenWithContext(
 				cmd,
@@ -647,7 +647,7 @@ func TestOpenStartSessionRequiresExactWorkspacePath(t *testing.T) {
 	openStartSession = true
 	t.Cleanup(func() { openStartSession = originalStartSession })
 	cmd, _, _ := fleetTestCommand()
-	cmd.SetContext(context.Background())
+	cmd.SetContext(t.Context())
 
 	err := runOpenWithContext(
 		cmd,
@@ -669,7 +669,7 @@ func TestRunOpenWithContextRejectsUnregisteredNonGitDirectory(t *testing.T) {
 		openStartSession = originalStartSession
 	})
 	cmd, _, _ := fleetTestCommand()
-	cmd.SetContext(context.Background())
+	cmd.SetContext(t.Context())
 	path := t.TempDir()
 
 	err := runOpenWithContext(
@@ -694,7 +694,7 @@ func TestResolveOpenWorktreeAcceptsExactPrimaryPathOutsideGlobalBase(
 
 	repo := filepath.Join(t.TempDir(), "registered", "widget")
 	require.NoError(t, os.MkdirAll(repo, 0o755))
-	require.NoError(t, exec.Command("git", "init", "-b", "main", repo).Run())
+	require.NoError(t, exec.CommandContext(t.Context(), "git", "init", "-b", "main", repo).Run())
 	require.NoError(t, os.WriteFile(
 		filepath.Join(repo, "README.md"),
 		[]byte("# widget\n"),
@@ -702,7 +702,7 @@ func TestResolveOpenWorktreeAcceptsExactPrimaryPathOutsideGlobalBase(
 	))
 	gitCommand := func(args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		cmd := exec.CommandContext(t.Context(), "git", append([]string{"-C", repo}, args...)...)
 		require.NoError(t, cmd.Run())
 	}
 	gitCommand("add", "README.md")
@@ -739,7 +739,7 @@ func TestOpenSelectedWorktreeRefusesProtectedPullRequestWorkspace(
 	liveGeneration := "0123456789abcdef0123456789abcdef"
 	stubPRWorkspaceGeneration(t, workspacePath, liveGeneration)
 	require.NoError(t, pullrequest.NewFileStore(prStorePath()).Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["pr-32"] = pullrequest.Provenance{Workspace: pullrequest.Workspace{
 				Path: workspacePath, Generation: liveGeneration,
@@ -749,7 +749,7 @@ func TestOpenSelectedWorktreeRefusesProtectedPullRequestWorkspace(
 	))
 
 	err := openSelectedWorktree(
-		context.Background(),
+		t.Context(),
 		&CommandContext{Config: &models.Config{}},
 		&discovery.GlobalWorktreeEntry{
 			Path:       workspacePath,
@@ -797,7 +797,7 @@ func TestOpenSelectedWorktreeStartsSessionWithoutAttaching(t *testing.T) {
 	require.NoError(t, err)
 
 	err = openSelectedWorktree(
-		context.Background(),
+		t.Context(),
 		&CommandContext{Config: &models.Config{
 			Fleet: models.FleetConfig{TokenEnv: "CUSTOM_FLEET_TOKEN"},
 		}},
@@ -859,7 +859,7 @@ func TestOpenSelectedWorktreeUsesBranchObservedInsideLifecycleGuard(t *testing.T
 	}
 
 	err = openSelectedWorktree(
-		context.Background(),
+		t.Context(),
 		&CommandContext{Config: &models.Config{}},
 		&discovery.GlobalWorktreeEntry{
 			Path: worktreePath, Branch: "feature/original", Generation: generation,
@@ -889,7 +889,7 @@ func TestDirectOpenCannotRaceGuardedRemoval(t *testing.T) {
 	expansion, err := kwt.CaptureExpansionContext()
 	require.NoError(t, err)
 	removalSessionName, _, err := lifecycle.ResolveCurrentWorktreeSessionIdentity(
-		context.Background(), worktreePath, nil, nil,
+		t.Context(), worktreePath, nil, nil,
 	)
 	require.NoError(t, err)
 	removalGuard := &blockingOpenRemovalGuard{
@@ -900,7 +900,7 @@ func TestDirectOpenCannotRaceGuardedRemoval(t *testing.T) {
 		_, removeErr := lifecycle.NewRemovalService(lifecycle.RemovalServiceOptions{
 			Home: home, SessionGuard: removalGuard,
 			ProcessGuard: allowTestRemovalProcesses,
-		}).Remove(context.Background(), lifecycle.RemovalRequest{
+		}).Remove(t.Context(), lifecycle.RemovalRequest{
 			RepositoryPath: repoPath,
 			Path:           worktreePath, ExpectedGeneration: generation,
 			Expansion: expansion,
@@ -927,7 +927,7 @@ func TestDirectOpenCannotRaceGuardedRemoval(t *testing.T) {
 	openDone := make(chan error, 1)
 	go func() {
 		openDone <- openSelectedWorktree(
-			context.Background(),
+			t.Context(),
 			&CommandContext{Config: &models.Config{}},
 			&discovery.GlobalWorktreeEntry{
 				Path: worktreePath, Branch: "open-race", Generation: generation,
@@ -1037,7 +1037,7 @@ func TestExpectedOpenRejectsReplacementBeforeSessionEnsure(t *testing.T) {
 	}
 
 	err = openSelectedWorktree(
-		context.Background(),
+		t.Context(),
 		&CommandContext{Config: &models.Config{}},
 		entry,
 		nil,
@@ -1120,7 +1120,7 @@ func TestExpectedOpenRejectsStaleDiscoveryAfterWorktreeReplacement(t *testing.T)
 	require.NotEqual(t, entry.Generation, replacementGeneration)
 
 	err = openSelectedWorktree(
-		context.Background(),
+		t.Context(),
 		&CommandContext{Config: &models.Config{}},
 		entry,
 		nil,
@@ -1163,7 +1163,7 @@ func TestOpenSelectedWorktreeAcknowledgesPersistedRemoteSource(t *testing.T) {
 	openSelectLayout = false
 
 	err = openSelectedWorktree(
-		context.Background(),
+		t.Context(),
 		&CommandContext{Config: &models.Config{}},
 		&discovery.GlobalWorktreeEntry{
 			Path:       worktreePath,
@@ -1188,7 +1188,7 @@ func TestOpenSelectedWorktreeAcknowledgesPersistedRemoteSource(t *testing.T) {
 func TestOpenSelectedWorktreeStartSessionDoesNotPromptForTargetTrust(t *testing.T) {
 	t.Setenv("KWT_HOME", t.TempDir())
 	repo := t.TempDir()
-	gitInit := exec.Command("git", "init", "-b", "main", repo)
+	gitInit := exec.CommandContext(t.Context(), "git", "init", "-b", "main", repo)
 	require.NoError(t, gitInit.Run())
 	require.NoError(t, os.WriteFile(
 		filepath.Join(repo, ".kwt.toml"),
@@ -1216,7 +1216,7 @@ func TestOpenSelectedWorktreeStartSessionDoesNotPromptForTargetTrust(t *testing.
 	oldStderr := os.Stderr
 	os.Stderr = stderr
 	err = openSelectedWorktree(
-		context.Background(),
+		t.Context(),
 		&CommandContext{Config: &models.Config{}},
 		&discovery.GlobalWorktreeEntry{
 			Path:       repo,
@@ -1356,7 +1356,7 @@ func (g guardedBranchChangeOpen) open(t *testing.T, startSession bool) error {
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	return openSelectedWorktree(
-		context.Background(),
+		t.Context(),
 		&CommandContext{Config: &models.Config{}},
 		entry,
 		nil,

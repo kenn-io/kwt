@@ -120,7 +120,7 @@ func TestInspectorClassifiesMissingProjectRegistrations(t *testing.T) {
 				tt.targets, tt.globalPaths, tt.pathExists, tt.pathErrors, tt.inspectErrors,
 			)
 
-			report, err := inspector.Inspect(context.Background())
+			report, err := inspector.Inspect(t.Context())
 
 			require.NoError(t, err)
 			finding, repository := requireFindingCode(t, report, tt.wantCode)
@@ -158,7 +158,7 @@ func TestInspectorUsesLiveRegistryPathAsProjectRelocationTarget(t *testing.T) {
 		nil, nil,
 	)
 
-	report, err := inspector.Inspect(context.Background())
+	report, err := inspector.Inspect(t.Context())
 
 	require.NoError(t, err)
 	finding, _ := requireFindingCode(t, report, ProjectPathMoved)
@@ -180,7 +180,7 @@ func TestInspectorKeepsMissingProjectManualWhenGlobalInventoryIsIncomplete(
 		map[string]error{unreachablePath: errors.New("not a git repository")},
 	)
 
-	report, err := inspector.Inspect(context.Background())
+	report, err := inspector.Inspect(t.Context())
 
 	require.NoError(t, err)
 	finding := requireProjectFindingAtPath(t, report, registration.Effective.Path)
@@ -209,7 +209,7 @@ func TestInspectorKeepsMissingProjectManualWhenRegistryInventoryIsIncomplete(
 		map[string]error{entry.Path: errors.New("not a git repository")},
 	)
 
-	report, err := inspector.Inspect(context.Background())
+	report, err := inspector.Inspect(t.Context())
 
 	require.NoError(t, err)
 	finding := requireProjectFindingAtPath(t, report, registration.Effective.Path)
@@ -232,7 +232,7 @@ func TestInspectorRemovesMissingDuplicateOfRegisteredLiveProject(t *testing.T) {
 		nil, nil,
 	)
 
-	report, err := inspector.Inspect(context.Background())
+	report, err := inspector.Inspect(t.Context())
 
 	require.NoError(t, err)
 	finding, _ := requireFindingCode(t, report, StaleProjectRegistration)
@@ -261,7 +261,7 @@ func TestInspectorRemovesMissingDuplicateOfRegisteredLiveProject(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, fixer.Fix(context.Background(), report))
+	require.NoError(t, fixer.Fix(t.Context(), report))
 	require.Len(t, projects, 1)
 	assert.Equal(t, live.Persisted, projects[0])
 }
@@ -296,7 +296,7 @@ func TestInspectorReportsMultipleRegistrationsClaimingOneRelocationTargetAsManua
 		nil, nil,
 	)
 
-	report, err := inspector.Inspect(context.Background())
+	report, err := inspector.Inspect(t.Context())
 
 	require.NoError(t, err)
 	var ambiguous []Finding
@@ -323,7 +323,7 @@ func TestInspectorReportsDuplicateMissingProjectRegistrationAsManual(t *testing.
 		map[string]bool{registration.Effective.Path: false}, nil, nil,
 	)
 
-	report, err := inspector.Inspect(context.Background())
+	report, err := inspector.Inspect(t.Context())
 
 	require.NoError(t, err)
 	finding, _ := requireFindingCode(t, report, ProjectUnreachable)
@@ -353,7 +353,7 @@ func TestInspectorDoesNotArbitrarilyJoinRegistryEntryToOneOfMultipleClones(t *te
 		nil, nil,
 	)
 
-	report, err := inspector.Inspect(context.Background())
+	report, err := inspector.Inspect(t.Context())
 
 	require.NoError(t, err)
 	finding, owner := requireFindingCode(t, report, StaleRegistryEntry)
@@ -383,7 +383,7 @@ func TestInspectorDoesNotUseRegistrySubdirectoryForProjectRelocation(t *testing.
 		nil,
 	)
 
-	report, err := inspector.Inspect(context.Background())
+	report, err := inspector.Inspect(t.Context())
 
 	require.NoError(t, err)
 	assert.Contains(t, findingCodes(report), UnverifiedRegistryEntry)
@@ -405,7 +405,7 @@ func TestInspectorDoesNotInventoryRegistryEntryOwnedByCreation(t *testing.T) {
 	}
 	inspector.CreationActive = func(string) (bool, error) { return true, nil }
 
-	report, err := inspector.Inspect(context.Background())
+	report, err := inspector.Inspect(t.Context())
 
 	require.NoError(t, err)
 	assert.True(t, report.Summary.Healthy)
@@ -433,7 +433,7 @@ func TestInspectorDefersMissingProjectRepairDuringActiveCreation(t *testing.T) {
 	}
 	inspector.CreationActive = func(string) (bool, error) { return true, nil }
 
-	report, err := inspector.Inspect(context.Background())
+	report, err := inspector.Inspect(t.Context())
 
 	require.NoError(t, err)
 	assert.Contains(t, findingCodes(report), ProjectUnreachable)
@@ -453,7 +453,7 @@ func TestInspectorIncludesAbandonedCreationRegistryEntries(t *testing.T) {
 		)
 		inspector.CreationActive = func(string) (bool, error) { return false, nil }
 
-		report, err := inspector.Inspect(context.Background())
+		report, err := inspector.Inspect(t.Context())
 
 		require.NoError(t, err)
 		finding, _ := requireFindingCode(t, report, StaleRegistryEntry)
@@ -472,7 +472,7 @@ func TestInspectorIncludesAbandonedCreationRegistryEntries(t *testing.T) {
 		)
 		inspector.CreationActive = func(string) (bool, error) { return false, nil }
 
-		report, err := inspector.Inspect(context.Background())
+		report, err := inspector.Inspect(t.Context())
 
 		require.NoError(t, err)
 		finding, _ := requireFindingCode(t, report, RegistryGenerationMismatch)

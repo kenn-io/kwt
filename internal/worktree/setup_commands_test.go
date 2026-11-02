@@ -48,7 +48,7 @@ func TestRunSetupCommands_ShellInvocation(t *testing.T) {
 		errs:    []error{nil, errors.New("fail")},
 	}
 	dir := t.TempDir()
-	ctx := context.Background()
+	ctx := t.Context()
 	cmds := []string{
 		"echo \"hello world\"",
 		"ln -s ~/foo bar && touch baz",
@@ -94,7 +94,7 @@ func TestRunSetupCommands_ShellInvocation(t *testing.T) {
 func TestRunSetupCommands_SkipEmpty(t *testing.T) {
 	exec := &fakeExecutor{}
 	dir := t.TempDir()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	results := RunSetupCommands(ctx, exec, dir, []string{"", "   ", "echo hi", "\t\n"})
 
@@ -117,7 +117,7 @@ func TestRunSetupCommands_IndexAlignment(t *testing.T) {
 		outputs: []string{"o1", "o2", "o3"},
 		errs:    []error{nil, errors.New("boom"), nil},
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	results := RunSetupCommands(ctx, exec, "/dir", []string{"a", "b", "c"})
 
 	if len(results) != 3 {

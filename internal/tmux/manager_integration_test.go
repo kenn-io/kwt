@@ -30,15 +30,15 @@ func TestSessionManagerMasksConfiguredCredentialRetainedByExistingServer(t *test
 		"tmux", KWTServerSocketName, tempDir, nil,
 	)
 	t.Cleanup(func() {
-		_ = server.RunCommandContext(context.Background(), "kill-server")
+		_ = server.RunCommandContext(context.WithoutCancel(t.Context()), "kill-server")
 		require.NoError(t, os.RemoveAll(tempDir))
 	})
 
 	require.NoError(t, server.NewSessionWithCommandContext(
-		context.Background(), "keeper", tempDir, "sleep 60",
+		t.Context(), "keeper", tempDir, "sleep 60",
 	))
 	require.NoError(t, server.RunCommandContext(
-		context.Background(),
+		t.Context(),
 		"set-environment", "-g", tokenName, tokenValue,
 	))
 
@@ -48,7 +48,7 @@ func TestSessionManagerMasksConfiguredCredentialRetainedByExistingServer(t *test
 			"else printf 'credential-clean\\n'; fi; sleep 60",
 		tokenName,
 	)
-	session, err := manager.CreateSession(context.Background(), SessionOptions{
+	session, err := manager.CreateSession(t.Context(), SessionOptions{
 		Context:    "run",
 		Identifier: "retained-token",
 		WorkingDir: tempDir,
@@ -56,7 +56,7 @@ func TestSessionManagerMasksConfiguredCredentialRetainedByExistingServer(t *test
 	})
 	require.NoError(t, err)
 	marker, err := server.RunCommandOutputContext(
-		context.Background(),
+		t.Context(),
 		"show-environment", "-t", session.SessionName, tokenName,
 	)
 	require.NoError(t, err)
@@ -65,7 +65,7 @@ func TestSessionManagerMasksConfiguredCredentialRetainedByExistingServer(t *test
 	var paneEnvironment string
 	require.Eventually(t, func() bool {
 		paneEnvironment, err = server.RunCommandOutputContext(
-			context.Background(),
+			t.Context(),
 			"capture-pane", "-p", "-S", "-", "-t", session.SessionName,
 		)
 		return err == nil && (strings.Contains(paneEnvironment, "credential-clean") ||

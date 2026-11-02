@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/kwt/service"
 )
 
-var openSSHVersionPattern = regexp.MustCompile( //nolint:gochecknoglobals
+var openSSHVersionPattern = regexp.MustCompile(
 	`OpenSSH(?:_for_Windows)?[_ ]([0-9]+)\.([0-9]+)`,
 )
 

@@ -39,7 +39,7 @@ func TestProcessGuardRejectsUninspectableCurrentUserProcess(t *testing.T) {
 	require.NoError(t, err)
 
 	err = rejectProcessCandidatesUsingWorktree(
-		context.Background(),
+		t.Context(),
 		"/worktrees/topic",
 		[]worktreeProcess{fakeWorktreeProcess{
 			processID:     42,
@@ -59,7 +59,7 @@ func TestProcessGuardRejectsEmptyWorkingDirectoryForCurrentUserProcess(t *testin
 	require.NoError(t, err)
 
 	err = rejectProcessCandidatesUsingWorktree(
-		context.Background(),
+		t.Context(),
 		"/worktrees/topic",
 		[]worktreeProcess{fakeWorktreeProcess{
 			processID: 42,
@@ -78,7 +78,7 @@ func TestProcessGuardIgnoresZombieWithNoWorkingDirectory(t *testing.T) {
 	require.NoError(t, err)
 
 	err = rejectProcessCandidatesUsingWorktree(
-		context.Background(),
+		t.Context(),
 		"/worktrees/topic",
 		[]worktreeProcess{fakeWorktreeProcess{
 			processID:     42,
