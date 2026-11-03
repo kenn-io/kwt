@@ -192,7 +192,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload test results
-        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-${{ matrix.os }}-attempt-${{ github.run_attempt }}
