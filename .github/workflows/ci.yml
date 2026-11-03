@@ -103,9 +103,9 @@ jobs:
             GIT_TERMINAL_PROMPT=0
           )
           read -r -a test_packages <<< "$TEST_PACKAGES"
-          "${clean_env[@]}" go -C tools/testbootstrap test ./...
+          "${clean_env[@]}" go -C tools/testbootstrap test -v ./...
           "${clean_env[@]}" "KWT_HOME=$kwt_test_home" \
-            go -C tools/testbootstrap run . -- "${test_packages[@]}"
+            go -C tools/testbootstrap run . -- -v "${test_packages[@]}"
 
       - name: Test
         if: runner.os == 'Windows'
@@ -148,10 +148,10 @@ jobs:
           $env:GIT_CONFIG_NOSYSTEM = '1'
           $env:GIT_TERMINAL_PROMPT = '0'
 
-          & go -C tools/testbootstrap test ./...
+          & go -C tools/testbootstrap test -v ./...
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:KWT_HOME = $kwtTestHome
-          & go -C tools/testbootstrap run . -- @testPackages
+          & go -C tools/testbootstrap run . -- -v @testPackages
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build
