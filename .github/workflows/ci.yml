@@ -69,7 +69,9 @@ jobs:
         shell: bash
         env:
           TEST_PACKAGES: ${{ matrix.packages }}
+          TEST_SUITE: ${{ matrix.os }}
         run: |
+          results="$PWD/gotestsum"
           kwt_test_home="$RUNNER_TEMP/kwt-test-home"
           mkdir -p "$kwt_test_home"
           clean_env=(
@@ -102,18 +104,36 @@ jobs:
             GIT_CONFIG_NOSYSTEM=1
             GIT_TERMINAL_PROMPT=0
           )
-          read -r -a test_packages <<< "$TEST_PACKAGES"
-          "${clean_env[@]}" go -C tools/testbootstrap test -v ./...
+          # The bootstrap module stays dependency-free, so its tests run the
+          # root module's gotestsum build from inside the bootstrap module.
+          gotestsum="$("${clean_env[@]}" go tool -n gotestsum)"
+          (
+            cd tools/testbootstrap
+            "${clean_env[@]}" "$gotestsum" \
+              --format pkgname-and-test-fails --format-icons text \
+              --jsonfile "$results/$TEST_SUITE-bootstrap.json" \
+              --rerun-fails=2 \
+              --rerun-fails-report "$results/$TEST_SUITE-bootstrap-reruns.txt" \
+              --packages ./...
+          )
           "${clean_env[@]}" "KWT_HOME=$kwt_test_home" \
-            go -C tools/testbootstrap run . -- -v "${test_packages[@]}"
+            go -C tools/testbootstrap run . -- gotestsum \
+              --format pkgname-and-test-fails --format-icons text \
+              --jsonfile "$results/$TEST_SUITE.json" \
+              --rerun-fails=2 \
+              --rerun-fails-report "$results/$TEST_SUITE-reruns.txt" \
+              --packages "$TEST_PACKAGES"
 
       - name: Test
         if: runner.os == 'Windows'
         shell: pwsh
         env:
           TEST_PACKAGES: ${{ matrix.packages }}
+          TEST_SUITE: ${{ matrix.os }}
         run: |
-          $testPackages = $env:TEST_PACKAGES -split ' '
+          $testPackages = $env:TEST_PACKAGES
+          $suite = $env:TEST_SUITE
+          $results = Join-Path (Get-Location) 'gotestsum'
           $kwtTestHome = Join-Path $env:RUNNER_TEMP 'kwt-test-home'
           $gitConfig = Join-Path $env:RUNNER_TEMP 'kwt-test-gitconfig'
           New-Item -ItemType Directory -Force $kwtTestHome | Out-Null
@@ -148,11 +168,37 @@ jobs:
           $env:GIT_CONFIG_NOSYSTEM = '1'
           $env:GIT_TERMINAL_PROMPT = '0'
 
-          & go -C tools/testbootstrap test -v ./...
+          # The bootstrap module stays dependency-free, so its tests run the
+          # root module's gotestsum build from inside the bootstrap module.
+          $gotestsum = & go tool -n gotestsum
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Push-Location tools/testbootstrap
+          & $gotestsum `
+            --format pkgname-and-test-fails --format-icons text `
+            --jsonfile (Join-Path $results "$suite-bootstrap.json") `
+            --rerun-fails=2 `
+            --rerun-fails-report (Join-Path $results "$suite-bootstrap-reruns.txt") `
+            --packages ./...
+          $bootstrapExit = $LASTEXITCODE
+          Pop-Location
+          if ($bootstrapExit -ne 0) { exit $bootstrapExit }
           $env:KWT_HOME = $kwtTestHome
-          & go -C tools/testbootstrap run . -- -v @testPackages
+          & go -C tools/testbootstrap run . -- gotestsum `
+            --format pkgname-and-test-fails --format-icons text `
+            --jsonfile (Join-Path $results "$suite.json") `
+            --rerun-fails=2 `
+            --rerun-fails-report (Join-Path $results "$suite-reruns.txt") `
+            --packages $testPackages
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload test results
+        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-${{ matrix.os }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Build
         run: go build ./cmd/kwt
