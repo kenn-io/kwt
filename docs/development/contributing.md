@@ -80,9 +80,10 @@ documented Make entrypoints rather than invoking the Go bootstrap directly.
 CI runs tests through gotestsum, a tool dependency of the root module. When
 the runner's first argument is `gotestsum`, it runs `go tool gotestsum` with
 the remaining arguments inside the same isolation. gotestsum reruns failed
-tests and writes their `go test -json` events, which CI uploads when a test
-failed or was rerun. The bootstrap module stays dependency-free, so CI runs
-its tests with the root module's gotestsum build.
+tests and writes their `go test -json` events. CI uploads them when a test
+failed or gotestsum reran one, and on every workflow run attempt after the
+first. The bootstrap module stays dependency-free, so CI runs its tests with
+the root module's gotestsum build.
 
 ### Shared build cache and debugging
 
