@@ -299,6 +299,55 @@ func TestRunDoesNotForwardProtectedEnvironment(t *testing.T) {
 	}
 }
 
+func TestRunStartsGotestsumInsideIsolation(t *testing.T) {
+	var commands []string
+	execute := func(
+		_ context.Context,
+		environment []string,
+		_, _ io.Writer,
+		name string,
+		args ...string,
+	) (string, error) {
+		command := strings.Join(append([]string{name}, args...), " ")
+		commands = append(commands, command)
+		if command == "git version" {
+			return "git version 2.55.0", nil
+		}
+		if name == "go" && len(args) > 0 && args[0] == "tool" {
+			assertEnvironmentMissing(t, environment, "KWT_GITHUB_TOKEN")
+			if environmentValue(t, environment, "HTTP_PROXY") == "" {
+				t.Fatal("gotestsum started without the outbound deny proxy")
+			}
+		}
+		return "", nil
+	}
+	var stderr bytes.Buffer
+
+	exitCode := runWith(
+		t.Context(),
+		[]string{
+			"gotestsum", "--jsonfile", "gotestsum/linux.json",
+			"--packages", "./internal/example ./internal/other",
+			"--", "-run", "^TestExample$",
+		},
+		io.Discard,
+		&stderr,
+		[]string{"HOME=/developer/home", "KWT_GITHUB_TOKEN=github-secret"},
+		[]string{"KWT_GITHUB_TOKEN"},
+		execute,
+	)
+
+	if exitCode != 0 {
+		t.Fatalf("runWith exit code = %d, stderr = %q", exitCode, stderr.String())
+	}
+	want := "git version\ngo mod download\n" +
+		"go tool gotestsum --jsonfile gotestsum/linux.json " +
+		"--packages ./internal/example ./internal/other -- -run ^TestExample$"
+	if got := strings.Join(commands, "\n"); got != want {
+		t.Fatalf("commands = %q, want %q", got, want)
+	}
+}
+
 func TestRunFailsAfterSuccessfulTestsAttemptOutboundHTTP(t *testing.T) {
 	var commands []string
 	execute := func(

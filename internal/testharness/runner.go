@@ -163,7 +163,7 @@ func runWith(
 	execute commandExecutor,
 ) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(stderr, "usage: testharness [go test flags and packages]")
+		_, _ = fmt.Fprintln(stderr, "usage: testharness [go test flags and packages | gotestsum [gotestsum flags] -- [go test flags]]")
 		return 2
 	}
 
@@ -244,7 +244,7 @@ func runPrepared(
 		return 1
 	}
 	testEnv := isolatedEnvironment(environment, protectedNames, scratch, proxy.Address())
-	_, testErr := execute(ctx, testEnv, stdout, stderr, "go", append([]string{"test"}, args...)...)
+	_, testErr := execute(ctx, testEnv, stdout, stderr, "go", testCommand(args)...)
 	closeErr := proxy.Close()
 	requests := proxy.Requests()
 
@@ -279,6 +279,16 @@ func runPrepared(
 		return 1
 	}
 	return 0
+}
+
+// testCommand returns the go subcommand that runs the tests. A leading
+// "gotestsum" runs the module's gotestsum tool with the remaining arguments, so
+// CI can record go test -json events and rerun failures inside the isolation.
+func testCommand(args []string) []string {
+	if args[0] == "gotestsum" {
+		return append([]string{"tool", "gotestsum"}, args[1:]...)
+	}
+	return append([]string{"test"}, args...)
 }
 
 func executeCommand(
