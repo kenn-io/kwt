@@ -7,15 +7,10 @@ import (
 
 const workspaceDestroyOption = "@kwt-destroy-unattached"
 
-// Leave global entries intact when a local array hides their ownership.
-const workspaceLifetimeCleanup = `if-shell -F "#{==:#{S:#{` + workspaceDestroyOption + `}},}" { ` +
-	`if-shell -F "#{m:if-shell -F *set-option -u ` + workspaceDestroyOption + `*,#{client-attached[999]}}" { set-hook -gu client-attached[999] } ; ` +
-	`if-shell -F "#{m:if-shell -F *set-option -u ` + workspaceDestroyOption + `*,#{client-session-changed[999]}}" { set-hook -gu client-session-changed[999] } }`
-
 // The hook event supplies the session, so the global entries restore only it.
 // The marker records the local policy, or inherit when it matches the global one.
 const workspaceRestoreCommand = `if-shell -F "#{` + workspaceDestroyOption + `}" { if-shell -F "#{==:#{` + workspaceDestroyOption + `},inherit}" ` +
-	`{ set-option -u destroy-unattached } { set-option -F destroy-unattached "#{` + workspaceDestroyOption + `}" } ; set-option -u ` + workspaceDestroyOption + " ; " + workspaceLifetimeCleanup + " }"
+	`{ set-option -u destroy-unattached } { set-option -F destroy-unattached "#{` + workspaceDestroyOption + `}" } ; set-option -u ` + workspaceDestroyOption + " }"
 
 // User commands take priority over the shared restore hook.
 const workspaceLifetimeHooks = `set-option -gqo client-attached[999] '` + workspaceRestoreCommand + `' ; ` +
