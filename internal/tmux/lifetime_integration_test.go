@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,6 +58,32 @@ func TestWorkspaceWithDestroyUnattachedOff(t *testing.T) {
 	after, err := command.RunCommandOutputContext(ctx, "show-hooks", "-g")
 	require.NoError(t, err)
 	require.Equal(t, output, after, "workspaces with the hold disabled must also reuse the shared hooks")
+}
+
+func TestWorkspaceWithServerPathWithoutTmux(t *testing.T) {
+	binary, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux is not installed")
+	}
+	sleep, err := exec.LookPath("sleep")
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	require.NoError(t, os.Mkdir(bin, 0700))
+	require.NoError(t, os.Symlink(sleep, filepath.Join(bin, "sleep")))
+	socket := fmt.Sprintf("kwt-lifetime-path-%d-%d", os.Getpid(), time.Now().UnixNano())
+	command := NewTmuxCommandForSocketWithStripNames(binary, socket, nil)
+	t.Cleanup(func() { killPrivateTmuxServer(socket) })
+	require.NoError(t, command.RunCommandContext(ctx, "-f", "/dev/null", "new-session", "-d", "-s", "unrelated", "/bin/sh"))
+	require.NoError(t, command.RunCommandContext(ctx, "set-option", "-g", "destroy-unattached", "off", ";", "set-option", "-g", "default-shell", "/bin/sh", ";", "set-environment", "-g", "PATH", bin))
+	err = NewWorkspaceRunner(command, nil).Ensure(ctx, "workspace", root, BlankLayout())
+	assert.NoError(t, err)
+	panes, err := command.RunCommandOutputContext(ctx, "list-panes", "-a", "-F", "#{session_name}:#{pane_start_command}")
+	require.NoError(t, err)
+	require.NotContains(t, panes, "sleep", "Ensure must replace its placeholder with the user's shell")
+	require.True(t, command.HasSession("workspace"))
 }
 
 func TestWorkspaceRestoresGlobalHookInheritance(t *testing.T) {
