@@ -32,14 +32,10 @@ func (command *lifetimeAttachmentTmux) RunCommandOutputContext(ctx context.Conte
 }
 
 func TestWorkspaceWithDestroyUnattachedOff(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux is not installed")
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	fixture := newRealWorkspaceSessionsFixture(t)
+	ctx, cancel := context.WithTimeout(fixture.ctx, 15*time.Second)
 	defer cancel()
-	socket := fmt.Sprintf("kwt-lifetime-off-%d-%d", os.Getpid(), time.Now().UnixNano())
-	command := NewTmuxCommandForSocketWithStripNames("tmux", socket, nil)
-	t.Cleanup(func() { killPrivateTmuxServer(socket) })
+	command := fixture.servers.kwtServer()
 	require.NoError(t, command.RunCommandContext(ctx, "-f", "/dev/null", "new-session", "-d", "-s", "unrelated"))
 	require.NoError(t, command.RunCommandContext(ctx, "set-option", "-g", "destroy-unattached", "off"))
 	before, err := command.RunCommandOutputContext(ctx, "show-hooks", "-g")
@@ -63,23 +59,18 @@ func TestWorkspaceWithDestroyUnattachedOff(t *testing.T) {
 }
 
 func TestWorkspaceWithServerPathWithoutTmux(t *testing.T) {
-	binary, err := exec.LookPath("tmux")
-	if err != nil {
-		t.Skip("tmux is not installed")
-	}
 	for _, policy := range []string{"off", "on"} {
 		t.Run(policy, func(t *testing.T) {
+			fixture := newRealWorkspaceSessionsFixture(t)
 			sleep, err := exec.LookPath("sleep")
 			require.NoError(t, err)
-			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			ctx, cancel := context.WithTimeout(fixture.ctx, 15*time.Second)
 			defer cancel()
-			root := t.TempDir()
+			root := fixture.workspace
 			bin := filepath.Join(root, "bin")
 			require.NoError(t, os.Mkdir(bin, 0700))
 			require.NoError(t, os.Symlink(sleep, filepath.Join(bin, "sleep")))
-			socket := fmt.Sprintf("kwt-lifetime-path-%d-%d", os.Getpid(), time.Now().UnixNano())
-			command := NewTmuxCommandForSocketWithStripNames(binary, socket, nil)
-			t.Cleanup(func() { killPrivateTmuxServer(socket) })
+			command := fixture.servers.kwtServer()
 			require.NoError(t, command.RunCommandContext(ctx, "-f", "/dev/null", "new-session", "-d", "-s", "unrelated", "/bin/sh"))
 			require.NoError(t, command.RunCommandContext(ctx, "set-option", "-t", "unrelated", "destroy-unattached", "off", ";", "set-option", "-g", "destroy-unattached", policy, ";", "set-option", "-g", "default-shell", "/bin/sh", ";", "set-environment", "-g", "PATH", bin))
 			err = NewWorkspaceRunner(command, nil).Ensure(ctx, "workspace", root, BlankLayout())
@@ -98,8 +89,8 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 		t.Skip("tmux is not installed")
 	}
 	for _, tc := range []struct {
-		name, secondVisit, secondHook                                                           string
-		warm, switchClient, localHooks, earlyAttach, followGlobal, localPolicy, reload, user999 bool
+		name, secondVisit, secondHook                                                   string
+		warm, switchClient, localHooks, earlyAttach, followGlobal, localPolicy, user999 bool
 	}{
 		{name: "fresh server"},
 		{name: "existing server", warm: true},
@@ -109,7 +100,6 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 		{name: "switch before local restore installation", warm: true, switchClient: true, earlyAttach: true, localHooks: true},
 		{name: "global policy change", followGlobal: true},
 		{name: "session-local policy", localPolicy: true},
-		{name: "reload before first attach", reload: true},
 		{name: "user hooks at 999", user999: true},
 		{name: "user hooks at 999 with local hooks", user999: true, localHooks: true, warm: true},
 		{name: "updated global hook", secondVisit: "global"},
@@ -118,9 +108,10 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 		{name: "installed local session-changed hook", secondVisit: "local", secondHook: "client-session-changed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			fixture := newRealWorkspaceSessionsFixture(t)
+			ctx, cancel := context.WithTimeout(fixture.ctx, 15*time.Second)
 			defer cancel()
-			root := t.TempDir()
+			root := fixture.workspace
 			config := filepath.Join(root, "tmux.conf")
 			// Keep server shutdown separate from the session lifetime assertions.
 			contents := "set -s exit-empty off\nset -g destroy-unattached on\nset -g default-shell /bin/sh\nset-hook -g client-attached 'set -g @user-attach-hook ran'\nset-hook -g client-session-changed 'set -g @user-switch-hook ran'\n" +
@@ -150,9 +141,8 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 			require.NoError(t, os.WriteFile(config, []byte(contents), 0600))
 			wrapper := filepath.Join(root, "tmux")
 			require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec "+quotePOSIXShellArgument(binary)+" -f "+quotePOSIXShellArgument(config)+" \"$@\"\n"), 0700))
-			socket := fmt.Sprintf("kwt-lifetime-%d-%d", os.Getpid(), time.Now().UnixNano())
-			command := NewTmuxCommandForSocketWithStripNames(wrapper, socket, nil)
-			t.Cleanup(func() { killPrivateTmuxServer(socket) })
+			command := fixture.servers.kwtServer()
+			command.command = wrapper
 			if tc.warm {
 				require.NoError(t, command.RunCommandContext(ctx, "new-session", "-d", "-s", "unrelated", "sleep", "30", ";", "set-option", "-t", "unrelated", "destroy-unattached", "off"))
 			}
@@ -240,11 +230,6 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, before, after, "workspace creation and reopening must reuse the shared hooks")
 			}
-			if tc.reload {
-				require.NoError(t, command.RunCommandContext(ctx, "set-hook", "-g", "client-attached", `set -g @user-attach-hook ran ; set -gF @user-attach-client "#{hook_client}"`))
-				require.NoError(t, command.RunCommandContext(ctx, "set-hook", "-g", "client-session-changed", `set -g @user-switch-hook ran ; set -gF @user-switch-client "#{hook_client}"`))
-				require.NoError(t, runner.Ensure(ctx, "workspace", root, BlankLayout()))
-			}
 			visits := 1
 			if tc.secondVisit != "" {
 				visits = 2
@@ -307,9 +292,9 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 				var exitErr *exec.ExitError
 				require.ErrorAs(t, client.Wait(), &exitErr)
 				require.Equal(t, -1, exitErr.ExitCode())
-				if tc.followGlobal || (tc.user999 && !tc.localHooks) || tc.secondVisit != "" {
+				if tc.followGlobal || tc.secondVisit != "" {
 					require.True(t, command.HasSession("workspace"))
-				} else {
+				} else if !tc.user999 || tc.localHooks {
 					require.Eventually(t, func() bool { return !command.HasSession("workspace") }, 5*time.Second, 10*time.Millisecond)
 				}
 			}

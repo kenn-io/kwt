@@ -434,8 +434,7 @@ With tmux 3.0 or newer, a new workspace stays alive through setup even when tmux
 session. When the first client attaches or switches to it, the session follows
 its own or global setting again. Server defaults, existing sessions, and user attachment
 hooks remain intact. With `--start-session`, the new session waits for that first
-client; detaching afterward follows the restored policy. Older tmux versions
-retain their existing session-lifetime behavior.
+client; detaching afterward follows the restored policy.
 
 During rollout, a verified matching session on the default server is adopted
 instead of creating a parallel session. If matching sessions

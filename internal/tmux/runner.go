@@ -232,9 +232,6 @@ func (r *WorkspaceRunner) ensure(
 		}
 	}
 	if sessionExists {
-		if err := r.restoreWorkspaceLifetime(ctx, session); err != nil {
-			return err
-		}
 		if err := r.repairBootstrap(ctx, session, worktreeDir, generation); err != nil {
 			return err
 		}
