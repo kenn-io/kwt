@@ -12,28 +12,9 @@ const workspaceDestroyOption = "@kwt-destroy-unattached"
 const workspaceRestoreCommand = `if-shell -F "#{` + workspaceDestroyOption + `}" { if-shell -F "#{==:#{` + workspaceDestroyOption + `},inherit}" ` +
 	`{ set-option -u destroy-unattached } { set-option -F destroy-unattached "#{` + workspaceDestroyOption + `}" } ; set-option -u ` + workspaceDestroyOption + " }"
 
-// Run before new-session: waiting for a shell job after creation could let a
-// client attach before its restore hook exists. The server lock makes the
-// global check and append one operation across concurrent kwt processes.
-func installWorkspaceLifetimeHooks() []string {
-	script := "set -e\n" +
-		"tmux() { command tmux -S #{q:socket_path} \"$@\"; }\n" +
-		"tmux wait-for -L kwt-workspace-lifetime-hooks\n" +
-		"trap 'tmux wait-for -U kwt-workspace-lifetime-hooks' 0\n" +
-		"restore=" + strings.ReplaceAll(quotePOSIXShellArgument(workspaceRestoreCommand), "#", "##") + "\n" +
-		"for hook in client-attached client-session-changed; do\n" +
-		"hooks=$(tmux show-hooks -g \"$hook\")\nfound=\n" +
-		"while IFS= read -r entry; do\n" +
-		"[ \"${entry#* }\" != \"$restore\" ] || found=1\n" +
-		"done <<EOF\n$hooks\nEOF\n" +
-		"[ \"$found\" ] || tmux set-hook -ag \"$hook\" \"$restore\"\n" +
-		"done"
-	job := "run-shell " + quoteTmuxCommandArgument(script)
-	// Nested tmux clients would otherwise end an empty server before the
-	// first new-session runs. Restore its setting before continuing the queue.
-	install := "if-shell -F '#{exit-empty}' " + quoteTmuxCommandArgument("set-option -s exit-empty off ; "+job+" ; set-option -s exit-empty on") + " " + quoteTmuxCommandArgument(job)
-	return []string{"if-shell", "-F", "#{>=:#{version},3.0}", install}
-}
+// User commands take priority over the shared restore hook.
+const workspaceLifetimeHooks = `if-shell -F '#{||:#{==:#{client-attached[999]},},#{m:*@kwt-destroy-unattached*,#{client-attached[999]}}}' { set-hook -g client-attached[999] { ` + workspaceRestoreCommand + ` } } ; ` +
+	`if-shell -F '#{||:#{==:#{client-session-changed[999]},},#{m:*@kwt-destroy-unattached*,#{client-session-changed[999]}}}' { set-hook -g client-session-changed[999] { ` + workspaceRestoreCommand + ` } }`
 
 // holdWorkspaceLifetime runs in the same command queue as new-session, before
 // tmux can destroy the still-unattached session between bootstrap commands.
@@ -43,7 +24,7 @@ func holdWorkspaceLifetime(session string) []string {
 		"#{?#{==:#{destroy-unattached},off},0,#{destroy-unattached}}",
 		"set-option -F -t " + quoteTmuxCommandArgument(target) + " " + workspaceDestroyOption + " '#{destroy-unattached}' ; set-option -u -t " + quoteTmuxCommandArgument(target) + " destroy-unattached" +
 			" ; if-shell -F -t " + quoteTmuxCommandArgument(target) + " '#{==:#{destroy-unattached},#{" + workspaceDestroyOption + "}}' { set-option -t " + quoteTmuxCommandArgument(target) + " " + workspaceDestroyOption + " inherit }" +
-			" ; set-option -t " + quoteTmuxCommandArgument(target) + " destroy-unattached off",
+			" ; set-option -t " + quoteTmuxCommandArgument(target) + " destroy-unattached off ; " + workspaceLifetimeHooks,
 	}
 }
 
@@ -58,7 +39,7 @@ func (r *WorkspaceRunner) restoreWorkspaceLifetime(ctx context.Context, session 
 	if strings.TrimSpace(pending) == "" {
 		return nil
 	}
-	if err := r.tmux.RunCommandContext(ctx, installWorkspaceLifetimeHooks()...); err != nil {
+	if err := r.tmux.RunCommandContext(ctx, "if-shell", "-F", "1", workspaceLifetimeHooks); err != nil {
 		return err
 	}
 	target := "=" + session + ":"

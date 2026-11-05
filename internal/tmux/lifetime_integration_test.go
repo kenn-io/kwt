@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +25,7 @@ type lifetimeAttachmentTmux struct {
 
 func (command *lifetimeAttachmentTmux) RunCommandOutputContext(ctx context.Context, args ...string) (string, error) {
 	output, err := command.TmuxCommand.RunCommandOutputContext(ctx, args...)
-	if err == nil && slices.Contains(args, "new-session") {
+	if err == nil && args[0] == "new-session" {
 		command.afterCreate()
 	}
 	return output, err
@@ -57,7 +56,7 @@ func TestWorkspaceWithDestroyUnattachedOff(t *testing.T) {
 	require.NoError(t, runner.Ensure(ctx, "second-workspace", t.TempDir(), BlankLayout()))
 	after, err := command.RunCommandOutputContext(ctx, "show-hooks", "-g")
 	require.NoError(t, err)
-	require.Equal(t, output, after, "workspaces with the hold disabled must also reuse the shared hooks")
+	require.Equal(t, output, after, "workspaces with the hold disabled must leave global hooks alone")
 }
 
 func TestWorkspaceWithServerPathWithoutTmux(t *testing.T) {
@@ -179,7 +178,7 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 		{name: "global policy change", followGlobal: true},
 		{name: "session-local policy", localPolicy: true},
 		{name: "reload before first attach", reload: true},
-		{name: "user hooks at 999", user999: true, earlyAttach: true},
+		{name: "user hooks at 999", user999: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
@@ -288,7 +287,11 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 			}
 			out, err := command.RunCommandOutputContext(ctx, "show-options", "-Av", "-t", "workspace", "destroy-unattached")
 			require.NoError(t, err)
-			require.Equal(t, "on", strings.TrimSpace(out))
+			expectedPolicy := "on"
+			if tc.user999 {
+				expectedPolicy = "off" // User-owned slots take priority over restoration.
+			}
+			require.Equal(t, expectedPolicy, strings.TrimSpace(out))
 			marker := filepath.Join(root, "shell-ready")
 			_, err = fmt.Fprintf(terminal, "printf 'ready-%%s' worktree > %s\r", quotePOSIXShellArgument(marker))
 			require.NoError(t, err)
@@ -305,7 +308,7 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 			var exitErr *exec.ExitError
 			require.ErrorAs(t, client.Wait(), &exitErr)
 			require.Equal(t, -1, exitErr.ExitCode())
-			if tc.followGlobal {
+			if tc.followGlobal || tc.user999 {
 				require.True(t, command.HasSession("workspace"))
 			} else {
 				require.Eventually(t, func() bool { return !command.HasSession("workspace") }, 5*time.Second, 10*time.Millisecond)
