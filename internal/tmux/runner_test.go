@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -199,7 +198,7 @@ func TestEnsureWithGenerationReusesMatchingSession(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, m.calls)
-	require.NotEmpty(t, m.queryContexts["session_user_option"])
+	require.Len(t, m.queryContexts["session_user_option"], 2)
 	for _, queryCtx := range m.queryContexts["session_user_option"] {
 		assert.Same(t, ctx, queryCtx)
 	}
@@ -404,10 +403,9 @@ func TestEnsureAndAttachCreatesSendsToCapturedIDsAndAttaches(t *testing.T) {
 		{"send-keys", "-t", "%3", "Enter"},
 		{"select-pane", "-t", "%1"},
 	}
-	prefix := []string{"new-session", "-d", "-P", "-F", "#{pane_id}", "-s", "s", "-c", "/wt", "sleep", "2147483647", ";", "if-shell"}
+	create := append(BuildSessionCreateCommand("s", "/wt"), holdWorkspaceLifetime("s")...)
 	require.NotEmpty(t, m.calls)
-	require.GreaterOrEqual(t, len(m.calls[0]), len(prefix))
-	assert.Equal(t, prefix, m.calls[0][:len(prefix)])
+	assert.Equal(t, create, m.calls[0])
 	assert.Equal(t, want, m.calls[1:])
 	assert.Equal(t, "s", m.attachedTo)
 	assert.Empty(t, m.switchedTo)
@@ -674,9 +672,7 @@ func TestProtectedEnsureAndAttachCreatesMissingSession(t *testing.T) {
 	require.NoError(t, err)
 	assert.Same(t, ctx, m.protectedAttachCtx)
 	assert.Equal(t, "workspace", m.protectedAttachedTo)
-	assert.True(t, slices.ContainsFunc(m.calls, func(args []string) bool {
-		return len(args) >= 9 && args[0] == "new-session" && args[5] == "-s" && args[6] == "workspace" && args[7] == "-c" && args[8] == "/wt"
-	}))
+	assert.Contains(t, m.calls, append(BuildSessionCreateCommand("workspace", "/wt"), holdWorkspaceLifetime("workspace")...))
 	assert.Contains(t, m.calls, buildProtectedSessionBootstrapCommand(
 		"workspace",
 		"/wt",

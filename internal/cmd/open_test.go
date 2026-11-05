@@ -564,13 +564,14 @@ func TestRunOpenWithContextRejectsSessionOnlyGuardWithoutRegisteredDirectory(t *
 			cmd, _, _ := fleetTestCommand()
 			cmd.SetContext(t.Context())
 			markCommandFlagsChanged(t, cmd, "expected-session")
-			for index, path := range tc.paths {
+			for _, path := range tc.paths {
 				expectedPath = path
+				discoveryCalls = 0
 				err := runOpenWithContext(cmd, []string{path}, &CommandContext{Config: &models.Config{Projects: projects}})
 				require.Error(t, err)
 				assert.True(t, service.IsCode(err, tc.code), err)
 				assert.Contains(t, err.Error(), tc.message)
-				assert.Equal(t, index+1, discoveryCalls)
+				assert.Equal(t, 1, discoveryCalls)
 				assert.False(t, runner.ensured)
 				assert.False(t, runner.attached)
 			}
