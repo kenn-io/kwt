@@ -431,10 +431,10 @@ Protected pull-request imports remain restricted to `kwt pr attach`.
 
 With tmux 3.0 or newer, a new workspace stays alive through setup even when tmux has
 `destroy-unattached` enabled. Kwt temporarily disables that option for the new
-session and restores its captured value when the first client attaches or
-switches to it. Server defaults, existing sessions, and user attachment hooks
-remain intact. With `--start-session`, the new session waits for that first
-client; detaching afterward follows the restored policy. Older tmux versions
+session. When the first client attaches or switches to it, the session follows
+the global setting again. Server defaults, existing sessions, and user attachment
+hooks remain intact. With `--start-session`, the new session waits for that first
+client; detaching afterward follows the current global policy. Older tmux versions
 retain their existing session-lifetime behavior.
 
 During rollout, a verified matching session on the default server is adopted

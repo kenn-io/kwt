@@ -127,8 +127,8 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 		t.Skip("tmux is not installed")
 	}
 	for _, tc := range []struct {
-		name                                        string
-		warm, switchClient, localHooks, earlyAttach bool
+		name                                                      string
+		warm, switchClient, localHooks, earlyAttach, followGlobal bool
 	}{
 		{name: "fresh server"},
 		{name: "existing server", warm: true},
@@ -136,6 +136,7 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 		{name: "switch client", warm: true, switchClient: true},
 		{name: "attach before hook installation", earlyAttach: true},
 		{name: "switch before hook installation", warm: true, switchClient: true, earlyAttach: true},
+		{name: "global policy change", followGlobal: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
@@ -221,8 +222,15 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 				contents, err := os.ReadFile(marker)
 				return err == nil && string(contents) == "ready-worktree"
 			}, 5*time.Second, 10*time.Millisecond)
+			if tc.followGlobal {
+				require.NoError(t, command.RunCommandContext(ctx, "set-option", "-g", "destroy-unattached", "off"))
+			}
 			require.NoError(t, command.RunCommandContext(ctx, "detach-client", "-s", "workspace"))
-			require.Eventually(t, func() bool { return !command.HasSession("workspace") }, 5*time.Second, 10*time.Millisecond)
+			if tc.followGlobal {
+				require.True(t, command.HasSession("workspace"))
+			} else {
+				require.Eventually(t, func() bool { return !command.HasSession("workspace") }, 5*time.Second, 10*time.Millisecond)
+			}
 			if tc.warm {
 				require.True(t, command.HasSession("unrelated"))
 			}
