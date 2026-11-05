@@ -391,7 +391,7 @@ func TestEnsureAndAttachCreatesSendsToCapturedIDsAndAttaches(t *testing.T) {
 	// exist.
 	want := [][]string{
 		{"new-session", "-d", "-P", "-F", "#{pane_id}", "-s", "s", "-c", "/wt", "sleep", "2147483647",
-			";", "if-shell", "-F", "-t", "=s:", "#{!=:#{destroy-unattached},off}",
+			";", "if-shell", "-F", "-t", "=s:", "#{?#{==:#{destroy-unattached},off},0,#{destroy-unattached}}",
 			`set-option -F -t "=s:" @kwt-destroy-unattached '#{destroy-unattached}' ; set-option -t "=s:" destroy-unattached off`},
 		expectedBootstrapCommand("s", "/wt"),
 		{"show-options", "-v", "-t", "s", "default-shell"},

@@ -30,6 +30,28 @@ func (command *lifetimeAttachmentTmux) RunCommandOutputContext(ctx context.Conte
 	return output, err
 }
 
+func TestWorkspaceWithDestroyUnattachedOff(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is not installed")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	socket := fmt.Sprintf("kwt-lifetime-off-%d-%d", os.Getpid(), time.Now().UnixNano())
+	command := NewTmuxCommandForSocketWithStripNames("tmux", socket, nil)
+	t.Cleanup(func() { killPrivateTmuxServer(socket) })
+	require.NoError(t, command.RunCommandContext(ctx, "-f", "/dev/null", "new-session", "-d", "-s", "unrelated"))
+	require.NoError(t, command.RunCommandContext(ctx, "set-option", "-g", "destroy-unattached", "off"))
+	runner := NewWorkspaceRunner(command, nil)
+	require.NoError(t, runner.Ensure(ctx, "workspace", t.TempDir(), BlankLayout()))
+	policy, err := command.sessionUserOption(ctx, "workspace", workspaceDestroyOption)
+	require.NoError(t, err)
+	require.Empty(t, strings.TrimSpace(policy))
+	output, err := command.RunCommandOutputContext(ctx, "show-options", "-q", "-t", "workspace", "client-attached")
+	require.NoError(t, err)
+	require.Empty(t, strings.TrimSpace(output))
+	require.True(t, command.HasSession("workspace"))
+}
+
 func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 	binary, err := exec.LookPath("tmux")
 	if err != nil {

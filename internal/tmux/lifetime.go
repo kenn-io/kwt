@@ -14,7 +14,7 @@ const workspaceDestroyOption = "@kwt-destroy-unattached"
 func holdWorkspaceLifetime(session string) []string {
 	target := "=" + session + ":"
 	return []string{";", "if-shell", "-F", "-t", target,
-		"#{!=:#{destroy-unattached},off}",
+		"#{?#{==:#{destroy-unattached},off},0,#{destroy-unattached}}",
 		"set-option -F -t " + quoteTmuxCommandArgument(target) + " " + workspaceDestroyOption +
 			" '#{destroy-unattached}' ; set-option -t " + quoteTmuxCommandArgument(target) + " destroy-unattached off",
 	}
@@ -33,7 +33,7 @@ func (r *WorkspaceRunner) restoreWorkspaceLifetime(ctx context.Context, session 
 		return nil
 	}
 	switch policy {
-	case "on", "keep-last", "keep-group":
+	case "1", "on", "keep-last", "keep-group":
 	default:
 		return fmt.Errorf("invalid pending workspace lifetime policy %q", policy)
 	}
