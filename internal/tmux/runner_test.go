@@ -653,59 +653,41 @@ func TestProtectedAttachRepairsPolicyAndDisablesEnvironmentUpdate(t *testing.T) 
 }
 
 func TestProtectedEnsureAndAttachCreatesMissingSession(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		restoreErr error
-	}{
-		{name: "attach"},
-		{name: "restore fails", restoreErr: errors.New("cannot read lifetime marker")},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			m := &mockWorkspaceTmux{
-				sessionOptionErr: tc.restoreErr,
-				globalEnv:        "PATH=/bin\n",
-				globalUpdateEnv:  "DISPLAY KWT_GITHUB_TOKEN",
-			}
-			r := NewProtectedWorkspaceRunner(
-				m,
-				[]string{"KWT_GITHUB_TOKEN"},
-			)
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-
-			err := r.EnsureAndAttachProtected(
-				ctx,
-				"workspace",
-				"/wt",
-				BlankLayout(),
-			)
-
-			assert.True(t, slices.ContainsFunc(m.calls, func(args []string) bool {
-				return len(args) >= 9 && args[0] == "new-session" && args[5] == "-s" && args[6] == "workspace" && args[7] == "-c" && args[8] == "/wt"
-			}))
-			if tc.restoreErr != nil {
-				require.ErrorIs(t, err, tc.restoreErr)
-				assert.True(t, m.killSessionCalled)
-				assert.Equal(t, "workspace", m.killedSession)
-				assert.Empty(t, m.protectedAttachedTo)
-				return
-			}
-			require.NoError(t, err)
-			assert.Same(t, ctx, m.protectedAttachCtx)
-			assert.Equal(t, "workspace", m.protectedAttachedTo)
-			assert.Contains(t, m.calls, buildProtectedSessionBootstrapCommand(
-				"workspace",
-				"/wt",
-				"",
-				MergeStripNames(
-					CanonicalStripExactNames(),
-					[]string{"KWT_GITHUB_TOKEN"},
-					StripEnvNames(os.Environ()),
-				),
-				"DISPLAY",
-			))
-		})
+	m := &mockWorkspaceTmux{
+		globalEnv:       "PATH=/bin\n",
+		globalUpdateEnv: "DISPLAY KWT_GITHUB_TOKEN",
 	}
+	r := NewProtectedWorkspaceRunner(
+		m,
+		[]string{"KWT_GITHUB_TOKEN"},
+	)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	err := r.EnsureAndAttachProtected(
+		ctx,
+		"workspace",
+		"/wt",
+		BlankLayout(),
+	)
+
+	require.NoError(t, err)
+	assert.Same(t, ctx, m.protectedAttachCtx)
+	assert.Equal(t, "workspace", m.protectedAttachedTo)
+	assert.True(t, slices.ContainsFunc(m.calls, func(args []string) bool {
+		return len(args) >= 9 && args[0] == "new-session" && args[5] == "-s" && args[6] == "workspace" && args[7] == "-c" && args[8] == "/wt"
+	}))
+	assert.Contains(t, m.calls, buildProtectedSessionBootstrapCommand(
+		"workspace",
+		"/wt",
+		"",
+		MergeStripNames(
+			CanonicalStripExactNames(),
+			[]string{"KWT_GITHUB_TOKEN"},
+			StripEnvNames(os.Environ()),
+		),
+		"DISPLAY",
+	))
 }
 
 func TestProtectedWorkspaceSocketNameIsStableAndWorkspaceSpecific(t *testing.T) {

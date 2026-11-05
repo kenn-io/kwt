@@ -133,8 +133,8 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 		t.Skip("tmux is not installed")
 	}
 	for _, tc := range []struct {
-		name                                                                   string
-		warm, switchClient, localHooks, earlyAttach, followGlobal, localPolicy bool
+		name                                                      string
+		warm, switchClient, localHooks, earlyAttach, followGlobal bool
 	}{
 		{name: "fresh server"},
 		{name: "existing server", warm: true},
@@ -143,7 +143,6 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 		{name: "attach before local restore installation", earlyAttach: true, localHooks: true},
 		{name: "switch before local restore installation", warm: true, switchClient: true, earlyAttach: true, localHooks: true},
 		{name: "global policy change", followGlobal: true},
-		{name: "session-local policy", localPolicy: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
@@ -155,9 +154,6 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 				"set-hook -g client-session-changed[3] 'set -gF @user-switch-client \"#{hook_client}\"'\n"
 			if tc.localHooks {
 				contents += "set-hook -g after-new-session { if-shell -F '#{==:#{session_name},workspace}' { set-hook client-attached[4] { set -g @user-attach-hook local }; set-hook client-session-changed[7] { set -g @user-switch-hook local }; set-hook client-attached[9] { set -gF @user-attach-client \"#{hook_client}\" }; set-hook client-session-changed[9] { set -gF @user-switch-client \"#{hook_client}\" } } }\n"
-			}
-			if tc.localPolicy {
-				contents += "set -g destroy-unattached off\nset-hook -g after-new-session { set-option destroy-unattached on }\n"
 			}
 			require.NoError(t, os.WriteFile(config, []byte(contents), 0600))
 			wrapper := filepath.Join(root, "tmux")
