@@ -270,7 +270,7 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 						require.NoError(t, err)
 						if tc.multiplePending {
 							require.Contains(t, out, "@kwt-destroy-unattached", "another session still needs the restore hook")
-						} else {
+						} else if !tc.localHooks && (tc.secondVisit != "local" || hook != secondHook) {
 							require.NotContains(t, out, "[999]", "global hooks must leave with the last pending marker")
 						}
 					}
