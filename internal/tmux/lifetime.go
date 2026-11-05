@@ -45,26 +45,25 @@ func (r *WorkspaceRunner) restoreWorkspaceLifetime(ctx context.Context, session 
 		if err != nil {
 			return err
 		}
-		inherited := strings.TrimSpace(output) == ""
-		if inherited {
-			// A local hook shadows the global list. Copy inherited commands so
-			// they still run with the real event's client and session context.
+		command := "if-shell -F -t " + quoted + " '#{" + workspaceDestroyOption + "}' " + quoteTmuxCommandArgument(restore)
+		if strings.TrimSpace(output) == "" {
+			// A local hook shadows the global list. Copy inherited commands to
+			// indexes 0..n-1 and this hook to n, keeping the event's client and
+			// session context, then unset those and any array left empty.
 			output, err = r.tmux.RunCommandOutputContext(ctx, "show-options", "-gv", hook)
 			if err != nil {
 				return err
 			}
-			for line := range strings.SplitSeq(strings.TrimSpace(output), "\n") {
+			command = "set-hook -u -t " + quoted + " " + hook + "[0] ; " + command + " ; if-shell -F -t " + quoted + " '#{==:#{" + hook + "},}' " + quoteTmuxCommandArgument("set-hook -u -t "+quoted+" "+hook)
+			for i, line := range strings.Split(strings.TrimSpace(output), "\n") {
 				if line == "" {
 					continue
 				}
+				command = fmt.Sprintf("set-hook -u -t %s %s[%d] ; ", quoted, hook, i+1) + command
 				if err := r.tmux.RunCommandContext(ctx, "set-hook", "-a", "-t", target, hook, line); err != nil {
 					return err
 				}
 			}
-		}
-		command := "if-shell -F -t " + quoted + " '#{" + workspaceDestroyOption + "}' " + quoteTmuxCommandArgument(restore)
-		if inherited {
-			command += " ; set-hook -u -t " + quoted + " " + hook
 		}
 		if err := r.tmux.RunCommandContext(ctx, "set-hook", "-a", "-t", target, hook, command); err != nil {
 			return err
