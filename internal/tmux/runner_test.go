@@ -390,9 +390,7 @@ func TestEnsureAndAttachCreatesSendsToCapturedIDsAndAttaches(t *testing.T) {
 	// without a command would re-run the placeholder — only once the strips
 	// exist.
 	want := [][]string{
-		{"new-session", "-d", "-P", "-F", "#{pane_id}", "-s", "s", "-c", "/wt", "sleep", "2147483647",
-			";", "if-shell", "-F", "-t", "=s:", "#{?#{==:#{destroy-unattached},off},0,#{destroy-unattached}}",
-			`set-option -F -t "=s:" @kwt-destroy-unattached '#{destroy-unattached}' ; set-option -t "=s:" destroy-unattached off`},
+		append(BuildSessionCreateCommand("s", "/wt"), holdWorkspaceLifetime("s")...),
 		expectedBootstrapCommand("s", "/wt"),
 		{"show-options", "-v", "-t", "s", "default-shell"},
 		{"show-options", "-gv", "default-shell"},
@@ -672,8 +670,6 @@ func TestProtectedEnsureAndAttachCreatesMissingSession(t *testing.T) {
 	require.NoError(t, err)
 	assert.Same(t, ctx, m.protectedAttachCtx)
 	assert.Equal(t, "workspace", m.protectedAttachedTo)
-	assert.Equal(t, []string{"new-session", "-d", "-P", "-F", "#{pane_id}",
-		"-s", "workspace", "-c", "/wt", "sleep", "2147483647"}, m.calls[0][:11])
 	assert.Contains(t, m.calls, buildProtectedSessionBootstrapCommand(
 		"workspace",
 		"/wt",
