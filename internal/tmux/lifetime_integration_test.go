@@ -99,6 +99,54 @@ func TestWorkspaceRestoresGlobalHookInheritance(t *testing.T) {
 	}
 }
 
+func TestWorkspacePreservesLocalHookInstalledDuringFirstAttach(t *testing.T) {
+	binary, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux is not installed")
+	}
+	for _, hook := range []string{"client-attached", "client-session-changed"} {
+		t.Run(hook, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			root := t.TempDir()
+			config := filepath.Join(root, "tmux.conf")
+			contents := "set -g destroy-unattached keep-last\nset -g default-shell /bin/sh\nset-hook -g " + hook + " { set-hook -t workspace " + hook + "[9] { set -gF @followup \"#{hook_client}\" }; set -g @installed yes }\n"
+			require.NoError(t, os.WriteFile(config, []byte(contents), 0600))
+			wrapper := filepath.Join(root, "tmux")
+			require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec "+quotePOSIXShellArgument(binary)+" -f "+quotePOSIXShellArgument(config)+" \"$@\"\n"), 0700))
+			socket := fmt.Sprintf("kwt-lifetime-local-%d-%d", os.Getpid(), time.Now().UnixNano())
+			command := NewTmuxCommandForSocketWithStripNames(wrapper, socket, nil)
+			t.Cleanup(func() { killPrivateTmuxServer(socket) })
+			runner := NewWorkspaceRunner(command, nil)
+			require.NoError(t, runner.Ensure(ctx, "workspace", root, BlankLayout()))
+			for visit := range 2 {
+				client := command.attachSessionCmd("workspace")
+				client.Env = append(client.Env, "TERM=xterm-256color")
+				terminal, err := pty.Start(client)
+				require.NoError(t, err)
+				drained := make(chan struct{})
+				t.Cleanup(func() { _ = terminal.Close(); _ = client.Process.Kill(); _ = client.Wait(); <-drained })
+				go func() { defer close(drained); _, _ = io.Copy(io.Discard, terminal) }()
+				require.Eventually(t, func() bool {
+					if visit == 0 {
+						output, err := command.RunCommandOutputContext(ctx, "show-options", "-gqv", "@installed")
+						return err == nil && strings.TrimSpace(output) == "yes"
+					}
+					clientName, err := command.RunCommandOutputContext(ctx, "list-clients", "-t", "workspace", "-F", "#{client_name}")
+					if err != nil || strings.TrimSpace(clientName) == "" {
+						return false
+					}
+					output, err := command.RunCommandOutputContext(ctx, "show-options", "-gqv", "@followup")
+					return err == nil && strings.TrimSpace(output) == strings.TrimSpace(clientName)
+				}, 5*time.Second, 10*time.Millisecond)
+				require.NoError(t, command.RunCommandContext(ctx, "detach-client", "-s", "workspace"))
+				require.NoError(t, client.Wait())
+				require.True(t, command.HasSession("workspace"))
+			}
+		})
+	}
+}
+
 func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 	binary, err := exec.LookPath("tmux")
 	if err != nil {
