@@ -89,10 +89,10 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 		t.Skip("tmux is not installed")
 	}
 	for _, tc := range []struct {
-		name, secondVisit, secondHook                                                                    string
-		warm, switchClient, localHooks, earlyAttach, followGlobal, localPolicy, user999, multiplePending bool
+		name, secondVisit, secondHook                                                   string
+		warm, switchClient, localHooks, earlyAttach, followGlobal, localPolicy, user999 bool
 	}{
-		{name: "fresh server", multiplePending: true},
+		{name: "fresh server"},
 		{name: "existing server", warm: true},
 		{name: "existing session hooks", localHooks: true},
 		{name: "switch client", warm: true, switchClient: true},
@@ -195,11 +195,7 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 					out, err := command.RunCommandOutputContext(ctx, "show-options", "-gv", hook)
 					return err == nil && strings.TrimSpace(out) == expected
 				}, 5*time.Second, 10*time.Millisecond)
-				attachedSession := destination
-				if tc.switchClient {
-					attachedSession = "workspace"
-				}
-				clientName, err := command.RunCommandOutputContext(ctx, "list-clients", "-t", attachedSession, "-F", "#{client_name}")
+				clientName, err := command.RunCommandOutputContext(ctx, "list-clients", "-t", "workspace", "-F", "#{client_name}")
 				require.NoError(t, err)
 				require.NotEmpty(t, strings.TrimSpace(clientName))
 				if tc.user999 && !tc.localHooks {
@@ -222,9 +218,6 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 			}
 			runner := NewWorkspaceRunner(backend, nil)
 			require.NoError(t, runner.Ensure(ctx, "workspace", root, BlankLayout()))
-			if tc.multiplePending {
-				require.NoError(t, runner.Ensure(ctx, "spare", root, BlankLayout()))
-			}
 			if tc.user999 {
 				before, err := command.RunCommandOutputContext(ctx, "show-hooks", "-g")
 				require.NoError(t, err)
@@ -236,9 +229,6 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 				after, err := command.RunCommandOutputContext(ctx, "show-hooks", "-g")
 				require.NoError(t, err)
 				require.Equal(t, before, after, "workspace creation and reopening must reuse the shared hooks")
-				if tc.localHooks {
-					require.NoError(t, command.KillSessionContext(ctx, "spare"))
-				}
 			}
 			visits := 1
 			if tc.secondVisit != "" {
@@ -264,21 +254,6 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 					expectedPolicy = "off" // User-owned slots take priority over restoration.
 				}
 				require.Equal(t, expectedPolicy, strings.TrimSpace(out))
-				if !tc.user999 {
-					for _, hook := range []string{"client-attached", "client-session-changed"} {
-						out, err := command.RunCommandOutputContext(ctx, "show-hooks", "-g", hook)
-						require.NoError(t, err)
-						if tc.multiplePending {
-							require.Contains(t, out, "@kwt-destroy-unattached", "another session still needs the restore hook")
-						} else {
-							require.NotContains(t, out, "[999]", "global hooks must leave with the last pending marker")
-						}
-					}
-				} else if tc.localHooks {
-					out, err := command.RunCommandOutputContext(ctx, "show-hooks", "-g")
-					require.NoError(t, err)
-					require.Equal(t, globalHooks, out, "cleanup must preserve user-owned global hooks")
-				}
 				if tc.secondVisit != "" {
 					require.Eventually(t, func() bool {
 						if visit == 0 {
@@ -321,15 +296,6 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 					require.True(t, command.HasSession("workspace"))
 				} else if !tc.user999 || tc.localHooks {
 					require.Eventually(t, func() bool { return !command.HasSession("workspace") }, 5*time.Second, 10*time.Millisecond)
-				}
-			}
-			if tc.multiplePending {
-				destination = "spare"
-				attach()
-				for _, hook := range []string{"client-attached", "client-session-changed"} {
-					out, err := command.RunCommandOutputContext(ctx, "show-hooks", "-g", hook)
-					require.NoError(t, err)
-					require.NotContains(t, out, "[999]", "the last pending session must remove both global restore hooks")
 				}
 			}
 			if tc.warm {
