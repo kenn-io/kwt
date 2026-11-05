@@ -456,31 +456,48 @@ func TestOpenSelectedDirectoryWorkspaceUsesDirectoryLayoutDefault(t *testing.T) 
 
 func TestRunOpenWithContextChoosesRegisteredDirectory(t *testing.T) {
 	isolateCommandTestHome(t)
-	for _, startSession := range []bool{false, true} {
-		t.Run(map[bool]string{false: "attach", true: "start only"}[startSession], func(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		startSession    bool
+		expectedSession string
+	}{
+		{name: "attach"},
+		{name: "start only", startSession: true},
+		{name: "expected session", expectedSession: "retained-directory"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			resetWorkspaceCommandDeps(t)
 			workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
 			resolveDirectorySessions = func(workspaces []models.Workspace) ([]tmux.WorkspaceSession, error) {
 				return testDirectorySessions(workspaces, ""), nil
 			}
 			runner := &recordingOpenWorkspaceRunner{}
+			if tc.expectedSession != "" {
+				runner.endpoint = testCanonicalSessionEndpoint(tc.expectedSession)
+			}
 			originalRunner := newOpenWorkspaceRunner
 			originalLayout := openLayout
 			originalSelectLayout := openSelectLayout
 			originalStartSession := openStartSession
+			originalExpectedSession := openExpectedSession
 			newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
 			openLayout = tmux.BlankLayoutName
 			openSelectLayout = false
-			openStartSession = startSession
+			openStartSession = tc.startSession
+			openExpectedSession = tc.expectedSession
 			t.Cleanup(func() {
 				newOpenWorkspaceRunner = originalRunner
 				openLayout = originalLayout
 				openSelectLayout = originalSelectLayout
 				openStartSession = originalStartSession
+				openExpectedSession = originalExpectedSession
 			})
 
 			cmd, _, _ := fleetTestCommand()
 			cmd.SetContext(t.Context())
+			if tc.expectedSession != "" {
+				markCommandFlagsChanged(t, cmd, "expected-session")
+			}
 			err := runOpenWithContext(
 				cmd,
 				[]string{workspace.Path},
@@ -492,60 +509,40 @@ func TestRunOpenWithContextChoosesRegisteredDirectory(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, workspace.Path, runner.workingDirectory)
 			assert.True(t, runner.ensured)
-			assert.Equal(t, !startSession, runner.attached)
+			assert.Equal(t, !tc.startSession, runner.attached)
+			assert.Equal(t, tc.expectedSession, runner.expectedSession)
 		})
 	}
 }
 
 func TestRunOpenWithContextChecksDirectoryExpectedSession(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		expected string
-		resolved string
-		wantOK   bool
-	}{
-		{name: "attach", expected: "retained-directory", resolved: "retained-directory", wantOK: true},
-		{name: "changed session", expected: "old-directory", resolved: "replacement-directory"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			isolateCommandTestHome(t)
-			resetWorkspaceCommandDeps(t)
-			workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
-			resolveDirectorySessions = func(workspaces []models.Workspace) ([]tmux.WorkspaceSession, error) {
-				return testDirectorySessions(workspaces, ""), nil
-			}
-			runner := &recordingOpenWorkspaceRunner{endpoint: testCanonicalSessionEndpoint(tc.resolved)}
-			originalRunner, originalLayout := newOpenWorkspaceRunner, openLayout
-			originalSession, originalStart := openExpectedSession, openStartSession
-			t.Cleanup(func() {
-				newOpenWorkspaceRunner, openLayout = originalRunner, originalLayout
-				openExpectedSession, openStartSession = originalSession, originalStart
-			})
-			newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
-			openLayout, openExpectedSession, openStartSession = tmux.BlankLayoutName, tc.expected, false
-			cmd, _, _ := fleetTestCommand()
-			cmd.SetContext(t.Context())
-			markCommandFlagsChanged(t, cmd, "expected-session")
-			cfg := &models.Config{Workspaces: []models.Workspace{workspace}}
-			err := runOpenWithContext(cmd, []string{workspace.Path}, &CommandContext{Config: cfg})
-			if tc.wantOK {
-				require.NoError(t, err)
-				assert.True(t, runner.ensured)
-				assert.True(t, runner.attached)
-				assert.Equal(t, tc.expected, runner.expectedSession)
-				assert.Equal(t, workspace.Path, runner.workingDirectory)
-			} else {
-				require.Error(t, err)
-				assert.True(t, service.IsCode(err, service.RegistrationChanged))
-				assert.False(t, runner.ensured)
-				assert.False(t, runner.attached)
-			}
-		})
+	isolateCommandTestHome(t)
+	resetWorkspaceCommandDeps(t)
+	workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
+	resolveDirectorySessions = func(workspaces []models.Workspace) ([]tmux.WorkspaceSession, error) {
+		return testDirectorySessions(workspaces, ""), nil
 	}
+	runner := &recordingOpenWorkspaceRunner{endpoint: testCanonicalSessionEndpoint("replacement-directory")}
+	originalRunner, originalLayout := newOpenWorkspaceRunner, openLayout
+	originalSession, originalStart := openExpectedSession, openStartSession
+	t.Cleanup(func() {
+		newOpenWorkspaceRunner, openLayout = originalRunner, originalLayout
+		openExpectedSession, openStartSession = originalSession, originalStart
+	})
+	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	openLayout, openExpectedSession, openStartSession = tmux.BlankLayoutName, "old-directory", false
+	cmd, _, _ := fleetTestCommand()
+	cmd.SetContext(t.Context())
+	markCommandFlagsChanged(t, cmd, "expected-session")
+	cfg := &models.Config{Workspaces: []models.Workspace{workspace}}
+	err := runOpenWithContext(cmd, []string{workspace.Path}, &CommandContext{Config: cfg})
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.RegistrationChanged))
+	assert.False(t, runner.ensured)
+	assert.False(t, runner.attached)
 }
 
 func TestRunOpenWithContextRejectsSessionOnlyGuardForWorktree(t *testing.T) {
-	isolateCommandTestHome(t)
 	repo := newTUITestRepo(t)
 	worktree := filepath.Join(t.TempDir(), "feature")
 	require.NoError(t, exec.CommandContext(t.Context(), "git", "-C", repo, "worktree", "add", "-b", "feature", worktree).Run())

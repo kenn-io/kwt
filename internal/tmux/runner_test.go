@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -390,7 +391,6 @@ func TestEnsureAndAttachCreatesSendsToCapturedIDsAndAttaches(t *testing.T) {
 	// without a command would re-run the placeholder — only once the strips
 	// exist.
 	want := [][]string{
-		append(BuildSessionCreateCommand("s", "/wt"), holdWorkspaceLifetime("s")...),
 		expectedBootstrapCommand("s", "/wt"),
 		{"show-options", "-v", "-t", "s", "default-shell"},
 		{"show-options", "-gv", "default-shell"},
@@ -404,7 +404,11 @@ func TestEnsureAndAttachCreatesSendsToCapturedIDsAndAttaches(t *testing.T) {
 		{"send-keys", "-t", "%3", "Enter"},
 		{"select-pane", "-t", "%1"},
 	}
-	assert.Equal(t, want, m.calls)
+	prefix := []string{"new-session", "-d", "-P", "-F", "#{pane_id}", "-s", "s", "-c", "/wt", "sleep", "2147483647", ";", "if-shell"}
+	require.NotEmpty(t, m.calls)
+	require.GreaterOrEqual(t, len(m.calls[0]), len(prefix))
+	assert.Equal(t, prefix, m.calls[0][:len(prefix)])
+	assert.Equal(t, want, m.calls[1:])
 	assert.Equal(t, "s", m.attachedTo)
 	assert.Empty(t, m.switchedTo)
 	assert.False(t, m.sessionEnvQueried,
@@ -649,38 +653,59 @@ func TestProtectedAttachRepairsPolicyAndDisablesEnvironmentUpdate(t *testing.T) 
 }
 
 func TestProtectedEnsureAndAttachCreatesMissingSession(t *testing.T) {
-	m := &mockWorkspaceTmux{
-		globalEnv:       "PATH=/bin\n",
-		globalUpdateEnv: "DISPLAY KWT_GITHUB_TOKEN",
+	for _, tc := range []struct {
+		name       string
+		restoreErr error
+	}{
+		{name: "attach"},
+		{name: "restore fails", restoreErr: errors.New("cannot read lifetime marker")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &mockWorkspaceTmux{
+				sessionOptionErr: tc.restoreErr,
+				globalEnv:        "PATH=/bin\n",
+				globalUpdateEnv:  "DISPLAY KWT_GITHUB_TOKEN",
+			}
+			r := NewProtectedWorkspaceRunner(
+				m,
+				[]string{"KWT_GITHUB_TOKEN"},
+			)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
+			err := r.EnsureAndAttachProtected(
+				ctx,
+				"workspace",
+				"/wt",
+				BlankLayout(),
+			)
+
+			assert.True(t, slices.ContainsFunc(m.calls, func(args []string) bool {
+				return len(args) >= 9 && args[0] == "new-session" && args[5] == "-s" && args[6] == "workspace" && args[7] == "-c" && args[8] == "/wt"
+			}))
+			if tc.restoreErr != nil {
+				require.ErrorIs(t, err, tc.restoreErr)
+				assert.True(t, m.killSessionCalled)
+				assert.Equal(t, "workspace", m.killedSession)
+				assert.Empty(t, m.protectedAttachedTo)
+				return
+			}
+			require.NoError(t, err)
+			assert.Same(t, ctx, m.protectedAttachCtx)
+			assert.Equal(t, "workspace", m.protectedAttachedTo)
+			assert.Contains(t, m.calls, buildProtectedSessionBootstrapCommand(
+				"workspace",
+				"/wt",
+				"",
+				MergeStripNames(
+					CanonicalStripExactNames(),
+					[]string{"KWT_GITHUB_TOKEN"},
+					StripEnvNames(os.Environ()),
+				),
+				"DISPLAY",
+			))
+		})
 	}
-	r := NewProtectedWorkspaceRunner(
-		m,
-		[]string{"KWT_GITHUB_TOKEN"},
-	)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-
-	err := r.EnsureAndAttachProtected(
-		ctx,
-		"workspace",
-		"/wt",
-		BlankLayout(),
-	)
-
-	require.NoError(t, err)
-	assert.Same(t, ctx, m.protectedAttachCtx)
-	assert.Equal(t, "workspace", m.protectedAttachedTo)
-	assert.Contains(t, m.calls, buildProtectedSessionBootstrapCommand(
-		"workspace",
-		"/wt",
-		"",
-		MergeStripNames(
-			CanonicalStripExactNames(),
-			[]string{"KWT_GITHUB_TOKEN"},
-			StripEnvNames(os.Environ()),
-		),
-		"DISPLAY",
-	))
 }
 
 func TestProtectedWorkspaceSocketNameIsStableAndWorkspaceSpecific(t *testing.T) {
