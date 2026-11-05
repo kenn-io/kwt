@@ -23,14 +23,14 @@ var agentHookCmd = &cobra.Command{
 	Use:   "agent-hook",
 	Short: "Record coding-agent attention state on tmux panes",
 	Long: `Install lifecycle hooks into coding agents so each agent records its
-state on the tmux pane it runs in. Terminal front ends such as Ghosthub read
-the pane option @kwt_agent to show which sessions are waiting for
-approval or input, or have finished a turn.
+state on the tmux pane it runs in. Terminal front ends such as Ghosthub show
+which sessions need approval or input, or have finished a turn.
 
 Hooks do nothing when the agent is not running inside tmux.`,
 	Args: cobra.NoArgs,
 	// Hooks must never fail because of kwt configuration or the agent's
-	// working directory, so skip the root config and project merge.
+	// working directory, so skip the root config check and project merge.
+	// Execute also skips config initialization for the run subcommand.
 	PersistentPreRunE: func(*cobra.Command, []string) error { return nil },
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return cmd.Help()
