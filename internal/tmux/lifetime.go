@@ -39,6 +39,8 @@ func (r *WorkspaceRunner) restoreWorkspaceLifetime(ctx context.Context, session 
 	}
 	target := "=" + session + ":"
 	quoted := quoteTmuxCommandArgument(target)
+	restore := "set-option -t " + quoted + " destroy-unattached " + policy +
+		" ; set-option -u -t " + quoted + " " + workspaceDestroyOption
 	for _, hook := range []string{"client-attached", "client-session-changed"} {
 		output, err := r.tmux.RunCommandOutputContext(ctx, "show-options", "-q", "-t", target, hook)
 		if err != nil {
@@ -65,8 +67,6 @@ func (r *WorkspaceRunner) restoreWorkspaceLifetime(ctx context.Context, session 
 		if !local {
 			remove = hook
 		}
-		restore := "set-option -t " + quoted + " destroy-unattached " + policy +
-			" ; set-option -u -t " + quoted + " " + workspaceDestroyOption
 		command := "set-hook -u -t " + quoted + " " + remove +
 			" ; if-shell -F -t " + quoted + " '#{" + workspaceDestroyOption + "}' " + quoteTmuxCommandArgument(restore)
 		if !local {
@@ -77,5 +77,8 @@ func (r *WorkspaceRunner) restoreWorkspaceLifetime(ctx context.Context, session 
 			return err
 		}
 	}
-	return nil
+	// A client may have visited before either hook was installed. Check the
+	// attachment history after both hooks exist so that visit is also honored.
+	return r.tmux.RunCommandContext(ctx, "if-shell", "-F", "-t", target,
+		"#{session_last_attached}", restore)
 }

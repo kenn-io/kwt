@@ -17,19 +17,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type lifetimeAttachmentTmux struct {
+	*TmuxCommand
+	afterCreate func()
+}
+
+func (command *lifetimeAttachmentTmux) RunCommandOutputContext(ctx context.Context, args ...string) (string, error) {
+	output, err := command.TmuxCommand.RunCommandOutputContext(ctx, args...)
+	if err == nil && args[0] == "new-session" {
+		command.afterCreate()
+	}
+	return output, err
+}
+
 func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 	binary, err := exec.LookPath("tmux")
 	if err != nil {
 		t.Skip("tmux is not installed")
 	}
 	for _, tc := range []struct {
-		name                           string
-		warm, switchClient, localHooks bool
+		name                                        string
+		warm, switchClient, localHooks, earlyAttach bool
 	}{
 		{name: "fresh server"},
 		{name: "existing server", warm: true},
 		{name: "existing session hooks", localHooks: true},
 		{name: "switch client", warm: true, switchClient: true},
+		{name: "attach before hook installation", earlyAttach: true},
+		{name: "switch before hook installation", warm: true, switchClient: true, earlyAttach: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
@@ -49,41 +64,52 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 			if tc.warm {
 				require.NoError(t, command.RunCommandContext(ctx, "new-session", "-d", "-s", "unrelated", "sleep", "30", ";", "set-option", "-t", "unrelated", "destroy-unattached", "off"))
 			}
-			runner := NewWorkspaceRunner(command, nil)
-			require.NoError(t, runner.Ensure(ctx, "workspace", root, BlankLayout()))
+			var terminal *os.File
 			destination := "workspace"
 			if tc.switchClient {
 				destination = "unrelated"
 			}
-			client := command.attachSessionCmd(destination)
-			client.Env = append(client.Env, "TERM=xterm-256color")
-			terminal, err := pty.Start(client)
-			require.NoError(t, err)
-			drained := make(chan struct{})
-			t.Cleanup(func() { _ = terminal.Close(); _ = client.Process.Kill(); _ = client.Wait(); <-drained })
-			go func() { defer close(drained); _, _ = io.Copy(io.Discard, terminal) }()
-			if tc.switchClient {
-				var clientName string
+			attach := func() {
+				client := command.attachSessionCmd(destination)
+				client.Env = append(client.Env, "TERM=xterm-256color")
+				var err error
+				terminal, err = pty.Start(client)
+				require.NoError(t, err)
+				drained := make(chan struct{})
+				t.Cleanup(func() { _ = terminal.Close(); _ = client.Process.Kill(); _ = client.Wait(); <-drained })
+				go func() { defer close(drained); _, _ = io.Copy(io.Discard, terminal) }()
+				if tc.switchClient {
+					var clientName string
+					require.Eventually(t, func() bool {
+						out, err := command.RunCommandOutputContext(ctx, "list-clients", "-F", "#{client_name}")
+						clientName = strings.TrimSpace(out)
+						return err == nil && clientName != ""
+					}, 5*time.Second, 10*time.Millisecond)
+					require.NoError(t, command.RunCommandContext(ctx, "set-option", "-gu", "@user-switch-hook"))
+					require.NoError(t, command.RunCommandContext(ctx, "switch-client", "-c", clientName, "-t", "workspace"))
+				}
+				hook := "@user-attach-hook"
+				if tc.switchClient {
+					hook = "@user-switch-hook"
+				}
+				expected := "ran"
+				if tc.localHooks {
+					expected = "local"
+				}
 				require.Eventually(t, func() bool {
-					out, err := command.RunCommandOutputContext(ctx, "list-clients", "-F", "#{client_name}")
-					clientName = strings.TrimSpace(out)
-					return err == nil && clientName != ""
+					out, err := command.RunCommandOutputContext(ctx, "show-options", "-gv", hook)
+					return err == nil && strings.TrimSpace(out) == expected
 				}, 5*time.Second, 10*time.Millisecond)
-				require.NoError(t, command.RunCommandContext(ctx, "set-option", "-gu", "@user-switch-hook"))
-				require.NoError(t, command.RunCommandContext(ctx, "switch-client", "-c", clientName, "-t", "workspace"))
 			}
-			hook := "@user-attach-hook"
-			if tc.switchClient {
-				hook = "@user-switch-hook"
+			var backend workspaceTmux = command
+			if tc.earlyAttach {
+				backend = &lifetimeAttachmentTmux{TmuxCommand: command, afterCreate: attach}
 			}
-			expected := "ran"
-			if tc.localHooks {
-				expected = "local"
+			runner := NewWorkspaceRunner(backend, nil)
+			require.NoError(t, runner.Ensure(ctx, "workspace", root, BlankLayout()))
+			if !tc.earlyAttach {
+				attach()
 			}
-			require.Eventually(t, func() bool {
-				out, err := command.RunCommandOutputContext(ctx, "show-options", "-gv", hook)
-				return err == nil && strings.TrimSpace(out) == expected
-			}, 5*time.Second, 10*time.Millisecond)
 			out, err := command.RunCommandOutputContext(ctx, "show-options", "-Av", "-t", "workspace", "destroy-unattached")
 			require.NoError(t, err)
 			require.Equal(t, "on", strings.TrimSpace(out))
