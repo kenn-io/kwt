@@ -617,6 +617,46 @@ from the session name.
 `kwt tmux run --context` rejects `wt` and `workspace`, which are reserved for
 managed worktree and directory-workspace session names.
 
+## `kwt agent-hook`
+
+Agent hooks let a terminal front end such as Ghosthub show which tmux
+sessions have an agent waiting for you.
+
+```sh
+kwt agent-hook install                  # every agent set up on this host
+kwt agent-hook install --agent codex
+kwt agent-hook status --json
+kwt agent-hook uninstall
+```
+
+`install` adds kwt's hooks to each agent's user config. Without `--agent`, it
+updates every supported agent whose config directory already exists. Naming an
+agent whose config directory is missing is an error. Reinstalling replaces
+kwt's earlier hooks, including ones that point at a different kwt path, and
+keeps hooks owned by other tools. Codex asks you to trust new hooks once
+through `/hooks`.
+
+Each hook writes the tmux pane option `@ghosthub_agent` on the pane the agent
+runs in:
+
+| Event | Value |
+|---|---|
+| Prompt submitted, tool finished | `working <unix-seconds> <agent>` |
+| Permission request or prompt | `approval <unix-seconds> <agent>` |
+| Question tool or elicitation dialog | `input <unix-seconds> <agent>` |
+| Turn finished (`Stop`) | `done <unix-seconds> <agent>` |
+| Session start or end | option removed |
+
+Subagent events and Claude Code's `idle_prompt` reminder are ignored. Outside
+tmux, or when tmux is unavailable, the hook does nothing. The hook always
+exits successfully and ignores kwt configuration errors, so it never
+interrupts the agent.
+
+`status --json` reports each agent's `config_path` and whether it is
+`available` (config directory exists), `installed` (any kwt hook present), and
+`current` (hooks match this kwt executable and event set). Pass
+`--executable` to install or compare a different kwt path.
+
 ## `kwt remove`
 
 `--if-generation <id>` makes a single-worktree removal conditional on the
