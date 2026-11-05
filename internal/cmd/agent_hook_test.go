@@ -61,7 +61,7 @@ func TestAgentHookRunRecordsStateDespiteBrokenConfig(t *testing.T) {
 
 	value, err := exec.CommandContext(
 		t.Context(), "tmux", "-L", socket,
-		"show-options", "-p", "-q", "-v", "-t", fields[0], "@ghosthub_agent",
+		"show-options", "-p", "-q", "-v", "-t", fields[0], "@kwt_agent",
 	).CombinedOutput()
 	require.NoError(t, err, string(value))
 	assert.Regexp(t, `^done [0-9]+ claude$`, strings.TrimSpace(string(value)))

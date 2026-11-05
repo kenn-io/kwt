@@ -24,7 +24,7 @@ var agentHookCmd = &cobra.Command{
 	Short: "Record coding-agent attention state on tmux panes",
 	Long: `Install lifecycle hooks into coding agents so each agent records its
 state on the tmux pane it runs in. Terminal front ends such as Ghosthub read
-the pane option @ghosthub_agent to show which sessions are waiting for
+the pane option @kwt_agent to show which sessions are waiting for
 approval or input, or have finished a turn.
 
 Hooks do nothing when the agent is not running inside tmux.`,

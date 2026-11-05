@@ -22,7 +22,7 @@ import (
 )
 
 // Option is the tmux pane user option that holds the recorded state.
-const Option = "@ghosthub_agent"
+const Option = "@kwt_agent"
 
 // Marker identifies the hook commands kwt owns inside agent configs.
 const Marker = "--source kwt-tmux-agent-state"

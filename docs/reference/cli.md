@@ -636,7 +636,7 @@ kwt's earlier hooks, including ones that point at a different kwt path, and
 keeps hooks owned by other tools. Codex asks you to trust new hooks once
 through `/hooks`.
 
-Each hook writes the tmux pane option `@ghosthub_agent` on the pane the agent
+Each hook writes the tmux pane option `@kwt_agent` on the pane the agent
 runs in:
 
 | Event                               | Value                             |
