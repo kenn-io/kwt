@@ -50,6 +50,9 @@ func TestWorkspaceWithDestroyUnattachedOff(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, strings.TrimSpace(output))
 	require.True(t, command.HasSession("workspace"))
+	output, err = command.RunCommandOutputContext(ctx, "show-hooks", "-g")
+	require.NoError(t, err)
+	require.NotContains(t, output, "[999]")
 }
 
 func TestWorkspaceRestoresGlobalHookInheritance(t *testing.T) {
@@ -60,10 +63,10 @@ func TestWorkspaceRestoresGlobalHookInheritance(t *testing.T) {
 	for _, hook := range []string{"client-attached", "client-session-changed"} {
 		t.Run(hook, func(t *testing.T) {
 			for _, tc := range []struct {
-				name, command, replacement, option, prefix string
+				name, command, replacement, option, prefix, zeroOption string
 			}{
 				{name: "updated global hook", command: "set -g @installed yes", replacement: `set -gF @seen "new:#{hook_client}"`, option: "@seen", prefix: "new:"},
-				{name: "installed local hook", command: "set-hook -t workspace " + hook + `[9] { set -gF @followup "#{hook_client}" }; set -g @installed yes`, option: "@followup"},
+				{name: "installed local hook", command: "set-hook -t workspace " + hook + `[0] { set -gF @followup-zero "#{hook_client}" }; set-hook -t workspace ` + hook + `[9] { set -gF @followup "#{hook_client}" }; set -g @installed yes`, option: "@followup", zeroOption: "@followup-zero"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
@@ -100,7 +103,14 @@ func TestWorkspaceRestoresGlobalHookInheritance(t *testing.T) {
 								return false
 							}
 							output, err := command.RunCommandOutputContext(ctx, "show-options", "-gqv", tc.option)
-							return err == nil && strings.TrimSpace(output) == tc.prefix+strings.TrimSpace(clientName)
+							if err != nil || strings.TrimSpace(output) != tc.prefix+strings.TrimSpace(clientName) {
+								return false
+							}
+							if tc.zeroOption == "" {
+								return true
+							}
+							output, err = command.RunCommandOutputContext(ctx, "show-options", "-gqv", tc.zeroOption)
+							return err == nil && strings.TrimSpace(output) == strings.TrimSpace(clientName)
 						}, 5*time.Second, 10*time.Millisecond)
 						require.NoError(t, command.RunCommandContext(ctx, "detach-client", "-s", "workspace"))
 						require.NoError(t, client.Wait())

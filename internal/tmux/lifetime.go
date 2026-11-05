@@ -2,11 +2,13 @@ package tmux
 
 import (
 	"context"
-	"fmt"
 	"strings"
 )
 
 const workspaceDestroyOption = "@kwt-destroy-unattached"
+
+// The hook event supplies the session, so the global entries restore only it.
+const workspaceRestoreCommand = "if-shell -F '#{" + workspaceDestroyOption + "}' { set-option -F destroy-unattached '#{" + workspaceDestroyOption + "}' ; set-option -u " + workspaceDestroyOption + " }"
 
 // holdWorkspaceLifetime runs in the same command queue as new-session, before
 // tmux can destroy the still-unattached session between bootstrap commands.
@@ -15,13 +17,15 @@ func holdWorkspaceLifetime(session string) []string {
 	return []string{";", "if-shell", "-F", "-t", target,
 		"#{?#{==:#{destroy-unattached},off},0,#{destroy-unattached}}",
 		"set-option -F -t " + quoteTmuxCommandArgument(target) + " " + workspaceDestroyOption +
-			" '#{destroy-unattached}' ; set-option -t " + quoteTmuxCommandArgument(target) + " destroy-unattached off",
+			" '#{destroy-unattached}' ; set-option -t " + quoteTmuxCommandArgument(target) + " destroy-unattached off" +
+			" ; set-hook -g client-attached[999] { " + workspaceRestoreCommand + " }" +
+			" ; set-hook -g client-session-changed[999] { " + workspaceRestoreCommand + " }",
 	}
 }
 
 // restoreWorkspaceLifetime lets any ordinary tmux client finish the handoff,
-// including a client that switches from another session. The temporary hooks
-// preserve session hooks and restore global hook inheritance after the event.
+// including a client that switches from another session. Session-local user
+// hooks shadow the global entries installed during creation, so append to them.
 func (r *WorkspaceRunner) restoreWorkspaceLifetime(ctx context.Context, session string) error {
 	policy, err := r.tmux.sessionUserOption(ctx, session, workspaceDestroyOption)
 	if err != nil {
@@ -31,46 +35,21 @@ func (r *WorkspaceRunner) restoreWorkspaceLifetime(ctx context.Context, session 
 	if policy == "" {
 		return nil
 	}
-	switch policy {
-	case "1", "on", "keep-last", "keep-group":
-	default:
-		return fmt.Errorf("invalid pending workspace lifetime policy %q", policy)
-	}
 	target := "=" + session + ":"
-	quoted := quoteTmuxCommandArgument(target)
-	restore := "set-option -t " + quoted + " destroy-unattached " + policy +
-		" ; set-option -u -t " + quoted + " " + workspaceDestroyOption
 	for _, hook := range []string{"client-attached", "client-session-changed"} {
 		output, err := r.tmux.RunCommandOutputContext(ctx, "show-options", "-q", "-t", target, hook)
 		if err != nil {
 			return err
 		}
-		command := "if-shell -F -t " + quoted + " '#{" + workspaceDestroyOption + "}' " + quoteTmuxCommandArgument(restore)
 		if strings.TrimSpace(output) == "" {
-			// A local hook shadows the global list. Copy inherited commands to
-			// indexes 0..n-1 and this hook to n, keeping the event's client and
-			// session context, then unset those and any array left empty.
-			output, err = r.tmux.RunCommandOutputContext(ctx, "show-options", "-gv", hook)
-			if err != nil {
-				return err
-			}
-			command = "set-hook -u -t " + quoted + " " + hook + "[0] ; " + command + " ; if-shell -F -t " + quoted + " '#{==:#{" + hook + "},}' " + quoteTmuxCommandArgument("set-hook -u -t "+quoted+" "+hook)
-			for i, line := range strings.Split(strings.TrimSpace(output), "\n") {
-				if line == "" {
-					continue
-				}
-				command = fmt.Sprintf("set-hook -u -t %s %s[%d] ; ", quoted, hook, i+1) + command
-				if err := r.tmux.RunCommandContext(ctx, "set-hook", "-a", "-t", target, hook, line); err != nil {
-					return err
-				}
-			}
+			continue
 		}
-		if err := r.tmux.RunCommandContext(ctx, "set-hook", "-a", "-t", target, hook, command); err != nil {
+		if err := r.tmux.RunCommandContext(ctx, "set-hook", "-a", "-t", target, hook, workspaceRestoreCommand); err != nil {
 			return err
 		}
 	}
 	// A client may have visited before either hook was installed. Check the
 	// attachment history after both hooks exist so that visit is also honored.
 	return r.tmux.RunCommandContext(ctx, "if-shell", "-F", "-t", target,
-		"#{session_last_attached}", restore)
+		"#{session_last_attached}", workspaceRestoreCommand)
 }
