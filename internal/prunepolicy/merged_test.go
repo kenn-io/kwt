@@ -101,7 +101,7 @@ func TestEvaluateMerged(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			outcomes := EvaluateMerged(context.Background(), tc.provider, []MergedCandidate{tc.candidate})
+			outcomes := EvaluateMerged(t.Context(), tc.provider, []MergedCandidate{tc.candidate})
 
 			require.Len(t, outcomes, 1)
 			assert.Equal(t, tc.want, outcomes[0].Reason)
@@ -126,7 +126,7 @@ func TestEvaluateMergedIgnoresDirtyStateUntilAfterProviderProof(t *testing.T) {
 	provider := providerEmpty()
 	candidate := dirtyMerged()
 
-	outcome := EvaluateMerged(context.Background(), provider, []MergedCandidate{candidate})[0]
+	outcome := EvaluateMerged(t.Context(), provider, []MergedCandidate{candidate})[0]
 
 	assert.Equal(t, NoAssociatedPR, outcome.Reason)
 	assert.NotZero(t, provider.resolveCalls)
@@ -137,7 +137,7 @@ func TestEvaluateMergedReturnsEligibleForDirtyConfirmedMergedCandidate(t *testin
 	provider := providerForCommit(exactMergedPR(forkRepository))
 	candidate := dirtyMerged()
 
-	outcome := EvaluateMerged(context.Background(), provider, []MergedCandidate{candidate})[0]
+	outcome := EvaluateMerged(t.Context(), provider, []MergedCandidate{candidate})[0]
 
 	assert.Equal(t, EligibleMerged, outcome.Reason)
 }
@@ -146,7 +146,7 @@ func TestEvaluateMergedKeepsAdvancedDirtyHeadAsHardStop(t *testing.T) {
 	candidate := advancedCandidate()
 	candidate.Dirty = true
 
-	outcome := EvaluateMerged(context.Background(), providerForAdvancedBranch(), []MergedCandidate{candidate})[0]
+	outcome := EvaluateMerged(t.Context(), providerForAdvancedBranch(), []MergedCandidate{candidate})[0]
 
 	assert.Equal(t, HeadAdvancedAfterPR, outcome.Reason)
 }
@@ -194,7 +194,7 @@ func TestEvaluateMergedMapsProviderFailuresToStableReasons(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			outcomes := EvaluateMerged(
-				context.Background(),
+				t.Context(),
 				providerWithError(tt.err),
 				[]MergedCandidate{ordinaryCandidate(forkRepository)},
 			)
@@ -230,7 +230,7 @@ func TestEvaluateMergedContinuesAfterProviderFailure(t *testing.T) {
 		},
 	}
 
-	outcomes := EvaluateMerged(context.Background(), provider, candidates)
+	outcomes := EvaluateMerged(t.Context(), provider, candidates)
 
 	require.Len(t, outcomes, 2)
 	assert.Equal(t, NetworkFailure, outcomes[0].Reason)
@@ -254,7 +254,7 @@ func TestEvaluateMergedResolvesTransferredRepositoryBeforeProvenanceValidation(t
 		}
 	}
 
-	outcomes := EvaluateMerged(context.Background(), provider, []MergedCandidate{candidate})
+	outcomes := EvaluateMerged(t.Context(), provider, []MergedCandidate{candidate})
 
 	require.Len(t, outcomes, 1)
 	assert.Equal(t, EligibleMerged, outcomes[0].Reason)
@@ -286,7 +286,7 @@ func TestEvaluateMergedAcceptsLegacyProvenanceAfterRepositoryTransfer(t *testing
 		}
 	}
 
-	outcomes := EvaluateMerged(context.Background(), provider, []MergedCandidate{candidate})
+	outcomes := EvaluateMerged(t.Context(), provider, []MergedCandidate{candidate})
 
 	require.Len(t, outcomes, 1)
 	assert.Equal(t, EligibleMerged, outcomes[0].Reason)
@@ -305,7 +305,7 @@ func TestEvaluateMergedAcceptsSymlinkEquivalentImportedWorkspacePath(t *testing.
 	candidate.Provenance.Workspace.Path = realPath
 	provider := providerForImported(exactMergedPR(forkRepository))
 
-	outcomes := EvaluateMerged(context.Background(), provider, []MergedCandidate{candidate})
+	outcomes := EvaluateMerged(t.Context(), provider, []MergedCandidate{candidate})
 
 	require.Len(t, outcomes, 1)
 	assert.Equal(t, EligibleMerged, outcomes[0].Reason)
@@ -332,7 +332,7 @@ func TestEvaluateMergedResolvesTransferredSourceRepository(t *testing.T) {
 		provider := providerForCommit(exactMergedPR(resolvedSource))
 		provider.resolve = resolve
 
-		outcomes := EvaluateMerged(context.Background(), provider, []MergedCandidate{candidate})
+		outcomes := EvaluateMerged(t.Context(), provider, []MergedCandidate{candidate})
 
 		require.Len(t, outcomes, 1)
 		assert.Equal(t, EligibleMerged, outcomes[0].Reason)
@@ -354,7 +354,7 @@ func TestEvaluateMergedResolvesTransferredSourceRepository(t *testing.T) {
 			},
 		}
 
-		outcomes := EvaluateMerged(context.Background(), provider, []MergedCandidate{candidate})
+		outcomes := EvaluateMerged(t.Context(), provider, []MergedCandidate{candidate})
 
 		require.Len(t, outcomes, 1)
 		assert.Equal(t, HeadAdvancedAfterPR, outcomes[0].Reason)
@@ -368,7 +368,7 @@ func TestEvaluateMergedResolvesTransferredSourceRepository(t *testing.T) {
 		provider := providerForImported(exactMergedPR(resolvedSource))
 		provider.resolve = resolve
 
-		outcomes := EvaluateMerged(context.Background(), provider, []MergedCandidate{candidate})
+		outcomes := EvaluateMerged(t.Context(), provider, []MergedCandidate{candidate})
 
 		require.Len(t, outcomes, 1)
 		assert.Equal(t, EligibleMerged, outcomes[0].Reason)
@@ -381,7 +381,7 @@ func TestEvaluateMergedRejectsMissingLiveRepositoryWithoutProvider(t *testing.T)
 	candidate.LiveRepository = ""
 	provider := providerForCommit(exactMergedPR(forkRepository))
 
-	outcomes := EvaluateMerged(context.Background(), provider, []MergedCandidate{candidate})
+	outcomes := EvaluateMerged(t.Context(), provider, []MergedCandidate{candidate})
 
 	require.Len(t, outcomes, 1)
 	assert.Equal(t, RepositoryChanged, outcomes[0].Reason)
@@ -393,7 +393,7 @@ func TestEvaluateMergedRejectsMissingUpstreamWithoutProvider(t *testing.T) {
 	candidate := noUpstream()
 	provider := &fakeMergedProvider{}
 
-	outcomes := EvaluateMerged(context.Background(), provider, []MergedCandidate{candidate})
+	outcomes := EvaluateMerged(t.Context(), provider, []MergedCandidate{candidate})
 
 	require.Len(t, outcomes, 1)
 	assert.Equal(t, SourceRepositoryUnavailable, outcomes[0].Reason)

@@ -734,7 +734,7 @@ func TestSSHLeasePromptReadStopsWhenContextIsCanceled(t *testing.T) {
 				_ = reader.Close()
 				_ = writer.Close()
 			})
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			command, _, _ := sshResolveTestCommand()
 			command.SetContext(ctx)
 			command.SetIn(reader)

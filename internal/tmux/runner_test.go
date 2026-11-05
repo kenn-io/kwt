@@ -163,7 +163,7 @@ func TestEnsureWithGenerationRejectsStaleExistingSessionIdentity(t *testing.T) {
 			runner := NewWorkspaceRunner(m, nil)
 
 			err := runner.EnsureWithGeneration(
-				context.Background(),
+				t.Context(),
 				"workspace",
 				"/new-worktree",
 				generation,
@@ -180,7 +180,7 @@ func TestEnsureWithGenerationRejectsStaleExistingSessionIdentity(t *testing.T) {
 func TestEnsureWithGenerationReusesMatchingSession(t *testing.T) {
 	const generation = "0123456789abcdef0123456789abcdef"
 	type operationContextKey struct{}
-	ctx := context.WithValue(context.Background(), operationContextKey{}, "operation")
+	ctx := context.WithValue(t.Context(), operationContextKey{}, "operation")
 	m := &mockWorkspaceTmux{
 		hasSession:         true,
 		sessionWorkspaceID: workspacePathIdentity("/worktree"),
@@ -209,7 +209,7 @@ func TestEnsureWithGenerationRejectsUnmarkedSession(t *testing.T) {
 	runner := NewWorkspaceRunner(m, nil)
 
 	err := runner.EnsureWithGeneration(
-		context.Background(),
+		t.Context(),
 		"workspace",
 		"/worktree",
 		"0123456789abcdef0123456789abcdef",
@@ -223,7 +223,7 @@ func TestEnsureWithGenerationRejectsUnmarkedSession(t *testing.T) {
 
 func TestEnsureUsesOperationContextForSessionExistence(t *testing.T) {
 	type operationContextKey struct{}
-	ctx := context.WithValue(context.Background(), operationContextKey{}, "operation")
+	ctx := context.WithValue(t.Context(), operationContextKey{}, "operation")
 	m := &mockWorkspaceTmux{hasSessionErr: context.Canceled}
 	runner := NewWorkspaceRunner(m, nil)
 
@@ -242,7 +242,7 @@ func TestEnsureUsesOperationContextForSessionExistence(t *testing.T) {
 
 func TestProtectedEnsureThreadsOperationContextThroughQueries(t *testing.T) {
 	type operationContextKey struct{}
-	ctx := context.WithValue(context.Background(), operationContextKey{}, "operation")
+	ctx := context.WithValue(t.Context(), operationContextKey{}, "operation")
 	m := &mockWorkspaceTmux{
 		hasSession:       true,
 		sessionWorkspace: "/worktree",
@@ -354,7 +354,7 @@ func (m *mockWorkspaceTmux) KillSessionContext(
 }
 
 func TestAbortUsesBoundedCleanupContextAfterCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	m := &mockWorkspaceTmux{}
 	runner := NewWorkspaceRunner(m, nil)
@@ -378,7 +378,7 @@ func TestEnsureAndAttachCreatesSendsToCapturedIDsAndAttaches(t *testing.T) {
 	r := NewWorkspaceRunner(m, nil)
 	layout := models.Layout{Arrange: "even-horizontal", Panes: []string{"codex", "", "vim"}}
 
-	err := r.EnsureAndAttach(context.Background(), "s", "/wt", layout, false)
+	err := r.EnsureAndAttach(t.Context(), "s", "/wt", layout, false)
 	require.NoError(t, err)
 
 	// The session bootstrap (one batched set-option + remove-marker command)
@@ -418,7 +418,7 @@ func TestEnsureCreatesWorkspaceWithoutAttaching(t *testing.T) {
 	r := NewWorkspaceRunner(m, nil)
 
 	err := r.Ensure(
-		context.Background(),
+		t.Context(),
 		"workspace",
 		"/wt",
 		BlankLayout(),
@@ -438,7 +438,7 @@ func TestEnsureAndAttachQueriesServerDefaultShell(t *testing.T) {
 	r := NewWorkspaceRunner(m, nil)
 
 	err := r.EnsureAndAttach(
-		context.Background(), "workspace", "/wt",
+		t.Context(), "workspace", "/wt",
 		models.Layout{Arrange: "tiled", Panes: []string{""}}, false,
 	)
 	require.NoError(t, err)
@@ -465,7 +465,7 @@ func TestEnsureAndAttachPrefersSessionDefaultShell(t *testing.T) {
 	r := NewWorkspaceRunner(m, nil)
 
 	err := r.EnsureAndAttach(
-		context.Background(), "workspace", "/wt",
+		t.Context(), "workspace", "/wt",
 		BlankLayout(), false,
 	)
 
@@ -489,7 +489,7 @@ func TestProtectedEnsureRejectsSensitiveServerEnvironment(t *testing.T) {
 	)
 
 	err := r.Ensure(
-		context.Background(),
+		t.Context(),
 		"workspace",
 		"/wt",
 		BlankLayout(),
@@ -512,7 +512,7 @@ func TestProtectedEnsureRejectsUnverifiedExistingSession(t *testing.T) {
 	)
 
 	err := r.Ensure(
-		context.Background(),
+		t.Context(),
 		"workspace",
 		"/wt",
 		BlankLayout(),
@@ -536,7 +536,7 @@ func TestProtectedEnsureRejectsSensitiveExistingSession(t *testing.T) {
 	)
 
 	err := r.Ensure(
-		context.Background(),
+		t.Context(),
 		"workspace",
 		"/wt",
 		BlankLayout(),
@@ -561,7 +561,7 @@ func TestProtectedEnsureRepairsVerifiedExistingSession(t *testing.T) {
 	)
 
 	err := r.Ensure(
-		context.Background(),
+		t.Context(),
 		"workspace",
 		"/wt",
 		BlankLayout(),
@@ -592,7 +592,7 @@ func TestProtectedEnsureMarksCreatedSessionBeforeRespawn(t *testing.T) {
 	)
 
 	err := r.Ensure(
-		context.Background(),
+		t.Context(),
 		"workspace",
 		"/wt",
 		BlankLayout(),
@@ -625,7 +625,7 @@ func TestProtectedAttachRepairsPolicyAndDisablesEnvironmentUpdate(t *testing.T) 
 		[]string{"KWT_GITHUB_TOKEN", "KWT_FLEET_TOKEN"},
 	)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	err := r.AttachProtected(
 		ctx,
@@ -659,7 +659,7 @@ func TestProtectedEnsureAndAttachCreatesMissingSession(t *testing.T) {
 		m,
 		[]string{"KWT_GITHUB_TOKEN"},
 	)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	err := r.EnsureAndAttachProtected(
@@ -711,7 +711,7 @@ func TestEnsureAndAttachRepairsExistingSessionBootstrapWithoutConstructing(t *te
 	r := NewWorkspaceRunner(m, nil)
 	layout := models.Layout{Arrange: "tiled", Panes: []string{"codex"}}
 
-	err := r.EnsureAndAttach(context.Background(), "s", "/wt", layout, false)
+	err := r.EnsureAndAttach(t.Context(), "s", "/wt", layout, false)
 	require.NoError(t, err)
 
 	want := [][]string{
@@ -734,7 +734,7 @@ func TestEnsureAndAttachStripsConfiguredCredentialCaseVariants(t *testing.T) {
 	r := NewWorkspaceRunner(m, []string{"CUSTOM_FLEET_TOKEN"})
 
 	err := r.EnsureAndAttach(
-		context.Background(),
+		t.Context(),
 		"s",
 		"/wt",
 		models.Layout{Arrange: "tiled", Panes: []string{""}},
@@ -759,7 +759,7 @@ func TestEnsureAndAttachRepairSurvivesEnvReadFailures(t *testing.T) {
 	}
 	r := NewWorkspaceRunner(m, nil)
 
-	err := r.EnsureAndAttach(context.Background(), "s", "/wt",
+	err := r.EnsureAndAttach(t.Context(), "s", "/wt",
 		models.Layout{Arrange: "tiled", Panes: []string{""}}, false)
 	require.NoError(t, err)
 
@@ -773,7 +773,7 @@ func TestEnsureAndAttachSwitchesClientInsideTmux(t *testing.T) {
 	r := NewWorkspaceRunner(m, nil)
 	layout := models.Layout{Arrange: "tiled", Panes: []string{"codex"}}
 
-	err := r.EnsureAndAttach(context.Background(), "s", "/wt", layout, true)
+	err := r.EnsureAndAttach(t.Context(), "s", "/wt", layout, true)
 	require.NoError(t, err)
 
 	assert.Equal(t, "s", m.switchedTo)
@@ -785,7 +785,7 @@ func TestEnsureAndAttachReturnsErrorOnCaptureFailure(t *testing.T) {
 	r := NewWorkspaceRunner(m, nil)
 	layout := models.Layout{Arrange: "tiled", Panes: []string{"codex"}}
 
-	err := r.EnsureAndAttach(context.Background(), "s", "/wt", layout, false)
+	err := r.EnsureAndAttach(t.Context(), "s", "/wt", layout, false)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "new-session")
@@ -802,7 +802,7 @@ func TestEnsureAndAttachKillsPartialSessionOnCreateFailure(t *testing.T) {
 	r := NewWorkspaceRunner(m, nil)
 	layout := models.Layout{Arrange: "even-horizontal", Panes: []string{"codex", "vim"}}
 
-	err := r.EnsureAndAttach(context.Background(), "s", "/wt", layout, false)
+	err := r.EnsureAndAttach(t.Context(), "s", "/wt", layout, false)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "split-window")
@@ -821,7 +821,7 @@ func TestEnsureAndAttachKillsPartialSessionOnRespawnFailure(t *testing.T) {
 	r := NewWorkspaceRunner(m, nil)
 	layout := models.Layout{Arrange: "even-horizontal", Panes: []string{"codex", "vim"}}
 
-	err := r.EnsureAndAttach(context.Background(), "s", "/wt", layout, false)
+	err := r.EnsureAndAttach(t.Context(), "s", "/wt", layout, false)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "respawn-pane")
@@ -844,7 +844,7 @@ func TestEnsureAndAttachKillsPartialSessionOnLayoutFailure(t *testing.T) {
 	r := NewWorkspaceRunner(m, nil)
 	layout := models.Layout{Arrange: "even-horizontal", Panes: []string{"codex", "vim"}}
 
-	err := r.EnsureAndAttach(context.Background(), "s", "/wt", layout, false)
+	err := r.EnsureAndAttach(t.Context(), "s", "/wt", layout, false)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "select-layout")
@@ -864,7 +864,7 @@ func TestEnsureAndAttachKillsPartialSessionOnPaneCommandFailure(t *testing.T) {
 	r := NewWorkspaceRunner(m, nil)
 	layout := models.Layout{Arrange: "even-horizontal", Panes: []string{"codex", "vim"}}
 
-	err := r.EnsureAndAttach(context.Background(), "s", "/wt", layout, false)
+	err := r.EnsureAndAttach(t.Context(), "s", "/wt", layout, false)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "send-keys")

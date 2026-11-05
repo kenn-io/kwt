@@ -1,0 +1,3 @@
+rules:
+  # Preserve existing job budgets, including the default when no timeout is set.
+  missing-timeout: off

@@ -460,7 +460,7 @@ func openSelectedWorktreeWithResult(
 	// config whose default would be ignored anyway.
 	targetDefault := ""
 	if shouldLoadTargetDefault(openLayout, openSelectLayout) {
-		repoRoot, err := git.New(entry.Path).GetMainRepositoryPath()
+		repoRoot, err := git.NewWithContext(commandCtx, entry.Path).GetMainRepositoryPath()
 		if err != nil {
 			return fmt.Errorf("failed to find repository root: %w", err)
 		}
@@ -536,7 +536,7 @@ func openExpectedWorktree(
 	protectedNames []string,
 	onEstablished func(tmux.SessionEndpoint) error,
 ) error {
-	mainPath, err := git.New(entry.Path).GetMainRepositoryPath()
+	mainPath, err := git.NewWithContext(ctx, entry.Path).GetMainRepositoryPath()
 	if err != nil {
 		return fmt.Errorf("failed to find repository root: %w", err)
 	}

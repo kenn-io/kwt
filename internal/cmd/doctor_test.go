@@ -56,7 +56,7 @@ func TestDoctorProjectRemovalUsesGuardedLifecycleService(t *testing.T) {
 		return true, nil
 	}
 
-	changed, err := (doctorProjectMutator{}).RemoveProject(context.Background(), expected)
+	changed, err := (doctorProjectMutator{}).RemoveProject(t.Context(), expected)
 
 	require.NoError(t, err)
 	assert.True(t, changed)
@@ -85,7 +85,7 @@ func TestDoctorProjectRemovalPreservesChangedRegistration(t *testing.T) {
 	), 0o600))
 
 	changed, err := (doctorProjectMutator{}).RemoveProject(
-		context.Background(), expected,
+		t.Context(), expected,
 	)
 
 	require.NoError(t, err)
@@ -138,7 +138,7 @@ func TestDoctorProjectRelocationUsesLifecycleTransition(t *testing.T) {
 	}
 
 	changed, err := (doctorProjectMutator{}).RelocateProject(
-		context.Background(), expected, replacement,
+		t.Context(), expected, replacement,
 	)
 
 	require.NoError(t, err)

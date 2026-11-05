@@ -24,6 +24,7 @@ go.work.sum
 # env file
 .env
 /kwt
+/custom-gcl
 
 # Claude Code
 .claude/todos/
@@ -35,3 +36,6 @@ go.work.sum
 
 # Local scratch output
 /tmp/
+
+# gotestsum results written by CI test steps
+/gotestsum/

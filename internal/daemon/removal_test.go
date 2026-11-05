@@ -40,7 +40,7 @@ func TestRemovalClientRoundTripsResult(t *testing.T) {
 	client, closeServer := removalTestClient(t, remover)
 	defer closeServer()
 
-	result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{
+	result, err := client.RemoveWorktree(t.Context(), kwt.RemovalRequest{
 		RepositoryPath: "/repos/widget", Path: "/worktrees/topic",
 		ExpectedGeneration: "0123456789abcdef0123456789abcdef",
 		DeleteBranch:       true,
@@ -71,7 +71,8 @@ func TestRemovalServerAcceptsLegacyV1PayloadWithoutExpansion(t *testing.T) {
 		"path":"/worktrees/topic",
 		"expected_generation":"0123456789abcdef0123456789abcdef"
 	}`)
-	request := httptest.NewRequest(
+	request := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodPost,
 		"http://127.0.0.1:43210/api/v1/worktrees/remove",
 		bytes.NewReader(body),
@@ -116,7 +117,7 @@ func TestRemovalClientPreservesPartialResultOnError(t *testing.T) {
 			client, closeServer := removalTestClient(t, remover)
 			defer closeServer()
 
-			result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{})
+			result, err := client.RemoveWorktree(t.Context(), kwt.RemovalRequest{})
 
 			require.Error(t, err)
 			assert.True(t, service.IsCode(err, code))
@@ -163,7 +164,7 @@ func TestRemovalClientPreservesKnownRemovalFailure(t *testing.T) {
 			client, closeServer := removalTestClient(t, remover)
 			defer closeServer()
 
-			result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{})
+			result, err := client.RemoveWorktree(t.Context(), kwt.RemovalRequest{})
 
 			require.Error(t, err)
 			typed := service.AsError(err)
@@ -192,7 +193,7 @@ func TestRemovalClientHidesUnexpectedInternalCause(t *testing.T) {
 	client, closeServer := removalTestClient(t, remover)
 	defer closeServer()
 
-	result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{})
+	result, err := client.RemoveWorktree(t.Context(), kwt.RemovalRequest{})
 
 	require.Error(t, err)
 	typed := service.AsError(err)
@@ -224,7 +225,7 @@ func TestRemovalClientReconcilesLostSuccessfulResponse(t *testing.T) {
 	defer server.Close()
 	client := clientForUnverifiedServer(t, server, "secret")
 
-	result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{
+	result, err := client.RemoveWorktree(t.Context(), kwt.RemovalRequest{
 		RepositoryPath:     "/repos/widget",
 		Path:               "/worktrees/topic",
 		ExpectedGeneration: "0123456789abcdef0123456789abcdef",
@@ -249,7 +250,7 @@ func TestRemovalClientMarksUnreconciledResponseLossForRefresh(t *testing.T) {
 	defer server.Close()
 	client := clientForUnverifiedServer(t, server, "secret")
 
-	result, err := client.RemoveWorktree(context.Background(), kwt.RemovalRequest{
+	result, err := client.RemoveWorktree(t.Context(), kwt.RemovalRequest{
 		RepositoryPath:     "/repos/widget",
 		Path:               "/worktrees/topic",
 		ExpectedGeneration: "0123456789abcdef0123456789abcdef",

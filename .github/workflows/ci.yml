@@ -12,6 +12,10 @@ env:
   # Module-relative source paths keep build cache entries independent of the checkout path.
   GOFLAGS: -trimpath
 
+concurrency:
+  group: ${{ github.workflow }}-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Go (${{ matrix.os }})
@@ -50,12 +54,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -65,7 +69,9 @@ jobs:
         shell: bash
         env:
           TEST_PACKAGES: ${{ matrix.packages }}
+          TEST_SUITE: ${{ matrix.os }}
         run: |
+          results="$PWD/gotestsum"
           kwt_test_home="$RUNNER_TEMP/kwt-test-home"
           mkdir -p "$kwt_test_home"
           clean_env=(
@@ -98,18 +104,36 @@ jobs:
             GIT_CONFIG_NOSYSTEM=1
             GIT_TERMINAL_PROMPT=0
           )
-          read -r -a test_packages <<< "$TEST_PACKAGES"
-          "${clean_env[@]}" go -C tools/testbootstrap test ./...
+          # The bootstrap module stays dependency-free, so its tests run the
+          # root module's gotestsum build from inside the bootstrap module.
+          gotestsum="$("${clean_env[@]}" go tool -n gotestsum)"
+          (
+            cd tools/testbootstrap
+            "${clean_env[@]}" "$gotestsum" \
+              --format pkgname-and-test-fails --format-icons text \
+              --jsonfile "$results/$TEST_SUITE-bootstrap.json" \
+              --rerun-fails=2 \
+              --rerun-fails-report "$results/$TEST_SUITE-bootstrap-reruns.txt" \
+              --packages ./...
+          )
           "${clean_env[@]}" "KWT_HOME=$kwt_test_home" \
-            go -C tools/testbootstrap run . -- "${test_packages[@]}"
+            go -C tools/testbootstrap run . -- gotestsum \
+              --format pkgname-and-test-fails --format-icons text \
+              --jsonfile "$results/$TEST_SUITE.json" \
+              --rerun-fails=2 \
+              --rerun-fails-report "$results/$TEST_SUITE-reruns.txt" \
+              --packages "$TEST_PACKAGES"
 
       - name: Test
         if: runner.os == 'Windows'
         shell: pwsh
         env:
           TEST_PACKAGES: ${{ matrix.packages }}
+          TEST_SUITE: ${{ matrix.os }}
         run: |
-          $testPackages = $env:TEST_PACKAGES -split ' '
+          $testPackages = $env:TEST_PACKAGES
+          $suite = $env:TEST_SUITE
+          $results = Join-Path (Get-Location) 'gotestsum'
           $kwtTestHome = Join-Path $env:RUNNER_TEMP 'kwt-test-home'
           $gitConfig = Join-Path $env:RUNNER_TEMP 'kwt-test-gitconfig'
           New-Item -ItemType Directory -Force $kwtTestHome | Out-Null
@@ -144,11 +168,37 @@ jobs:
           $env:GIT_CONFIG_NOSYSTEM = '1'
           $env:GIT_TERMINAL_PROMPT = '0'
 
-          & go -C tools/testbootstrap test ./...
+          # The bootstrap module stays dependency-free, so its tests run the
+          # root module's gotestsum build from inside the bootstrap module.
+          $gotestsum = & go tool -n gotestsum
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Push-Location tools/testbootstrap
+          & $gotestsum `
+            --format pkgname-and-test-fails --format-icons text `
+            --jsonfile (Join-Path $results "$suite-bootstrap.json") `
+            --rerun-fails=2 `
+            --rerun-fails-report (Join-Path $results "$suite-bootstrap-reruns.txt") `
+            --packages ./...
+          $bootstrapExit = $LASTEXITCODE
+          Pop-Location
+          if ($bootstrapExit -ne 0) { exit $bootstrapExit }
           $env:KWT_HOME = $kwtTestHome
-          & go -C tools/testbootstrap run . -- @testPackages
+          & go -C tools/testbootstrap run . -- gotestsum `
+            --format pkgname-and-test-fails --format-icons text `
+            --jsonfile (Join-Path $results "$suite.json") `
+            --rerun-fails=2 `
+            --rerun-fails-report (Join-Path $results "$suite-reruns.txt") `
+            --packages $testPackages
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload test results
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-${{ matrix.os }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Build
         run: go build ./cmd/kwt
@@ -163,20 +213,24 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: true
 
+      - name: Check lint config
+        run: make lint-config-check
+
+      # The action builds the kit analyzers from .custom-gcl.yml.
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        uses: step-security/golangci-lint-action@v9.3.0
         with:
-          version: v2.14.0
+          version: v2.15.0
 
   docs:
     name: Docs
@@ -184,12 +238,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
 
@@ -197,6 +251,6 @@ jobs:
         run: make docs-install docs-check
 
       - name: Check first paint
-        uses: kenn-io/actions/first-paint@b523fb403607f01de5eec5f4556c7668544c70fe # first-paint
+        uses: kenn-io/actions/first-paint@main
         with:
           dist: docs/site

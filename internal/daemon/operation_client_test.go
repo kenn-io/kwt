@@ -45,7 +45,7 @@ func TestOperationClientResumesInterruptedStreamFromLastSequence(t *testing.T) {
 	client := clientForUnverifiedServer(t, server, "secret")
 	var messages []string
 	result, err := client.FollowOperation(
-		context.Background(),
+		t.Context(),
 		"operation-1",
 		0,
 		OperationCallbacks{Event: func(event service.OperationEvent) error {
@@ -100,7 +100,7 @@ func TestOperationClientHandlesMultipleBoundPromptRounds(t *testing.T) {
 	client := clientForUnverifiedServer(t, server, "secret")
 	var promptIDs []string
 	_, err := client.FollowOperation(
-		context.Background(), "operation-1", 0,
+		t.Context(), "operation-1", 0,
 		OperationCallbacks{Prompt: func(
 			_ context.Context,
 			prompt service.OperationPrompt,
@@ -150,7 +150,7 @@ func TestOperationClientWaitsForTerminalFailureAfterPromptDeadline(t *testing.T)
 	var observedDeadline time.Time
 
 	_, err := client.FollowOperation(
-		context.Background(), "operation-1", 0,
+		t.Context(), "operation-1", 0,
 		OperationCallbacks{Prompt: func(ctx context.Context, _ service.OperationPrompt) (string, error) {
 			observedDeadline, _ = ctx.Deadline()
 			<-ctx.Done()
@@ -204,7 +204,7 @@ func TestOperationClientWaitsForTerminalFailureWhenPromptExpiresDuringResponse(t
 	client := clientForUnverifiedServer(t, server, "secret")
 
 	_, err := client.FollowOperation(
-		context.Background(), "operation-1", 0,
+		t.Context(), "operation-1", 0,
 		OperationCallbacks{Prompt: func(context.Context, service.OperationPrompt) (string, error) {
 			return "secret", nil
 		}},
@@ -263,7 +263,7 @@ func TestOperationClientReconnectReplaysUnansweredPrompt(t *testing.T) {
 	client := clientForUnverifiedServer(t, server, "secret")
 
 	_, err := client.FollowOperation(
-		context.Background(), "operation-1", 0,
+		t.Context(), "operation-1", 0,
 		OperationCallbacks{Prompt: func(context.Context, service.OperationPrompt) (string, error) {
 			if promptCalls.Add(1) == 1 {
 				return "", errOperationStreamInterrupted
@@ -286,7 +286,7 @@ func TestOperationClientRejectsInvalidSequenceAsUnknownOutcome(t *testing.T) {
 	}))
 	defer server.Close()
 	client := clientForUnverifiedServer(t, server, "secret")
-	_, err := client.FollowOperation(context.Background(), "operation-1", 0, OperationCallbacks{})
+	_, err := client.FollowOperation(t.Context(), "operation-1", 0, OperationCallbacks{})
 	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
 }
 
@@ -303,7 +303,7 @@ func TestOperationClientPreservesTerminalServiceFailure(t *testing.T) {
 	}))
 	defer server.Close()
 	client := clientForUnverifiedServer(t, server, "secret")
-	_, err := client.FollowOperation(context.Background(), "operation-1", 0, OperationCallbacks{})
+	_, err := client.FollowOperation(t.Context(), "operation-1", 0, OperationCallbacks{})
 	assert.True(t, service.IsCode(err, service.Conflict), err)
 }
 
@@ -329,7 +329,7 @@ func TestOperationClientCancelsAfterPreterminalEventCallbackFailure(t *testing.T
 	client := clientForUnverifiedServer(t, server, "secret")
 
 	_, err := client.FollowOperation(
-		context.Background(), "operation-1", 0,
+		t.Context(), "operation-1", 0,
 		OperationCallbacks{Event: func(service.OperationEvent) error { return callbackErr }},
 	)
 	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
@@ -350,7 +350,7 @@ func TestOperationClientTerminalResultSurvivesEventCallbackFailure(t *testing.T)
 
 	callbackErr := errors.New("completion writer failed")
 	result, err := client.FollowOperation(
-		context.Background(), "operation-1", 0,
+		t.Context(), "operation-1", 0,
 		OperationCallbacks{Event: func(service.OperationEvent) error {
 			return callbackErr
 		}},
@@ -384,7 +384,7 @@ func TestOperationClientCancelsAfterPromptHandlerFailure(t *testing.T) {
 	client := clientForUnverifiedServer(t, server, "secret")
 
 	_, err := client.FollowOperation(
-		context.Background(), "operation-1", 0,
+		t.Context(), "operation-1", 0,
 		OperationCallbacks{Prompt: func(context.Context, service.OperationPrompt) (string, error) {
 			return "", promptErr
 		}},
@@ -407,7 +407,7 @@ func TestOperationClientPreservesInteractionRequired(t *testing.T) {
 	}))
 	defer server.Close()
 	client := clientForUnverifiedServer(t, server, "secret")
-	_, err := client.FollowOperation(context.Background(), "operation-1", 0, OperationCallbacks{})
+	_, err := client.FollowOperation(t.Context(), "operation-1", 0, OperationCallbacks{})
 	assert.True(t, service.IsCode(err, service.InteractionRequired), err)
 }
 
@@ -420,7 +420,7 @@ func TestOperationClientBoundsStreamResponse(t *testing.T) {
 	}))
 	defer server.Close()
 	client := clientForUnverifiedServer(t, server, "secret")
-	_, err := client.FollowOperation(context.Background(), "operation-1", 0, OperationCallbacks{})
+	_, err := client.FollowOperation(t.Context(), "operation-1", 0, OperationCallbacks{})
 	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
 	assert.ErrorIs(t, err, ErrResponseTooLarge)
 }
@@ -431,7 +431,7 @@ func TestOperationClientMapsEndpointLossToUnknownOutcome(t *testing.T) {
 		"secret",
 		&http.Client{Transport: failingRoundTripper{}},
 	)
-	_, err := client.FollowOperation(context.Background(), "operation-1", 0, OperationCallbacks{})
+	_, err := client.FollowOperation(t.Context(), "operation-1", 0, OperationCallbacks{})
 	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
 	assert.False(t, service.AsError(err).Retryable)
 }
@@ -451,9 +451,9 @@ func TestVerifiedOperationClientBoundsStreamHeaderWait(t *testing.T) {
 	mux.HandleFunc("/api/v1/operations/operation-1/events", func(_ http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
 	})
-	client, err := NewVerifiedClient(context.Background(), record, token)
+	client, err := NewVerifiedClient(t.Context(), record, token)
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 
 	_, _, err = client.followOperationAttempt(ctx, "operation-1", 0, OperationCallbacks{})
@@ -480,9 +480,9 @@ func TestVerifiedOperationClientBoundsPromptResponse(t *testing.T) {
 		w.(http.Flusher).Flush()
 		<-r.Context().Done()
 	})
-	client, err := NewVerifiedClient(context.Background(), record, token)
+	client, err := NewVerifiedClient(t.Context(), record, token)
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 
 	err = client.sendOperationResponse(ctx, "operation-1", service.OperationResponse{PromptID: "prompt-1"})
@@ -501,7 +501,7 @@ func TestOperationClientMapsReplacementAuthenticationFailureToUnknownOutcome(t *
 	defer server.Close()
 	client := clientForUnverifiedServer(t, server, "stale-secret")
 
-	_, err := client.FollowOperation(context.Background(), "operation-1", 0, OperationCallbacks{})
+	_, err := client.FollowOperation(t.Context(), "operation-1", 0, OperationCallbacks{})
 	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
 	assert.Equal(t, int32(1), requests.Load())
 }
@@ -516,7 +516,7 @@ func TestOperationClientRetriesMalformedFailureThenReportsUnknownOutcome(t *test
 	defer server.Close()
 	client := clientForUnverifiedServer(t, server, "secret")
 
-	_, err := client.FollowOperation(context.Background(), "operation-1", 0, OperationCallbacks{})
+	_, err := client.FollowOperation(t.Context(), "operation-1", 0, OperationCallbacks{})
 	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
 	assert.Equal(t, int32(2), requests.Load())
 }
@@ -535,7 +535,7 @@ func TestOperationClientRetriesSubscriptionFailureThenReportsUnknownOutcome(t *t
 	defer server.Close()
 	client := clientForUnverifiedServer(t, server, "secret")
 
-	_, err := client.FollowOperation(context.Background(), "operation-1", 0, OperationCallbacks{})
+	_, err := client.FollowOperation(t.Context(), "operation-1", 0, OperationCallbacks{})
 	assert.True(t, service.IsCode(err, service.OperationOutcomeUnknown), err)
 	assert.False(t, service.IsCode(err, service.OperationCapacityExhausted), err)
 	assert.Equal(t, int32(2), requests.Load())
@@ -549,7 +549,7 @@ func TestOperationClientCancelsOperation(t *testing.T) {
 	}))
 	defer server.Close()
 	client := clientForUnverifiedServer(t, server, "secret")
-	require.NoError(t, client.CancelOperation(context.Background(), "operation-1"))
+	require.NoError(t, client.CancelOperation(t.Context(), "operation-1"))
 }
 
 type failingRoundTripper struct{}

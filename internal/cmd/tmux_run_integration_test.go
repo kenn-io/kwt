@@ -30,8 +30,8 @@ func TestTmuxRunAutoCleanupUsesPaneServer(t *testing.T) {
 	)
 	defaultServer := tmux.NewTmuxCommandInTempDirWithStripNames("tmux", tempDir, nil)
 	t.Cleanup(func() {
-		_ = kwtServer.RunCommandContext(context.Background(), "kill-server")
-		_ = defaultServer.RunCommandContext(context.Background(), "kill-server")
+		_ = kwtServer.RunCommandContext(context.WithoutCancel(t.Context()), "kill-server")
+		_ = defaultServer.RunCommandContext(context.WithoutCancel(t.Context()), "kill-server")
 		require.NoError(t, os.RemoveAll(tempDir))
 	})
 
@@ -67,7 +67,7 @@ func TestTmuxRunAutoCleanupUsesPaneServer(t *testing.T) {
 	t.Setenv("CUSTOM_FLEET_TOKEN", "secret")
 
 	command := &cobra.Command{}
-	command.SetContext(context.Background())
+	command.SetContext(t.Context())
 	require.NoError(t, runTmuxRun(command, []string{"sleep 0.5"}))
 	assert.ElementsMatch(t, []string{
 		"KWT_GITHUB_TOKEN",
@@ -82,7 +82,7 @@ func TestTmuxRunAutoCleanupUsesPaneServer(t *testing.T) {
 		sessions, listErr := manager.ListSessions()
 		return listErr == nil && len(sessions) == 0
 	}, 3*time.Second, 20*time.Millisecond)
-	defaultSessions, err := defaultServer.ListSessionsContext(context.Background())
+	defaultSessions, err := defaultServer.ListSessionsContext(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, defaultSessions)
 }

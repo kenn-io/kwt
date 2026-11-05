@@ -29,6 +29,11 @@ endif
 export GOFLAGS
 
 INSTALL_DIR ?= $(GO_PATH_FIRST)/bin
+# .custom-gcl.yml owns the golangci-lint and kit plugin versions.
+GOLANGCI_LINT_VERSION := $(shell sed -n 's/^version: //p' .custom-gcl.yml)
+CUSTOM_GCL := ./custom-gcl
+# Keep the renderer pin explicit so the sibling-pins check can validate it.
+KENNLINT := go run go.kenn.io/kit/cmd/kennlint@v0.47.3
 VERCEL_SCOPE ?= kenn-software
 VERCEL_PROJECT ?= kwt-docs
 TEST_PACKAGES ?= ./...
@@ -75,7 +80,7 @@ TEST_CLEAN_ENV := env -i \
 GO_TEST_BOOTSTRAP := $(TEST_CLEAN_ENV) go -C tools/testbootstrap test ./...
 GO_TEST_RUNNER := $(TEST_CLEAN_ENV) KWT_HOME="$(KWT_HOME)" go -C tools/testbootstrap run . --
 
-.PHONY: all build clean test test-verbose test-coverage lint fmt vet install help docs-install docs-assets docs-assets-test docs-build docs-serve docs-preview docs-screenshot docs-check docs-deploy
+.PHONY: all build clean test test-verbose test-coverage lint lint-config lint-config-check custom-gcl fmt vet install help docs-install docs-assets docs-assets-test docs-build docs-serve docs-preview docs-screenshot docs-check docs-deploy
 
 # Default target
 all: clean build
@@ -176,14 +181,23 @@ docs-check: docs-assets-test docs-build
 docs-deploy: docs-check
 	@vercel deploy --prod --yes --cwd docs/site --scope "$(VERCEL_SCOPE)" --project "$(VERCEL_PROJECT)"
 
-## lint: Run golangci-lint
-lint:
+## lint: Run golangci-lint with kit's shared policy
+lint: lint-config-check custom-gcl
 	@echo "Running golangci-lint..."
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run ./...; \
-	else \
-		echo "golangci-lint not installed. Install with: brew install golangci-lint"; \
-	fi
+	@$(CUSTOM_GCL) run ./...
+
+## lint-config: Render .golangci.yml from kit's canonical config and the overlay
+lint-config:
+	@$(KENNLINT) config
+
+## lint-config-check: Fail when .golangci.yml does not match the overlay
+lint-config-check:
+	@$(KENNLINT) config -check
+
+## custom-gcl: Build golangci-lint with the kit analyzers in .custom-gcl.yml
+custom-gcl:
+	@go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) custom \
+		--destination . --name custom-gcl --version $(GOLANGCI_LINT_VERSION)
 
 ## fmt: Format code
 fmt:
@@ -226,3 +240,32 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+# Workflow actions run at the commits in .github/workflows/actions.lock,
+# including actions that other actions call. The organization requires
+# SHA-pinned actions, and the lockfile is what satisfies that for nested refs.
+# The version comes from constraints.ghActionsLock in renovate.json.
+# Renovate uses the same version when it regenerates the lockfile after
+# bumping an action.
+GH_ACTIONS_LOCK_VERSION ?= $(shell sed -nE "s/^[[:space:]]*\"?ghActionsLock\"?:[[:space:]]*[\"']([^\"']*)[\"'].*/\1/p" renovate.json)
+
+.PHONY: gh-actions-lock-install actions-lock actions-lock-check-local actions-lock-check
+
+gh-actions-lock-install:
+	@test -n "$(GH_ACTIONS_LOCK_VERSION)" || { echo "constraints.ghActionsLock is missing from renovate.json" >&2; exit 1; }
+	@if [ "$$(gh actions-lock --version 2>/dev/null)" != "actions-lock version $(GH_ACTIONS_LOCK_VERSION)" ]; then \
+		gh extension remove actions-lock >/dev/null 2>&1 || true; \
+		gh extension install github/gh-actions-lock --pin $(GH_ACTIONS_LOCK_VERSION); \
+	fi
+
+# Lock every workflow action after adding or bumping a `uses:` line
+actions-lock: gh-actions-lock-install
+	gh actions-lock --no-interactive
+
+# Offline check that every workflow action has a lockfile entry
+actions-lock-check-local: gh-actions-lock-install
+	gh actions-lock --verify-local
+
+# Network check that the lockfile is complete and every locked commit is still valid
+actions-lock-check: gh-actions-lock-install
+	gh actions-lock --verify

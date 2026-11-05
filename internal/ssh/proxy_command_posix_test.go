@@ -35,7 +35,7 @@ func TestTargetProxyCommandWinsOpenSSHEffectiveConfiguration(t *testing.T) {
 
 	arguments := append([]string{"-G"}, target.Projection.Arguments...)
 	arguments = append(arguments, "--", "build.example.test")
-	output, err := exec.Command("ssh", arguments...).CombinedOutput()
+	output, err := exec.CommandContext(t.Context(), "ssh", arguments...).CombinedOutput()
 	require.NoError(t, err, string(output))
 	config := openssh.ParseConfig(output)
 	proxyCommandValue := ""
@@ -50,7 +50,7 @@ func TestTargetProxyCommandWinsOpenSSHEffectiveConfiguration(t *testing.T) {
 }
 
 func TestProxyCommandDoesNotConnectDirectlyWhenControlSocketIsMissing(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, listener.Close()) }()
 	port := listener.Addr().(*net.TCPAddr).Port
@@ -67,7 +67,7 @@ func TestProxyCommandDoesNotConnectDirectlyWhenControlSocketIsMissing(t *testing
 		Target{User: "relay", Hostname: "127.0.0.1", Port: port},
 		[]string{"-S", filepath.Join(t.TempDir(), "missing-control")},
 	)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, "/bin/sh", "-c", commandText)
 	err = command.Run()
@@ -82,7 +82,7 @@ func TestProxyCommandDoesNotConnectDirectlyWhenControlSocketIsMissing(t *testing
 }
 
 func TestMultiplexedLeaseDoesNotConnectDirectlyWhenControlSocketIsMissing(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, listener.Close()) }()
 	port := listener.Addr().(*net.TCPAddr).Port
@@ -113,13 +113,13 @@ func TestMultiplexedLeaseDoesNotConnectDirectlyWhenControlSocketIsMissing(t *tes
 	})
 	snapshot := directSnapshot("fail-closed-route")
 	lease, err := manager.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: snapshot},
 		func(context.Context) (RouteSnapshot, error) { return snapshot, nil },
 	)
 	require.NoError(t, err)
-	defer func() { assert.NoError(t, lease.Release(context.Background())) }()
-	arguments, err := lease.Arguments(context.Background())
+	defer func() { assert.NoError(t, lease.Release(t.Context())) }()
+	arguments, err := lease.Arguments(t.Context())
 	require.NoError(t, err)
 	arguments = append(arguments,
 		"-o", "ConnectTimeout=1",
@@ -127,7 +127,7 @@ func TestMultiplexedLeaseDoesNotConnectDirectlyWhenControlSocketIsMissing(t *tes
 		"--", "127.0.0.1",
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, "ssh", arguments...)
 	err = command.Run()

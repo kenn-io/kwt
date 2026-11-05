@@ -1,7 +1,6 @@
 package lifecycle
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,13 +22,13 @@ func TestProjectInventoryRetainsRenamedDirectoryAndClearsIssueWhenRestored(t *te
 	snapshot, err := config.LoadGlobalSnapshotAt(home)
 	require.NoError(t, err)
 	registration := snapshot.Projects[0]
-	before, err := publishedProjectRegistrations(context.Background(), []config.ProjectRegistration{registration})
+	before, err := publishedProjectRegistrations(t.Context(), []config.ProjectRegistration{registration})
 	require.NoError(t, err)
 	require.Len(t, before, 1)
 	assert.Empty(t, before[0].PathIssue)
 
 	require.NoError(t, os.Rename(oldPath, newPath))
-	missing, err := publishedProjectRegistrations(context.Background(), []config.ProjectRegistration{registration})
+	missing, err := publishedProjectRegistrations(t.Context(), []config.ProjectRegistration{registration})
 	require.NoError(t, err)
 	require.Len(t, missing, 1)
 	assert.Equal(t, "missing", missing[0].PathIssue)
@@ -37,7 +36,7 @@ func TestProjectInventoryRetainsRenamedDirectoryAndClearsIssueWhenRestored(t *te
 	assert.Equal(t, oldPath, missing[0].Path)
 
 	require.NoError(t, os.Rename(newPath, oldPath))
-	restored, err := publishedProjectRegistrations(context.Background(), []config.ProjectRegistration{registration})
+	restored, err := publishedProjectRegistrations(t.Context(), []config.ProjectRegistration{registration})
 	require.NoError(t, err)
 	assert.Equal(t, before, restored)
 }

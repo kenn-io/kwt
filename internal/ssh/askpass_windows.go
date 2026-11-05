@@ -16,6 +16,7 @@ import (
 )
 
 func listenAskpass(
+	context.Context,
 	string,
 ) (net.Listener, askpassEndpoint, func() error, error) {
 	var random [16]byte
@@ -46,7 +47,7 @@ func currentUserSID() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer token.Close() //nolint:errcheck // Read-only token cleanup.
+	defer token.Close() // Read-only token cleanup.
 	user, err := token.GetTokenUser()
 	if err != nil {
 		return "", err
@@ -57,8 +58,8 @@ func currentUserSID() (string, error) {
 	return user.User.Sid.String(), nil
 }
 
-func dialAskpass(handle askpassHandle, timeout time.Duration) (net.Conn, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+func dialAskpass(ctx context.Context, handle askpassHandle, timeout time.Duration) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	return winio.DialPipeContext(ctx, handle.Address)
 }

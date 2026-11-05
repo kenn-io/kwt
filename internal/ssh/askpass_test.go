@@ -21,7 +21,7 @@ func TestAskpassCarriesMultipleBoundRoundsIncludingEmptyResponse(t *testing.T) {
 	require.NoError(t, err)
 	responses := []string{"wrong", ""}
 	var prompts []service.OperationPrompt
-	transport, err := NewAskpass(context.Background(), root, AskpassOptions{
+	transport, err := NewAskpass(t.Context(), root, AskpassOptions{
 		Version:    supportedAskpassVersion(),
 		Executable: executable,
 		Environment: []string{
@@ -72,7 +72,7 @@ func TestAskpassCarriesMultipleBoundRoundsIncludingEmptyResponse(t *testing.T) {
 
 func TestAskpassTreatsUnhintedHostKeyTextAsSensitive(t *testing.T) {
 	var captured service.OperationPrompt
-	transport, err := NewAskpass(context.Background(), t.TempDir(), AskpassOptions{
+	transport, err := NewAskpass(t.Context(), t.TempDir(), AskpassOptions{
 		Version: supportedAskpassVersion(),
 		Prompt: func(_ context.Context, prompt service.OperationPrompt) (string, error) {
 			captured = prompt
@@ -99,7 +99,7 @@ Are you sure you want to continue connecting (yes/no/[fingerprint])? `},
 }
 
 func TestAskpassPreservesTypedPromptRejection(t *testing.T) {
-	transport, err := NewAskpass(context.Background(), t.TempDir(), AskpassOptions{
+	transport, err := NewAskpass(t.Context(), t.TempDir(), AskpassOptions{
 		Version: supportedAskpassVersion(),
 		Prompt: func(context.Context, service.OperationPrompt) (string, error) {
 			return "", service.NewError(
@@ -126,7 +126,7 @@ func TestAskpassPreservesTypedPromptRejection(t *testing.T) {
 
 func TestAskpassTimesOutOnePromptRound(t *testing.T) {
 	deadlines := make(chan time.Time, 1)
-	transport, err := NewAskpass(context.Background(), t.TempDir(), AskpassOptions{
+	transport, err := NewAskpass(t.Context(), t.TempDir(), AskpassOptions{
 		Version:       supportedAskpassVersion(),
 		PromptTimeout: 10 * time.Millisecond,
 		Prompt: func(ctx context.Context, prompt service.OperationPrompt) (string, error) {
@@ -158,7 +158,7 @@ func TestAskpassTimesOutOnePromptRound(t *testing.T) {
 
 func TestAskpassRemovesPrivateOperationDirectory(t *testing.T) {
 	root := t.TempDir()
-	transport, err := NewAskpass(context.Background(), root, AskpassOptions{
+	transport, err := NewAskpass(t.Context(), root, AskpassOptions{
 		Version: supportedAskpassVersion(),
 		Prompt: func(context.Context, service.OperationPrompt) (string, error) {
 			return "secret", nil
@@ -174,7 +174,7 @@ func TestAskpassRemovesPrivateOperationDirectory(t *testing.T) {
 
 func TestAskpassRejectsUnsupportedOpenSSHBeforeCreatingState(t *testing.T) {
 	root := t.TempDir()
-	transport, err := NewAskpass(context.Background(), root, AskpassOptions{
+	transport, err := NewAskpass(t.Context(), root, AskpassOptions{
 		Version: NewVersionPolicy(func(context.Context) (string, error) {
 			return "OpenSSH_8.3p1", nil
 		}),
@@ -193,7 +193,7 @@ func TestAskpassRejectsUnsupportedOpenSSHBeforeCreatingState(t *testing.T) {
 
 func TestAskpassCancellationCreatesNoState(t *testing.T) {
 	root := t.TempDir()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	transport, err := NewAskpass(ctx, root, AskpassOptions{
@@ -212,7 +212,7 @@ func TestAskpassCancellationCreatesNoState(t *testing.T) {
 
 func TestAskpassRejectsRelativeExecutableBeforeCreatingState(t *testing.T) {
 	root := t.TempDir()
-	transport, err := NewAskpass(context.Background(), root, AskpassOptions{
+	transport, err := NewAskpass(t.Context(), root, AskpassOptions{
 		Version:    supportedAskpassVersion(),
 		Executable: "kwt",
 		Prompt: func(context.Context, service.OperationPrompt) (string, error) {
@@ -273,7 +273,7 @@ func (w *countingFrameWriter) Write(p []byte) (int, error) {
 }
 
 func TestAskpassHelperSubprocessReturnsPromptResponse(t *testing.T) {
-	transport, err := NewAskpass(context.Background(), t.TempDir(), AskpassOptions{
+	transport, err := NewAskpass(t.Context(), t.TempDir(), AskpassOptions{
 		Version:    supportedAskpassVersion(),
 		Executable: os.Args[0],
 		Prompt: func(context.Context, service.OperationPrompt) (string, error) {
@@ -283,7 +283,7 @@ func TestAskpassHelperSubprocessReturnsPromptResponse(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, transport.Close()) })
 
-	command := exec.Command(os.Args[0], "-test.run=TestAskpassProtocolHelperProcess")
+	command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=TestAskpassProtocolHelperProcess")
 	command.Env = append(transport.Environment(),
 		"GOCOVERDIR="+t.TempDir(),
 		"KWT_TEST_ASKPASS_PROTOCOL_HELPER=1",

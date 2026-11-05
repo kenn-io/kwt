@@ -489,7 +489,7 @@ func TestPruneMergedDoesNotRemoveWhileCandidateCreationIsActive(t *testing.T) {
 		return nil
 	})
 	cmd, stdout, _ := fleetTestCommand()
-	cmd.SetContext(context.Background())
+	cmd.SetContext(t.Context())
 
 	err := runPrune(cmd, nil)
 
@@ -750,7 +750,7 @@ func TestPruneMergedRemovesMultipleGloballyDiscoveredWorktrees(t *testing.T) {
 	removePruneMergedWorktree = defaultRemovePruneMergedWorktree
 	publishFleetBestEffortForCommand = func(*cobra.Command, *models.Config) {}
 	cmd, stdout, stderr := fleetTestCommand()
-	cmd.SetContext(context.Background())
+	cmd.SetContext(t.Context())
 
 	err := runPrune(cmd, nil)
 
@@ -866,7 +866,7 @@ func TestPruneMergedProtectedOperationRejectsLiveSession(t *testing.T) {
 	called := false
 
 	err := defaultRunPruneMergedProtectedOperation(
-		context.Background(), &models.Config{}, candidate,
+		t.Context(), &models.Config{}, candidate,
 		func() error { called = true; return nil },
 	)
 
@@ -884,7 +884,7 @@ func TestPruneMergedProtectedOperationRejectsIndeterminateSession(t *testing.T) 
 	called := false
 
 	err := defaultRunPruneMergedProtectedOperation(
-		context.Background(), &models.Config{}, candidate,
+		t.Context(), &models.Config{}, candidate,
 		func() error { called = true; return nil },
 	)
 
@@ -904,7 +904,7 @@ func TestPruneMergedProtectedOperationRunsWhenSessionIsAbsent(t *testing.T) {
 	called := false
 
 	err := defaultRunPruneMergedProtectedOperation(
-		context.Background(), &models.Config{
+		t.Context(), &models.Config{
 			Fleet: models.FleetConfig{TokenEnv: "GHOSTHUB_AUTH"},
 		}, candidate,
 		func() error { called = true; return nil },
@@ -925,7 +925,7 @@ func TestPruneMergedProtectedOperationRequiresAliasConnectedRegistration(t *test
 	called := false
 
 	err = defaultRunPruneMergedProtectedOperation(
-		context.Background(), &models.Config{}, candidate,
+		t.Context(), &models.Config{}, candidate,
 		func() error { called = true; return nil },
 	)
 
@@ -956,7 +956,7 @@ func TestPruneMergedLiveProtectedSessionPreservesWorktreeAndProvenance(t *testin
 		func(pruneMergedCandidate) error { removed++; return nil },
 	)
 	cmd, stdout, _ := fleetTestCommand()
-	cmd.SetContext(context.Background())
+	cmd.SetContext(t.Context())
 
 	err := runPrune(cmd, nil)
 
@@ -1147,7 +1147,7 @@ func TestPruneMergedInventoryReturnsStrictGlobalDiscoveryError(t *testing.T) {
 	cfg := &models.Config{Worktree: models.WorktreeConfig{BaseDir: t.TempDir()}}
 
 	candidates, err := defaultInspectPruneMergedCandidates(
-		context.Background(), cfg, nil, nil,
+		t.Context(), cfg, nil, nil,
 	)
 
 	assert.Nil(t, candidates)
@@ -1163,7 +1163,7 @@ func TestPruneMergedInventoryReportsUninspectableDiscoveredPathAsDoctorRequired(
 	}
 	cfg := &models.Config{Worktree: models.WorktreeConfig{BaseDir: t.TempDir()}}
 
-	candidates, err := defaultInspectPruneMergedCandidates(context.Background(), cfg, nil, nil)
+	candidates, err := defaultInspectPruneMergedCandidates(t.Context(), cfg, nil, nil)
 
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
@@ -1187,7 +1187,7 @@ func TestPruneMergedInventoryIncludesFinalizedRegistryWorktreeRoot(t *testing.T)
 	}
 
 	candidates, err := defaultInspectPruneMergedCandidates(
-		context.Background(), &models.Config{}, nil, []*registry.WorktreeEntry{entry},
+		t.Context(), &models.Config{}, nil, []*registry.WorktreeEntry{entry},
 	)
 
 	require.NoError(t, err)
@@ -1216,7 +1216,7 @@ func TestPruneMergedInventoryRejectsRegistrySubdirectory(t *testing.T) {
 	}
 
 	candidates, err := defaultInspectPruneMergedCandidates(
-		context.Background(), &models.Config{}, nil, []*registry.WorktreeEntry{entry},
+		t.Context(), &models.Config{}, nil, []*registry.WorktreeEntry{entry},
 	)
 
 	require.NoError(t, err)
@@ -1233,7 +1233,7 @@ func TestPruneMergedInventoryExcludesRegistryWorktreeWithCreationToken(t *testin
 	}
 
 	candidates, err := defaultInspectPruneMergedCandidates(
-		context.Background(), &models.Config{}, nil, []*registry.WorktreeEntry{entry},
+		t.Context(), &models.Config{}, nil, []*registry.WorktreeEntry{entry},
 	)
 
 	require.NoError(t, err)
@@ -1298,7 +1298,7 @@ func TestPruneMergedInventoryUsesReadOnlyGitFactsAndUpstreamIdentity(t *testing.
 	cfg := &models.Config{Projects: []models.Project{{Path: repositoryRoot, Repository: commandBaseRepo}}}
 
 	candidates, err := defaultInspectPruneMergedCandidates(
-		context.Background(), cfg, nil, []*registry.WorktreeEntry{entry},
+		t.Context(), cfg, nil, []*registry.WorktreeEntry{entry},
 	)
 
 	require.NoError(t, err)
@@ -1349,7 +1349,7 @@ func TestPruneMergedInventoryRejectsMismatchedWorktreeBacklink(t *testing.T) {
 	}}}
 
 	candidates, err := defaultInspectPruneMergedCandidates(
-		context.Background(), cfg, nil, nil,
+		t.Context(), cfg, nil, nil,
 	)
 
 	require.NoError(t, err)
@@ -1414,7 +1414,7 @@ func TestPruneMergedInventoryRejectsDistinctRootClaimingCandidateBacklink(
 			}
 
 			candidates, err := defaultInspectPruneMergedCandidates(
-				context.Background(), cfg, nil, entries,
+				t.Context(), cfg, nil, entries,
 			)
 
 			require.NoError(t, err)
@@ -1456,7 +1456,7 @@ func TestPruneMergedInventoryReadsOriginFromLinkedWorktree(t *testing.T) {
 	}}}
 
 	candidates, err := defaultInspectPruneMergedCandidates(
-		context.Background(), cfg, nil, nil,
+		t.Context(), cfg, nil, nil,
 	)
 
 	require.NoError(t, err)
@@ -1472,7 +1472,7 @@ func TestPruneMergedInventorySupportsSeparateGitDirectory(t *testing.T) {
 	}}}
 
 	candidates, err := defaultInspectPruneMergedCandidates(
-		context.Background(), cfg, nil, nil,
+		t.Context(), cfg, nil, nil,
 	)
 
 	require.NoError(t, err)
@@ -1520,7 +1520,7 @@ func TestPruneMergedSeparateGitDirectoryIncludesConfiguredLinkedIdentityClaim(
 	}}
 
 	candidates, err := defaultInspectPruneMergedCandidates(
-		context.Background(), cfg, nil, nil,
+		t.Context(), cfg, nil, nil,
 	)
 
 	require.NoError(t, err)
@@ -1546,7 +1546,7 @@ func TestPruneMergedConfiguredRootDoesNotFallBackToLiveOrigin(t *testing.T) {
 	}}}
 
 	candidates, err := defaultInspectPruneMergedCandidates(
-		context.Background(), cfg, nil, nil,
+		t.Context(), cfg, nil, nil,
 	)
 
 	require.NoError(t, err)
@@ -1605,7 +1605,7 @@ func TestPruneMergedConfiguredIdentityClaimsForCanonicalPath(t *testing.T) {
 			}}
 
 			candidates, err := defaultInspectPruneMergedCandidates(
-				context.Background(), cfg, nil, nil,
+				t.Context(), cfg, nil, nil,
 			)
 
 			require.NoError(t, err)
@@ -1648,7 +1648,7 @@ func TestPruneMergedConflictingConfiguredIdentitiesForOneCommonRepository(
 	}}
 
 	candidates, err := defaultInspectPruneMergedCandidates(
-		context.Background(), cfg, nil, nil,
+		t.Context(), cfg, nil, nil,
 	)
 
 	require.NoError(t, err)
@@ -1682,7 +1682,7 @@ func TestPruneMergedUnconfiguredCandidateRequiresDoctorWhenConfiguredRootIsUnava
 	}
 
 	candidates, err := defaultInspectPruneMergedCandidates(
-		context.Background(), cfg, nil, nil,
+		t.Context(), cfg, nil, nil,
 	)
 
 	require.NoError(t, err)
@@ -1725,7 +1725,7 @@ func TestPruneMergedUnconfiguredCandidateRequiresDoctorWhenConfiguredPathIsEmpty
 	}
 
 	candidates, err := defaultInspectPruneMergedCandidates(
-		context.Background(), cfg, nil, nil,
+		t.Context(), cfg, nil, nil,
 	)
 
 	require.NoError(t, err)
@@ -1750,7 +1750,7 @@ func TestPruneMergedConfiguredCandidateRemainsEligibleWhenAnotherConfiguredRootI
 	}}
 
 	candidates, err := defaultInspectPruneMergedCandidates(
-		context.Background(), cfg, nil, nil,
+		t.Context(), cfg, nil, nil,
 	)
 
 	require.NoError(t, err)
@@ -1792,7 +1792,7 @@ func TestPruneMergedInventoryStripsCredentialsFromWorktreeGitProcesses(t *testin
 	}
 
 	candidates, err := defaultInspectPruneMergedCandidates(
-		context.Background(), cfg, nil, nil,
+		t.Context(), cfg, nil, nil,
 	)
 
 	require.NoError(t, err)
@@ -1858,7 +1858,7 @@ func TestPruneMergedGlobalInventoryDerivesBaseFromEachWorktreeOrigin(t *testing.
 	cfg := &models.Config{Worktree: models.WorktreeConfig{BaseDir: globalBase}}
 
 	candidates, err := defaultInspectPruneMergedCandidates(
-		context.Background(), cfg, nil, nil,
+		t.Context(), cfg, nil, nil,
 	)
 
 	require.NoError(t, err)

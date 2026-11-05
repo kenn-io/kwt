@@ -72,7 +72,7 @@ func TestRunnerAppliesProjectionAndPrivateConfigToEveryManagerCommand(t *testing
 	})
 	require.NoError(t, err)
 
-	exitCode, err := runner(context.Background(), []string{
+	exitCode, err := runner(t.Context(), []string{
 		"-MNf", "-S", "/tmp/control", "--", "deploy@build.internal",
 	})
 
@@ -123,7 +123,7 @@ func TestRunnerEnforcesResolvedHostKeyPolicyWithoutAmbientAskpass(t *testing.T) 
 	})
 	require.NoError(t, err)
 
-	_, err = runner(context.Background(), []string{"-MNf", "--", "build.internal"})
+	_, err = runner(t.Context(), []string{"-MNf", "--", "build.internal"})
 
 	require.NoError(t, err)
 	assert.Contains(t, capturedArguments, "StrictHostKeyChecking=yes")
@@ -167,7 +167,7 @@ func TestRunnerCarriesPromptThroughAskpassHelperProcess(t *testing.T) {
 				_ string,
 				environment []string,
 			) (int, error) {
-				command := exec.Command(os.Args[0], "-test.run=TestRunnerAskpassHelperProcess")
+				command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=TestRunnerAskpassHelperProcess")
 				command.Env = append(environment, runnerAskpassHelper+"=1")
 				command.Stdout = &output
 				err := command.Run()
@@ -184,7 +184,7 @@ func TestRunnerCarriesPromptThroughAskpassHelperProcess(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	exitCode, err := runner(context.Background(), []string{"-MNf", "--", "build.internal"})
+	exitCode, err := runner(t.Context(), []string{"-MNf", "--", "build.internal"})
 
 	require.NoError(t, err)
 	assert.Equal(t, 0, exitCode)
@@ -254,7 +254,7 @@ Are you sure you want to continue connecting (yes/no/[fingerprint])? `},
 			})
 			require.NoError(t, err)
 
-			exitCode, err := runner(context.Background(), []string{"-MNf", "--", "jump@100.64.0.7"})
+			exitCode, err := runner(t.Context(), []string{"-MNf", "--", "jump@100.64.0.7"})
 
 			require.NoError(t, err)
 			assert.Equal(t, 0, exitCode)
@@ -344,7 +344,7 @@ Are you sure you want to continue connecting (yes/no/[fingerprint])? `,
 			require.NoError(t, err)
 
 			exitCode, err := runner(
-				context.Background(),
+				t.Context(),
 				[]string{"-MNf", "--", "build.internal"},
 			)
 
@@ -398,7 +398,7 @@ func TestRunnerPropagatesPromptFailure(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	_, err = runner(context.Background(), []string{"-MNf", "--", "build.internal"})
+	_, err = runner(t.Context(), []string{"-MNf", "--", "build.internal"})
 
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.SSHPromptRejected))

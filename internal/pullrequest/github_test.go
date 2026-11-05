@@ -40,7 +40,7 @@ func TestGitHubProviderListsPullRequestsForCommit(t *testing.T) {
 	require.NoError(t, err)
 	provider := NewGitHubProvider(client)
 
-	prs, err := provider.ListForCommit(context.Background(), testGitHubRepository(), headSHA)
+	prs, err := provider.ListForCommit(t.Context(), testGitHubRepository(), headSHA)
 
 	require.NoError(t, err)
 	require.Len(t, prs, 2)
@@ -76,7 +76,7 @@ func TestGitHubProviderListsClosedPullRequestsByHead(t *testing.T) {
 	provider := NewGitHubProvider(client)
 
 	prs, err := provider.ListByHead(
-		context.Background(),
+		t.Context(),
 		testGitHubRepository(),
 		"octocat",
 		"topic",
@@ -111,11 +111,11 @@ func TestGitHubProviderEvidenceMethodsClassifyFailures(t *testing.T) {
 		call func(*GitHubProvider) error
 	}{
 		{name: "commit", call: func(provider *GitHubProvider) error {
-			_, err := provider.ListForCommit(context.Background(), testGitHubRepository(), headSHA)
+			_, err := provider.ListForCommit(t.Context(), testGitHubRepository(), headSHA)
 			return err
 		}},
 		{name: "head", call: func(provider *GitHubProvider) error {
-			_, err := provider.ListByHead(context.Background(), testGitHubRepository(), "octocat", "topic")
+			_, err := provider.ListByHead(t.Context(), testGitHubRepository(), "octocat", "topic")
 			return err
 		}},
 	} {
@@ -193,7 +193,7 @@ func testGitHubPullRequest(number int) *github.PullRequest {
 
 func TestResolveGitHubTokenPrefersEnvironment(t *testing.T) {
 	called := false
-	token, err := ResolveGitHubToken(context.Background(),
+	token, err := ResolveGitHubToken(t.Context(),
 		func(name string) string {
 			assert.Equal(t, "KWT_GITHUB_TOKEN", name)
 			return " env-token\n"
@@ -209,7 +209,7 @@ func TestResolveGitHubTokenPrefersEnvironment(t *testing.T) {
 }
 
 func TestResolveGitHubTokenFallsBackToGHWithoutPrompt(t *testing.T) {
-	token, err := ResolveGitHubToken(context.Background(), func(string) string { return "" },
+	token, err := ResolveGitHubToken(t.Context(), func(string) string { return "" },
 		func(_ context.Context, name string, args ...string) ([]byte, error) {
 			assert.Equal(t, "gh", name)
 			assert.Equal(t, []string{"auth", "token"}, args)
@@ -220,7 +220,7 @@ func TestResolveGitHubTokenFallsBackToGHWithoutPrompt(t *testing.T) {
 }
 
 func TestResolveGitHubTokenReportsAuthenticationFailureWithoutLeakingOutput(t *testing.T) {
-	_, err := ResolveGitHubToken(context.Background(), func(string) string { return "" },
+	_, err := ResolveGitHubToken(t.Context(), func(string) string { return "" },
 		func(context.Context, string, ...string) ([]byte, error) {
 			return []byte("sensitive-test-output"), errors.New("exit 1")
 		})
@@ -247,7 +247,7 @@ func TestGitHubProviderMapsPullRequests(t *testing.T) {
 	require.NoError(t, err)
 	provider := NewGitHubProvider(client)
 
-	prs, err := provider.List(context.Background(), Repository{Provider: "github", Identity: "github.com/acme/widget", Host: "github.com", Owner: "acme", Name: "widget"}, "all")
+	prs, err := provider.List(t.Context(), Repository{Provider: "github", Identity: "github.com/acme/widget", Host: "github.com", Owner: "acme", Name: "widget"}, "all")
 
 	require.NoError(t, err)
 	require.Len(t, prs, 1)
@@ -290,7 +290,7 @@ func TestGitHubProviderResolvesTransferredRepository(t *testing.T) {
 	require.NoError(t, err)
 	provider := NewGitHubProvider(client)
 
-	repository, err := provider.ResolveRepository(context.Background(), Repository{
+	repository, err := provider.ResolveRepository(t.Context(), Repository{
 		Provider: "github", Identity: "github.com/legacy/widget",
 		Host: "github.com", Owner: "legacy", Name: "widget",
 	})
@@ -335,7 +335,7 @@ func TestGitHubProviderClassifiesFailures(t *testing.T) {
 			require.NoError(t, err)
 			provider := NewGitHubProvider(client)
 
-			_, err = provider.List(context.Background(), Repository{Owner: "acme", Name: "widget", Identity: "github.com/acme/widget"}, "open")
+			_, err = provider.List(t.Context(), Repository{Owner: "acme", Name: "widget", Identity: "github.com/acme/widget"}, "open")
 
 			var typed *Error
 			require.ErrorAs(t, err, &typed)
@@ -362,7 +362,7 @@ func TestGitHubProviderListSkipsDeletedHeadRepository(t *testing.T) {
 	require.NoError(t, err)
 	provider := NewGitHubProvider(client)
 
-	prs, err := provider.List(context.Background(), Repository{Owner: "acme", Name: "widget", Identity: "github.com/acme/widget"}, "all")
+	prs, err := provider.List(t.Context(), Repository{Owner: "acme", Name: "widget", Identity: "github.com/acme/widget"}, "all")
 
 	require.NoError(t, err)
 	require.Len(t, prs, 1)
@@ -380,7 +380,7 @@ func TestGitHubProviderRejectsMalformedSuccessfulResponse(t *testing.T) {
 	require.NoError(t, err)
 	provider := NewGitHubProvider(client)
 
-	_, err = provider.List(context.Background(), Repository{Owner: "acme", Name: "widget", Identity: "github.com/acme/widget"}, "open")
+	_, err = provider.List(t.Context(), Repository{Owner: "acme", Name: "widget", Identity: "github.com/acme/widget"}, "open")
 
 	assertErrorCode(t, err, CodeMalformedResponse)
 	assert.True(t, strings.Contains(err.Error(), "missing") || strings.Contains(err.Error(), "malformed"))
@@ -492,9 +492,9 @@ func TestGitHubProviderRejectsMismatchedSuccessfulResponse(t *testing.T) {
 			}
 
 			if tc.get {
-				_, err = provider.Get(context.Background(), repository, 17)
+				_, err = provider.Get(t.Context(), repository, 17)
 			} else {
-				_, err = provider.List(context.Background(), repository, "open")
+				_, err = provider.List(t.Context(), repository, "open")
 			}
 
 			assertErrorCode(t, err, CodeMalformedResponse)

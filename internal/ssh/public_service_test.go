@@ -83,14 +83,14 @@ func TestPublicServiceReloadsConfiguredProtectedEnvironmentPerRequest(t *testing
 		return recordingPublicResolver{}
 	}
 
-	_, err := service.Resolve(context.Background(), ResolveRequest{})
+	_, err := service.Resolve(t.Context(), ResolveRequest{})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(
 		configPath,
 		[]byte("[fleet]\ntoken_env = \"TOKEN_TWO\"\n"),
 		0o600,
 	))
-	_, err = service.Resolve(context.Background(), ResolveRequest{})
+	_, err = service.Resolve(t.Context(), ResolveRequest{})
 	require.NoError(t, err)
 	require.Len(t, captured, 2)
 	assert.NotContains(t, captured[0].Environment, "TOKEN_ONE=first-secret")
@@ -117,7 +117,7 @@ func TestPublicServiceUsesRequestEnvironmentAndStripsConfiguredCredentials(t *te
 		return recordingPublicResolver{}
 	}
 
-	_, err := service.Resolve(context.Background(), ResolveRequest{
+	_, err := service.Resolve(t.Context(), ResolveRequest{
 		Environment: []string{
 			"PATH=/invocation/bin",
 			"SSH_AUTH_SOCK=/invocation/agent.sock",
@@ -144,7 +144,7 @@ func TestPublicServiceAcquiresLeaseThroughSharedManager(t *testing.T) {
 		},
 	})
 
-	lease, err := service.Acquire(context.Background(), LeaseRequest{Snapshot: snapshot})
+	lease, err := service.Acquire(t.Context(), LeaseRequest{Snapshot: snapshot})
 
 	require.NoError(t, err)
 	assert.Equal(t, uint64(23), lease.Generation())
@@ -165,7 +165,7 @@ func TestPublicServiceRequiresExplicitAskpassExecutableForAcquire(t *testing.T) 
 	}
 
 	_, err := service.Acquire(
-		context.Background(),
+		t.Context(),
 		LeaseRequest{Snapshot: snapshot},
 	)
 
@@ -197,13 +197,13 @@ func TestPublicServiceBuildsOneOwnerScopedPersistentManager(t *testing.T) {
 		return publicTestPersistentManager{}, nil
 	}
 
-	first, err := service.Acquire(context.Background(), LeaseRequest{Snapshot: snapshot})
+	first, err := service.Acquire(t.Context(), LeaseRequest{Snapshot: snapshot})
 	require.NoError(t, err)
-	second, err := service.Acquire(context.Background(), LeaseRequest{Snapshot: snapshot})
+	second, err := service.Acquire(t.Context(), LeaseRequest{Snapshot: snapshot})
 	require.NoError(t, err)
-	require.NoError(t, first.Release(context.Background()))
-	require.NoError(t, second.Release(context.Background()))
-	require.NoError(t, service.Close(context.Background()))
+	require.NoError(t, first.Release(t.Context()))
+	require.NoError(t, second.Release(t.Context()))
+	require.NoError(t, service.Close(t.Context()))
 
 	assert.Equal(t, 1, created)
 	assert.NotEqual(t, home, filepath.Dir(filepath.Dir(controlDirectory)))
@@ -236,10 +236,10 @@ func TestPublicServiceControlPathLeavesOpenSSHTemporarySocketHeadroom(t *testing
 		return publicTestPersistentManager{}, nil
 	}
 
-	lease, err := service.Acquire(context.Background(), LeaseRequest{Snapshot: snapshot})
+	lease, err := service.Acquire(t.Context(), LeaseRequest{Snapshot: snapshot})
 	require.NoError(t, err)
-	require.NoError(t, lease.Release(context.Background()))
-	defer func() { require.NoError(t, service.Close(context.Background())) }()
+	require.NoError(t, lease.Release(t.Context()))
+	defer func() { require.NoError(t, service.Close(t.Context())) }()
 
 	controlPath := filepath.Join(
 		controlDirectory,
@@ -265,8 +265,8 @@ func TestPublicServiceClosePreventsManagerReinitialization(t *testing.T) {
 		return publicTestPersistentManager{}, nil
 	}
 
-	require.NoError(t, service.Close(context.Background()))
-	_, err := service.Acquire(context.Background(), LeaseRequest{Snapshot: snapshot})
+	require.NoError(t, service.Close(t.Context()))
+	_, err := service.Acquire(t.Context(), LeaseRequest{Snapshot: snapshot})
 
 	require.Error(t, err)
 	assert.True(t, servicepkg.IsCode(err, servicepkg.SSHConnectionChanged))

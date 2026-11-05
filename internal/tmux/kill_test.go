@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -19,14 +20,17 @@ func TestKillSessionIfPresentDoesNotPrefixMatchReplacement(t *testing.T) {
 		t.Skip("tmux is not installed")
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	tempDir, err := os.MkdirTemp("/tmp", "kwt-kill-")
 	require.NoError(t, err)
 	command := NewTmuxCommandForSocketInTempDirWithStripNames(
 		"tmux", KWTServerSocketName, tempDir, nil,
 	)
 	t.Cleanup(func() {
-		_ = command.RunCommandContext(ctx, "kill-server")
+		// Test contexts are canceled before cleanup runs.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer cancel()
+		_ = command.RunCommandContext(cleanupCtx, "kill-server")
 		require.NoError(t, os.RemoveAll(tempDir))
 	})
 
@@ -45,6 +49,40 @@ func TestKillSessionIfPresentDoesNotPrefixMatchReplacement(t *testing.T) {
 
 	require.NoError(t, command.KillSessionIfPresentContext(ctx, "workspace"))
 	require.True(t, command.HasSession("workspace-build"))
+}
+
+func TestSessionLookupOnEmptyServerReportsAbsence(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("tmux is unavailable on Windows")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is not installed")
+	}
+
+	ctx := t.Context()
+	tempDir, err := os.MkdirTemp("/tmp", "kwt-empty-")
+	require.NoError(t, err)
+	command := NewTmuxCommandForSocketInTempDirWithStripNames(
+		"tmux", KWTServerSocketName, tempDir, nil,
+	)
+	t.Cleanup(func() {
+		// Test contexts are canceled before cleanup runs.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer cancel()
+		_ = command.RunCommandContext(cleanupCtx, "kill-server")
+		require.NoError(t, os.RemoveAll(tempDir))
+	})
+
+	// With exit-empty off the server stays up after its last session exits,
+	// and tmux answers session lookups with "no current target".
+	require.NoError(t, command.RunCommandContext(
+		ctx, "start-server", ";", "set-option", "-g", "exit-empty", "off",
+	))
+
+	present, err := command.HasSessionContext(ctx, "workspace")
+	require.NoError(t, err)
+	require.False(t, present)
+	require.NoError(t, command.KillSessionIfPresentContext(ctx, "workspace"))
 }
 
 func TestKillSessionIfPresentTreatsOnlyExplicitAbsenceAsSuccess(t *testing.T) {
@@ -67,6 +105,7 @@ exit "$KWT_TEST_TMUX_EXIT"
 		{name: "missing socket", stderr: "error connecting to /tmp/tmux/socket (No such file or directory)", exit: "1"},
 		{name: "missing session", stderr: "can't find session: workspace", exit: "1"},
 		{name: "tmux 2.1 missing session", stderr: "can't find session workspace", exit: "1"},
+		{name: "empty server", stderr: "no current target", exit: "1"},
 		{name: "permission failure", stderr: "error connecting to /tmp/tmux/socket (Permission denied)", exit: "1", wantError: true},
 		{name: "unexpected failure", stderr: "server rejected request", exit: "2", wantError: true},
 	}
@@ -77,7 +116,7 @@ exit "$KWT_TEST_TMUX_EXIT"
 			command := NewTmuxCommand(fixture)
 
 			err := command.KillSessionIfPresentContext(
-				context.Background(),
+				t.Context(),
 				"workspace",
 			)
 
@@ -91,7 +130,7 @@ exit "$KWT_TEST_TMUX_EXIT"
 }
 
 func TestKillSessionIfPresentPreservesCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	err := NewTmuxCommand("tmux").KillSessionIfPresentContext(ctx, "workspace")

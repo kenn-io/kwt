@@ -13,7 +13,7 @@ import (
 const askpassExecuteHelper = "KWT_TEST_EXECUTE_ASKPASS"
 
 func TestExecuteDispatchesAskpassBeforeCobra(t *testing.T) {
-	command := exec.Command(os.Args[0], "-test.run=TestExecuteAskpassHelperProcess")
+	command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=TestExecuteAskpassHelperProcess")
 	command.Env = append(os.Environ(),
 		askpassExecuteHelper+"=1",
 		"KWT_SSH_ASKPASS_HANDLE=invalid",

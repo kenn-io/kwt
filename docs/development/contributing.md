@@ -77,6 +77,14 @@ custom transports, and subprocesses that replace the guarded environment are
 outside this boundary; it is not an operating-system network sandbox. Use the
 documented Make entrypoints rather than invoking the Go bootstrap directly.
 
+CI runs tests through gotestsum, a tool dependency of the root module. When
+the runner's first argument is `gotestsum`, it runs `go tool gotestsum` with
+the remaining arguments inside the same isolation. gotestsum reruns failed
+tests and writes their `go test -json` events. CI uploads them when a test
+failed or gotestsum reran one, and on every workflow run attempt after the
+first. The bootstrap module stays dependency-free, so CI runs its tests with
+the root module's gotestsum build.
+
 ### Shared build cache and debugging
 
 `make` targets build and test Go code with `-trimpath`. Compiled code then

@@ -115,6 +115,11 @@ func classifyProtectedSessionProbe(
 
 func isExplicitlyAbsentTmuxDiagnostic(stderr string) bool {
 	diagnostic := strings.TrimSpace(stderr)
+	// tmux resolves a current session before the target. That fails only on a
+	// server with no sessions, which stays up when exit-empty is off.
+	if diagnostic == "no current target" {
+		return true
+	}
 	if strings.HasPrefix(diagnostic, "no server running on ") ||
 		strings.HasPrefix(diagnostic, "can't find session: ") ||
 		strings.HasPrefix(diagnostic, "can't find session ") {

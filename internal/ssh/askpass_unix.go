@@ -3,6 +3,7 @@
 package ssh
 
 import (
+	"context"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 const maximumAskpassSocketPathBytes = 100
 
 func listenAskpass(
+	ctx context.Context,
 	directory string,
 ) (net.Listener, askpassEndpoint, func() error, error) {
 	path := filepath.Join(directory, "prompt.sock")
@@ -30,7 +32,7 @@ func listenAskpass(
 		path = filepath.Join(shortDirectory, "prompt.sock")
 		cleanup = func() error { return os.RemoveAll(shortDirectory) }
 	}
-	listener, err := net.Listen("unix", path)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "unix", path)
 	if err != nil {
 		_ = cleanup()
 		return nil, askpassEndpoint{}, nil, err
@@ -43,6 +45,6 @@ func listenAskpass(
 	return listener, askpassEndpoint{Network: "unix", Address: path}, cleanup, nil
 }
 
-func dialAskpass(handle askpassHandle, timeout time.Duration) (net.Conn, error) {
-	return net.DialTimeout(handle.Network, handle.Address, timeout)
+func dialAskpass(ctx context.Context, handle askpassHandle, timeout time.Duration) (net.Conn, error) {
+	return (&net.Dialer{Timeout: timeout}).DialContext(ctx, handle.Network, handle.Address)
 }

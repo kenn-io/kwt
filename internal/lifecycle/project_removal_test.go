@@ -114,7 +114,7 @@ func TestProjectRemovalRequiresObservedRegistrationFingerprint(t *testing.T) {
 	} {
 		request := fixture.request()
 		request.ExpectedRegistration = fingerprint
-		_, err := fixture.service.RemoveProject(context.Background(), request)
+		_, err := fixture.service.RemoveProject(t.Context(), request)
 
 		typed := service.AsError(err)
 		if fingerprint == "" || fingerprint == "v1:bad" {
@@ -138,7 +138,7 @@ func TestProjectRemovalRejectsRawRegistrationChangeBeforeEndpointInspection(t *t
 		"[[projects]]\nrepository = 'github.com/acme/widget'\nname = 'widget'\npath = '/repo '\nlast_touched = 'after'\nfuture = true\n",
 	), 0o600))
 
-	_, err := fixture.service.RemoveProject(context.Background(), request)
+	_, err := fixture.service.RemoveProject(t.Context(), request)
 
 	assert.True(t, service.IsCode(err, service.RegistrationChanged))
 	assert.Empty(t, fixture.probe.sockets)
@@ -151,7 +151,7 @@ func TestProjectRemovalRejectsRawRegistrationChangeBeforeEndpointInspection(t *t
 func TestProjectRemovalMissingCheckoutWithoutProtectedSessionSucceeds(t *testing.T) {
 	fixture := newProjectRemovalFixture(t, filepath.Join(t.TempDir(), "repo "), "github.com/acme/widget")
 
-	result, err := fixture.service.RemoveProject(context.Background(), fixture.request())
+	result, err := fixture.service.RemoveProject(t.Context(), fixture.request())
 
 	require.NoError(t, err)
 	assert.Equal(t, fixture.path, result.Project.Path)
@@ -168,7 +168,7 @@ func TestProjectRemovalWithNaNRegistrationSucceeds(t *testing.T) {
 			fixture.path+"'\nfuture_weight = nan\n",
 	), 0o600))
 
-	result, err := fixture.service.RemoveProject(context.Background(), fixture.request())
+	result, err := fixture.service.RemoveProject(t.Context(), fixture.request())
 
 	require.NoError(t, err)
 	assert.Equal(t, fixture.path, result.Project.Path)
@@ -181,12 +181,12 @@ func TestProjectRemovalRequiresExactPathAndRepository(t *testing.T) {
 	fixture := newProjectRemovalFixture(t, "/repo ", "github.com/acme/widget")
 	request := fixture.request()
 	request.Path = "/repo"
-	_, err := fixture.service.RemoveProject(context.Background(), request)
+	_, err := fixture.service.RemoveProject(t.Context(), request)
 	assert.True(t, service.IsCode(err, service.ProjectNotFound))
 
 	request = fixture.request()
 	request.ExpectedRepository = "github.com/acme/other"
-	_, err = fixture.service.RemoveProject(context.Background(), request)
+	_, err = fixture.service.RemoveProject(t.Context(), request)
 	assert.True(t, service.IsCode(err, service.RegistrationChanged))
 }
 
@@ -195,7 +195,7 @@ func TestProjectRemovalAcceptsEquivalentRepositoryCase(t *testing.T) {
 	request := fixture.request()
 	request.ExpectedRepository = "github.com/acme/widget"
 
-	result, err := fixture.service.RemoveProject(context.Background(), request)
+	result, err := fixture.service.RemoveProject(t.Context(), request)
 
 	require.NoError(t, err)
 	assert.Equal(t, "github.com/acme/widget", result.Project.Repository)
@@ -204,9 +204,10 @@ func TestProjectRemovalAcceptsEquivalentRepositoryCase(t *testing.T) {
 func TestProjectRemovalAcceptsPublishedLiveIdentityForLegacyRegistration(t *testing.T) {
 	home := t.TempDir()
 	repository := t.TempDir()
-	command := exec.Command("git", "init", "-b", "main", repository)
+	command := exec.CommandContext(t.Context(), "git", "init", "-b", "main", repository)
 	require.NoError(t, command.Run())
-	command = exec.Command(
+	command = exec.CommandContext(
+		t.Context(),
 		"git", "-C", repository, "remote", "add", "origin",
 		"git@github.com:acme/widget.git",
 	)
@@ -216,7 +217,7 @@ func TestProjectRemovalAcceptsPublishedLiveIdentityForLegacyRegistration(t *test
 	), 0o600))
 	expansion := testExpansion(t)
 	inventory, err := NewSource(SourceOptions{Home: home}).Load(
-		context.Background(),
+		t.Context(),
 		Request{
 			View: ViewProjects, Expansion: expansion,
 			UntrustedConfig: IgnoreUntrustedConfig,
@@ -228,7 +229,7 @@ func TestProjectRemovalAcceptsPublishedLiveIdentityForLegacyRegistration(t *test
 	probe := &projectRemovalProbe{state: tmux.ProtectedSessionAbsent}
 	remover := newProjectRemovalService(home, probe.probe)
 
-	result, err := remover.RemoveProject(context.Background(), ProjectRemovalRequest{
+	result, err := remover.RemoveProject(t.Context(), ProjectRemovalRequest{
 		Path: repository, ExpectedRepository: inventory.Snapshot.Projects[0].Repository,
 		ExpectedRegistration: inventory.Snapshot.Projects[0].RegistrationFingerprint,
 		Expansion:            expansion,
@@ -243,7 +244,7 @@ func TestProjectRemovalRejectsLiveProtectedSession(t *testing.T) {
 	fixture.writeProvenance()
 	fixture.probe.setState(tmux.ProtectedSessionLive)
 
-	_, err := fixture.service.RemoveProject(context.Background(), fixture.request())
+	_, err := fixture.service.RemoveProject(t.Context(), fixture.request())
 
 	typed := service.AsError(err)
 	assert.Equal(t, service.ProtectedSessionLive, typed.Code)
@@ -267,7 +268,7 @@ func TestProjectRemovalProbeStripsConfiguredCredential(t *testing.T) {
 
 	request := fixture.request()
 	request.Expansion.Environment["TMUX_TMPDIR"] = "/tmp/legacy-tmux"
-	_, err := fixture.service.RemoveProject(context.Background(), request)
+	_, err := fixture.service.RemoveProject(t.Context(), request)
 
 	require.NoError(t, err)
 	require.Len(t, fixture.probe.names, 1)
@@ -283,7 +284,7 @@ func TestProjectRemovalRejectsTransferredAliasProtectedEndpoint(t *testing.T) {
 	)
 	workspacePath := filepath.Join(t.TempDir(), "moved-clone", "pr-7")
 	require.NoError(t, fixture.provenance.Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["github:current/widget#7"] = pullrequest.Provenance{
 				Repository: "github.com/current/widget",
@@ -305,7 +306,7 @@ func TestProjectRemovalRejectsTransferredAliasProtectedEndpoint(t *testing.T) {
 	))
 	fixture.probe.setState(tmux.ProtectedSessionLive)
 
-	_, err := fixture.service.RemoveProject(context.Background(), fixture.request())
+	_, err := fixture.service.RemoveProject(t.Context(), fixture.request())
 
 	assert.True(t, service.IsCode(err, service.ProtectedSessionLive))
 	require.Len(t, fixture.probe.sockets, 1)
@@ -323,7 +324,7 @@ func TestProjectRemovalRejectsDisconnectedSamePathProvenance(t *testing.T) {
 		"github.com/acme/widget",
 	)
 	require.NoError(t, fixture.provenance.Update(
-		context.Background(),
+		t.Context(),
 		func(records map[string]pullrequest.Provenance) error {
 			records["github:other/widget#8"] = pullrequest.Provenance{
 				Repository: "github.com/other/widget",
@@ -340,7 +341,7 @@ func TestProjectRemovalRejectsDisconnectedSamePathProvenance(t *testing.T) {
 		},
 	))
 
-	_, err := fixture.service.RemoveProject(context.Background(), fixture.request())
+	_, err := fixture.service.RemoveProject(t.Context(), fixture.request())
 
 	assert.True(t, service.IsCode(err, service.ProtectedEndpointInventoryIncomplete))
 	remaining, loadErr := configSnapshot(fixture.home, fixture.expansion)
@@ -356,7 +357,7 @@ func TestProtectedEstablishmentWinsBeforeProjectRemoval(t *testing.T) {
 	)
 	fixture.writeProvenance()
 	claim, err := ObserveProjectClaim(
-		context.Background(), fixture.home, fixture.path, fixture.expansion,
+		t.Context(), fixture.home, fixture.path, fixture.expansion,
 	)
 	require.NoError(t, err)
 	operationStarted := make(chan struct{})
@@ -364,7 +365,7 @@ func TestProtectedEstablishmentWinsBeforeProjectRemoval(t *testing.T) {
 	operationDone := make(chan error, 1)
 	go func() {
 		release, acquireErr := AcquireRequiredProjectClaim(
-			context.Background(), fixture.home, claim,
+			t.Context(), fixture.home, claim,
 		)
 		if acquireErr != nil {
 			operationDone <- acquireErr
@@ -379,7 +380,7 @@ func TestProtectedEstablishmentWinsBeforeProjectRemoval(t *testing.T) {
 	removalDone := make(chan error, 1)
 	go func() {
 		_, removeErr := fixture.service.RemoveProject(
-			context.Background(), fixture.request(),
+			t.Context(), fixture.request(),
 		)
 		removalDone <- removeErr
 	}()
@@ -403,7 +404,7 @@ func TestProjectRemovalRejectsIncompleteProvenance(t *testing.T) {
 	fixture := newProjectRemovalFixture(t, filepath.Join(t.TempDir(), "missing"), "github.com/acme/widget")
 	require.NoError(t, os.WriteFile(filepath.Join(fixture.home, "pull-requests.json"), []byte("{"), 0o600))
 
-	_, err := fixture.service.RemoveProject(context.Background(), fixture.request())
+	_, err := fixture.service.RemoveProject(t.Context(), fixture.request())
 
 	typed := service.AsError(err)
 	assert.Equal(t, service.ProtectedEndpointInventoryIncomplete, typed.Code)
@@ -420,7 +421,7 @@ func TestProjectRemovalCASLossPreservesReplacement(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(fixture.home, "config.toml"), replacement, 0o600))
 	}
 
-	_, err := fixture.service.RemoveProject(context.Background(), fixture.request())
+	_, err := fixture.service.RemoveProject(t.Context(), fixture.request())
 
 	assert.True(t, service.IsCode(err, service.RegistrationChanged))
 	snapshot, loadErr := configSnapshot(fixture.home, fixture.expansion)
@@ -438,7 +439,7 @@ func TestProjectRemovalDuplicateExactPathFailsClosed(t *testing.T) {
 	)
 	require.NoError(t, os.WriteFile(filepath.Join(fixture.home, "config.toml"), duplicate, 0o600))
 
-	_, err := fixture.service.RemoveProject(context.Background(), request)
+	_, err := fixture.service.RemoveProject(t.Context(), request)
 
 	typed := service.AsError(err)
 	assert.Equal(t, service.UnregistrationFailed, typed.Code)

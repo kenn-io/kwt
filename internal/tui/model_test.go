@@ -2331,7 +2331,7 @@ func TestModelInsideTmuxAttachRunsResidentAction(t *testing.T) {
 
 func TestModelCrossServerAttachUsesBubbleTeaManagedProcess(t *testing.T) {
 	row := testRow("kwt", "feature", "/w/kwt/feature")
-	process := exec.Command("tmux", "attach-session", "-t", "workspace")
+	process := exec.CommandContext(t.Context(), "tmux", "attach-session", "-t", "workspace")
 	backend := &fakeBackend{insideTmux: true, openProcess: process}
 	model := NewModel(backend, "/worktrees")
 	model, _ = updateModel(t, model, rowsMsg{rows: []Row{row}})

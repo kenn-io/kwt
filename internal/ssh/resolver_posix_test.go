@@ -42,7 +42,7 @@ func TestResolverPOSIXUsesLoginShellFrameAndExplicitTarget(t *testing.T) {
 		},
 	})
 
-	observation, err := resolver.Resolve(context.Background(), ResolveRequest{Target: Target{
+	observation, err := resolver.Resolve(t.Context(), ResolveRequest{Target: Target{
 		User: "deploy", Hostname: "build.example.test", Port: 2200,
 	}})
 	require.NoError(t, err)
@@ -104,7 +104,7 @@ func TestResolverPOSIXSeparatesConfiguredIdentitiesFromImplicitDefaults(t *testi
 				},
 			})
 
-			observation, err := resolver.Resolve(context.Background(), ResolveRequest{
+			observation, err := resolver.Resolve(t.Context(), ResolveRequest{
 				Target: Target{Hostname: "build.example.test"},
 			})
 			require.NoError(t, err)
@@ -136,7 +136,7 @@ func TestResolverPOSIXBindsBareExecutableBeforeLoginShellStartup(t *testing.T) {
 		},
 	})
 
-	_, err := resolver.Resolve(context.Background(), ResolveRequest{
+	_, err := resolver.Resolve(t.Context(), ResolveRequest{
 		Target: Target{Hostname: "build.example.test"},
 	})
 	require.NoError(t, err)
@@ -169,7 +169,7 @@ printf 'hostname build.internal\n'
 		},
 	})
 
-	_, err := resolver.Resolve(context.Background(), ResolveRequest{
+	_, err := resolver.Resolve(t.Context(), ResolveRequest{
 		Target: Target{Hostname: "build.example.test"},
 	})
 	require.NoError(t, err)
@@ -193,7 +193,7 @@ func TestResolverPOSIXDelegatesResolveScriptThroughPOSIXShellForFish(t *testing.
 		},
 	})
 
-	_, err := resolver.Resolve(context.Background(), ResolveRequest{
+	_, err := resolver.Resolve(t.Context(), ResolveRequest{
 		Target: Target{Hostname: "build.example.test"},
 	})
 	require.NoError(t, err)
@@ -214,7 +214,7 @@ func TestResolverPOSIXDelegatesResolveScriptThroughPOSIXShellForTcsh(t *testing.
 		},
 	})
 
-	_, err := resolver.Resolve(context.Background(), ResolveRequest{
+	_, err := resolver.Resolve(t.Context(), ResolveRequest{
 		Target: Target{Hostname: "build.example.test"},
 	})
 	require.NoError(t, err)
@@ -238,7 +238,7 @@ func TestResolverPOSIXRunsThroughAvailableNonPOSIXShells(t *testing.T) {
 				"END",
 			)
 			arguments, standardInput := loginShellInvocation(shell)
-			process := exec.Command(arguments[0], arguments[1:]...)
+			process := exec.CommandContext(t.Context(), arguments[0], arguments[1:]...)
 			process.Stdin = bytes.NewReader(standardInput)
 			process.Env = resolveEnvironment([]string{
 				"HOME=" + t.TempDir(),
@@ -278,7 +278,7 @@ func TestResolverPOSIXResolvesProxyJumpInConnectionOrder(t *testing.T) {
 		},
 	})
 
-	observation, err := resolver.Resolve(context.Background(), ResolveRequest{
+	observation, err := resolver.Resolve(t.Context(), ResolveRequest{
 		Target: Target{Hostname: "build.example.test"},
 	})
 	require.NoError(t, err)
@@ -309,7 +309,7 @@ func TestResolverPOSIXFailsClosedForUnreviewableRoutes(t *testing.T) {
 					return framedResolverOutput("nonce", test.config), nil, 0, nil
 				},
 			})
-			_, err := resolver.Resolve(context.Background(), ResolveRequest{
+			_, err := resolver.Resolve(t.Context(), ResolveRequest{
 				Target: Target{Hostname: "build.example.test"},
 			})
 			require.Error(t, err)
@@ -326,7 +326,7 @@ func TestResolverPOSIXRejectsTargetBeforeInvocation(t *testing.T) {
 			return nil, nil, 0, nil
 		},
 	})
-	_, err := resolver.Resolve(context.Background(), ResolveRequest{
+	_, err := resolver.Resolve(t.Context(), ResolveRequest{
 		Target: Target{User: "$(id)", Hostname: "build.example.test"},
 	})
 	require.Error(t, err)
@@ -343,7 +343,7 @@ func TestResolverPOSIXPreservesCancellationAndRejectsMalformedFrames(t *testing.
 				return nil, nil, -1, context.Canceled
 			},
 		})
-		_, err := resolver.Resolve(context.Background(), ResolveRequest{
+		_, err := resolver.Resolve(t.Context(), ResolveRequest{
 			Target: Target{Hostname: "build.example.test"},
 		})
 		require.Error(t, err)
@@ -359,7 +359,7 @@ func TestResolverPOSIXPreservesCancellationAndRejectsMalformedFrames(t *testing.
 				return []byte("hostname build.internal\n"), nil, 0, nil
 			},
 		})
-		_, err := resolver.Resolve(context.Background(), ResolveRequest{
+		_, err := resolver.Resolve(t.Context(), ResolveRequest{
 			Target: Target{Hostname: "build.example.test"},
 		})
 		require.Error(t, err)
@@ -375,7 +375,7 @@ func TestResolverPOSIXPreservesDeadlineCause(t *testing.T) {
 			return nil, nil, -1, context.DeadlineExceeded
 		},
 	})
-	_, err := resolver.Resolve(context.Background(), ResolveRequest{
+	_, err := resolver.Resolve(t.Context(), ResolveRequest{
 		Target: Target{Hostname: "build.example.test"},
 	})
 	require.Error(t, err)
@@ -393,7 +393,7 @@ func TestResolverPOSIXReportsBoundedOutputAsStableFailure(t *testing.T) {
 		Nonce:      func() (string, error) { return "nonce", nil },
 	})
 
-	_, err := resolver.Resolve(context.Background(), ResolveRequest{
+	_, err := resolver.Resolve(t.Context(), ResolveRequest{
 		Target: Target{Hostname: "build.example.test"},
 	})
 	require.Error(t, err)

@@ -44,7 +44,7 @@ func TestExecuteCancelsProjectRecoveryOnInterrupt(t *testing.T) {
 	tmp := t.TempDir()
 	readyPath := filepath.Join(tmp, "ready")
 	canceledPath := filepath.Join(tmp, "canceled")
-	command := exec.Command(os.Args[0], "-test.run=^TestExecuteCancelsProjectRecoveryOnInterrupt$")
+	command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestExecuteCancelsProjectRecoveryOnInterrupt$")
 	command.Env = append(os.Environ(),
 		"KWT_TEST_SIGNAL_CONTEXT=1",
 		"KWT_TEST_SIGNAL_READY="+readyPath,
@@ -103,7 +103,8 @@ func TestExecuteDoesNotInterceptSignalForUncancelableCommand(t *testing.T) {
 
 	tmp := t.TempDir()
 	readyPath := filepath.Join(tmp, "ready")
-	command := exec.Command(
+	command := exec.CommandContext(
+		t.Context(),
 		os.Args[0],
 		"-test.run=^TestExecuteDoesNotInterceptSignalForUncancelableCommand$",
 	)
@@ -157,7 +158,7 @@ func TestExecuteRestoresDefaultSignalHandlingAfterCancel(t *testing.T) {
 	tmp := t.TempDir()
 	readyPath := filepath.Join(tmp, "ready")
 	canceledPath := filepath.Join(tmp, "canceled")
-	command := exec.Command(os.Args[0], "-test.run=^TestExecuteRestoresDefaultSignalHandlingAfterCancel$")
+	command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestExecuteRestoresDefaultSignalHandlingAfterCancel$")
 	command.Env = append(os.Environ(),
 		"KWT_TEST_SECOND_SIGNAL=1",
 		"KWT_TEST_SIGNAL_READY="+readyPath,

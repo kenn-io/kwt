@@ -204,7 +204,8 @@ func collectWorktreeStatuses(ctx context.Context, cfg *models.Config, printer *u
 
 	g, err := git.NewFromCwd()
 	if err != nil || statusGlobal {
-		globalEntries, err := discovery.DiscoverGlobalWorktrees(
+		globalEntries, err := discovery.DiscoverGlobalWorktreesContext(
+			ctx,
 			cfg.Worktree.BaseDir,
 			cfg.Projects,
 		)
@@ -217,7 +218,7 @@ func collectWorktreeStatuses(ctx context.Context, cfg *models.Config, printer *u
 		}
 	} else {
 		wm := worktree.New(g, cfg)
-		localWorktrees, err := wm.List()
+		localWorktrees, err := wm.ListContext(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list worktrees: %w", err)
 		}

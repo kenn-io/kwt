@@ -1,7 +1,6 @@
 package pullrequest
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,13 +25,13 @@ func TestFileStorePersistsProvenance(t *testing.T) {
 		Number: 1,
 	}
 
-	require.NoError(t, store.Update(context.Background(), func(records map[string]Provenance) error {
+	require.NoError(t, store.Update(t.Context(), func(records map[string]Provenance) error {
 		records[record.PullRequestID] = record
 		return nil
 	}))
 
 	reopened := NewFileStore(path)
-	require.NoError(t, reopened.View(context.Background(), func(records map[string]Provenance) error {
+	require.NoError(t, reopened.View(t.Context(), func(records map[string]Provenance) error {
 		assert.Equal(t, record, records[record.PullRequestID])
 		return nil
 	}))
@@ -50,7 +49,7 @@ func TestFileStoreSerializesConcurrentWriters(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			store := stores[i%len(stores)]
-			require.NoError(t, store.Update(context.Background(), func(records map[string]Provenance) error {
+			require.NoError(t, store.Update(t.Context(), func(records map[string]Provenance) error {
 				key := "pr-" + strconv.Itoa(i)
 				records[key] = Provenance{PullRequestID: key, Number: i}
 				return nil
@@ -59,7 +58,7 @@ func TestFileStoreSerializesConcurrentWriters(t *testing.T) {
 	}
 	wg.Wait()
 
-	require.NoError(t, NewFileStore(path).View(context.Background(), func(records map[string]Provenance) error {
+	require.NoError(t, NewFileStore(path).View(t.Context(), func(records map[string]Provenance) error {
 		assert.Len(t, records, 20)
 		return nil
 	}))
@@ -69,7 +68,7 @@ func TestFileStoreRejectsMalformedState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pull-requests.json")
 	require.NoError(t, os.WriteFile(path, []byte("not json"), 0600))
 
-	err := NewFileStore(path).View(context.Background(), func(map[string]Provenance) error { return nil })
+	err := NewFileStore(path).View(t.Context(), func(map[string]Provenance) error { return nil })
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "decode")
@@ -78,7 +77,7 @@ func TestFileStoreRejectsMalformedState(t *testing.T) {
 func TestFileStoreDoesNotRewriteUnchangedState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pull-requests.json")
 	store := NewFileStore(path)
-	require.NoError(t, store.Update(context.Background(), func(records map[string]Provenance) error {
+	require.NoError(t, store.Update(t.Context(), func(records map[string]Provenance) error {
 		records["pr-1"] = Provenance{PullRequestID: "pr-1", Number: 1}
 		return nil
 	}))
@@ -86,7 +85,7 @@ func TestFileStoreDoesNotRewriteUnchangedState(t *testing.T) {
 	require.NoError(t, err)
 	time.Sleep(20 * time.Millisecond)
 
-	require.NoError(t, store.Update(context.Background(), func(map[string]Provenance) error { return nil }))
+	require.NoError(t, store.Update(t.Context(), func(map[string]Provenance) error { return nil }))
 
 	after, err := os.Stat(path)
 	require.NoError(t, err)
@@ -97,16 +96,16 @@ func TestFileStoreRemoveIfMatchDeletesObservedRecord(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pull-requests.json")
 	store := NewFileStore(path)
 	record := Provenance{PullRequestID: "pr-17", Number: 17, HeadSHA: "head-17"}
-	require.NoError(t, store.Update(context.Background(), func(records map[string]Provenance) error {
+	require.NoError(t, store.Update(t.Context(), func(records map[string]Provenance) error {
 		records[record.PullRequestID] = record
 		return nil
 	}))
 
-	removed, err := store.RemoveIfMatch(context.Background(), record.PullRequestID, record)
+	removed, err := store.RemoveIfMatch(t.Context(), record.PullRequestID, record)
 
 	require.NoError(t, err)
 	assert.True(t, removed)
-	require.NoError(t, store.View(context.Background(), func(records map[string]Provenance) error {
+	require.NoError(t, store.View(t.Context(), func(records map[string]Provenance) error {
 		_, exists := records[record.PullRequestID]
 		assert.False(t, exists)
 		return nil
@@ -119,16 +118,16 @@ func TestFileStoreRemoveIfMatchPreservesReplacement(t *testing.T) {
 	observed := Provenance{PullRequestID: "pr-17", Number: 17, HeadSHA: "old-head"}
 	replacement := observed
 	replacement.HeadSHA = "replacement-head"
-	require.NoError(t, store.Update(context.Background(), func(records map[string]Provenance) error {
+	require.NoError(t, store.Update(t.Context(), func(records map[string]Provenance) error {
 		records[observed.PullRequestID] = replacement
 		return nil
 	}))
 
-	removed, err := store.RemoveIfMatch(context.Background(), observed.PullRequestID, observed)
+	removed, err := store.RemoveIfMatch(t.Context(), observed.PullRequestID, observed)
 
 	require.NoError(t, err)
 	assert.False(t, removed)
-	require.NoError(t, store.View(context.Background(), func(records map[string]Provenance) error {
+	require.NoError(t, store.View(t.Context(), func(records map[string]Provenance) error {
 		assert.Equal(t, replacement, records[observed.PullRequestID])
 		return nil
 	}))
@@ -146,18 +145,18 @@ func TestFileStoreRemoveIfMatchPreservesReimportedWorkspaceGeneration(t *testing
 	}
 	replacement := observed
 	replacement.Workspace.Generation = "fedcba9876543210fedcba9876543210"
-	require.NoError(t, store.Update(context.Background(), func(records map[string]Provenance) error {
+	require.NoError(t, store.Update(t.Context(), func(records map[string]Provenance) error {
 		records[observed.PullRequestID] = replacement
 		return nil
 	}))
 
 	removed, err := store.RemoveIfMatch(
-		context.Background(), observed.PullRequestID, observed,
+		t.Context(), observed.PullRequestID, observed,
 	)
 
 	require.NoError(t, err)
 	assert.False(t, removed)
-	require.NoError(t, store.View(context.Background(), func(records map[string]Provenance) error {
+	require.NoError(t, store.View(t.Context(), func(records map[string]Provenance) error {
 		assert.Equal(t, replacement, records[observed.PullRequestID])
 		return nil
 	}))

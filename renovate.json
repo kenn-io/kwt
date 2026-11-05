@@ -1,13 +1,45 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", "group:allNonMajor", "schedule:weekly"],
-  "enabledManagers": ["gomod"],
-  "minimumReleaseAge": "3 days",
-  "postUpdateOptions": ["gomodTidy"],
+  "extends": ["config:recommended", "schedule:weekly"],
+  "timezone": "America/New_York",
+  "dependencyDashboard": true,
+  "enabledManagers": ["github-actions", "gomod"],
+  "osvVulnerabilityAlerts": true,
+  "minimumReleaseAge": "7 days",
+  "minimumReleaseAgeBehaviour": "timestamp-required",
+  "prCreation": "not-pending",
+  "internalChecksFilter": "strict",
+  "constraints": {
+    "ghActionsLock": "v0.3.0"
+  },
+  "vulnerabilityAlerts": {
+    "minimumReleaseAge": null,
+    "prCreation": "immediate",
+    "schedule": ["at any time"]
+  },
   "packageRules": [
+    {
+      "matchManagers": ["gomod"],
+      "groupName": "Go dependencies",
+      "groupSlug": "go-dependencies",
+      "postUpdateOptions": ["gomodTidy"]
+    },
     {
       "matchPackageNames": ["github.com/google/go-github/**"],
       "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths"]
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "groupSlug": "github-actions"
+    },
+    {
+      "description": ["kenn-io releases open right away: no release-age wait and no weekly window."],
+      "matchPackageNames": ["kenn-io/**", "github.com/kenn-io/**", "go.kenn.io/**", "@kenn-io/**"],
+      "groupName": "kenn-io dependencies",
+      "groupSlug": "kenn-io-dependencies",
+      "minimumReleaseAge": null,
+      "schedule": ["at any time"]
     }
   ]
 }

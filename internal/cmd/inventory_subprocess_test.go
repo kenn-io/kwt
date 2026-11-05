@@ -26,7 +26,7 @@ func runInventoryCommand(
 ) ([]byte, []byte, error) {
 	t.Helper()
 	installInventoryTmuxFixture(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, binary, args...)
 	command.Dir = directory
@@ -54,7 +54,7 @@ func installInventoryTmuxFixture(t *testing.T) {
 		name += ".exe"
 	}
 	path := filepath.Join(directory, name)
-	command := exec.Command("go", "build", "-o", path, "./internal/cmd/testdata/tmuxfixture")
+	command := exec.CommandContext(t.Context(), "go", "build", "-o", path, "./internal/cmd/testdata/tmuxfixture")
 	command.Dir = root
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
@@ -71,7 +71,7 @@ func buildDaemonFixture(t *testing.T) string {
 		suffix = ".exe"
 	}
 	path := filepath.Join(t.TempDir(), "daemonfixture"+suffix)
-	command := exec.Command("go", "build", "-o", path, "./internal/cmd/testdata/daemonfixture")
+	command := exec.CommandContext(t.Context(), "go", "build", "-o", path, "./internal/cmd/testdata/daemonfixture")
 	command.Dir = root
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
@@ -83,7 +83,7 @@ func startDaemonFixture(t *testing.T, fixture, home, mode string) {
 	canonicalHome, err := filepath.EvalSymlinks(home)
 	require.NoError(t, err)
 	marker := filepath.Join(t.TempDir(), "ready")
-	command := exec.Command(fixture, "-home", canonicalHome, "-mode", mode, "-ready", marker)
+	command := exec.CommandContext(t.Context(), fixture, "-home", canonicalHome, "-mode", mode, "-ready", marker)
 	require.NoError(t, command.Start())
 	t.Cleanup(func() {
 		_ = command.Process.Kill()
@@ -100,7 +100,7 @@ func TestInventorySubprocessPreservesGhosthubJSONAndTrustBehavior(t *testing.T) 
 	home := newDaemonTestHome(t, validDaemonConfig)
 	registerDaemonCleanup(t, cleanupBinary, home)
 	repository := filepath.Join(t.TempDir(), "repo")
-	require.NoError(t, exec.Command("git", "init", repository).Run())
+	require.NoError(t, exec.CommandContext(t.Context(), "git", "init", repository).Run())
 	require.NoError(t, os.WriteFile(
 		filepath.Join(repository, ".kwt.toml"),
 		[]byte("[naming]\ntemplate = 'untrusted/{{.Branch}}'\n"),
@@ -172,7 +172,7 @@ path = "$KWT_TEST_PROJECT"
 	firstRepository := filepath.Join(t.TempDir(), "first")
 	secondRepository := filepath.Join(t.TempDir(), "second")
 	for _, repository := range []string{firstRepository, secondRepository} {
-		require.NoError(t, exec.Command("git", "init", repository).Run())
+		require.NoError(t, exec.CommandContext(t.Context(), "git", "init", repository).Run())
 	}
 	firstRepository, err := filepath.EvalSymlinks(firstRepository)
 	require.NoError(t, err)
@@ -202,7 +202,7 @@ path = "$KWT_TEST_PROJECT"
 func TestProjectsRemoveIsVisibleToDaemonInventory(t *testing.T) {
 	binary, cleanupBinary := buildDaemonTestBinaries(t)
 	repository := filepath.Join(t.TempDir(), "widget")
-	require.NoError(t, exec.Command("git", "init", repository).Run())
+	require.NoError(t, exec.CommandContext(t.Context(), "git", "init", repository).Run())
 	repository, err := filepath.EvalSymlinks(repository)
 	require.NoError(t, err)
 	home := newDaemonTestHome(t, validDaemonConfig+`
@@ -258,7 +258,7 @@ func TestInventorySubprocessDaemonFailuresNeverUseSSHExit255(t *testing.T) {
 		t.Run(test.mode, func(t *testing.T) {
 			home := newDaemonTestHome(t, validDaemonConfig)
 			repository := filepath.Join(t.TempDir(), "repo")
-			require.NoError(t, exec.Command("git", "init", repository).Run())
+			require.NoError(t, exec.CommandContext(t.Context(), "git", "init", repository).Run())
 			startDaemonFixture(t, fixture, home, test.mode)
 
 			stdout, stderr, err := runInventoryCommand(t, binary, home, repository, "list", "--json")

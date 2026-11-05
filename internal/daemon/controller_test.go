@@ -122,7 +122,7 @@ func TestControllerStartsAbsentDaemonAndWaitsForReady(t *testing.T) {
 		launches++
 		return nil
 	}
-	got, err := NewController(options).Start(context.Background())
+	got, err := NewController(options).Start(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, ready.Status.Version, got.Status.Version)
 	assert.Equal(t, 1, launches)
@@ -142,7 +142,7 @@ func TestControllerDefaultStartupBudgetToleratesLoadedLaunch(t *testing.T) {
 		return launchCompleted
 	}
 
-	_, err := NewController(options).Start(context.Background())
+	_, err := NewController(options).Start(t.Context())
 
 	assert.ErrorIs(t, err, launchCompleted)
 	assert.NotErrorIs(t, err, insufficientBudget)
@@ -157,7 +157,7 @@ func TestControllerLaunchFailsWhenDaemonReportsFailed(t *testing.T) {
 	)
 	options.Launch = func(context.Context) error { return nil }
 
-	_, err := NewController(options).Start(context.Background())
+	_, err := NewController(options).Start(t.Context())
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.DaemonStartFailed))
 	assert.Contains(t, err.Error(), "failed state")
@@ -168,7 +168,7 @@ func TestControllerClassifiesLaunchFailure(t *testing.T) {
 	options.Inspect = scriptedInspector(t, Observation{State: RuntimeAbsent})
 	options.Launch = func(context.Context) error { return context.DeadlineExceeded }
 
-	_, err := NewController(options).Start(context.Background())
+	_, err := NewController(options).Start(t.Context())
 
 	assert.True(t, service.IsCode(err, service.DaemonStartFailed))
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
@@ -213,7 +213,7 @@ func TestControllerWaitsForExistingStartingDaemon(t *testing.T) {
 		return nil
 	}
 
-	got, err := NewController(options).Start(context.Background())
+	got, err := NewController(options).Start(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, ready, got)
 	assert.False(t, launched)
@@ -230,7 +230,7 @@ func TestControllerReusesCompatibleNewerDaemon(t *testing.T) {
 		launches++
 		return nil
 	}
-	got, err := NewController(options).Start(context.Background())
+	got, err := NewController(options).Start(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, "v1.3.0", got.Status.Version)
 	assert.Zero(t, launches)
@@ -260,7 +260,7 @@ func TestControllerReplacesOlderDaemonAfterDrain(t *testing.T) {
 		launches++
 		return nil
 	}
-	_, err := NewController(options).Start(context.Background())
+	_, err := NewController(options).Start(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, "replacement", shutdownReason)
 	assert.Equal(t, 1, launches)
@@ -297,7 +297,7 @@ func TestControllerReplacesOlderSHAStampedDaemon(t *testing.T) {
 	}
 	options.Launch = func(context.Context) error { return nil }
 
-	got, err := NewController(options).Start(context.Background())
+	got, err := NewController(options).Start(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, ready, got)
 	assert.True(t, shutdown)
@@ -322,7 +322,7 @@ func TestControllerReportsDrainProgressBeforeStarting(t *testing.T) {
 	var progress bytes.Buffer
 	options.Progress = &progress
 	options.Launch = func(context.Context) error { return nil }
-	_, err := NewController(options).Start(context.Background())
+	_, err := NewController(options).Start(t.Context())
 	require.NoError(t, err)
 	assert.Contains(t, progress.String(), "draining, waiting on 3 leases")
 	assert.Contains(t, progress.String(), deadline.Format(time.RFC3339))
@@ -341,7 +341,7 @@ func TestControllerRefusesIncompatibleOrUnresponsiveOwner(t *testing.T) {
 				launched = true
 				return nil
 			}
-			_, err := NewController(options).Start(context.Background())
+			_, err := NewController(options).Start(t.Context())
 			require.Error(t, err)
 			assert.False(t, launched)
 		})
@@ -351,7 +351,7 @@ func TestControllerRefusesIncompatibleOrUnresponsiveOwner(t *testing.T) {
 func TestControllerStopAbsentIsIdempotent(t *testing.T) {
 	options := testControllerOptions(t)
 	options.Inspect = scriptedInspector(t, Observation{State: RuntimeAbsent})
-	require.NoError(t, NewController(options).Stop(context.Background()))
+	require.NoError(t, NewController(options).Stop(t.Context()))
 }
 
 func TestControllerStopRequestsShutdownForNonReadyOwner(t *testing.T) {
@@ -376,7 +376,7 @@ func TestControllerStopRequestsShutdownForNonReadyOwner(t *testing.T) {
 				return Status{}, nil
 			}
 
-			require.NoError(t, NewController(options).Stop(context.Background()))
+			require.NoError(t, NewController(options).Stop(t.Context()))
 			assert.True(t, shutdown)
 		})
 	}
@@ -409,7 +409,7 @@ func TestControllerStopUsesRunningDaemonDrainDeadline(t *testing.T) {
 		return Status{}, nil
 	}
 
-	require.NoError(t, NewController(options).Stop(context.Background()))
+	require.NoError(t, NewController(options).Stop(t.Context()))
 }
 
 func TestControllerRestartStopsThenStartsInvokingBinary(t *testing.T) {
@@ -432,7 +432,7 @@ func TestControllerRestartStopsThenStartsInvokingBinary(t *testing.T) {
 		return Status{}, nil
 	}
 	options.Launch = func(context.Context) error { return nil }
-	got, err := NewController(options).Restart(context.Background())
+	got, err := NewController(options).Restart(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, []string{"restart"}, reasons)
 	assert.Equal(t, "v1.2.0", got.Status.Version)
@@ -459,7 +459,7 @@ func TestControllerRestartRecoversFailedDaemon(t *testing.T) {
 	}
 	options.Launch = func(context.Context) error { return nil }
 
-	got, err := NewController(options).Restart(context.Background())
+	got, err := NewController(options).Restart(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, ready, got)
 	assert.True(t, shutdown)
@@ -483,7 +483,7 @@ func TestControllerRestartRejectsUnknownBuildOrder(t *testing.T) {
 		return Status{}, nil
 	}
 
-	_, err := NewController(options).Restart(context.Background())
+	_, err := NewController(options).Restart(t.Context())
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.DaemonBuildOrderUnknown))
 	assert.False(t, shutdown)
@@ -492,11 +492,11 @@ func TestControllerRestartRejectsUnknownBuildOrder(t *testing.T) {
 func TestControllerUnknownBuildCannotReplaceDrainingDaemon(t *testing.T) {
 	for name, act := range map[string]func(*Controller) error{
 		"start": func(controller *Controller) error {
-			_, err := controller.Start(context.Background())
+			_, err := controller.Start(t.Context())
 			return err
 		},
 		"restart": func(controller *Controller) error {
-			_, err := controller.Restart(context.Background())
+			_, err := controller.Restart(t.Context())
 			return err
 		},
 	} {
@@ -546,7 +546,7 @@ func TestControllerRestartRefusesToDowngradeNewerDaemon(t *testing.T) {
 		return Status{}, nil
 	}
 
-	_, err := NewController(options).Restart(context.Background())
+	_, err := NewController(options).Restart(t.Context())
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.DaemonDowngradeRefused))
 	assert.False(t, shutdown)
@@ -555,11 +555,11 @@ func TestControllerRestartRefusesToDowngradeNewerDaemon(t *testing.T) {
 func TestControllerOlderVersionCannotReplaceDrainingNewerDaemon(t *testing.T) {
 	for name, act := range map[string]func(*Controller) error{
 		"start": func(controller *Controller) error {
-			_, err := controller.Start(context.Background())
+			_, err := controller.Start(t.Context())
 			return err
 		},
 		"restart": func(controller *Controller) error {
-			_, err := controller.Restart(context.Background())
+			_, err := controller.Restart(t.Context())
 			return err
 		},
 	} {

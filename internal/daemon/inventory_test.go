@@ -46,7 +46,7 @@ func TestInventoryClientPreservesActionableSourceFailure(t *testing.T) {
 	expansion, err := kwt.CaptureExpansionContext()
 	require.NoError(t, err)
 
-	_, err = client.Inventory(context.Background(), kwt.Request{
+	_, err = client.Inventory(t.Context(), kwt.Request{
 		View: kwt.ViewProjects, Expansion: expansion,
 		UntrustedConfig: kwt.IgnoreUntrustedConfig,
 	})
@@ -85,7 +85,7 @@ func TestInventoryClientRoundTripsResult(t *testing.T) {
 	require.NoError(t, err)
 	client := newClient(endpoint, "secret", server.Client())
 
-	result, err := client.Inventory(context.Background(), kwt.Request{View: kwt.ViewProjects})
+	result, err := client.Inventory(t.Context(), kwt.Request{View: kwt.ViewProjects})
 	require.NoError(t, err)
 	assert.Equal(t, kwt.Fresh, result.Freshness)
 	require.Len(t, inventory.requests, 1)
@@ -116,7 +116,7 @@ func TestInventoryServerReportsPrivateCauseWithoutReturningIt(t *testing.T) {
 	require.NoError(t, err)
 	client := newClient(endpoint, "secret", server.Client())
 
-	_, err = client.Inventory(context.Background(), kwt.Request{View: kwt.ViewProjects})
+	_, err = client.Inventory(t.Context(), kwt.Request{View: kwt.ViewProjects})
 
 	typed := service.AsError(err)
 	assert.Equal(t, service.Internal, typed.Code)
@@ -146,7 +146,7 @@ func TestInventoryClientPreservesTrustDetails(t *testing.T) {
 	require.NoError(t, err)
 	client := newClient(endpoint, "secret", server.Client())
 
-	_, err = client.Inventory(context.Background(), kwt.Request{View: kwt.ViewProjects})
+	_, err = client.Inventory(t.Context(), kwt.Request{View: kwt.ViewProjects})
 	typed := service.AsError(err)
 	assert.Equal(t, service.InteractionRequired, typed.Code)
 	assert.Equal(t, "/repo/.kwt.toml", typed.Details["path"])

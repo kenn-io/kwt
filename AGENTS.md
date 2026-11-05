@@ -17,6 +17,26 @@
 - Never locate files from a path returned by `runtime.Caller` or a stack trace; builds use `-trimpath`, so those paths are module-relative. Tests run from their package directory, so use paths relative to it.
 - Git prints forward-slash paths on Windows. Use `filepath.FromSlash` when tests compare Git path output with paths built by `filepath`; preserve assertions for empty paths.
 
+## Context
+
+Functions that run Git, tmux, SSH, HTTP, or another process take the caller's
+`context.Context` as their first parameter. Commands pass
+`commandContext(cmd)`. A `git.Git` from `git.New` carries no context, so a
+function that has one uses `git.NewWithContext(ctx, path)`.
+
+Detach only work that must finish after cancellation: daemon drain and
+shutdown, cleanup after a failed start, and test cleanup. Use
+`context.WithoutCancel(ctx)` with its own deadline and a comment saying why.
+`context.Background()` belongs to `main`, the askpass helper process, and
+nil-context fallbacks.
+
+Tests use `t.Context()`. `t.Cleanup` runs after that context is canceled, so
+cleanup uses `context.WithoutCancel(t.Context())`.
+
+`make lint` enforces `noctx`, `usetesting`, `fatcontext`, and govet's
+`lostcancel`. `.golangci.yml` is generated: edit `.golangci.overlay.yml` and run
+`make lint-config`.
+
 ## Worktree lifecycle
 
 CLI, TUI, and fleet creation use `internal/worktree.Manager.Create`, which

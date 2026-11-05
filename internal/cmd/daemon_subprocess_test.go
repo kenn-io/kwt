@@ -52,7 +52,8 @@ func buildDaemonTestBinary(t *testing.T, build daemonTestBuild) string {
 	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, build.Name+suffix)
-	command := exec.Command(
+	command := exec.CommandContext(
+		t.Context(),
 		"go",
 		"build",
 		"-buildvcs=false",
@@ -88,7 +89,8 @@ func runDaemonCommand(
 	args ...string,
 ) ([]byte, []byte, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// registerDaemonCleanup stops the daemon after t.Context is canceled.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, binary, args...)
 	command.Env = append(os.Environ(), "KWT_HOME="+home)

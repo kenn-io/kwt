@@ -94,7 +94,7 @@ func TestInspectUsesKitStableProcessIdentityAcrossLegacyClockDrift(t *testing.T)
 	path, err := store.Write(record)
 	require.NoError(t, err)
 
-	observation, err := Inspect(context.Background(), store, home)
+	observation, err := Inspect(t.Context(), store, home)
 	require.NoError(t, err)
 	assert.Equal(t, RuntimeUnresponsive, observation.State)
 	assert.FileExists(t, path)
@@ -158,7 +158,7 @@ func TestInspectRemovesMismatchedStableProcessIdentity(t *testing.T) {
 	path, err := store.Write(record)
 	require.NoError(t, err)
 
-	observation, err := Inspect(context.Background(), store, home)
+	observation, err := Inspect(t.Context(), store, home)
 	require.NoError(t, err)
 	assert.Equal(t, RuntimeAbsent, observation.State)
 	assert.NoFileExists(t, path)
@@ -266,7 +266,7 @@ func TestInspectRemovesADeadPIDRuntimeRecord(t *testing.T) {
 	require.NoError(t, err)
 
 	observation, err := Inspect(
-		context.Background(),
+		t.Context(),
 		store,
 		rec.Metadata[metadataHome],
 	)
@@ -287,7 +287,7 @@ func TestInspectRemovesAReusedPIDRecord(t *testing.T) {
 	path, err := store.Write(rec)
 	require.NoError(t, err)
 
-	observation, err := Inspect(context.Background(), store, rec.Metadata[metadataHome])
+	observation, err := Inspect(t.Context(), store, rec.Metadata[metadataHome])
 	require.NoError(t, err)
 	assert.Equal(t, RuntimeAbsent, observation.State)
 	assert.NoFileExists(t, path)
@@ -308,7 +308,7 @@ func TestInspectPreservesMatchingButUnresponsiveOwner(t *testing.T) {
 	path, err := store.Write(rec)
 	require.NoError(t, err)
 
-	observation, err := Inspect(context.Background(), store, home)
+	observation, err := Inspect(t.Context(), store, home)
 	require.NoError(t, err)
 	assert.Equal(t, RuntimeUnresponsive, observation.State)
 	assert.FileExists(t, path)
@@ -327,7 +327,7 @@ func TestInspectPreservesOwnerWithInvalidRevisionTime(t *testing.T) {
 	path, err := store.Write(record)
 	require.NoError(t, err)
 
-	observation, err := Inspect(context.Background(), store, home)
+	observation, err := Inspect(t.Context(), store, home)
 	require.NoError(t, err)
 	assert.Equal(t, RuntimeUnresponsive, observation.State)
 	require.ErrorContains(t, observation.Err, "revision time")
@@ -336,7 +336,7 @@ func TestInspectPreservesOwnerWithInvalidRevisionTime(t *testing.T) {
 
 func TestInspectReturnsAProofVerifiedRuntime(t *testing.T) {
 	home := t.TempDir()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	ep := kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: listener.Addr().String()}
 	rec := kitdaemon.NewRuntimeRecord(ServiceName, "v1", ep)
@@ -374,7 +374,7 @@ func TestInspectReturnsAProofVerifiedRuntime(t *testing.T) {
 	_, err = store.Write(rec)
 	require.NoError(t, err)
 
-	observation, err := Inspect(context.Background(), store, home)
+	observation, err := Inspect(t.Context(), store, home)
 	require.NoError(t, err)
 	assert.Equal(t, RuntimeReady, observation.State)
 	assert.Equal(t, "abc", observation.Record.Metadata[metadataRevision])
@@ -383,7 +383,7 @@ func TestInspectReturnsAProofVerifiedRuntime(t *testing.T) {
 
 func TestInspectPreservesUnknownProcessIdentityAsUnresponsive(t *testing.T) {
 	home := t.TempDir()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	ep := kitdaemon.Endpoint{Network: kitdaemon.NetworkTCP, Address: listener.Addr().String()}
 	rec := kitdaemon.NewRuntimeRecord(ServiceName, "v1", ep)
@@ -423,7 +423,7 @@ func TestInspectPreservesUnknownProcessIdentityAsUnresponsive(t *testing.T) {
 	path, err := store.Write(rec)
 	require.NoError(t, err)
 
-	observation, err := Inspect(context.Background(), store, home)
+	observation, err := Inspect(t.Context(), store, home)
 	require.NoError(t, err)
 	assert.Equal(t, RuntimeUnresponsive, observation.State)
 	assert.FileExists(t, path)

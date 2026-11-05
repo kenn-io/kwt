@@ -108,7 +108,7 @@ func TestResolverPrefersMatchingCanonicalWhenBothEndpointsAreLive(t *testing.T) 
 	defaultServer.sessions = []string{request.SessionName}
 	resolver := newEndpointResolver(canonical, defaultServer, nil)
 
-	got, err := resolver.resolve(context.Background(), request)
+	got, err := resolver.resolve(t.Context(), request)
 
 	require.NoError(t, err)
 	assert.Equal(t, KWTServerSocketName, got.Endpoint.SocketName)
@@ -146,7 +146,7 @@ func TestResolverAdoptsPreNormalizationDollarSignSessionName(t *testing.T) {
 			defaultServer.sessions = test.adopted
 			resolver := newEndpointResolver(canonical, defaultServer, nil)
 
-			got, err := resolver.resolve(context.Background(), request)
+			got, err := resolver.resolve(t.Context(), request)
 
 			require.NoError(t, err)
 			assert.True(t, got.Live)
@@ -163,7 +163,7 @@ func TestResolverReturnsEveryMatchingLiveEndpoint(t *testing.T) {
 	defaultServer.sessions = []string{request.SessionName}
 	resolver := newEndpointResolver(canonical, defaultServer, nil)
 
-	got, err := resolver.liveEndpoints(context.Background(), request)
+	got, err := resolver.liveEndpoints(t.Context(), request)
 
 	require.NoError(t, err)
 	assert.Equal(t, []SessionEndpoint{
@@ -204,7 +204,7 @@ func TestResolverReturnsRenamedLiveEndpointsByWorkspaceMarkers(t *testing.T) {
 	}
 	resolver := newEndpointResolver(canonical, defaultServer, nil)
 
-	got, err := resolver.liveEndpoints(context.Background(), request)
+	got, err := resolver.liveEndpoints(t.Context(), request)
 
 	require.NoError(t, err)
 	assert.Equal(t, []SessionEndpoint{
@@ -226,7 +226,7 @@ func TestResolverReturnsMovedWorktreeEndpointByGeneration(t *testing.T) {
 	}
 	resolver := newEndpointResolver(canonical, defaultServer, nil)
 
-	got, err := resolver.liveEndpoints(context.Background(), request)
+	got, err := resolver.liveEndpoints(t.Context(), request)
 
 	require.NoError(t, err)
 	assert.Equal(t, []SessionEndpoint{
@@ -248,7 +248,7 @@ func TestResolverTreatsGeneratedLegacyDirPrefixAsWorktree(t *testing.T) {
 	}
 	resolver := newEndpointResolver(canonical, defaultServer, nil)
 
-	got, err := resolver.liveEndpoints(context.Background(), request)
+	got, err := resolver.liveEndpoints(t.Context(), request)
 
 	require.NoError(t, err)
 	assert.Equal(t, []SessionEndpoint{
@@ -262,7 +262,7 @@ func TestResolverReusesMatchingEnumeratedDefaultServerSession(t *testing.T) {
 	defaultServer.sessions = []string{request.SessionName}
 	resolver := newEndpointResolver(canonical, defaultServer, nil)
 
-	got, err := resolver.resolve(context.Background(), request)
+	got, err := resolver.resolve(t.Context(), request)
 
 	require.NoError(t, err)
 	assert.Empty(t, got.Endpoint.SocketName)
@@ -281,7 +281,7 @@ func TestResolverIgnoresMismatchedDefaultServerMarkers(t *testing.T) {
 	defaultServer.options[workspaceIdentityOption] = workspacePathIdentity("/work/other")
 	resolver := newEndpointResolver(canonical, defaultServer, nil)
 
-	got, err := resolver.resolve(context.Background(), request)
+	got, err := resolver.resolve(t.Context(), request)
 
 	require.NoError(t, err)
 	assert.Equal(t, KWTServerSocketName, got.Endpoint.SocketName)
@@ -295,7 +295,7 @@ func TestResolverIgnoresUnmarkedDefaultServerCandidate(t *testing.T) {
 	defaultServer.options[workspaceIdentityOption] = ""
 	resolver := newEndpointResolver(canonical, defaultServer, nil)
 
-	got, err := resolver.resolve(context.Background(), request)
+	got, err := resolver.resolve(t.Context(), request)
 
 	require.NoError(t, err)
 	assert.Equal(t, KWTServerSocketName, got.Endpoint.SocketName)
@@ -309,7 +309,7 @@ func TestResolverRejectsMismatchedCanonicalMarkers(t *testing.T) {
 	canonical.options[workspaceGenerationOption] = "fedcba9876543210fedcba9876543210"
 	resolver := newEndpointResolver(canonical, defaultServer, nil)
 
-	_, err := resolver.resolve(context.Background(), request)
+	_, err := resolver.resolve(t.Context(), request)
 
 	var safety *SessionSafetyError
 	require.ErrorAs(t, err, &safety)
@@ -323,7 +323,7 @@ func TestResolverFailsClosedWhenEnumeratedDefaultServerCandidateCannotBeRead(t *
 	defaultServer.optionErrors[workspaceIdentityOption] = errors.New("permission denied")
 	resolver := newEndpointResolver(canonical, defaultServer, nil)
 
-	_, err := resolver.resolve(context.Background(), request)
+	_, err := resolver.resolve(t.Context(), request)
 
 	require.ErrorContains(t, err, "inspect adopted default-server workspace")
 	require.ErrorContains(t, err, "permission denied")
@@ -338,7 +338,7 @@ func TestResolverFailsOpenWhenDefaultServerEnumerationFailsBeforeDiscovery(t *te
 		diagnostics = append(diagnostics, err)
 	})
 
-	got, err := resolver.resolve(context.Background(), request)
+	got, err := resolver.resolve(t.Context(), request)
 
 	require.NoError(t, err)
 	assert.Equal(t, KWTServerSocketName, got.Endpoint.SocketName)
@@ -355,7 +355,7 @@ func TestResolverRejectsMalformedDefaultServerMarkerAfterDiscovery(t *testing.T)
 	defaultServer.options[workspaceIdentityOption] = "not-a-workspace-identity"
 	resolver := newEndpointResolver(canonical, defaultServer, nil)
 
-	_, err := resolver.resolve(context.Background(), request)
+	_, err := resolver.resolve(t.Context(), request)
 
 	require.ErrorContains(t, err, "malformed workspace identity marker")
 }
@@ -368,7 +368,7 @@ func TestResolverDirectoryWorkspaceRequiresOnlyPathIdentity(t *testing.T) {
 	delete(defaultServer.options, workspaceGenerationOption)
 	resolver := newEndpointResolver(canonical, defaultServer, nil)
 
-	got, err := resolver.resolve(context.Background(), request)
+	got, err := resolver.resolve(t.Context(), request)
 
 	require.NoError(t, err)
 	assert.Empty(t, got.Endpoint.SocketName)
@@ -386,7 +386,7 @@ func TestResolverFindsRenamedDirectoryWorkspaceByVerifiedPath(t *testing.T) {
 	canonical.sessions = []string{previousName}
 	resolver := newEndpointResolver(canonical, defaultServer, nil)
 
-	got, err := resolver.resolve(context.Background(), request)
+	got, err := resolver.resolve(t.Context(), request)
 
 	require.NoError(t, err)
 	assert.True(t, got.Live)
@@ -403,7 +403,7 @@ func TestResolverBatchEnumeratesEachEndpointOnce(t *testing.T) {
 	}
 	resolver := newEndpointResolver(canonical, defaultServer, nil)
 
-	got, err := resolver.resolveAll(context.Background(), []WorkspaceEndpointRequest{
+	got, err := resolver.resolveAll(t.Context(), []WorkspaceEndpointRequest{
 		{SessionName: "one", WorkspacePath: "/work/one"},
 		{SessionName: "two", WorkspacePath: "/work/two"},
 	})
@@ -429,7 +429,7 @@ func TestResolverBatchPreservesLiveSessionNameAfterBranchChange(t *testing.T) {
 	resolver := newEndpointResolver(canonical, defaultServer, nil)
 
 	got, err := resolver.resolveAllBestEffort(
-		context.Background(),
+		t.Context(),
 		[]WorkspaceEndpointRequest{request},
 	)
 
@@ -466,7 +466,7 @@ func TestResolverBatchKeepsResolvingAfterWorkspaceSafetyError(t *testing.T) {
 	resolver := newEndpointResolver(canonical, defaultServer, nil)
 
 	got, err := resolver.resolveAllBestEffort(
-		context.Background(),
+		t.Context(),
 		[]WorkspaceEndpointRequest{first, second},
 	)
 
@@ -512,7 +512,7 @@ func TestResolverBestEffortPreservesCancellation(t *testing.T) {
 			resolver := newEndpointResolver(canonical, defaultServer, nil)
 
 			_, err := resolver.resolveAllBestEffort(
-				context.Background(), []WorkspaceEndpointRequest{request},
+				t.Context(), []WorkspaceEndpointRequest{request},
 			)
 
 			require.Error(t, err)
@@ -526,7 +526,7 @@ func TestResolverBestEffortPreservesCancellation(t *testing.T) {
 func TestResolverBestEffortChecksCanceledContextBeforeReturning(t *testing.T) {
 	request := resolverTestRequest()
 	canonical, defaultServer := newResolverTestCommands(request.WorkspacePath, request.SessionName)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defaultServer.listErr = errors.New("default server unavailable")
 	resolver := newEndpointResolver(canonical, defaultServer, func(error) { cancel() })
 
@@ -572,7 +572,7 @@ func TestAttachWorkspaceEndpointSwitchesOnMatchingServerPID(t *testing.T) {
 	canonical := &fakeEndpointCommand{serverPID: "42"}
 
 	err := attachWorkspaceEndpoint(
-		context.Background(),
+		t.Context(),
 		canonicalEndpoint("workspace"),
 		canonical,
 		"/tmp/default,42,0",
@@ -589,7 +589,7 @@ func TestAttachWorkspaceEndpointNestsAcrossServers(t *testing.T) {
 	canonical := &fakeEndpointCommand{serverPID: "43"}
 
 	err := attachWorkspaceEndpoint(
-		context.Background(),
+		t.Context(),
 		canonicalEndpoint("workspace"),
 		canonical,
 		"/tmp/default,42,0",
@@ -606,7 +606,7 @@ func TestAttachWorkspaceEndpointOutsideTmuxDoesNotProbeServer(t *testing.T) {
 	canonical := &fakeEndpointCommand{serverPIDErr: errors.New("must not run")}
 
 	err := attachWorkspaceEndpoint(
-		context.Background(),
+		t.Context(),
 		canonicalEndpoint("workspace"),
 		canonical,
 		"",
@@ -620,7 +620,7 @@ func TestAttachWorkspaceEndpointRejectsNonNumericServerPIDWithoutVersionProbe(t 
 	canonical := &fakeEndpointCommand{serverPID: "#{pid}"}
 
 	err := attachWorkspaceEndpoint(
-		context.Background(),
+		t.Context(),
 		canonicalEndpoint("workspace"),
 		canonical,
 		"/tmp/default,42,0",

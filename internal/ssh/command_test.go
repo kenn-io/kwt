@@ -2,7 +2,6 @@ package ssh
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"os"
 	"strings"
@@ -17,7 +16,7 @@ const clientProcessHelper = "KWT_SSH_CLIENT_PROCESS_HELPER"
 func TestRunClientProcessStreamsStandardIO(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	exitCode, started, err := RunClientProcess(
-		context.Background(),
+		t.Context(),
 		os.Args[0],
 		[]string{"-test.run=^TestSSHClientProcessHelper$"},
 		t.TempDir(),
@@ -35,7 +34,7 @@ func TestRunClientProcessStreamsStandardIO(t *testing.T) {
 
 func TestRunClientProcessReportsExecutableLookupBeforeStart(t *testing.T) {
 	exitCode, started, err := RunClientProcess(
-		context.Background(),
+		t.Context(),
 		"kwt-missing-ssh-client",
 		nil,
 		t.TempDir(),

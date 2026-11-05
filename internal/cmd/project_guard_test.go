@@ -30,7 +30,7 @@ func TestGuardedProjectOperationRejectsRemovedRegistration(t *testing.T) {
 	expansion, err := kwt.CaptureExpansionContext()
 	require.NoError(t, err)
 	guard, err := observeGuardedProjectOperation(
-		context.Background(), home, projectPath, expansion,
+		t.Context(), home, projectPath, expansion,
 	)
 	require.NoError(t, err)
 
@@ -43,7 +43,7 @@ func TestGuardedProjectOperationRejectsRemovedRegistration(t *testing.T) {
 	require.True(t, changed)
 	called := false
 
-	err = guard.run(context.Background(), func() error {
+	err = guard.run(t.Context(), func() error {
 		called = true
 		return nil
 	})
@@ -62,7 +62,7 @@ func TestWorktreeSessionEstablishmentCancelsWhileWaitingForMutationLock(t *testi
 	require.NoError(err)
 	lock := flock.New(filepath.Join(repoPath, ".git", "kwt-worktree.lock"))
 	require.NoError(lock.Lock())
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	reachedGuard := make(chan struct{})
 	originalHook := beforeProjectGuardAcquire
 	beforeProjectGuardAcquire = func() { close(reachedGuard) }
@@ -124,7 +124,7 @@ func TestRequiredProjectGuardRejectsUnexpectedRepository(t *testing.T) {
 	require.NoError(t, err)
 
 	guard, err := observeRequiredGuardedProjectOperation(
-		context.Background(), home, projectPath, expansion,
+		t.Context(), home, projectPath, expansion,
 		"github.com/acme/original",
 	)
 
@@ -139,14 +139,14 @@ func TestRequiredProjectGuardRejectsMatchingUnregisteredRepository(t *testing.T)
 	expansion, err := kwt.CaptureExpansionContext()
 	require.NoError(t, err)
 	claim, err := lifecycle.ObserveProjectClaim(
-		context.Background(), home, repositoryPath, expansion,
+		t.Context(), home, repositoryPath, expansion,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, claim)
 	require.False(t, claim.Registered)
 
 	guard, err := observeRequiredGuardedProjectOperation(
-		context.Background(), home, repositoryPath, expansion, claim.Identity,
+		t.Context(), home, repositoryPath, expansion, claim.Identity,
 	)
 
 	assert.Nil(t, guard)
@@ -165,14 +165,14 @@ func TestRequiredProjectGuardAcceptsEquivalentRepositoryCase(t *testing.T) {
 	require.NoError(t, err)
 
 	guard, err := observeRequiredGuardedProjectOperation(
-		context.Background(), home, projectPath, expansion,
+		t.Context(), home, projectPath, expansion,
 		"github.com/acme/widget",
 	)
 
 	require.NoError(t, err)
 	require.NotNil(t, guard)
 	called := false
-	require.NoError(t, guard.run(context.Background(), func() error {
+	require.NoError(t, guard.run(t.Context(), func() error {
 		called = true
 		return nil
 	}))
@@ -185,14 +185,14 @@ func TestRegisterProjectIdentityMatchesPublishedCanonicalIdentity(t *testing.T) 
 	projectPath := newTUITestRepo(t)
 
 	registered, err := registerProjectIdentityWithLifecycle(
-		context.Background(),
+		t.Context(),
 		models.Project{Repository: "repo", Name: "repo", Path: projectPath},
 	)
 	require.NoError(t, err)
 	expansion, err := kwt.CaptureExpansionContext()
 	require.NoError(t, err)
 	inventory, err := kwt.NewSource(kwt.SourceOptions{Home: home}).Load(
-		context.Background(),
+		t.Context(),
 		kwt.Request{
 			View: kwt.ViewProjects, Expansion: expansion,
 			UntrustedConfig: kwt.IgnoreUntrustedConfig,

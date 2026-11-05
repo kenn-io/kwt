@@ -25,7 +25,7 @@ func TestMakeInstallUsesSharedGoBinByDefault(t *testing.T) {
 	gopath := strings.Join([]string{firstGopath, secondGopath}, string(os.PathListSeparator))
 	privateBin := filepath.Join(scratch, "toolchain-bin")
 	buildPath := filepath.Join(scratch, "kwt")
-	moduleCacheOutput, err := exec.Command("go", "env", "GOMODCACHE").Output()
+	moduleCacheOutput, err := exec.CommandContext(t.Context(), "go", "env", "GOMODCACHE").Output()
 	if err != nil {
 		t.Fatalf("go env GOMODCACHE failed: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestMakeInstallUsesSharedGoBinByDefault(t *testing.T) {
 
 	runMake := func(args ...string) {
 		t.Helper()
-		cmd := exec.Command("make", append([]string{
+		cmd := exec.CommandContext(t.Context(), "make", append([]string{
 			"-C", repoRoot,
 			"BINARY_NAME=" + buildPath,
 		}, args...)...)
@@ -58,7 +58,7 @@ func TestMakeInstallUsesSharedGoBinByDefault(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(privateBin, "kwt")); !os.IsNotExist(err) {
 		t.Fatalf("default install unexpectedly used private GOBIN: %v", err)
 	}
-	version := exec.Command(sharedBinary, "--version")
+	version := exec.CommandContext(t.Context(), sharedBinary, "--version")
 	if output, err := version.CombinedOutput(); err != nil || !strings.Contains(string(output), "kwt version") {
 		t.Fatalf("installed binary did not run: %v\n%s", err, output)
 	}

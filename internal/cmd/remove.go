@@ -248,7 +248,7 @@ func removeLocalWorktree(
 	args []string,
 	conditions removalConditions,
 ) (int, error) {
-	worktrees, err := ctx.WorktreeManager.List()
+	worktrees, err := ctx.WorktreeManager.ListContext(commandContext)
 	if err != nil {
 		return 0, fmt.Errorf("failed to list worktrees: %w", err)
 	}
@@ -364,7 +364,7 @@ func removeGlobalWorktree(
 	args []string,
 	conditions removalConditions,
 ) (int, error) {
-	entries, err := discovery.DiscoverGlobalWorktrees(ctx.Config.Worktree.BaseDir, ctx.Config.Projects)
+	entries, err := discovery.DiscoverGlobalWorktreesContext(commandContext, ctx.Config.Worktree.BaseDir, ctx.Config.Projects)
 	if err != nil {
 		return 0, fmt.Errorf("failed to discover worktrees: %w", err)
 	}

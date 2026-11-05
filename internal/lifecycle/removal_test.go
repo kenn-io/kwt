@@ -101,7 +101,7 @@ func TestRemovalServiceRemovesWorktreeAndRegistryRecord(t *testing.T) {
 	}))
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{Home: home}).Remove(
-		context.Background(),
+		t.Context(),
 		RemovalRequest{
 			RepositoryPath: repositoryPath,
 			Path:           worktreePath, ExpectedGeneration: generation,
@@ -133,7 +133,7 @@ func TestRemovalServiceUsesConfiguredProcessGuard(t *testing.T) {
 			guardCalled = true
 			return errors.New("fixture process guard rejected removal")
 		},
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath:     repositoryPath,
 		Path:               worktreePath,
 		ExpectedGeneration: generation,
@@ -149,7 +149,7 @@ func TestRemovalServiceRejectsChangedGeneration(t *testing.T) {
 	repositoryPath, worktreePath := removalRepository(t, "keep-me")
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{Home: t.TempDir()}).Remove(
-		context.Background(),
+		t.Context(),
 		RemovalRequest{
 			RepositoryPath:     repositoryPath,
 			Path:               worktreePath,
@@ -196,7 +196,7 @@ func TestRemovalServiceRejectsChangedCheckout(t *testing.T) {
 			tt.change(t, worktreePath)
 
 			result, err := newFixtureRemovalService(RemovalServiceOptions{Home: t.TempDir()}).Remove(
-				context.Background(),
+				t.Context(),
 				RemovalRequest{
 					RepositoryPath:     repositoryPath,
 					Path:               worktreePath,
@@ -232,7 +232,7 @@ func TestRemovalServiceTerminatesConfirmedSessionBeforeRemovingWorktree(t *testi
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath: repositoryPath,
 		Path:           worktreePath, ExpectedGeneration: generation,
 		Expansion: expansion,
@@ -282,7 +282,7 @@ func TestRemovalServiceReloadsConfiguredProtectedNamesPerRequest(t *testing.T) {
 	)
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(contents), 0o600))
 
-	result, err := service.Remove(context.Background(), RemovalRequest{
+	result, err := service.Remove(t.Context(), RemovalRequest{
 		RepositoryPath:     repositoryPath,
 		Path:               worktreePath,
 		ExpectedGeneration: generation,
@@ -312,7 +312,7 @@ func TestGuardedRemovalSupportsUnregisteredRepository(t *testing.T) {
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath: repositoryPath,
 		Path:           worktreePath, ExpectedGeneration: generation,
 		Expansion: testExpansion(t),
@@ -339,7 +339,7 @@ func TestRemovalServicePreservesWorktreeWhenSessionConditionChanges(t *testing.T
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath: repositoryPath,
 		Path:           worktreePath, ExpectedGeneration: generation,
 		Expansion: testExpansion(t),
@@ -369,7 +369,7 @@ func TestRemovalServiceRejectsStaleSessionNameAfterBranchSwitch(t *testing.T) {
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath:     repositoryPath,
 		Path:               worktreePath,
 		ExpectedGeneration: generation,
@@ -410,7 +410,7 @@ func TestRemovalServiceRejectsOldBranchSessionForCurrentWorktree(t *testing.T) {
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath:     repositoryPath,
 		Path:               worktreePath,
 		ExpectedGeneration: generation,
@@ -438,7 +438,7 @@ func TestRemovalServiceRejectsStaleSessionSocket(t *testing.T) {
 	sessionName := removalSessionName(t, worktreePath, "socket-changed")
 	require.NoError(t, pullrequest.NewFileStore(
 		filepath.Join(home, "pull-requests.json"),
-	).Update(context.Background(), func(records map[string]pullrequest.Provenance) error {
+	).Update(t.Context(), func(records map[string]pullrequest.Provenance) error {
 		records["github:acme/widget#1"] = pullrequest.Provenance{
 			Repository: "github.com/acme/widget",
 			Project: pullrequest.Project{
@@ -458,7 +458,7 @@ func TestRemovalServiceRejectsStaleSessionSocket(t *testing.T) {
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath:     repositoryPath,
 		Path:               worktreePath,
 		ExpectedGeneration: generation,
@@ -495,7 +495,7 @@ func TestRemovalServiceAcceptsDirectSessionOnCanonicalSocketEndpoint(t *testing.
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath:     repositoryPath,
 		Path:               worktreePath,
 		ExpectedGeneration: generation,
@@ -526,7 +526,7 @@ func TestRemovalServiceRejectsDirectSessionSocketDirectoryOutsideRequest(t *test
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath:     repositoryPath,
 		Path:               worktreePath,
 		ExpectedGeneration: generation,
@@ -558,7 +558,7 @@ func TestRemovalServiceUsesRequestSocketDirectoryWhenConditionOmitsIt(t *testing
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath:     repositoryPath,
 		Path:               worktreePath,
 		ExpectedGeneration: generation,
@@ -586,7 +586,7 @@ func TestRemovalServiceRejectsDirectSessionOnArbitraryNamedSocket(t *testing.T) 
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath:     repositoryPath,
 		Path:               worktreePath,
 		ExpectedGeneration: generation,
@@ -625,7 +625,7 @@ func TestRemovalServiceCarriesDurableGenerationAfterWorktreeMove(t *testing.T) {
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath:     repositoryPath,
 		Path:               movedPath,
 		ExpectedGeneration: generation,
@@ -665,7 +665,7 @@ func TestRemovalServiceAcceptsCurrentProtectedSessionEndpoint(t *testing.T) {
 	}
 	require.NoError(t, pullrequest.NewFileStore(
 		filepath.Join(home, "pull-requests.json"),
-	).Update(context.Background(), func(records map[string]pullrequest.Provenance) error {
+	).Update(t.Context(), func(records map[string]pullrequest.Provenance) error {
 		records["github:acme/widget#1"] = record
 		return nil
 	}))
@@ -673,7 +673,7 @@ func TestRemovalServiceAcceptsCurrentProtectedSessionEndpoint(t *testing.T) {
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath:     repositoryPath,
 		Path:               worktreePath,
 		ExpectedGeneration: generation,
@@ -716,7 +716,7 @@ func TestRemovalServiceFindsProtectedProvenanceAfterWorktreeMove(t *testing.T) {
 	}
 	require.NoError(t, pullrequest.NewFileStore(
 		filepath.Join(home, "pull-requests.json"),
-	).Update(context.Background(), func(records map[string]pullrequest.Provenance) error {
+	).Update(t.Context(), func(records map[string]pullrequest.Provenance) error {
 		records["github:acme/widget#2"] = record
 		return nil
 	}))
@@ -726,7 +726,7 @@ func TestRemovalServiceFindsProtectedProvenanceAfterWorktreeMove(t *testing.T) {
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath:     repositoryPath,
 		Path:               movedPath,
 		ExpectedGeneration: generation,
@@ -760,7 +760,7 @@ func TestRemovalServicePreservesConfirmedSessionWhenDirtyWorktreeCannotBeRemoved
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath: repositoryPath,
 		Path:           worktreePath, ExpectedGeneration: generation,
 		Expansion: testExpansion(t),
@@ -788,7 +788,7 @@ func TestRemovalServicePreservesNativeDirtyErrorWithoutSessionGuard(t *testing.T
 
 	processChecked := false
 	result, err := newFixtureRemovalService(RemovalServiceOptions{Home: t.TempDir(), ProcessGuard: func(context.Context, string) error { processChecked = true; return nil }}).Remove(
-		context.Background(),
+		t.Context(),
 		RemovalRequest{
 			RepositoryPath: repositoryPath,
 			Path:           worktreePath, ExpectedGeneration: generation,
@@ -822,7 +822,7 @@ func TestRemovalServiceUsesClientExpansionForProjectFence(t *testing.T) {
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath: repositoryPath,
 		Path:           worktreePath, ExpectedGeneration: generation,
 		Expansion: expansion,
@@ -846,12 +846,12 @@ func TestRemovalServiceWaitsForProjectSessionStartupFence(t *testing.T) {
 	expansion, err := CaptureExpansionContext()
 	require.NoError(t, err)
 	claim, err := ObserveProjectClaim(
-		context.Background(), home, repositoryPath, expansion,
+		t.Context(), home, repositoryPath, expansion,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, claim)
 	identity := claim.Identity
-	releaseFence, err := acquireProjectFence(context.Background(), home, identity)
+	releaseFence, err := acquireProjectFence(t.Context(), home, identity)
 	require.NoError(t, err)
 	guard := &signalingRemovalSessionGuard{
 		called: make(chan struct{}),
@@ -863,7 +863,7 @@ func TestRemovalServiceWaitsForProjectSessionStartupFence(t *testing.T) {
 	go func() {
 		_, removeErr := newFixtureRemovalService(RemovalServiceOptions{
 			Home: home, SessionGuard: guard,
-		}).Remove(context.Background(), RemovalRequest{
+		}).Remove(t.Context(), RemovalRequest{
 			RepositoryPath: repositoryPath,
 			Path:           worktreePath, ExpectedGeneration: generation,
 			Expansion: testExpansion(t),
@@ -925,7 +925,7 @@ func TestRemovalServicePreservesConfirmedSessionForInitializedSubmodule(t *testi
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath: repositoryPath,
 		Path:           worktreePath, ExpectedGeneration: generation,
 		Expansion: testExpansion(t),
@@ -952,7 +952,7 @@ func TestRemovalServiceResumesSessionWhenCheckoutChangesDuringQuiesce(t *testing
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath: repositoryPath,
 		Path:           worktreePath, ExpectedGeneration: generation,
 		Expansion: testExpansion(t),
@@ -987,7 +987,7 @@ func TestRemovalServiceRejectsActiveCreation(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, release()) })
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{Home: home}).Remove(
-		context.Background(),
+		t.Context(),
 		RemovalRequest{
 			RepositoryPath: repositoryPath,
 			Path:           worktreePath, ExpectedGeneration: generation,
@@ -1017,7 +1017,7 @@ func TestRemovalServiceRejectsProcessWithWorkingDirectoryInsideWorktree(t *testi
 	command := startRemovalProcess(t, workingDirectory)
 
 	result, err := NewRemovalService(RemovalServiceOptions{Home: t.TempDir()}).Remove(
-		context.Background(),
+		t.Context(),
 		RemovalRequest{
 			RepositoryPath: repositoryPath,
 			Path:           worktreePath, ExpectedGeneration: generation,
@@ -1038,7 +1038,7 @@ func TestRemovalServiceForceRemovesWorktreeUsedAsProcessWorkingDirectory(t *test
 	command := startRemovalProcess(t, worktreePath)
 
 	result, err := NewRemovalService(RemovalServiceOptions{Home: t.TempDir()}).Remove(
-		context.Background(),
+		t.Context(),
 		RemovalRequest{
 			RepositoryPath: repositoryPath,
 			Path:           worktreePath, ExpectedGeneration: generation,
@@ -1063,7 +1063,7 @@ func TestRemovalServiceResumesGuardedSessionWhenProcessUsesWorktree(t *testing.T
 
 	result, err := NewRemovalService(RemovalServiceOptions{
 		Home: home, SessionGuard: guard,
-	}).Remove(context.Background(), RemovalRequest{
+	}).Remove(t.Context(), RemovalRequest{
 		RepositoryPath: repositoryPath,
 		Path:           worktreePath, ExpectedGeneration: generation,
 		Expansion: testExpansion(t),
@@ -1085,7 +1085,7 @@ func TestRemovalServiceResumesGuardedSessionWhenProcessUsesWorktree(t *testing.T
 
 func startRemovalProcess(t *testing.T, workingDirectory string) *exec.Cmd {
 	t.Helper()
-	command := exec.Command(os.Args[0], "-test.run=TestRemovalProcessHelper")
+	command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=TestRemovalProcessHelper")
 	command.Dir = workingDirectory
 	command.Env = append(os.Environ(), "KWT_REMOVAL_PROCESS_HELPER=1")
 	require.NoError(t, command.Start())
@@ -1119,7 +1119,7 @@ func TestRemovalServiceIgnoresDaemonRepositoryRoutingEnvironment(t *testing.T) {
 	t.Setenv("GIT_WORK_TREE", otherRepository)
 
 	result, err := newFixtureRemovalService(RemovalServiceOptions{Home: t.TempDir()}).Remove(
-		context.Background(),
+		t.Context(),
 		RemovalRequest{
 			RepositoryPath:     repositoryPath,
 			Path:               worktreePath,
@@ -1168,7 +1168,7 @@ func removalRepository(t *testing.T, branch string) (string, string) {
 
 func runRemovalGit(t *testing.T, directory string, args ...string) {
 	t.Helper()
-	command := exec.Command("git", args...)
+	command := exec.CommandContext(t.Context(), "git", args...)
 	command.Dir = directory
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "%s", output)
@@ -1187,7 +1187,7 @@ func registerRemovalRepository(t *testing.T, home, repositoryPath string) {
 func removalSessionName(t *testing.T, worktreePath, branch string) string {
 	t.Helper()
 	info, err := internalworktree.RepositoryInfoWithProjects(
-		git.NewForInventory(context.Background(), worktreePath, nil),
+		git.NewForInventory(t.Context(), worktreePath, nil),
 		nil,
 	)
 	require.NoError(t, err)

@@ -286,12 +286,12 @@ func (g *Git) command(args ...string) *exec.Cmd {
 	if executable == "" {
 		executable = "git"
 	}
-	var cmd *exec.Cmd
-	if g.ctx != nil {
-		cmd = exec.CommandContext(g.ctx, executable, args...)
-	} else {
-		cmd = exec.Command(executable, args...)
+	ctx := g.ctx
+	if ctx == nil {
+		// Git values from New carry no caller context.
+		ctx = context.Background()
 	}
+	cmd := exec.CommandContext(ctx, executable, args...)
 	if g.environment != nil {
 		cmd.Env = append([]string(nil), g.environment...)
 	}

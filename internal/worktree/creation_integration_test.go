@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -29,6 +30,7 @@ func createForTest(t *testing.T, g *git.Git, opts CreateOptions) error {
 // TestRepository creates a test git repository
 type TestRepository struct {
 	Path string
+	t    *testing.T
 }
 
 // NewTestRepository creates a new test repository
@@ -37,7 +39,7 @@ func NewTestRepository(t *testing.T) *TestRepository {
 
 	t.Setenv("KWT_HOME", t.TempDir())
 	tmpDir := t.TempDir()
-	repo := &TestRepository{Path: tmpDir}
+	repo := &TestRepository{Path: tmpDir, t: t}
 
 	// Set environment variables for git if needed in CI
 	t.Setenv("GIT_AUTHOR_NAME", "Test User")
@@ -75,7 +77,7 @@ func NewTestRepository(t *testing.T) *TestRepository {
 
 // run executes a git command in the test repository
 func (r *TestRepository) run(args ...string) error {
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(r.t.Context(), "git", args...)
 	cmd.Dir = r.Path
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -113,7 +115,7 @@ func (r *TestRepository) CreateWorktree(t *testing.T, path, branch string) {
 }
 
 func (r *TestRepository) getCurrentBranch() (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd := exec.CommandContext(r.t.Context(), "git", "rev-parse", "--abbrev-ref", "HEAD")
 	cmd.Dir = r.Path
 	output, err := cmd.Output()
 	if err != nil {
@@ -124,7 +126,7 @@ func (r *TestRepository) getCurrentBranch() (string, error) {
 
 func gitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -707,7 +709,8 @@ func TestManagerCreateExistingDisablesCheckoutHooks(t *testing.T) {
 	gitOutput(t, repo.Path, "config", "hook.configured-attack.command", configuredHook)
 	gitOutput(t, repo.Path, "config", "--add", "hook.configured-attack.event", "post-checkout")
 	gitOutput(t, repo.Path, "config", "--add", "hook.configured-attack.event", "post-index-change")
-	configuredHooksSupported := exec.Command(
+	configuredHooksSupported := exec.CommandContext(
+		t.Context(),
 		"git", "-C", repo.Path, "hook", "list", "post-checkout",
 	).Run() == nil
 
@@ -939,7 +942,8 @@ func TestManagerCreateTrackingRemoteBranch(t *testing.T) {
 	} {
 		gitOutput(t, repo.Path, "config", "--add", "hook.configured-attack.event", event)
 	}
-	configuredHooksSupported := exec.Command(
+	configuredHooksSupported := exec.CommandContext(
+		t.Context(),
 		"git", "-C", repo.Path, "hook", "list", "post-checkout",
 	).Run() == nil
 
@@ -1076,7 +1080,8 @@ func TestManagerCreateTrackingRollsBackBranchWhenWorktreeFails(t *testing.T) {
 	}
 	gitOutput(t, repo.Path, "config", "hook.configured-attack.command", configuredHook)
 	gitOutput(t, repo.Path, "config", "--add", "hook.configured-attack.event", "reference-transaction")
-	configuredHooksSupported := exec.Command(
+	configuredHooksSupported := exec.CommandContext(
+		t.Context(),
 		"git", "-C", repo.Path, "hook", "list", "reference-transaction",
 	).Run() == nil
 
@@ -1386,4 +1391,17 @@ func TestManagerCreateExistingBranchWithholdsCredentials(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "local-only", gitOutput(t, worktreePath, "branch", "--show-current"))
+}
+
+func TestManagerListContextStopsWhenCanceled(t *testing.T) {
+	repo := NewTestRepository(t)
+	manager := New(git.New(repo.Path), nil)
+	worktrees, err := manager.ListContext(t.Context())
+	require.NoError(t, err)
+	require.Len(t, worktrees, 1)
+
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = manager.ListContext(canceled)
+	require.ErrorIs(t, err, context.Canceled)
 }

@@ -160,7 +160,7 @@ func TestKillWorkspaceSessionIfMatching(t *testing.T) {
 			}
 
 			err := killWorkspaceSessionIfMatching(
-				context.Background(), command, test.request,
+				t.Context(), command, test.request,
 			)
 
 			if test.wantError == "" {

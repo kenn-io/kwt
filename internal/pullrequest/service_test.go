@@ -88,7 +88,7 @@ func TestImportBranchNamePreservesCaseNeededForValidRef(t *testing.T) {
 	branch := importBranchName(pr)
 
 	assert.Equal(t, "pr-17-feature.LOCK", branch)
-	cmd := exec.Command("git", "check-ref-format", "--branch", branch)
+	cmd := exec.CommandContext(t.Context(), "git", "check-ref-format", "--branch", branch)
 	require.NoError(t, cmd.Run(), "generated branch %q must be a valid Git ref", branch)
 }
 
@@ -99,7 +99,7 @@ func TestImportBranchNameTruncationDoesNotCreateLockSuffix(t *testing.T) {
 	branch := importBranchName(pr)
 
 	assert.False(t, strings.HasSuffix(strings.ToLower(branch), ".lock"))
-	cmd := exec.Command("git", "check-ref-format", "--branch", branch)
+	cmd := exec.CommandContext(t.Context(), "git", "check-ref-format", "--branch", branch)
 	require.NoError(t, cmd.Run(), "generated branch %q must be a valid Git ref", branch)
 }
 
@@ -298,7 +298,7 @@ func TestListReturnsSameRepoForkAndDraftDetails(t *testing.T) {
 	draft.Draft = true
 	service := newTestService(&fakeProvider{prs: []PullRequest{same, fork, draft}}, newFakeBackend(), newMemoryStore())
 
-	got, err := service.List(context.Background(), testProject(), "open")
+	got, err := service.List(t.Context(), testProject(), "open")
 
 	require.NoError(t, err)
 	require.Len(t, got, 3)
@@ -322,7 +322,7 @@ func TestListMarksExistingImport(t *testing.T) {
 	}
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
 
-	got, err := service.List(context.Background(), testProject(), "open")
+	got, err := service.List(t.Context(), testProject(), "open")
 
 	require.NoError(t, err)
 	require.Len(t, got, 1)
@@ -339,7 +339,7 @@ func TestImportPersistsWorkspaceGenerationInProvenance(t *testing.T) {
 	store := newMemoryStore()
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
 
-	result, err := service.Import(context.Background(), testProject(), "61")
+	result, err := service.Import(t.Context(), testProject(), "61")
 
 	require.NoError(t, err)
 	require.NotEmpty(t, result.Workspace.Generation)
@@ -356,7 +356,7 @@ func TestImportHoldsWorkspaceCreationGuardThroughProvenanceCommit(t *testing.T) 
 	}
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
 
-	result, err := service.Import(context.Background(), testProject(), "62")
+	result, err := service.Import(t.Context(), testProject(), "62")
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, result.Workspace.Path)
@@ -370,7 +370,7 @@ func TestImportHoldsWorkspaceCreationGuardThroughRollback(t *testing.T) {
 	store := &commitFailStore{memoryStore: newMemoryStore()}
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
 
-	_, err := service.Import(context.Background(), testProject(), "63")
+	_, err := service.Import(t.Context(), testProject(), "63")
 
 	assertErrorCode(t, err, CodeWorkspaceCreation)
 	assert.Equal(t, 1, backend.guardCalls)
@@ -396,7 +396,7 @@ func TestListMatchesCanonicalProvenancePathThroughSymlink(t *testing.T) {
 	}
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
 
-	got, err := service.List(context.Background(), testProject(), "open")
+	got, err := service.List(t.Context(), testProject(), "open")
 
 	require.NoError(t, err)
 	require.Len(t, got, 1)
@@ -416,7 +416,7 @@ func TestListDoesNotMatchProvenanceWhenLiveBranchDiffers(t *testing.T) {
 	store.records[pr.ID] = Provenance{PullRequestID: pr.ID, Project: testProject(), Workspace: recorded, HeadSHA: pr.HeadSHA}
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
 
-	got, err := service.List(context.Background(), testProject(), "open")
+	got, err := service.List(t.Context(), testProject(), "open")
 
 	require.NoError(t, err)
 	require.Len(t, got, 1)
@@ -443,7 +443,7 @@ func TestListDoesNotMatchProvenanceWhenLiveGenerationDiffers(t *testing.T) {
 	}
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
 
-	got, err := service.List(context.Background(), testProject(), "open")
+	got, err := service.List(t.Context(), testProject(), "open")
 
 	require.NoError(t, err)
 	require.Len(t, got, 1)
@@ -462,7 +462,7 @@ func TestListDoesNotMarkImportAfterSourceBranchRename(t *testing.T) {
 	}
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
 
-	got, err := service.List(context.Background(), testProject(), "open")
+	got, err := service.List(t.Context(), testProject(), "open")
 
 	require.NoError(t, err)
 	require.Len(t, got, 1)
@@ -484,7 +484,7 @@ func TestListRecognizesLegacyCasedProvenance(t *testing.T) {
 	}
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
 
-	got, err := service.List(context.Background(), testProject(), "open")
+	got, err := service.List(t.Context(), testProject(), "open")
 
 	require.NoError(t, err)
 	require.Len(t, got, 1)
@@ -526,7 +526,7 @@ func TestListRecognizesTransferredRepositoryProvenance(t *testing.T) {
 		testProject().Identity,
 	)
 
-	got, err := service.List(context.Background(), testProject(), "open")
+	got, err := service.List(t.Context(), testProject(), "open")
 
 	require.NoError(t, err)
 	require.Len(t, got, 1)
@@ -541,7 +541,7 @@ func TestImportSameRepositoryUsesMatchingRemoteAndCanonicalName(t *testing.T) {
 	backend := newFakeBackend()
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, newMemoryStore())
 
-	result, err := service.Import(context.Background(), testProject(), "31")
+	result, err := service.Import(t.Context(), testProject(), "31")
 
 	require.NoError(t, err)
 	assert.Equal(t, ImportCreated, result.Status)
@@ -556,7 +556,7 @@ func TestImportDelegatesGitLifecycleAsOneOperation(t *testing.T) {
 	backend := newFakeBackend()
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, newMemoryStore())
 
-	result, err := service.Import(context.Background(), testProject(), "35")
+	result, err := service.Import(t.Context(), testProject(), "35")
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, backend.importCalls)
@@ -570,7 +570,7 @@ func TestImportPropagatesUnsupportedGitFromSharedLifecycle(t *testing.T) {
 	provider := &fakeProvider{prs: []PullRequest{testPR(30, false)}}
 	service := newTestService(provider, backend, newMemoryStore())
 
-	_, err := service.Import(context.Background(), testProject(), "30")
+	_, err := service.Import(t.Context(), testProject(), "30")
 
 	assertErrorCode(t, err, CodeUnsupportedGitVersion)
 	assert.Equal(t, 1, backend.importCalls)
@@ -586,7 +586,7 @@ func TestGitHubRepositoryIdentityIsCaseInsensitive(t *testing.T) {
 	backend := newFakeBackend()
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, newMemoryStore())
 
-	result, err := service.Import(context.Background(), project, "https://github.com/aCmE/wIdGeT/pull/33")
+	result, err := service.Import(t.Context(), project, "https://github.com/aCmE/wIdGeT/pull/33")
 
 	require.NoError(t, err)
 	assert.False(t, result.PullRequest.Source.IsFork)
@@ -624,7 +624,7 @@ func TestImportForkCreatesAndUsesForkRemote(t *testing.T) {
 	backend := newFakeBackend()
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, newMemoryStore())
 
-	result, err := service.Import(context.Background(), testProject(), pr.URL)
+	result, err := service.Import(t.Context(), testProject(), pr.URL)
 
 	require.NoError(t, err)
 	assert.Equal(t, ImportCreated, result.Status)
@@ -636,9 +636,9 @@ func TestImportIsIdempotent(t *testing.T) {
 	backend := newFakeBackend()
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, newMemoryStore())
 
-	first, err := service.Import(context.Background(), testProject(), pr.ID)
+	first, err := service.Import(t.Context(), testProject(), pr.ID)
 	require.NoError(t, err)
-	second, err := service.Import(context.Background(), testProject(), pr.ID)
+	second, err := service.Import(t.Context(), testProject(), pr.ID)
 	require.NoError(t, err)
 
 	assert.Equal(t, ImportCreated, first.Status)
@@ -718,7 +718,7 @@ func TestImportPreservesLegacyProtectedWorkspaceEndpoint(t *testing.T) {
 		&fakeProvider{prs: []PullRequest{pr}}, backend, store,
 	)
 
-	listed, err := service.List(context.Background(), testProject(), "open")
+	listed, err := service.List(t.Context(), testProject(), "open")
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
 	require.NotNil(t, listed[0].Workspace)
@@ -727,7 +727,7 @@ func TestImportPreservesLegacyProtectedWorkspaceEndpoint(t *testing.T) {
 	assert.Equal(t, legacySocket, listed[0].Workspace.TmuxSocketName)
 	assert.Equal(t, models.TmuxAttachProtected, listed[0].Workspace.TmuxAttachMode)
 
-	result, err := service.Import(context.Background(), testProject(), pr.ID)
+	result, err := service.Import(t.Context(), testProject(), pr.ID)
 	require.NoError(t, err)
 	assert.Equal(t, ImportExisting, result.Status)
 	assert.Equal(t, recordedPath, result.Workspace.Path)
@@ -793,7 +793,7 @@ func TestImportDoesNotReturnExistingWorkspaceWhenBranchDiffers(t *testing.T) {
 	store.records[pr.ID] = Provenance{PullRequestID: pr.ID, Project: testProject(), Workspace: recorded, HeadSHA: pr.HeadSHA}
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
 
-	result, err := service.Import(context.Background(), testProject(), "44")
+	result, err := service.Import(t.Context(), testProject(), "44")
 
 	require.NoError(t, err)
 	assert.Equal(t, ImportCreated, result.Status)
@@ -812,7 +812,7 @@ func TestImportRejectsExistingWorkspaceAfterSourceBranchRename(t *testing.T) {
 	}
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
 
-	_, err := service.Import(context.Background(), testProject(), "45")
+	_, err := service.Import(t.Context(), testProject(), "45")
 
 	assertErrorCode(t, err, CodeConflict)
 	assert.ErrorContains(t, err, "source repository or branch changed")
@@ -830,7 +830,7 @@ func TestImportRejectsExistingWorkspaceWithMissingSourceProvenance(t *testing.T)
 	}
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
 
-	_, err := service.Import(context.Background(), testProject(), "46")
+	_, err := service.Import(t.Context(), testProject(), "46")
 
 	assertErrorCode(t, err, CodeConflict)
 	assert.ErrorContains(t, err, "source provenance")
@@ -849,7 +849,7 @@ func TestImportExistingDoesNotReenterSharedLifecycle(t *testing.T) {
 	}
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
 
-	result, err := service.Import(context.Background(), testProject(), "47")
+	result, err := service.Import(t.Context(), testProject(), "47")
 
 	require.NoError(t, err)
 	assert.Equal(t, ImportExisting, result.Status)
@@ -898,7 +898,7 @@ func TestImportMigratesLegacyCasedProvenance(t *testing.T) {
 	}
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
 
-	result, err := service.Import(context.Background(), testProject(), "43")
+	result, err := service.Import(t.Context(), testProject(), "43")
 
 	require.NoError(t, err)
 	assert.Equal(t, ImportExisting, result.Status)
@@ -945,7 +945,7 @@ func TestImportMigratesTransferredRepositoryProvenance(t *testing.T) {
 		testProject().Identity,
 	)
 
-	result, err := service.Import(context.Background(), testProject(), "49")
+	result, err := service.Import(t.Context(), testProject(), "49")
 
 	require.NoError(t, err)
 	assert.Equal(t, ImportExisting, result.Status)
@@ -1006,7 +1006,7 @@ func TestImportMigratesConsecutiveRepositoryTransfers(t *testing.T) {
 		testProject().Identity,
 	)
 
-	result, err := service.Import(context.Background(), testProject(), "54")
+	result, err := service.Import(t.Context(), testProject(), "54")
 
 	require.NoError(t, err)
 	assert.Equal(t, ImportExisting, result.Status)
@@ -1062,7 +1062,7 @@ func TestImportDoesNotTrustRepositoryOutsidePersistedAliasHistory(
 		testProject().Identity,
 	)
 
-	result, err := service.Import(context.Background(), testProject(), "57")
+	result, err := service.Import(t.Context(), testProject(), "57")
 
 	require.NoError(t, err)
 	assert.Equal(t, ImportCreated, result.Status)
@@ -1102,7 +1102,7 @@ func TestImportDoesNotTreatProjectAliasAsForkSource(t *testing.T) {
 		testProject().Identity,
 	)
 
-	_, err := service.Import(context.Background(), testProject(), "50")
+	_, err := service.Import(t.Context(), testProject(), "50")
 
 	assertErrorCode(t, err, CodeConflict)
 	assert.Zero(t, backend.createCalls)
@@ -1121,7 +1121,7 @@ func TestConcurrentImportConverges(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			result, err := service.Import(context.Background(), testProject(), "42")
+			result, err := service.Import(t.Context(), testProject(), "42")
 			results <- result
 			errs <- err
 		}()
@@ -1146,7 +1146,7 @@ func TestImportReportsNamingConflict(t *testing.T) {
 	backend.createErr = NewError(CodeNamingConflict, "branch is already in use", false, nil)
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, newMemoryStore())
 
-	_, err := service.Import(context.Background(), testProject(), "51")
+	_, err := service.Import(t.Context(), testProject(), "51")
 
 	assertErrorCode(t, err, CodeNamingConflict)
 }
@@ -1157,7 +1157,7 @@ func TestImportReportsUnavailableHead(t *testing.T) {
 	backend.createErr = NewError(CodeInaccessibleHead, "head is unavailable", false, nil)
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, newMemoryStore())
 
-	_, err := service.Import(context.Background(), testProject(), "52")
+	_, err := service.Import(t.Context(), testProject(), "52")
 
 	assertErrorCode(t, err, CodeInaccessibleHead)
 	assert.Empty(t, backend.workspaces)
@@ -1168,7 +1168,7 @@ func TestImportRejectsRepositoryMismatch(t *testing.T) {
 	pr.Repository.Identity = "github.com/other/widget"
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, newFakeBackend(), newMemoryStore())
 
-	_, err := service.Import(context.Background(), testProject(), "53")
+	_, err := service.Import(t.Context(), testProject(), "53")
 
 	assertErrorCode(t, err, CodeRepositoryMismatch)
 }
@@ -1187,7 +1187,7 @@ func TestImportPropagatesTypedProviderFailures(t *testing.T) {
 			providerErr := NewError(code, "provider failed", code == CodeNetwork, errors.New("cause"))
 			service := newTestService(&fakeProvider{getErr: providerErr}, newFakeBackend(), newMemoryStore())
 
-			_, err := service.Import(context.Background(), testProject(), "99")
+			_, err := service.Import(t.Context(), testProject(), "99")
 
 			assertErrorCode(t, err, code)
 		})
@@ -1200,7 +1200,7 @@ func TestImportWrapsCreationFailure(t *testing.T) {
 	backend.createErr = errors.New("create failed")
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, newMemoryStore())
 
-	_, err := service.Import(context.Background(), testProject(), "55")
+	_, err := service.Import(t.Context(), testProject(), "55")
 
 	assertErrorCode(t, err, CodeWorkspaceCreation)
 	assert.Empty(t, backend.workspaces)
@@ -1217,7 +1217,7 @@ func TestImportReportsArtifactsPreservedBySharedLifecycle(t *testing.T) {
 	}
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, newMemoryStore())
 
-	_, err := service.Import(context.Background(), testProject(), "63")
+	_, err := service.Import(t.Context(), testProject(), "63")
 
 	assertErrorCode(t, err, CodeWorkspaceCreation)
 	assert.ErrorContains(t, err, backend.createErrWorkspace.Path)
@@ -1237,7 +1237,7 @@ func TestImportRollsBackPostCreationFailure(t *testing.T) {
 		&fakeProvider{prs: []PullRequest{pr}}, backend, newMemoryStore(),
 	)
 
-	_, err := service.Import(context.Background(), testProject(), "64")
+	_, err := service.Import(t.Context(), testProject(), "64")
 
 	assertErrorCode(t, err, CodeWorkspaceCreation)
 	assert.Empty(t, backend.workspaces)
@@ -1275,7 +1275,7 @@ func TestImportPreservesTypedNamingFailureFromWorkspaceCreation(t *testing.T) {
 	backend.createErr = NewError(CodeNamingConflict, "workspace path already exists", false, nil)
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, newMemoryStore())
 
-	_, err := service.Import(context.Background(), testProject(), "56")
+	_, err := service.Import(t.Context(), testProject(), "56")
 
 	assertErrorCode(t, err, CodeNamingConflict)
 }
@@ -1286,7 +1286,7 @@ func TestImportRollsBackWhenProvenanceCannotBeCommitted(t *testing.T) {
 	store := &commitFailStore{memoryStore: newMemoryStore()}
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
 
-	_, err := service.Import(context.Background(), testProject(), "57")
+	_, err := service.Import(t.Context(), testProject(), "57")
 
 	assertErrorCode(t, err, CodeWorkspaceCreation)
 	assert.Empty(t, backend.workspaces)
@@ -1299,7 +1299,7 @@ func TestImportReportsRollbackFailureAndPreservesWorkspace(t *testing.T) {
 	store := &commitFailStore{memoryStore: newMemoryStore()}
 	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
 
-	_, err := service.Import(context.Background(), testProject(), "60")
+	_, err := service.Import(t.Context(), testProject(), "60")
 
 	assertErrorCode(t, err, CodeWorkspaceCreation)
 	assert.ErrorContains(t, err, "rollback failed")

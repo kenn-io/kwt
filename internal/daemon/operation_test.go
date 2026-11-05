@@ -14,7 +14,7 @@ import (
 )
 
 func TestOperationHubReplaysOrderedCompletion(t *testing.T) {
-	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	hub := NewOperationHub(t.Context(), OperationHubOptions{})
 	op, created, err := hub.Start(OperationStart{
 		ID: "operation-1", RequestDigest: "request-1",
 		Run: func(_ context.Context, operation *Operation) (json.RawMessage, error) {
@@ -49,7 +49,7 @@ func TestOperationHubReplaysOrderedCompletion(t *testing.T) {
 }
 
 func TestOperationHubPublishesSanitizedTerminalFailure(t *testing.T) {
-	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	hub := NewOperationHub(t.Context(), OperationHubOptions{})
 	operation, _, err := hub.Start(OperationStart{
 		RequestDigest: "request-1",
 		Run: func(context.Context, *Operation) (json.RawMessage, error) {
@@ -79,7 +79,7 @@ func TestOperationHubPublishesSanitizedTerminalFailure(t *testing.T) {
 }
 
 func TestOperationHubPreservesTypedPromptTimeout(t *testing.T) {
-	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	hub := NewOperationHub(t.Context(), OperationHubOptions{})
 	operation, _, err := hub.Start(OperationStart{
 		RequestDigest: "request-1",
 		Run: func(context.Context, *Operation) (json.RawMessage, error) {
@@ -106,7 +106,7 @@ func TestOperationHubPreservesTypedPromptTimeout(t *testing.T) {
 }
 
 func TestOperationHubPublishesInternalFailureForMalformedResult(t *testing.T) {
-	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	hub := NewOperationHub(t.Context(), OperationHubOptions{})
 	operation, _, err := hub.Start(OperationStart{
 		RequestDigest: "request-1",
 		Run: func(context.Context, *Operation) (json.RawMessage, error) {
@@ -128,7 +128,7 @@ func TestOperationHubPublishesInternalFailureForMalformedResult(t *testing.T) {
 
 func TestOperationHubRetainsImmutablePromptPayload(t *testing.T) {
 	details := map[string]any{"host": "original.example"}
-	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	hub := NewOperationHub(t.Context(), OperationHubOptions{})
 	operation, _, err := hub.Start(OperationStart{
 		RequestDigest: "request-1",
 		Run: func(ctx context.Context, operation *Operation) (json.RawMessage, error) {
@@ -168,7 +168,7 @@ func TestOperationHubRetainsImmutablePromptPayload(t *testing.T) {
 }
 
 func TestOperationHubDeliversSSHPromptTargetDetails(t *testing.T) {
-	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	hub := NewOperationHub(t.Context(), OperationHubOptions{})
 	operation, _, err := hub.Start(OperationStart{
 		RequestDigest: "ssh-prompt-targets",
 		Run: func(ctx context.Context, operation *Operation) (json.RawMessage, error) {
@@ -219,7 +219,7 @@ func TestOperationHubDeliversSSHPromptTargetDetails(t *testing.T) {
 }
 
 func TestOperationHubResumesAfterSequence(t *testing.T) {
-	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	hub := NewOperationHub(t.Context(), OperationHubOptions{})
 	op, _, err := hub.Start(OperationStart{
 		RequestDigest: "request-1",
 		Run: func(_ context.Context, operation *Operation) (json.RawMessage, error) {
@@ -246,7 +246,7 @@ func TestOperationHubResumesAfterSequence(t *testing.T) {
 }
 
 func TestOperationHubBindsMultiplePromptRounds(t *testing.T) {
-	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	hub := NewOperationHub(t.Context(), OperationHubOptions{})
 	op, _, err := hub.Start(OperationStart{
 		ID: "operation-1", RequestDigest: "request-1",
 		Run: func(ctx context.Context, operation *Operation) (json.RawMessage, error) {
@@ -310,7 +310,7 @@ func TestOperationHubBindsMultiplePromptRounds(t *testing.T) {
 
 func TestOperationHubRejectsConflictingRequestID(t *testing.T) {
 	release := make(chan struct{})
-	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	hub := NewOperationHub(t.Context(), OperationHubOptions{})
 	op, created, err := hub.Start(OperationStart{
 		ID: "operation-1", RequestDigest: "request-1",
 		Run: func(context.Context, *Operation) (json.RawMessage, error) {
@@ -339,7 +339,7 @@ func TestOperationHubRejectsConflictingRequestID(t *testing.T) {
 func TestOperationHubRejectsUnroutableOperationIDs(t *testing.T) {
 	for _, id := range []string{"batch/1", "batch?1", "batch#1", ".", ".."} {
 		t.Run(id, func(t *testing.T) {
-			hub := NewOperationHub(context.Background(), OperationHubOptions{})
+			hub := NewOperationHub(t.Context(), OperationHubOptions{})
 			_, created, err := hub.Start(OperationStart{
 				ID: id, RequestDigest: "request-1",
 				Run: func(context.Context, *Operation) (json.RawMessage, error) {
@@ -354,7 +354,7 @@ func TestOperationHubRejectsUnroutableOperationIDs(t *testing.T) {
 }
 
 func TestOperationHubRejectsUnroutableGeneratedOperationID(t *testing.T) {
-	hub := NewOperationHub(context.Background(), OperationHubOptions{
+	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		IDSource: func() (string, error) { return "batch/1", nil },
 	})
 	_, created, err := hub.Start(OperationStart{
@@ -371,7 +371,7 @@ func TestOperationHubRejectsUnroutableGeneratedOperationID(t *testing.T) {
 func TestOperationHubCancellationReachesWorker(t *testing.T) {
 	started := make(chan struct{})
 	canceled := make(chan struct{})
-	hub := NewOperationHub(context.Background(), OperationHubOptions{})
+	hub := NewOperationHub(t.Context(), OperationHubOptions{})
 	op, _, err := hub.Start(OperationStart{
 		RequestDigest: "request-1",
 		Run: func(ctx context.Context, _ *Operation) (json.RawMessage, error) {
@@ -396,7 +396,7 @@ func TestOperationHubCancellationReachesWorker(t *testing.T) {
 }
 
 func TestOperationHubReportsUnknownOutcomeAtEventCapacity(t *testing.T) {
-	hub := NewOperationHub(context.Background(), OperationHubOptions{
+	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		MaxEvents: 2,
 	})
 	op, _, err := hub.Start(OperationStart{
@@ -427,7 +427,7 @@ func TestOperationHubRetriesGeneratedIDCollision(t *testing.T) {
 	ids <- "operation-1"
 	ids <- "operation-2"
 	release := make(chan struct{})
-	hub := NewOperationHub(context.Background(), OperationHubOptions{
+	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		IDSource: func() (string, error) { return <-ids, nil },
 	})
 	first, _, err := hub.Start(OperationStart{
@@ -459,7 +459,7 @@ func TestOperationHubRetriesGeneratedIDCollision(t *testing.T) {
 func TestOperationHubCancelsAfterFinalSubscriberGrace(t *testing.T) {
 	started := make(chan struct{})
 	canceled := make(chan struct{})
-	hub := NewOperationHub(context.Background(), OperationHubOptions{
+	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		SubscriberGrace: time.Millisecond,
 	})
 	op, _, err := hub.Start(OperationStart{
@@ -490,7 +490,7 @@ func TestOperationHubCancelsAfterFinalSubscriberGrace(t *testing.T) {
 func TestOperationHubIgnoresStaleSubscriberLossTimerAfterReconnect(t *testing.T) {
 	started := make(chan struct{})
 	canceled := make(chan struct{})
-	hub := NewOperationHub(context.Background(), OperationHubOptions{
+	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		SubscriberGrace: time.Millisecond,
 	})
 	op, _, err := hub.Start(OperationStart{
@@ -546,7 +546,7 @@ func TestOperationHubIgnoresStaleSubscriberLossTimerAfterReconnect(t *testing.T)
 
 func TestOperationHubExpiresCompletedRetention(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	hub := NewOperationHub(context.Background(), OperationHubOptions{
+	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		Now:                func() time.Time { return now },
 		CompletedRetention: time.Minute,
 	})
@@ -583,7 +583,7 @@ func TestOperationHubRetainsTerminalOperationUntilWorkerReleaseAfterExpiry(t *te
 	released := make(chan struct{})
 	var allowReleaseOnce sync.Once
 	defer allowReleaseOnce.Do(func() { close(allowRelease) })
-	hub := NewOperationHub(context.Background(), OperationHubOptions{
+	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		Now:                func() time.Time { return now },
 		CompletedRetention: time.Minute,
 		Reserve: func() (func(), error) {
@@ -623,7 +623,7 @@ func TestOperationHubRetainsTerminalOperationUntilWorkerReleaseUnderCompletedCap
 	var allowFirstReleaseOnce sync.Once
 	defer allowFirstReleaseOnce.Do(func() { close(allowFirstRelease) })
 	reservations := 0
-	hub := NewOperationHub(context.Background(), OperationHubOptions{
+	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		MaxCompletedOperations: 1,
 		Reserve: func() (func(), error) {
 			reservations++
@@ -669,7 +669,7 @@ func TestOperationHubRetainsTerminalOperationUntilWorkerReleaseUnderCompletedCap
 
 func TestOperationHubRejectsNewWorkAtActiveCapacity(t *testing.T) {
 	release := make(chan struct{})
-	hub := NewOperationHub(context.Background(), OperationHubOptions{
+	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		MaxActiveOperations: 1,
 	})
 	_, _, err := hub.Start(OperationStart{
@@ -697,7 +697,7 @@ func TestOperationHubRejectsNewWorkAtActiveCapacity(t *testing.T) {
 func TestOperationHubRetainsWorkerCapacityUntilCleanupReturns(t *testing.T) {
 	cleanup := make(chan struct{})
 	workerStarted := make(chan struct{})
-	hub := NewOperationHub(context.Background(), OperationHubOptions{
+	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		MaxActiveOperations: 1,
 		MaxBytes:            256,
 	})
@@ -750,7 +750,7 @@ func TestOperationHubRetainsWorkerCapacityUntilCleanupReturns(t *testing.T) {
 func TestOperationHubBoundsSubscribersPerOperationAndGlobally(t *testing.T) {
 	t.Run("per operation", func(t *testing.T) {
 		release := make(chan struct{})
-		hub := NewOperationHub(context.Background(), OperationHubOptions{
+		hub := NewOperationHub(t.Context(), OperationHubOptions{
 			MaxSubscribersPerOperation: 1,
 			MaxSubscribers:             2,
 		})
@@ -783,7 +783,7 @@ func TestOperationHubBoundsSubscribersPerOperationAndGlobally(t *testing.T) {
 
 	t.Run("global", func(t *testing.T) {
 		release := make(chan struct{})
-		hub := NewOperationHub(context.Background(), OperationHubOptions{
+		hub := NewOperationHub(t.Context(), OperationHubOptions{
 			MaxSubscribersPerOperation: 2,
 			MaxSubscribers:             1,
 		})
@@ -820,7 +820,7 @@ func TestOperationHubBoundsSubscribersPerOperationAndGlobally(t *testing.T) {
 }
 
 func TestOperationHubCountsTerminalReplaySubscribersUntilClose(t *testing.T) {
-	hub := NewOperationHub(context.Background(), OperationHubOptions{
+	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		MaxSubscribersPerOperation: 1,
 		MaxSubscribers:             1,
 	})
@@ -852,7 +852,7 @@ func TestOperationHubCountsTerminalReplaySubscribersUntilClose(t *testing.T) {
 
 func TestOperationHubCountsOverflowedSubscriberUntilClose(t *testing.T) {
 	release := make(chan struct{})
-	hub := NewOperationHub(context.Background(), OperationHubOptions{
+	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		SubscriberQueue:            1,
 		MaxSubscribersPerOperation: 1,
 		MaxSubscribers:             1,
@@ -892,7 +892,7 @@ func TestOperationHubReservesLiveHeadroomAfterReplay(t *testing.T) {
 	replayReady := make(chan struct{})
 	emitLive := make(chan struct{})
 	liveEmitted := make(chan struct{})
-	hub := NewOperationHub(context.Background(), OperationHubOptions{
+	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		SubscriberQueue: 1,
 	})
 	operation, _, err := hub.Start(OperationStart{
@@ -964,7 +964,7 @@ func TestOperationHubReservesCriticalCapacityAfterLiveQueueSaturates(t *testing.
 			startWork := make(chan struct{})
 			startCritical := make(chan struct{})
 			queueSaturated := make(chan struct{})
-			hub := NewOperationHub(context.Background(), OperationHubOptions{SubscriberQueue: 1})
+			hub := NewOperationHub(t.Context(), OperationHubOptions{SubscriberQueue: 1})
 			operation, _, err := hub.Start(OperationStart{
 				RequestDigest: "request-1",
 				Run: func(ctx context.Context, operation *Operation) (json.RawMessage, error) {
@@ -1032,7 +1032,7 @@ func TestOperationHubReservesCriticalCapacityAfterLiveQueueSaturates(t *testing.
 
 func TestOperationHubCancelsWhenInitialSubscriberGraceExpires(t *testing.T) {
 	canceled := make(chan struct{})
-	hub := NewOperationHub(context.Background(), OperationHubOptions{
+	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		SubscriberGrace: time.Millisecond,
 	})
 	_, _, err := hub.Start(OperationStart{
@@ -1057,7 +1057,7 @@ func TestOperationHubReservesDaemonWorkUntilTerminalCompletion(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	gate := NewGate(now)
 	releaseWorker := make(chan struct{})
-	hub := NewOperationHub(context.Background(), OperationHubOptions{
+	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		Reserve: func() (func(), error) {
 			return gate.Reserve(ReservationWork, now)
 		},
@@ -1087,7 +1087,7 @@ func TestOperationHubDrainRefusesNewWorkAndTerminatesActiveStreams(t *testing.T)
 	gate := NewGate(now)
 	started := make(chan struct{})
 	cleanup := make(chan struct{})
-	hub := NewOperationHub(context.Background(), OperationHubOptions{
+	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		Reserve: func() (func(), error) {
 			return gate.Reserve(ReservationWork, now)
 		},

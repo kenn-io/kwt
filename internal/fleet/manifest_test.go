@@ -34,7 +34,7 @@ func TestBuildManifestIncludesConfiguredProjectWorktrees(t *testing.T) {
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), cfg)
+	}).Build(t.Context(), cfg)
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, manifest.SchemaVersion)
@@ -106,7 +106,7 @@ func TestBuildManifestUsesConfiguredProjectIdentityOverRemote(t *testing.T) {
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), cfg)
+	}).Build(t.Context(), cfg)
 
 	require.NoError(t, err)
 	require.Len(t, manifest.Projects, 1)
@@ -159,7 +159,7 @@ func TestBuildManifestNeverPublishesCredentialBearingIdentities(t *testing.T) {
 			manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 				Now:      func() time.Time { return fixedTime },
 				Hostname: func() (string, error) { return "Host-A", nil },
-			}).Build(context.Background(), &models.Config{
+			}).Build(t.Context(), &models.Config{
 				Fleet: models.FleetConfig{HostID: "host-a"},
 				Projects: []models.Project{{
 					Repository: tt.configured,
@@ -184,7 +184,7 @@ func TestBuildManifestAndStoreAcceptExplicitPortIdentity(t *testing.T) {
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{HostID: "host-a"},
 		Projects: []models.Project{{
 			Repository: identity,
@@ -196,7 +196,7 @@ func TestBuildManifestAndStoreAcceptExplicitPortIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, manifest.Projects, 1)
 	assert.Equal(t, identity, manifest.Projects[0].Identity)
-	require.NoError(t, NewFileStore(filepath.Join(t.TempDir(), "state.json")).Put(context.Background(), *manifest))
+	require.NoError(t, NewFileStore(filepath.Join(t.TempDir(), "state.json")).Put(t.Context(), *manifest))
 }
 
 func TestBuildManifestGlobalFallbackPreservesRegisteredIdentity(t *testing.T) {
@@ -222,7 +222,7 @@ func TestBuildManifestGlobalFallbackPreservesRegisteredIdentity(t *testing.T) {
 				IsMain:         true,
 			}}, nil
 		},
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet:    models.FleetConfig{HostID: "host-a"},
 		Worktree: models.WorktreeConfig{BaseDir: t.TempDir()},
 		Projects: []models.Project{{
@@ -240,7 +240,7 @@ func TestBuildManifestGlobalFallbackPreservesRegisteredIdentity(t *testing.T) {
 }
 
 func TestBuildManifestReturnsCanceledContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
@@ -262,7 +262,7 @@ func TestBuildManifestPropagatesCanceledProjectWorktreeListing(t *testing.T) {
 		ListProjectWorktrees: func(context.Context, models.Project) ([]models.Worktree, error) {
 			return nil, context.Canceled
 		},
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{HostID: "host-a"},
 		Projects: []models.Project{{
 			Repository: "github.com/kenn-io/kwt",
@@ -292,7 +292,7 @@ func TestBuildManifestPropagatesIncompleteProjectInventory(t *testing.T) {
 		) ([]models.Worktree, error) {
 			return nil, incomplete
 		},
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{HostID: "host-a"},
 		Projects: []models.Project{{
 			Repository: "github.com/kenn-io/kwt",
@@ -312,7 +312,7 @@ func TestBuildManifestUsesRemoteWhenConfiguredProjectIdentityIsPathBacked(t *tes
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{HostID: "host-a"},
 		Projects: []models.Project{{
 			Repository: repo,
@@ -333,7 +333,7 @@ func TestBuildManifestUsesRemoteWhenConfiguredProjectIdentityIsBarePathLike(t *t
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{HostID: "host-a"},
 		Projects: []models.Project{{
 			Repository: "workspace/repo",
@@ -358,7 +358,7 @@ func TestBuildManifestUsesConfiguredAliasSlugIdentity(t *testing.T) {
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{HostID: "host-a"},
 		Projects: []models.Project{{
 			Repository: "workspace/org/repo",
@@ -378,7 +378,7 @@ func TestBuildManifestUsesRemoteWhenConfiguredProjectIdentityIsTildePath(t *test
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{HostID: "host-a"},
 		Projects: []models.Project{{
 			Repository: "~/.config/kwt",
@@ -398,7 +398,7 @@ func TestBuildManifestUsesRemoteWhenConfiguredProjectIdentityIsFileURL(t *testin
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{HostID: "host-a"},
 		Projects: []models.Project{{
 			Repository: "file:///tmp/org/repo",
@@ -418,7 +418,7 @@ func TestBuildManifestSkipsProjectWhenConfiguredAndRemoteIdentitiesAreUnsupporte
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{HostID: "host-a"},
 		Projects: []models.Project{{
 			Repository: repo,
@@ -438,7 +438,7 @@ func TestBuildManifestSkipsConfiguredProjectWithoutStableIdentity(t *testing.T) 
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{HostID: "host-a"},
 		Projects: []models.Project{{
 			Name: "local-only",
@@ -457,7 +457,7 @@ func TestBuildManifestSkipsConfiguredProjectWithPathLikeRemote(t *testing.T) {
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{HostID: "host-a"},
 		Projects: []models.Project{{
 			Name: "local-remote",
@@ -482,7 +482,7 @@ func TestBuildManifestSkipsConfiguredProjectWithRelativeDotlessRemote(t *testing
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{HostID: "host-a"},
 		Projects: []models.Project{{
 			Name: "relative-remote",
@@ -505,7 +505,7 @@ func TestBuildManifestPublishesConfiguredIdentityOverBarredRemote(t *testing.T) 
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{HostID: "host-a"},
 		Projects: []models.Project{{
 			Repository: "cache/team/repo",
@@ -529,7 +529,7 @@ func TestBuildManifestUsesScpAliasRemoteIdentity(t *testing.T) {
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{HostID: "host-a"},
 		Projects: []models.Project{{
 			Name: "alias-remote",
@@ -548,7 +548,7 @@ func TestBuildManifestSkipsConfiguredProjectWithFileURLRemote(t *testing.T) {
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{HostID: "host-a"},
 		Projects: []models.Project{{
 			Name: "file-remote",
@@ -569,7 +569,7 @@ func TestBuildManifestIncludesGlobalBaseDirWorktrees(t *testing.T) {
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet:    models.FleetConfig{HostID: "host-a"},
 		Worktree: models.WorktreeConfig{BaseDir: baseDir},
 	})
@@ -586,7 +586,7 @@ func TestBuildManifestSkipsGlobalWorktreeWithoutStableRemoteIdentity(t *testing.
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet:    models.FleetConfig{HostID: "host-a"},
 		Worktree: models.WorktreeConfig{BaseDir: baseDir},
 	})
@@ -603,7 +603,7 @@ func TestBuildManifestSkipsGlobalWorktreeWithFileURLRemote(t *testing.T) {
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet:    models.FleetConfig{HostID: "host-a"},
 		Worktree: models.WorktreeConfig{BaseDir: baseDir},
 	})
@@ -620,7 +620,7 @@ func TestBuildManifestSkipsGlobalWorktreeWithPathLikeRemote(t *testing.T) {
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet:    models.FleetConfig{HostID: "host-a"},
 		Worktree: models.WorktreeConfig{BaseDir: baseDir},
 	})
@@ -641,7 +641,7 @@ func TestBuildManifestSkipsGlobalWorktreeWithRelativeDotlessRemote(t *testing.T)
 	manifest, err := NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet:    models.FleetConfig{HostID: "host-a"},
 		Worktree: models.WorktreeConfig{BaseDir: baseDir},
 	})
@@ -656,7 +656,7 @@ func buildTestManifestForRepo(t *testing.T, repo string) (*Manifest, error) {
 	return NewManifestBuilder(ManifestBuilderOptions{
 		Now:      func() time.Time { return fixedTime },
 		Hostname: func() (string, error) { return "Host-A", nil },
-	}).Build(context.Background(), &models.Config{
+	}).Build(t.Context(), &models.Config{
 		Fleet: models.FleetConfig{HostID: "host-a"},
 		Projects: []models.Project{{
 			Repository: "github.com/kenn-io/kwt",
@@ -703,7 +703,7 @@ func runGit(t *testing.T, dir string, args ...string) {
 
 func runGitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"GIT_AUTHOR_NAME=Test User",

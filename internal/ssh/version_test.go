@@ -37,7 +37,7 @@ func TestVersionPolicyRequiresOpenSSH84ForInteractiveUse(t *testing.T) {
 		return "OpenSSH_8.3p1, LibreSSL 3.3.6", nil
 	})
 
-	err := policy.RequireInteractive(context.Background())
+	err := policy.RequireInteractive(t.Context())
 
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.SSHUnsupportedVersion))
@@ -50,8 +50,8 @@ func TestVersionPolicyCachesAuthoritativeResult(t *testing.T) {
 		return "OpenSSH_8.4p1", nil
 	})
 
-	require.NoError(t, policy.RequireInteractive(context.Background()))
-	require.NoError(t, policy.RequireInteractive(context.Background()))
+	require.NoError(t, policy.RequireInteractive(t.Context()))
+	require.NoError(t, policy.RequireInteractive(t.Context()))
 	assert.Equal(t, 1, calls)
 }
 
@@ -61,12 +61,12 @@ func TestVersionPolicyPreservesCancellationWithoutCachingIt(t *testing.T) {
 		calls++
 		return "OpenSSH_9.0p1", nil
 	})
-	canceled, cancel := context.WithCancel(context.Background())
+	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	err := policy.RequireInteractive(canceled)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, context.Canceled))
-	require.NoError(t, policy.RequireInteractive(context.Background()))
+	require.NoError(t, policy.RequireInteractive(t.Context()))
 	assert.Equal(t, 1, calls)
 }
