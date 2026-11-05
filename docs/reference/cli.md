@@ -639,13 +639,13 @@ through `/hooks`.
 Each hook writes the tmux pane option `@ghosthub_agent` on the pane the agent
 runs in:
 
-| Event | Value |
-|---|---|
-| Prompt submitted, tool finished | `working <unix-seconds> <agent>` |
-| Permission request or prompt | `approval <unix-seconds> <agent>` |
-| Question tool or elicitation dialog | `input <unix-seconds> <agent>` |
-| Turn finished (`Stop`) | `done <unix-seconds> <agent>` |
-| Session start or end | option removed |
+| Event                               | Value                             |
+| ----------------------------------- | --------------------------------- |
+| Prompt submitted, tool finished     | `working <unix-seconds> <agent>`  |
+| Permission request or prompt        | `approval <unix-seconds> <agent>` |
+| Question tool or elicitation dialog | `input <unix-seconds> <agent>`    |
+| Turn finished (`Stop`)              | `done <unix-seconds> <agent>`     |
+| Session start or end                | option removed                    |
 
 Subagent events and Claude Code's `idle_prompt` reminder are ignored. Outside
 tmux, or when tmux is unavailable, the hook does nothing. The hook always
