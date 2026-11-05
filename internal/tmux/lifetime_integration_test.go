@@ -111,6 +111,7 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 		{name: "session-local policy", localPolicy: true},
 		{name: "reload before first attach", reload: true},
 		{name: "user hooks at 999", user999: true},
+		{name: "user hooks at 999 with local hooks", user999: true, localHooks: true, warm: true},
 		{name: "updated global hook", secondVisit: "global"},
 		{name: "installed local hook", secondVisit: "local"},
 		{name: "updated global session-changed hook", secondVisit: "global", secondHook: "client-session-changed"},
@@ -154,6 +155,11 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 			t.Cleanup(func() { killPrivateTmuxServer(socket) })
 			if tc.warm {
 				require.NoError(t, command.RunCommandContext(ctx, "new-session", "-d", "-s", "unrelated", "sleep", "30", ";", "set-option", "-t", "unrelated", "destroy-unattached", "off"))
+			}
+			var globalHooks string
+			if tc.user999 && tc.localHooks {
+				globalHooks, err = command.RunCommandOutputContext(ctx, "show-hooks", "-g")
+				require.NoError(t, err)
 			}
 			var terminal *os.File
 			var client *exec.Cmd
@@ -202,7 +208,7 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 				clientName, err := command.RunCommandOutputContext(ctx, "list-clients", "-t", "workspace", "-F", "#{client_name}")
 				require.NoError(t, err)
 				require.NotEmpty(t, strings.TrimSpace(clientName))
-				if tc.user999 {
+				if tc.user999 && !tc.localHooks {
 					require.Eventually(t, func() bool {
 						output, err := command.RunCommandOutputContext(ctx, "show-options", "-gqv", "@user-999-client")
 						return err == nil && strings.TrimSpace(output) == strings.TrimSpace(clientName)
@@ -225,6 +231,9 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 			if tc.user999 {
 				before, err := command.RunCommandOutputContext(ctx, "show-hooks", "-g")
 				require.NoError(t, err)
+				if tc.localHooks {
+					require.Equal(t, globalHooks, before, "session-local arrays must not hide user-owned global slots")
+				}
 				require.NoError(t, runner.Ensure(ctx, "workspace", root, BlankLayout()))
 				require.NoError(t, NewWorkspaceRunner(command, nil).Ensure(ctx, "spare", root, BlankLayout()))
 				after, err := command.RunCommandOutputContext(ctx, "show-hooks", "-g")
@@ -256,7 +265,7 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 				if tc.secondVisit != "" {
 					expectedPolicy = "keep-last"
 				}
-				if tc.user999 {
+				if tc.user999 && !tc.localHooks {
 					expectedPolicy = "off" // User-owned slots take priority over restoration.
 				}
 				require.Equal(t, expectedPolicy, strings.TrimSpace(out))
@@ -298,7 +307,7 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 				var exitErr *exec.ExitError
 				require.ErrorAs(t, client.Wait(), &exitErr)
 				require.Equal(t, -1, exitErr.ExitCode())
-				if tc.followGlobal || tc.user999 || tc.secondVisit != "" {
+				if tc.followGlobal || (tc.user999 && !tc.localHooks) || tc.secondVisit != "" {
 					require.True(t, command.HasSession("workspace"))
 				} else {
 					require.Eventually(t, func() bool { return !command.HasSession("workspace") }, 5*time.Second, 10*time.Millisecond)

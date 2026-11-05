@@ -13,8 +13,8 @@ const workspaceRestoreCommand = `if-shell -F "#{` + workspaceDestroyOption + `}"
 	`{ set-option -u destroy-unattached } { set-option -F destroy-unattached "#{` + workspaceDestroyOption + `}" } ; set-option -u ` + workspaceDestroyOption + " }"
 
 // User commands take priority over the shared restore hook.
-const workspaceLifetimeHooks = `if-shell -F '#{||:#{==:#{client-attached[999]},},#{m:*@kwt-destroy-unattached*,#{client-attached[999]}}}' { set-hook -g client-attached[999] { ` + workspaceRestoreCommand + ` } } ; ` +
-	`if-shell -F '#{||:#{==:#{client-session-changed[999]},},#{m:*@kwt-destroy-unattached*,#{client-session-changed[999]}}}' { set-hook -g client-session-changed[999] { ` + workspaceRestoreCommand + ` } }`
+const workspaceLifetimeHooks = `set-option -gqo client-attached[999] '` + workspaceRestoreCommand + `' ; ` +
+	`set-option -gqo client-session-changed[999] '` + workspaceRestoreCommand + `'`
 
 // holdWorkspaceLifetime runs in the same command queue as new-session, before
 // tmux can destroy the still-unattached session between bootstrap commands.
