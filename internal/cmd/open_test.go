@@ -556,6 +556,30 @@ func TestRunOpenWithContextChecksDirectoryExpectedSession(t *testing.T) {
 	}
 }
 
+func TestRunOpenWithContextRejectsSessionOnlyGuardForWorktree(t *testing.T) {
+	isolateCommandTestHome(t)
+	resetWorkspaceCommandDeps(t)
+	repo := newTUITestRepo(t)
+	worktree := filepath.Join(t.TempDir(), "feature")
+	require.NoError(t, exec.CommandContext(t.Context(), "git", "-C", repo, "worktree", "add", "-b", "feature", worktree).Run())
+	originalSession := openExpectedSession
+	t.Cleanup(func() { openExpectedSession = originalSession })
+	openExpectedSession = "retained-session"
+	for _, path := range []string{repo, worktree} {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			cmd, _, _ := fleetTestCommand()
+			cmd.SetContext(t.Context())
+			markCommandFlagsChanged(t, cmd, "expected-session")
+			err := runOpenWithContext(cmd, []string{path}, &CommandContext{Config: &models.Config{
+				Projects: []models.Project{{Repository: "github.com/acme/widget", Path: repo}},
+			}})
+			require.Error(t, err)
+			assert.True(t, service.IsCode(err, service.InvalidRequest), err)
+			assert.Contains(t, err.Error(), "expected repository, registration, generation, and session must be provided together")
+		})
+	}
+}
+
 func TestRunOpenWithContextRejectsGuardedDirectoryWorkspace(t *testing.T) {
 	workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
 	originalRepository := openExpectedRepository

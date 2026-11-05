@@ -73,9 +73,11 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 			defer cancel()
 			root := t.TempDir()
 			config := filepath.Join(root, "tmux.conf")
-			contents := "set -g destroy-unattached on\nset -g default-shell /bin/sh\nset-hook -g client-attached 'set -g @user-attach-hook ran'\nset-hook -g client-session-changed 'set -g @user-switch-hook ran'\n"
+			contents := "set -g destroy-unattached on\nset -g default-shell /bin/sh\nset-hook -g client-attached 'set -g @user-attach-hook ran'\nset-hook -g client-session-changed 'set -g @user-switch-hook ran'\n" +
+				"set-hook -g client-attached[3] 'set -gF @user-attach-client \"#{hook_client}\"'\n" +
+				"set-hook -g client-session-changed[3] 'set -gF @user-switch-client \"#{hook_client}\"'\n"
 			if tc.localHooks {
-				contents += "set-hook -g after-new-session { set-hook client-attached[4] { set -g @user-attach-hook local }; set-hook client-session-changed[7] { set -g @user-switch-hook local } }\n"
+				contents += "set-hook -g after-new-session { set-hook client-attached[4] { set -g @user-attach-hook local }; set-hook client-session-changed[7] { set -g @user-switch-hook local }; set-hook client-attached[9] { set -gF @user-attach-client \"#{hook_client}\" }; set-hook client-session-changed[9] { set -gF @user-switch-client \"#{hook_client}\" } }\n"
 			}
 			require.NoError(t, os.WriteFile(config, []byte(contents), 0600))
 			wrapper := filepath.Join(root, "tmux")
@@ -108,6 +110,7 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 						return err == nil && clientName != ""
 					}, 5*time.Second, 10*time.Millisecond)
 					require.NoError(t, command.RunCommandContext(ctx, "set-option", "-gu", "@user-switch-hook"))
+					require.NoError(t, command.RunCommandContext(ctx, "set-option", "-gu", "@user-switch-client"))
 					require.NoError(t, command.RunCommandContext(ctx, "switch-client", "-c", clientName, "-t", "workspace"))
 				}
 				hook := "@user-attach-hook"
@@ -121,6 +124,13 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 				require.Eventually(t, func() bool {
 					out, err := command.RunCommandOutputContext(ctx, "show-options", "-gv", hook)
 					return err == nil && strings.TrimSpace(out) == expected
+				}, 5*time.Second, 10*time.Millisecond)
+				clientName, err := command.RunCommandOutputContext(ctx, "list-clients", "-t", "workspace", "-F", "#{client_name}")
+				require.NoError(t, err)
+				require.NotEmpty(t, strings.TrimSpace(clientName))
+				require.Eventually(t, func() bool {
+					output, err := command.RunCommandOutputContext(ctx, "show-options", "-gv", strings.Replace(hook, "-hook", "-client", 1))
+					return err == nil && strings.TrimSpace(output) == strings.TrimSpace(clientName)
 				}, 5*time.Second, 10*time.Millisecond)
 			}
 			var backend workspaceTmux = command

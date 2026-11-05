@@ -151,6 +151,11 @@ func runOpenWithContext(
 		}
 	}
 	if !guardedOpen && commandFlagChanged(cmd, "expected-session") {
+		if _, err := discoverOpenWorktree(args[0], ctx.Config.Projects); err == nil {
+			return service.NewError(service.InvalidRequest,
+				"expected repository, registration, generation, and session must be provided together",
+				false, nil, nil)
+		}
 		return service.NewError(service.RegistrationChanged,
 			"directory workspace is no longer registered at the requested path",
 			true, nil, nil)

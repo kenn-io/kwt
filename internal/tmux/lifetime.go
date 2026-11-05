@@ -3,7 +3,6 @@ package tmux
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -22,7 +21,7 @@ func holdWorkspaceLifetime(session string) []string {
 
 // restoreWorkspaceLifetime lets any ordinary tmux client finish the handoff,
 // including a client that switches from another session. The temporary hooks
-// remove themselves and preserve existing session or inherited user hooks.
+// become inert after restoration and preserve session or inherited user hooks.
 func (r *WorkspaceRunner) restoreWorkspaceLifetime(ctx context.Context, session string) error {
 	policy, err := r.tmux.sessionUserOption(ctx, session, workspaceDestroyOption)
 	if err != nil {
@@ -46,34 +45,24 @@ func (r *WorkspaceRunner) restoreWorkspaceLifetime(ctx context.Context, session 
 		if err != nil {
 			return err
 		}
-		index := 0
-		local := strings.TrimSpace(output) != ""
-		for line := range strings.SplitSeq(strings.TrimSpace(output), "\n") {
-			if line == "" {
-				continue
+		if strings.TrimSpace(output) == "" {
+			// A local hook shadows the global list. Copy inherited commands so
+			// they still run with the real event's client and session context.
+			output, err = r.tmux.RunCommandOutputContext(ctx, "show-options", "-gv", hook)
+			if err != nil {
+				return err
 			}
-			key, _, ok := strings.Cut(line, "]")
-			if !ok {
-				return fmt.Errorf("invalid tmux hook entry %q", line)
+			for line := range strings.SplitSeq(strings.TrimSpace(output), "\n") {
+				if line == "" {
+					continue
+				}
+				if err := r.tmux.RunCommandContext(ctx, "set-hook", "-a", "-t", target, hook, line); err != nil {
+					return err
+				}
 			}
-			value, err := strconv.Atoi(strings.TrimPrefix(key, hook+"["))
-			if err != nil || value < 0 {
-				return fmt.Errorf("invalid tmux hook index %q", key)
-			}
-			index = max(index, value+1)
 		}
-		key := fmt.Sprintf("%s[%d]", hook, index)
-		remove := key
-		if !local {
-			remove = hook
-		}
-		command := "set-hook -u -t " + quoted + " " + remove +
-			" ; if-shell -F -t " + quoted + " '#{" + workspaceDestroyOption + "}' " + quoteTmuxCommandArgument(restore)
-		if !local {
-			// Unsetting the temporary local array reveals the inherited hook again.
-			command += " ; set-hook -R -t " + quoted + " " + hook
-		}
-		if err := r.tmux.RunCommandContext(ctx, "set-hook", "-t", target, key, command); err != nil {
+		command := "if-shell -F -t " + quoted + " '#{" + workspaceDestroyOption + "}' " + quoteTmuxCommandArgument(restore)
+		if err := r.tmux.RunCommandContext(ctx, "set-hook", "-a", "-t", target, hook, command); err != nil {
 			return err
 		}
 	}
