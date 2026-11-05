@@ -151,7 +151,8 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 			defer cancel()
 			root := t.TempDir()
 			config := filepath.Join(root, "tmux.conf")
-			contents := "set -g destroy-unattached on\nset -g default-shell /bin/sh\nset-hook -g client-attached 'set -g @user-attach-hook ran'\nset-hook -g client-session-changed 'set -g @user-switch-hook ran'\n" +
+			// Keep server shutdown separate from the session lifetime assertions.
+			contents := "set -s exit-empty off\nset -g destroy-unattached on\nset -g default-shell /bin/sh\nset-hook -g client-attached 'set -g @user-attach-hook ran'\nset-hook -g client-session-changed 'set -g @user-switch-hook ran'\n" +
 				"set-hook -g client-attached[3] 'set -gF @user-attach-client \"#{hook_client}\"'\n" +
 				"set-hook -g client-session-changed[3] 'set -gF @user-switch-client \"#{hook_client}\"'\n"
 			if tc.localHooks {
@@ -242,16 +243,12 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 			if tc.followGlobal {
 				require.NoError(t, command.RunCommandContext(ctx, "set-option", "-g", "destroy-unattached", "off"))
 			}
-			if tc.switchClient {
-				// Return to the original session before detaching. Tmux 3.6 can
-				// exit unexpectedly when detaching from a switched-to session
-				// that destroy-unattached immediately removes.
-				require.NoError(t, command.RunCommandContext(ctx, "switch-client", "-t", "unrelated"))
-				require.NoError(t, command.RunCommandContext(ctx, "detach-client", "-s", "unrelated"))
-			} else {
-				require.NoError(t, command.RunCommandContext(ctx, "detach-client", "-s", "workspace"))
-			}
-			require.NoError(t, client.Wait())
+			// Disconnect the client directly. Tmux 3.6's detach-client path can
+			// redraw a session after destroy-unattached removes its last window.
+			require.NoError(t, client.Process.Kill())
+			var exitErr *exec.ExitError
+			require.ErrorAs(t, client.Wait(), &exitErr)
+			require.Equal(t, -1, exitErr.ExitCode())
 			if tc.followGlobal {
 				require.True(t, command.HasSession("workspace"))
 			} else {
@@ -262,6 +259,9 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 				require.NoError(t, err)
 				require.True(t, exists)
 			}
+			out, err = command.RunCommandOutputContext(ctx, "show-options", "-sv", "exit-empty")
+			require.NoError(t, err, "the tmux server must survive the client disconnect")
+			require.Equal(t, "off", strings.TrimSpace(out))
 		})
 	}
 }
