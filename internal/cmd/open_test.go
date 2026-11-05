@@ -460,10 +460,13 @@ func TestRunOpenWithContextChoosesRegisteredDirectory(t *testing.T) {
 		name            string
 		startSession    bool
 		expectedSession string
+		actualSession   string
+		wantError       bool
 	}{
 		{name: "attach"},
 		{name: "start only", startSession: true},
-		{name: "expected session", expectedSession: "retained-directory"},
+		{name: "expected session", expectedSession: "retained-directory", actualSession: "retained-directory"},
+		{name: "session changed", expectedSession: "old-directory", actualSession: "replacement-directory", wantError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resetWorkspaceCommandDeps(t)
@@ -473,7 +476,7 @@ func TestRunOpenWithContextChoosesRegisteredDirectory(t *testing.T) {
 			}
 			runner := &recordingOpenWorkspaceRunner{}
 			if tc.expectedSession != "" {
-				runner.endpoint = testCanonicalSessionEndpoint(tc.expectedSession)
+				runner.endpoint = testCanonicalSessionEndpoint(tc.actualSession)
 			}
 			originalRunner := newOpenWorkspaceRunner
 			originalLayout := openLayout
@@ -506,6 +509,13 @@ func TestRunOpenWithContextChoosesRegisteredDirectory(t *testing.T) {
 				}},
 			)
 
+			if tc.wantError {
+				require.Error(t, err)
+				assert.True(t, service.IsCode(err, service.RegistrationChanged))
+				assert.False(t, runner.ensured)
+				assert.False(t, runner.attached)
+				return
+			}
 			require.NoError(t, err)
 			assert.Equal(t, workspace.Path, runner.workingDirectory)
 			assert.True(t, runner.ensured)
@@ -515,46 +525,19 @@ func TestRunOpenWithContextChoosesRegisteredDirectory(t *testing.T) {
 	}
 }
 
-func TestRunOpenWithContextChecksDirectoryExpectedSession(t *testing.T) {
-	isolateCommandTestHome(t)
-	resetWorkspaceCommandDeps(t)
-	workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
-	resolveDirectorySessions = func(workspaces []models.Workspace) ([]tmux.WorkspaceSession, error) {
-		return testDirectorySessions(workspaces, ""), nil
-	}
-	runner := &recordingOpenWorkspaceRunner{endpoint: testCanonicalSessionEndpoint("replacement-directory")}
-	originalRunner, originalLayout := newOpenWorkspaceRunner, openLayout
-	originalSession, originalStart := openExpectedSession, openStartSession
-	t.Cleanup(func() {
-		newOpenWorkspaceRunner, openLayout = originalRunner, originalLayout
-		openExpectedSession, openStartSession = originalSession, originalStart
-	})
-	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
-	openLayout, openExpectedSession, openStartSession = tmux.BlankLayoutName, "old-directory", false
-	cmd, _, _ := fleetTestCommand()
-	cmd.SetContext(t.Context())
-	markCommandFlagsChanged(t, cmd, "expected-session")
-	cfg := &models.Config{Workspaces: []models.Workspace{workspace}}
-	err := runOpenWithContext(cmd, []string{workspace.Path}, &CommandContext{Config: cfg})
-	require.Error(t, err)
-	assert.True(t, service.IsCode(err, service.RegistrationChanged))
-	assert.False(t, runner.ensured)
-	assert.False(t, runner.attached)
-}
-
-func TestRunOpenWithContextRejectsSessionOnlyGuardForWorktree(t *testing.T) {
+func TestRunOpenWithContextRejectsSessionOnlyGuardWithoutRegisteredDirectory(t *testing.T) {
 	repo := newTUITestRepo(t)
 	worktree := filepath.Join(t.TempDir(), "feature")
 	require.NoError(t, exec.CommandContext(t.Context(), "git", "-C", repo, "worktree", "add", "-b", "feature", worktree).Run())
 	for _, tc := range []struct {
-		name, path   string
+		name         string
+		paths        []string
 		discoveryErr error
 		code         service.Code
 		message      string
 	}{
-		{name: "primary", path: repo, code: service.InvalidRequest, message: "expected repository, registration, generation, and session must be provided together"},
-		{name: "linked", path: worktree, code: service.InvalidRequest, message: "expected repository, registration, generation, and session must be provided together"},
-		{name: "removed registration", path: t.TempDir(), discoveryErr: errors.New("not a worktree"), code: service.RegistrationChanged, message: "directory workspace is no longer registered at the requested path"},
+		{name: "worktree", paths: []string{repo, worktree}, code: service.InvalidRequest, message: "expected repository, registration, generation, and session must be provided together"},
+		{name: "removed registration", paths: []string{t.TempDir()}, discoveryErr: errors.New("not a worktree"), code: service.RegistrationChanged, message: "directory workspace is no longer registered at the requested path"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			isolateCommandTestHome(t)
@@ -567,8 +550,9 @@ func TestRunOpenWithContextRejectsSessionOnlyGuardForWorktree(t *testing.T) {
 			newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
 			projects := []models.Project{{Repository: "github.com/acme/widget", Path: repo}}
 			discoveryCalls := 0
+			var expectedPath string
 			discoverOpenWorktree = func(requestedPath string, registered []models.Project) (*discovery.GlobalWorktreeEntry, error) {
-				assert.Equal(t, tc.path, requestedPath)
+				assert.Equal(t, expectedPath, requestedPath)
 				assert.Equal(t, projects, registered)
 				discoveryCalls++
 				if tc.discoveryErr != nil {
@@ -580,13 +564,16 @@ func TestRunOpenWithContextRejectsSessionOnlyGuardForWorktree(t *testing.T) {
 			cmd, _, _ := fleetTestCommand()
 			cmd.SetContext(t.Context())
 			markCommandFlagsChanged(t, cmd, "expected-session")
-			err := runOpenWithContext(cmd, []string{tc.path}, &CommandContext{Config: &models.Config{Projects: projects}})
-			require.Error(t, err)
-			assert.True(t, service.IsCode(err, tc.code), err)
-			assert.Contains(t, err.Error(), tc.message)
-			assert.Equal(t, 1, discoveryCalls)
-			assert.False(t, runner.ensured)
-			assert.False(t, runner.attached)
+			for index, path := range tc.paths {
+				expectedPath = path
+				err := runOpenWithContext(cmd, []string{path}, &CommandContext{Config: &models.Config{Projects: projects}})
+				require.Error(t, err)
+				assert.True(t, service.IsCode(err, tc.code), err)
+				assert.Contains(t, err.Error(), tc.message)
+				assert.Equal(t, index+1, discoveryCalls)
+				assert.False(t, runner.ensured)
+				assert.False(t, runner.attached)
+			}
 		})
 	}
 }
@@ -639,8 +626,6 @@ func TestRunOpenWithContextRejectsExplicitEmptyExpectedFlags(t *testing.T) {
 		{name: "empty expected session", flags: []string{"expected-session"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			isolateCommandTestHome(t)
-			resetWorkspaceCommandDeps(t)
 			workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
 			runner := &recordingOpenWorkspaceRunner{}
 			originalRunner, originalSession := newOpenWorkspaceRunner, openExpectedSession

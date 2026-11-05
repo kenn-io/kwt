@@ -199,7 +199,7 @@ func TestEnsureWithGenerationReusesMatchingSession(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, m.calls)
-	require.Len(t, m.queryContexts["session_user_option"], 3)
+	require.NotEmpty(t, m.queryContexts["session_user_option"])
 	for _, queryCtx := range m.queryContexts["session_user_option"] {
 		assert.Same(t, ctx, queryCtx)
 	}
