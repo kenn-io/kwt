@@ -26,25 +26,28 @@ func TestHookEventsRecordPaneState(t *testing.T) {
 		Now:      func() time.Time { return clock },
 	}
 
+	// Each step runs one minute after the previous one, so the expected
+	// stamp shows which event's time the pane keeps.
 	steps := []struct {
 		payload string
 		want    string
 	}{
-		{claudePayload("UserPromptSubmit", `"prompt":"fix it"`), "working 1800000000 claude"},
-		{claudePayload("PermissionRequest", `"tool_name":"Bash","tool_input":{"command":"ls"}`), "approval 1800000000 claude"},
-		{claudePayload("PostToolUse", `"tool_name":"Bash","tool_input":{},"tool_response":{}`), "working 1800000000 claude"},
-		{claudePayload("PreToolUse", `"tool_name":"AskUserQuestion","tool_input":{}`), "input 1800000000 claude"},
-		{claudePayload("Notification", `"message":"Claude needs your permission","notification_type":"permission_prompt"`), "approval 1800000000 claude"},
-		{claudePayload("Stop", ""), "done 1800000000 claude"},
-		// Claude raises idle_prompt a minute after Stop; it must not
-		// replace the finished turn.
-		{claudePayload("Notification", `"message":"waiting","notification_type":"idle_prompt"`), "done 1800000000 claude"},
+		{claudePayload("UserPromptSubmit", `"prompt":"fix it"`), "working 1800000060 claude"},
+		{claudePayload("PermissionRequest", `"tool_name":"Bash","tool_input":{"command":"ls"}`), "approval 1800000120 claude"},
+		{claudePayload("PostToolUse", `"tool_name":"Bash","tool_input":{},"tool_response":{}`), "working 1800000180 claude"},
+		{claudePayload("PreToolUse", `"tool_name":"AskUserQuestion","tool_input":{}`), "input 1800000240 claude"},
+		{claudePayload("Notification", `"message":"Claude needs your permission","notification_type":"permission_prompt"`), "approval 1800000300 claude"},
+		{claudePayload("Stop", ""), "done 1800000360 claude"},
+		// Claude raises idle_prompt a minute after Stop. It must keep the
+		// finished turn and its stamp, or a viewed turn would look new.
+		{claudePayload("Notification", `"message":"waiting","notification_type":"idle_prompt"`), "done 1800000360 claude"},
 		// A subagent finishing is not the session handing control back.
-		{claudePayload("UserPromptSubmit", `"prompt":"again"`), "working 1800000000 claude"},
-		{claudePayload("Stop", `"agent_id":"sub-1","agent_type":"Explore"`), "working 1800000000 claude"},
+		{claudePayload("UserPromptSubmit", `"prompt":"again"`), "working 1800000480 claude"},
+		{claudePayload("Stop", `"agent_id":"sub-1","agent_type":"Explore"`), "working 1800000480 claude"},
 		{claudePayload("SessionEnd", `"reason":"prompt_input_exit"`), ""},
 	}
 	for _, step := range steps {
+		clock = clock.Add(time.Minute)
 		err := agenthook.Handle(
 			t.Context(),
 			agenthook.AgentClaude,
