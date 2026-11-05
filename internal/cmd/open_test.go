@@ -529,7 +529,7 @@ func TestRunOpenWithContextChecksDirectoryExpectedSession(t *testing.T) {
 			newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
 			openLayout, openExpectedSession, openStartSession = tmux.BlankLayoutName, tc.expected, tc.startOnly
 			cmd, _, _ := fleetTestCommand()
-			cmd.SetContext(context.Background())
+			cmd.SetContext(t.Context())
 			markCommandFlagsChanged(t, cmd, "expected-session")
 			cfg := &models.Config{}
 			if tc.registered {
