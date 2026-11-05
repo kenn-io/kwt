@@ -573,7 +573,9 @@ func (r *WorkspaceRunner) create(
 	if err != nil {
 		return fmt.Errorf("cannot inspect tmux bootstrap environment: %w", err)
 	}
-	createCmd := append(BuildSessionCreateCommand(session, worktreeDir), holdWorkspaceLifetime(session)...)
+	createCmd := append(installWorkspaceLifetimeHooks(), ";")
+	createCmd = append(createCmd, BuildSessionCreateCommand(session, worktreeDir)...)
+	createCmd = append(createCmd, holdWorkspaceLifetime(session)...)
 	firstPane, err := r.tmux.RunCommandOutputContext(ctx, createCmd...)
 	if err != nil {
 		return wrapTmuxErr(createCmd, err)

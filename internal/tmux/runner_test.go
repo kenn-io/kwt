@@ -406,8 +406,10 @@ func TestEnsureAndAttachCreatesSendsToCapturedIDsAndAttaches(t *testing.T) {
 	}
 	prefix := []string{"new-session", "-d", "-P", "-F", "#{pane_id}", "-s", "s", "-c", "/wt", "sleep", "2147483647", ";", "if-shell"}
 	require.NotEmpty(t, m.calls)
-	require.GreaterOrEqual(t, len(m.calls[0]), len(prefix))
-	assert.Equal(t, prefix, m.calls[0][:len(prefix)])
+	require.GreaterOrEqual(t, len(m.calls[0]), len(prefix)+5)
+	assert.Equal(t, "if-shell", m.calls[0][0])
+	assert.Equal(t, ";", m.calls[0][4])
+	assert.Equal(t, prefix, m.calls[0][5:len(prefix)+5])
 	assert.Equal(t, want, m.calls[1:])
 	assert.Equal(t, "s", m.attachedTo)
 	assert.Empty(t, m.switchedTo)
@@ -675,7 +677,8 @@ func TestProtectedEnsureAndAttachCreatesMissingSession(t *testing.T) {
 	assert.Same(t, ctx, m.protectedAttachCtx)
 	assert.Equal(t, "workspace", m.protectedAttachedTo)
 	assert.True(t, slices.ContainsFunc(m.calls, func(args []string) bool {
-		return len(args) >= 9 && args[0] == "new-session" && args[5] == "-s" && args[6] == "workspace" && args[7] == "-c" && args[8] == "/wt"
+		index := slices.Index(args, "new-session")
+		return index >= 0 && len(args) >= index+9 && args[index+5] == "-s" && args[index+6] == "workspace" && args[index+7] == "-c" && args[index+8] == "/wt"
 	}))
 	assert.Contains(t, m.calls, buildProtectedSessionBootstrapCommand(
 		"workspace",
