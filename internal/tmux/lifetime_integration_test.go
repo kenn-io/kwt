@@ -122,7 +122,6 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 				secondHook = "client-attached"
 			}
 			if tc.secondVisit != "" {
-				contents += "set -g destroy-unattached keep-last\n"
 				if tc.secondVisit == "local" {
 					contents += `set-hook -g ` + secondHook + `[5] { set-hook -t workspace ` + secondHook + `[0] { set -gF @followup-zero "#{hook_client}" ; set -gF @user-attach-client "#{hook_client}" }; set-hook -t workspace ` + secondHook + `[9] { set -gF @followup "#{hook_client}" }; set -g @installed yes }` + "\n"
 				} else {
@@ -247,8 +246,8 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 				out, err := command.RunCommandOutputContext(ctx, "show-options", "-Av", "-t", "workspace", "destroy-unattached")
 				require.NoError(t, err)
 				expectedPolicy := "on"
-				if tc.secondVisit != "" {
-					expectedPolicy = "keep-last"
+				if tc.secondVisit != "" && visit > 0 {
+					expectedPolicy = "off"
 				}
 				if tc.user999 && !tc.localHooks {
 					expectedPolicy = "off" // User-owned slots take priority over restoration.
@@ -283,7 +282,7 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 					contents, err := os.ReadFile(marker)
 					return err == nil && string(contents) == "ready-worktree"
 				}, 5*time.Second, 10*time.Millisecond)
-				if tc.followGlobal {
+				if tc.followGlobal || (tc.secondVisit != "" && visit == 0) {
 					require.NoError(t, command.RunCommandContext(ctx, "set-option", "-g", "destroy-unattached", "off"))
 				}
 				// Disconnect the client directly. Tmux 3.6's detach-client path can
