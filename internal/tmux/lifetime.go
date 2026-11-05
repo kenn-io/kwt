@@ -21,7 +21,7 @@ func holdWorkspaceLifetime(session string) []string {
 
 // restoreWorkspaceLifetime lets any ordinary tmux client finish the handoff,
 // including a client that switches from another session. The temporary hooks
-// become inert after restoration and preserve session or inherited user hooks.
+// preserve session hooks and restore global hook inheritance after the event.
 func (r *WorkspaceRunner) restoreWorkspaceLifetime(ctx context.Context, session string) error {
 	policy, err := r.tmux.sessionUserOption(ctx, session, workspaceDestroyOption)
 	if err != nil {
@@ -45,7 +45,8 @@ func (r *WorkspaceRunner) restoreWorkspaceLifetime(ctx context.Context, session 
 		if err != nil {
 			return err
 		}
-		if strings.TrimSpace(output) == "" {
+		inherited := strings.TrimSpace(output) == ""
+		if inherited {
 			// A local hook shadows the global list. Copy inherited commands so
 			// they still run with the real event's client and session context.
 			output, err = r.tmux.RunCommandOutputContext(ctx, "show-options", "-gv", hook)
@@ -62,6 +63,9 @@ func (r *WorkspaceRunner) restoreWorkspaceLifetime(ctx context.Context, session 
 			}
 		}
 		command := "if-shell -F -t " + quoted + " '#{" + workspaceDestroyOption + "}' " + quoteTmuxCommandArgument(restore)
+		if inherited {
+			command += " ; set-hook -u -t " + quoted + " " + hook
+		}
 		if err := r.tmux.RunCommandContext(ctx, "set-hook", "-a", "-t", target, hook, command); err != nil {
 			return err
 		}
