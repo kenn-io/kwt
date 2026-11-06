@@ -25,8 +25,9 @@ var (
 )
 
 var (
-	mergeCwdLocal = config.MergeCwdLocal
-	configInitErr error
+	mergeCwdLocal  = config.MergeCwdLocal
+	configInitErr  error
+	skipConfigInit bool
 
 	stdinIsTerminal = func() bool {
 		return term.IsTerminal(int(os.Stdin.Fd()))
@@ -73,6 +74,12 @@ func Execute() {
 			os.Exit(exitCode)
 		}
 		return
+	}
+	// An agent hook runs inside the agent's lifecycle with a short timeout.
+	// Global config initialization can wait on config.toml.lock, and a hook
+	// killed while waiting loses its state change, so the hook skips it.
+	if cmd, _, err := rootCmd.Find(os.Args[1:]); err == nil && cmd == agentHookRunCmd {
+		skipConfigInit = true
 	}
 	err := rootCmd.Execute()
 	exitCode := 0
@@ -162,6 +169,9 @@ func runRoot(cmd *cobra.Command, args []string) error {
 // initializer callback cannot return an error, so command pre-run hooks
 // propagate the stored failure without terminating the process directly.
 func initConfig() {
+	if skipConfigInit {
+		return
+	}
 	configInitErr = config.Init()
 }
 
