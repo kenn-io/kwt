@@ -570,10 +570,13 @@ func (r *WorkspaceRunner) create(
 	if err != nil {
 		return fmt.Errorf("cannot inspect tmux bootstrap environment: %w", err)
 	}
-	createCmd := BuildSessionCreateCommand(session, worktreeDir)
+	createCmd := append(BuildSessionCreateCommand(session, worktreeDir), holdWorkspaceLifetime(session)...)
 	firstPane, err := r.tmux.RunCommandOutputContext(ctx, createCmd...)
 	if err != nil {
 		return wrapTmuxErr(createCmd, err)
+	}
+	if err := r.restoreWorkspaceLifetime(ctx, session); err != nil {
+		return r.abort(ctx, session, []string{"restore workspace lifetime"}, err)
 	}
 	paneIDs := make([]string, 0, len(layout.Panes))
 	paneIDs = append(paneIDs, strings.TrimSpace(firstPane))
