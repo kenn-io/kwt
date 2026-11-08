@@ -4,6 +4,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,6 +20,8 @@ type Sessions struct {
 	socket string
 	names  []string
 }
+
+var ErrWorkspaceNotLive = errors.New("no live Core workspace")
 
 func New(cfg *models.Config, options tmux.WorkspaceSessionsOptions) *Sessions {
 	s := &Sessions{WorkspaceSessions: tmux.NewWorkspaceSessions(options), names: append([]string(nil), options.StripNames...)}
@@ -140,7 +143,7 @@ func (s *Sessions) ResolveLive(ctx context.Context, r tmux.WorkspaceEndpointRequ
 		return tmux.SessionEndpoint{}, err
 	}
 	if !v.Live {
-		return tmux.SessionEndpoint{}, fmt.Errorf("no live Core workspace")
+		return tmux.SessionEndpoint{}, ErrWorkspaceNotLive
 	}
 	return v.Endpoint, nil
 }
@@ -178,14 +181,24 @@ func (s *Sessions) EstablishExpectedWithGeneration(ctx context.Context, name, ex
 		return s.WorkspaceSessions.EstablishExpectedWithGeneration(ctx, name, expected, path, generation, layout)
 	}
 	r := tmux.WorkspaceEndpointRequest{SessionName: name, WorkspacePath: path, WorkspaceGeneration: generation}
-	live, err := s.Resolve(ctx, r)
+	if len(layout.Panes) > 1 {
+		return tmux.SessionEndpoint{}, fmt.Errorf("Herdr Core does not support multi-pane layouts")
+	}
+	opts, err := s.options(r)
 	if err != nil {
 		return tmux.SessionEndpoint{}, err
 	}
-	if live.Endpoint.SessionName != expected {
+	if len(layout.Panes) == 1 {
+		opts.Command = layout.Panes[0]
+	}
+	terminal, err := s.core.EstablishExpectedWorkspace(ctx, opts, generation, expected)
+	if errors.Is(err, herdrcore.ErrWorkspaceIdentityChanged) {
 		return tmux.SessionEndpoint{}, tmux.ErrWorkspaceSessionChanged
 	}
-	return s.EstablishWithGeneration(ctx, name, path, generation, layout)
+	if err != nil {
+		return tmux.SessionEndpoint{}, err
+	}
+	return s.endpoint(terminal, r), nil
 }
 func (s *Sessions) current(ctx context.Context, e tmux.SessionEndpoint) (*herdrcore.Terminal, herdrcore.RunOptions, error) {
 	if s.core == nil || e.Runtime != "herdr-core" || (e.CoreSocket != "" && e.CoreSocket != s.socket) {

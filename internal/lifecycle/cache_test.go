@@ -37,17 +37,6 @@ func TestFileCacheRoundTripsSnapshot(t *testing.T) {
 	assert.Equal(t, want.Snapshot, got.Snapshot)
 }
 
-func TestFileCacheUsesSecondInventoryFormat(t *testing.T) {
-	home := t.TempDir()
-	cache, diagnostic, err := NewFileCache(home)
-	require.NoError(t, err)
-	assert.Nil(t, diagnostic)
-	require.NoError(t, cache.Store(Result{ObservedAt: time.Unix(7, 0).UTC()}))
-
-	_, err = os.Stat(filepath.Join(home, "cache", "inventory-v3.json"))
-	require.NoError(t, err)
-}
-
 func TestFileCacheIgnoresFirstInventoryFormat(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, "cache")

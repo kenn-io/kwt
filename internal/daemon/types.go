@@ -17,6 +17,7 @@ const (
 	CapabilityInventory       = "worktree.inventory.v2"
 	CapabilityRemoval         = "worktree.removal.v1"
 	CapabilityGuardedRemoval  = "worktree.removal.v2"
+	CapabilityCoreWorkspace   = "workspace.core.v1"
 	CapabilityOperationStream = "operation.stream.v1"
 	CapabilitySSHLeaseHold    = "ssh.lease.hold.v1"
 	CapabilitySSHLifecycle    = "ssh.lifecycle.v1"

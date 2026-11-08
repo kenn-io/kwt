@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"go.kenn.io/kwt/internal/git"
+	"go.kenn.io/kwt/service"
 	shared "go.kenn.io/kwt/worktree"
 )
 
@@ -111,6 +112,9 @@ func TestRemovalServiceRefusesLiveCoreWithoutSessionCondition(t *testing.T) {
 			result, err := newFixtureRemovalService(RemovalServiceOptions{Home: home}).Remove(t.Context(), RemovalRequest{RepositoryPath: repository, Path: path, ExpectedGeneration: generation, Force: force})
 			if err == nil || result.WorktreeRemoved {
 				t.Fatalf("removed under live Core workspace: result=%+v err=%v", result, err)
+			}
+			if !service.IsCode(err, service.ProtectedSessionLive) {
+				t.Fatalf("expected typed live workspace refusal, got %v", err)
 			}
 			if _, err := os.Stat(path); err != nil {
 				t.Fatalf("refusal lost checkout: %v", err)

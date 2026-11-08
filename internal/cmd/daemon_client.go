@@ -14,10 +14,31 @@ import (
 	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
 	kwtdaemon "go.kenn.io/kwt/internal/daemon"
+	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
 
 var queryCLIInventory = queryInventoryForCLI
+
+func requireCoreWorkspaceCapability(observation kwtdaemon.Observation, cfg *models.Config) error {
+	if cfg != nil && cfg.Workspace.CoreSocket != "" && (observation.Client == nil || !slices.Contains(observation.Status.Capabilities, kwtdaemon.CapabilityCoreWorkspace)) {
+		return service.NewError(service.DaemonIncompatible, "the running kwt daemon does not support Core workspace safety; restart it with the current kwt binary", false, nil, nil)
+	}
+	return nil
+}
+
+func requireConfiguredCoreCapability(observation kwtdaemon.Observation) error {
+	home, err := config.CanonicalHome()
+	if err != nil {
+		return err
+	}
+	snapshot, err := config.LoadGlobalSnapshotAt(home)
+	if err != nil {
+		return err
+	}
+	return requireCoreWorkspaceCapability(observation, snapshot.Config)
+}
+
 var removeDaemonWorktree = removeWorktreeThroughDaemon
 var removeWorktreeWithDaemonClient = func(
 	ctx context.Context,
@@ -220,6 +241,9 @@ func removeProjectViaDaemon(
 				false, nil, nil,
 			))
 		}
+		if err := requireConfiguredCoreCapability(observation); err != nil {
+			return kwt.ProjectRemovalResult{}, backoff.Permanent(err)
+		}
 		result, err := observation.Client.RemoveProject(ctx, request)
 		deadline, draining := inventoryDrainDeadline(err)
 		if !draining {
@@ -270,6 +294,9 @@ func removeWorktreeThroughDaemon(
 				nil,
 				nil,
 			))
+		}
+		if err := requireConfiguredCoreCapability(observation); err != nil {
+			return kwt.RemovalResult{}, backoff.Permanent(err)
 		}
 		result, err := removeWorktreeWithDaemonClient(ctx, observation.Client, request)
 		deadline, draining := inventoryDrainDeadline(err)
@@ -393,6 +420,9 @@ func queryDaemonInventory(
 			return kwt.Result{}, backoff.Permanent(err)
 		}
 		if err := requireCapability(observation); err != nil {
+			return kwt.Result{}, backoff.Permanent(err)
+		}
+		if err := requireConfiguredCoreCapability(observation); err != nil {
 			return kwt.Result{}, backoff.Permanent(err)
 		}
 		result, err := observation.Client.Inventory(ctx, request)

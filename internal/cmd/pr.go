@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/kwt/internal/tmux"
 	urlutil "go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
+	workspacepkg "go.kenn.io/kwt/internal/workspace"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
@@ -474,6 +475,9 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 					sessions := newConfiguredWorkspaceSessions(cfg, credentials.ProtectedNames(cfg), cmd.ErrOrStderr())
 					coreEndpoint, currentErr = sessions.ResolveLive(cmd.Context(), tmux.WorkspaceEndpointRequest{SessionName: record.Workspace.SessionName, WorkspacePath: record.Workspace.Path, WorkspaceGeneration: currentVerified.liveGeneration, Protected: true})
 					if currentErr != nil {
+						if errors.Is(currentErr, workspacepkg.ErrWorkspaceNotLive) {
+							return service.NewError(service.RegistrationChanged, "Core workspace exited before attachment", true, nil, currentErr)
+						}
 						return currentErr
 					}
 					if coreEndpoint.SessionName != prAttachExpectedSession || coreEndpoint.Address != prAttachExpectedAddress || coreEndpoint.CreatedMS != prAttachExpectedCreatedMS {
@@ -578,7 +582,7 @@ func validateExpectedPRAttachFlags(cmd *cobra.Command) (bool, error) {
 		prAttachExpectedSession,
 	}
 	if core {
-		if !commandFlagChanged(cmd, "expected-runtime") || !commandFlagChanged(cmd, "expected-address") || !commandFlagChanged(cmd, "expected-created-ms") || commandFlagChanged(cmd, "expected-socket") || prAttachExpectedRuntime != "herdr-core" || prAttachExpectedAddress == "" || strings.ContainsAny(prAttachExpectedAddress, "\t\r\n/\\") || strings.HasPrefix(prAttachExpectedAddress, "-") || prAttachExpectedCreatedMS <= 0 {
+		if !commandFlagChanged(cmd, "expected-runtime") || !commandFlagChanged(cmd, "expected-address") || !commandFlagChanged(cmd, "expected-created-ms") || commandFlagChanged(cmd, "expected-socket") || prAttachExpectedRuntime != "herdr-core" || prAttachExpectedAddress == "" || strings.TrimSpace(prAttachExpectedAddress) != prAttachExpectedAddress || strings.ContainsAny(prAttachExpectedAddress, "\t\r\n/\\") || strings.HasPrefix(prAttachExpectedAddress, "-") || prAttachExpectedCreatedMS <= 0 {
 			return false, service.NewError(service.InvalidRequest, "expected Core runtime, address, and creation identity must be provided together", false, nil, nil)
 		}
 	} else if commandFlagChanged(cmd, "expected-socket") {

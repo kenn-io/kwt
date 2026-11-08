@@ -404,7 +404,7 @@ func (s *removalService) prepareCoreWorkspaceRemoval(ctx context.Context, cfg *m
 	}
 	observation, err := herdrcore.NewWorkspaceClient(cfg.Workspace.CoreSocket).ObserveRemoval(ctx)
 	if err != nil {
-		return nil, closeNoop, fmt.Errorf("cannot establish Core workspace absence: %w", err)
+		return nil, closeNoop, service.NewError(service.ProtectedEndpointInventoryIncomplete, "cannot verify Core workspace state; start the configured Core and retry", true, nil, err)
 	}
 	fail := func(err error) (func() error, func(), error) { observation.Close(); return nil, closeNoop, err }
 	executable, err := os.Executable()
@@ -421,11 +421,11 @@ func (s *removalService) prepareCoreWorkspaceRemoval(ctx context.Context, cfg *m
 			continue
 		}
 		if t.State != "finished" || t.Reason == "spawn_pending" {
-			return fail(fmt.Errorf("live or uncertain Core workspace %s protects this worktree; stop it before removal", t.Address))
+			return fail(service.NewError(service.ProtectedSessionLive, "a live or uncertain Core workspace protects this worktree; inspect 'kwt herdr list --all' and stop it before removal", false, nil, nil))
 		}
 		opts := herdrcore.RunOptions{Executable: executable, Directory: request.Path, Context: t.Context(), ProtectedNames: credentials.ProtectedNames(cfg)}
 		if err := observation.VerifyFinished(t, opts, request.ExpectedGeneration); err != nil {
-			return fail(fmt.Errorf("Core terminal %s cannot be verified: %w; inspect 'kwt herdr list --all' and remove it with 'kwt herdr kill %s' if appropriate", t.Address, err, t.Address))
+			return fail(service.NewError(service.ProtectedEndpointInventoryIncomplete, "Core workspace identity could not be verified; inspect 'kwt herdr list --all' before removal", false, nil, err))
 		}
 		captured = append(captured, t)
 	}

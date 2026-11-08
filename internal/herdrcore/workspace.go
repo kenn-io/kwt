@@ -210,12 +210,29 @@ func SelectObservedWorkspace(terminals []Terminal, opts RunOptions, generation s
 	return selected, nil
 }
 
+var ErrWorkspaceIdentityChanged = errors.New("Core workspace session identity changed")
+
 func (c *Client) EstablishWorkspace(ctx context.Context, opts RunOptions, generation string) (*Terminal, error) {
+	return c.EstablishExpectedWorkspace(ctx, opts, generation, "")
+}
+
+// EstablishExpectedWorkspace checks the selected identity before launch or
+// command delivery, while the same establishment operation owns selection.
+func (c *Client) EstablishExpectedWorkspace(ctx context.Context, opts RunOptions, generation, expected string) (*Terminal, error) {
 	c.workspaceMu.Lock()
 	defer c.workspaceMu.Unlock()
 	terminal, err := c.resolveWorkspace(ctx, opts, generation)
-	if err != nil || terminal != nil {
+	if err != nil {
+		return nil, err
+	}
+	if terminal != nil {
+		if expected != "" && terminal.Identifier() != expected {
+			return nil, ErrWorkspaceIdentityChanged
+		}
 		return terminal, err
+	}
+	if expected != "" && opts.Identifier != expected {
+		return nil, ErrWorkspaceIdentityChanged
 	}
 	initialized := "true"
 	if opts.Command != "" {
@@ -238,6 +255,9 @@ func (c *Client) EstablishWorkspace(ctx context.Context, opts RunOptions, genera
 			if existing == nil {
 				return nil, fmt.Errorf("Core workspace name conflict without a verified live workspace; inspect before retrying")
 			}
+			if expected != "" && existing.Identifier() != expected {
+				return nil, ErrWorkspaceIdentityChanged
+			}
 			return existing, nil
 		}
 		return nil, fmt.Errorf("Core workspace launch uncertain; inspect before retrying: %w", err)
@@ -259,6 +279,9 @@ func (c *Client) EstablishWorkspace(ctx context.Context, opts RunOptions, genera
 	check.Labels["kwt.initialized"] = "true"
 	if err := VerifyWorkspace(check, opts, generation); err != nil {
 		return nil, err
+	}
+	if expected != "" && terminal.Identifier() != expected {
+		return nil, ErrWorkspaceIdentityChanged
 	}
 	if terminal.State != "live" {
 		return nil, fmt.Errorf("Core workspace did not start; inspect before retrying")

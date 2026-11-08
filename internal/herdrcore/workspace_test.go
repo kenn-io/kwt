@@ -138,6 +138,19 @@ func TestWorkspaceNameTakenWithoutLiveMatchFails(t *testing.T) {
 	}
 }
 
+func TestExpectedWorkspaceDoesNotLaunchDifferentSession(t *testing.T) {
+	fixture := &workspaceCoreFixture{}
+	opts := workspaceOptions()
+	opts.Identifier = "new-branch"
+	_, err := fixture.client().EstablishExpectedWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef", "old-branch")
+	if !errors.Is(err, ErrWorkspaceIdentityChanged) {
+		t.Fatalf("expected changed identity, got %v", err)
+	}
+	if fixture.launches != 0 || fixture.sends != 0 {
+		t.Fatalf("launched under changed identity: launches=%d sends=%d", fixture.launches, fixture.sends)
+	}
+}
+
 // Missing reuse would run the command twice on an ordinary live reopen.
 func TestWorkspaceEstablishmentReusesVerifiedLiveTerminal(t *testing.T) {
 	fixture := &workspaceCoreFixture{}

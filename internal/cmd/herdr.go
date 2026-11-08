@@ -97,7 +97,7 @@ replacement shell. On a launch error, inspect list --all before retrying.`,
 	command.Flags().StringVar(&identifier, "id", "", "Custom identifier label")
 	command.Flags().StringVar(&sessionContext, "context", "run", "Session context label")
 	command.Flags().BoolVar(&attach, "no-detach", false, "Attach immediately after creation")
-	command.Flags().BoolVar(&cleanup, "auto-cleanup", false, "Use Core --rm to remove the record after its exit is observed")
+	command.Flags().BoolVar(&cleanup, "auto-cleanup", false, "Remove the record when Core observes exit")
 	return command
 }
 

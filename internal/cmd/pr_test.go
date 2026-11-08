@@ -328,6 +328,10 @@ func TestGuardedCoreAttachRequiresExactEndpointIdentity(t *testing.T) {
 	guarded, err := validateExpectedPRAttachFlags(cmd)
 	require.NoError(t, err)
 	assert.True(t, guarded)
+	prAttachExpectedAddress = "t91 "
+	_, err = validateExpectedPRAttachFlags(cmd)
+	assert.True(t, service.IsCode(err, service.InvalidRequest))
+	prAttachExpectedAddress = "t91"
 	prAttachExpectedCreatedMS = 0
 	_, err = validateExpectedPRAttachFlags(cmd)
 	require.Error(t, err)
