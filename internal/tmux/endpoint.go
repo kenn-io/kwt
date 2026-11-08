@@ -39,7 +39,7 @@ func canonicalEndpoint(session string) SessionEndpoint {
 // It does not infer attachment policy from the socket name.
 func KillCommandHint(endpoint SessionEndpoint) string {
 	if endpoint.Runtime == "herdr-core" {
-		return fmt.Sprintf("HC_SOCKET=%s hc kill -- %s", endpoint.CoreSocket, endpoint.Address)
+		return fmt.Sprintf("HC_SOCKET=%s hc kill -- %s", shellQuote(endpoint.CoreSocket), shellQuote(endpoint.Address))
 	}
 	if endpoint.SocketName != "" {
 		return fmt.Sprintf(
@@ -52,6 +52,10 @@ func KillCommandHint(endpoint SessionEndpoint) string {
 		"env -u TMUX -u TMUX_PANE tmux kill-session -t %s",
 		exactSessionTarget(endpoint.SessionName),
 	)
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 // WorkspaceSessionsOptions configures workspace session coordination. The

@@ -16,7 +16,7 @@ func TestSessionEndpointContainsOnlyDurableAddressFields(t *testing.T) {
 		got = append(got, typeOfEndpoint.Field(index).Name)
 	}
 
-	assert.Equal(t, []string{"SessionName", "SocketName"}, got)
+	assert.Equal(t, []string{"Runtime", "Address", "CreatedMS", "WorkspacePath", "WorkspaceGeneration", "Protected", "CoreSocket", "SessionName", "SocketName"}, got)
 	for index := 0; index < typeOfEndpoint.NumField(); index++ {
 		assert.Empty(t, typeOfEndpoint.Field(index).Tag.Get("json"))
 	}
@@ -50,6 +50,8 @@ func TestKillCommandHintUsesEndpointAddress(t *testing.T) {
 		"env -u TMUX -u TMUX_PANE tmux kill-session -t =workspace",
 		KillCommandHint(SessionEndpoint{SessionName: "workspace"}),
 	)
+	assert.Equal(t, `HC_SOCKET='/tmp/core '\''quoted'\''/socket' hc kill -- 't'\''91'`,
+		KillCommandHint(SessionEndpoint{Runtime: "herdr-core", CoreSocket: "/tmp/core 'quoted'/socket", Address: "t'91"}))
 }
 
 func TestServerCommandsSeparateKWTAndDefaultEnvironmentPolicy(t *testing.T) {

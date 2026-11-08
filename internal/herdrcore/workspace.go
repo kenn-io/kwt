@@ -130,22 +130,9 @@ func (c *Client) resolveWorkspace(ctx context.Context, opts RunOptions, generati
 	if err != nil {
 		return nil, err
 	}
-	var selected *Terminal
-	for _, t := range terminals {
-		if t.Labels["kwt.workspace_key"] != workspaceKey(opts, generation) && t.Name != workspaceName(opts, generation) {
-			continue
-		}
-		if t.State == "finished" && t.Reason != "spawn_pending" && t.Labels["kwt.initialized"] == "true" {
-			continue
-		}
-		if err := VerifyWorkspace(t, opts, generation); err != nil {
-			return nil, err
-		}
-		if selected != nil {
-			return nil, fmt.Errorf("multiple live Core workspaces; inspect exact addresses")
-		}
-		copy := t
-		selected = &copy
+	selected, err := SelectObservedWorkspace(terminals, opts, generation)
+	if err != nil {
+		return nil, err
 	}
 	if selected == nil {
 		return nil, nil

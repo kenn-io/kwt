@@ -161,10 +161,12 @@ func runWorkspaceRemove(cmd *cobra.Command, args []string) error {
 			sessions,
 		); len(records) == 1 && records[0].SessionLive {
 			record := records[0]
-			killCommand := tmux.KillCommandHint(tmux.SessionEndpoint{
-				SessionName: record.SessionName,
-				SocketName:  record.TmuxSocketName,
-			})
+			endpoint := sessions[0].Endpoint
+			killCommand := tmux.KillCommandHint(endpoint)
+			if endpoint.Runtime == "herdr-core" {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "its Core workspace %s is still running; stop it with: %s\n", record.SessionName, killCommand)
+				return nil
+			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"its tmux session %s is still running; kill it with: %s\n",
 				record.SessionName,
