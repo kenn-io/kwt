@@ -38,6 +38,15 @@ func TestCoreLifecycleIntegration(t *testing.T) {
 	} else if err := os.MkdirAll(fixture, 0700); err != nil {
 		t.Fatal(err)
 	}
+	// A separate short, newly created directory prevents inherited routes or a
+	// caller-supplied fixture root from directing cleanup at another server.
+	socketDir, err := os.MkdirTemp("/tmp", "kwt-hc-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	t.Setenv("HC_SOCKET", filepath.Join(socketDir, "core.sock"))
+	t.Setenv("HC_TERMINAL_SOCKET", "")
 	session := os.Getenv("KWT_HERDR_TEST_SESSION")
 	if session == "" {
 		session = "kwt-test-" + strconv.FormatInt(time.Now().UnixNano(), 36)

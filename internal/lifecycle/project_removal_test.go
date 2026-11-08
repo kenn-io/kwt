@@ -131,6 +131,22 @@ func TestProjectRemovalRequiresObservedRegistrationFingerprint(t *testing.T) {
 	require.Len(t, remaining.Projects, 1)
 }
 
+func TestProjectRemovalRejectsUnreachableConfiguredCoreWithProtectedProvenance(t *testing.T) {
+	fixture := newProjectRemovalFixture(t, filepath.Join(t.TempDir(), "repo"), "github.com/acme/widget")
+	fixture.writeProvenance()
+	configPath := filepath.Join(fixture.home, "config.toml")
+	file, err := os.OpenFile(configPath, os.O_APPEND|os.O_WRONLY, 0600)
+	require.NoError(t, err)
+	_, err = file.WriteString("\n[workspace]\ncore_socket = '" + filepath.Join(fixture.home, "missing.sock") + "'\n")
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	_, err = fixture.service.RemoveProject(t.Context(), fixture.request())
+	assert.True(t, service.IsCode(err, service.ProtectedEndpointInventoryIncomplete), "%v", err)
+	remaining, err := configSnapshot(fixture.home, fixture.expansion)
+	require.NoError(t, err)
+	require.Len(t, remaining.Projects, 1)
+}
+
 func TestProjectRemovalRejectsRawRegistrationChangeBeforeEndpointInspection(t *testing.T) {
 	fixture := newProjectRemovalFixture(t, "/repo ", "github.com/acme/widget")
 	request := fixture.request()

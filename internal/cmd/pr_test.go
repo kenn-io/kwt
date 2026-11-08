@@ -623,6 +623,30 @@ func TestRunPRImportStartsValidatedWorkspaceSessionOnRequest(t *testing.T) {
 	)
 }
 
+func TestRunPRImportCoreLaunchRequiresGenerationGuard(t *testing.T) {
+	workspace := pullrequest.Workspace{Path: "/fixture/worktree", SessionName: "fixture", Generation: "0123456789abcdef0123456789abcdef"}
+	service := &fakePRService{result: pullrequest.ImportResult{Status: pullrequest.ImportCreated, Workspace: workspace}}
+	cfg := testPRConfig()
+	cfg.Workspace.Backend = "herdr-core"
+	cfg.Workspace.CoreSocket = "/fixture/missing.sock"
+	withPRCommandDeps(t, cfg, service)
+	prStartSession = true
+	called := false
+	withPRWorkspaceGeneration = func(_ context.Context, _ string, path, generation string, _ func() error) error {
+		called = true
+		assert.Equal(t, workspace.Path, path)
+		assert.Equal(t, workspace.Generation, generation)
+		return errors.New("generation changed")
+	}
+	cmd, stdout, _ := prTestCommand()
+	require.NoError(t, runPRImport(cmd, []string{"17"}))
+	assert.True(t, called)
+	var result pullrequest.ImportResult
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
+	require.NotNil(t, result.SessionStartError)
+	assert.Contains(t, result.SessionStartError.Error(), "generation changed")
+}
+
 func TestRunPRImportRejectsSessionStartWithoutValidatedEndpoint(t *testing.T) {
 	service := &fakePRService{result: pullrequest.ImportResult{
 		Status: pullrequest.ImportCreated,

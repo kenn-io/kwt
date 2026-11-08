@@ -377,6 +377,25 @@ func requestSafePath(path string) string {
 
 // Both direct and session removal use the same pinned, non-starting check.
 // Force relaxes Git's dirty-worktree policy, never live runtime protection.
+// PrepareCoreWorkspaceRemoval must be called under the repository removal lock;
+// close the returned observation after the native removal and its cleanup.
+func PrepareCoreWorkspaceRemoval(ctx context.Context, path, generation string) (func() error, func(), error) {
+	home, err := config.CanonicalHome()
+	if err != nil {
+		return nil, func() {}, err
+	}
+	expansion, err := CaptureExpansionContext()
+	if err != nil {
+		return nil, func() {}, err
+	}
+	snapshot, err := config.LoadGlobalSnapshotAtWithExpansion(home, expansion.expandPath)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	s := &removalService{home: home}
+	return s.prepareCoreWorkspaceRemoval(ctx, snapshot.Config, RemovalRequest{Path: path, ExpectedGeneration: generation, Expansion: expansion})
+}
+
 func (s *removalService) prepareCoreWorkspaceRemoval(ctx context.Context, cfg *models.Config, request RemovalRequest) (func() error, func(), error) {
 	noop := func() error { return nil }
 	closeNoop := func() {}

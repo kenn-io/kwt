@@ -72,13 +72,16 @@ func (s *Sessions) ResolveAll(ctx context.Context, requests []tmux.WorkspaceEndp
 	if s.core == nil {
 		return s.WorkspaceSessions.ResolveAll(ctx, requests)
 	}
-	out := make([]tmux.WorkspaceSession, len(requests))
-	for i, r := range requests {
-		v, err := s.Resolve(ctx, r)
-		if err != nil {
-			return nil, err
+	resolutions, err := s.ResolveAllBestEffort(ctx, requests)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]tmux.WorkspaceSession, len(resolutions))
+	for i, resolution := range resolutions {
+		if resolution.Err != nil {
+			return nil, resolution.Err
 		}
-		out[i] = v
+		out[i] = resolution.Session
 	}
 	return out, nil
 }
@@ -86,9 +89,32 @@ func (s *Sessions) ResolveAllBestEffort(ctx context.Context, requests []tmux.Wor
 	if s.core == nil {
 		return s.WorkspaceSessions.ResolveAllBestEffort(ctx, requests)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(requests) == 0 {
+		return []tmux.WorkspaceSessionResolution{}, nil
+	}
+	terminals, observationErr := s.core.ObserveManaged(ctx)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	out := make([]tmux.WorkspaceSessionResolution, len(requests))
 	for i, r := range requests {
-		out[i].Session, out[i].Err = s.Resolve(ctx, r)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if observationErr != nil {
+			out[i].Err = observationErr
+			continue
+		}
+		opts, err := s.options(r)
+		if err != nil {
+			out[i].Err = err
+			continue
+		}
+		terminal, err := herdrcore.SelectObservedWorkspace(terminals, opts, r.WorkspaceGeneration)
+		out[i] = tmux.WorkspaceSessionResolution{Session: tmux.WorkspaceSession{Endpoint: s.endpoint(terminal, r), Live: terminal != nil}, Err: err}
 	}
 	return out, nil
 }

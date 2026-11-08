@@ -182,6 +182,14 @@ func (c *Client) ObserveWorkspace(ctx context.Context, opts RunOptions, generati
 	if err != nil {
 		return nil, err
 	}
+	return SelectObservedWorkspace(terminals, opts, generation)
+}
+
+// SelectObservedWorkspace resolves one request from a previously verified inventory.
+func SelectObservedWorkspace(terminals []Terminal, opts RunOptions, generation string) (*Terminal, error) {
+	if err := validateWorkspaceOptions(opts); err != nil {
+		return nil, err
+	}
 	var selected *Terminal
 	for _, t := range terminals {
 		if t.Labels["kwt.workspace_key"] != workspaceKey(opts, generation) && t.Name != workspaceName(opts, generation) {

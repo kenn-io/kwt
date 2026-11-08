@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -53,6 +57,20 @@ func TestHerdrRunWorktreeAndDetach(t *testing.T) {
 	assert.NotEmpty(t, f.opts.Executable)
 	assert.Equal(t, "t1", f.attached)
 	assert.Contains(t, out.String(), "t1")
+}
+
+func TestHerdrDetachedRunReportsAddressOnlyInAttachHint(t *testing.T) {
+	initCommandTestConfig(t, t.TempDir())
+	client := &fakeHerdrClient{}
+	cmd := newHerdrCommand(client)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetContext(t.Context())
+	cmd.SetArgs([]string{"run", "--id", "fixture", "--", "echo hello"})
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, out.String(), "Created Core terminal: fixture\n")
+	assert.Equal(t, 1, strings.Count(out.String(), "t1"))
+	assert.Empty(t, client.attached)
 }
 
 func TestHerdrListJSONIsEmptyArray(t *testing.T) {
@@ -127,12 +145,28 @@ func TestHerdrHelperStripsBeforeShell(t *testing.T) {
 }
 
 func TestHerdrHelperBypassesConfiguration(t *testing.T) {
-	cmd := newHerdrCommand(&fakeHerdrClient{})
-	helper, _, err := cmd.Find([]string{"_run-command"})
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell fixture")
+	}
+	if os.Getenv("KWT_HELPER_TEST_CHILD") == "1" {
+		args := []string{"herdr", "_run-command", "--", `printf ran > "$KWT_HELPER_MARKER"`}
+		os.Args = append([]string{os.Args[0]}, args...)
+		rootCmd.SetArgs(args)
+		Execute()
+		return
+	}
+	home := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte("invalid = ["), 0600))
+	marker := filepath.Join(home, "marker")
+	t.Setenv("KWT_HOME", home)
+	t.Setenv("KWT_HELPER_MARKER", marker)
+	t.Setenv("KWT_HELPER_TEST_CHILD", "1")
+	child := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestHerdrHelperBypassesConfiguration$")
+	output, err := child.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	data, err := os.ReadFile(marker)
 	require.NoError(t, err)
-	require.True(t, helper.Hidden)
-	require.NotNil(t, helper.PersistentPreRunE)
-	require.NoError(t, helper.PersistentPreRunE(helper, nil))
+	assert.Equal(t, "ran", string(data))
 }
 
 func TestHerdrListRejectsConflictingFormats(t *testing.T) {

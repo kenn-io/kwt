@@ -154,6 +154,30 @@ type fakePruneMergedProvider struct {
 	get       func(int) (pullrequest.PullRequest, error)
 }
 
+func TestPruneMergedPreservesProvenanceWhenCoreIsUnreachable(t *testing.T) {
+	resetPruneMergedCommand(t)
+	initCommandTestConfig(t, t.TempDir())
+	f, err := os.OpenFile(filepath.Join(os.Getenv("KWT_HOME"), "config.toml"), os.O_APPEND|os.O_WRONLY, 0600)
+	require.NoError(t, err)
+	_, err = fmt.Fprintf(f, "\n[workspace]\ncore_socket = %q\n", filepath.Join(t.TempDir(), "missing.sock"))
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	candidate := commandMergedCandidate(filepath.Join(t.TempDir(), "worktree"), commandMergedHead)
+	record := commandMergedProvenance(candidate)
+	record.Workspace.Generation = candidate.Policy.Generation
+	candidate.Policy.Provenance = &record
+	candidate.ProvenanceKey = record.PullRequestID
+	store := &fakePruneMergedProvenance{records: map[string]pullrequest.Provenance{record.PullRequestID: record}, removeResult: true}
+	reg := &fakePruneMergedRegistry{removed: true}
+	called := false
+	removePruneMergedWorktree = fakePruneMergedRemoval(func(pruneMergedCandidate) error { called = true; return nil })
+	result, err := removePruneMergedCandidate(t.Context(), reg, store, candidate, false)
+	require.Error(t, err)
+	assert.False(t, called)
+	assert.False(t, result.worktreeRemoved)
+	assert.Empty(t, store.removedKey)
+}
+
 func (p *fakePruneMergedProvider) ResolveRepository(
 	_ context.Context,
 	repository pullrequest.Repository,

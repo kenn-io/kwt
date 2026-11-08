@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/table"
 	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/pkg/models"
@@ -38,7 +39,7 @@ func resolveRegisteredDirectorySessions(
 	if err != nil {
 		return nil, err
 	}
-	return newConfiguredWorkspaceSessions(cfg, nil, os.Stderr).ResolveAll(
+	return newConfiguredWorkspaceSessions(cfg, credentials.ProtectedNames(cfg), os.Stderr).ResolveAll(
 		context.Background(),
 		requests,
 	)

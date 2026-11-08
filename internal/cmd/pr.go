@@ -285,7 +285,12 @@ func runPRImport(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		if cfg.Workspace.Backend == "herdr-core" {
-			endpoint, startErr := startPRCoreWorkspace(cmd.Context(), result.Workspace, cfg)
+			var endpoint tmux.SessionEndpoint
+			startErr := withPRWorkspaceGeneration(cmd.Context(), project.Path, result.Workspace.Path, result.Workspace.Generation, func() error {
+				var establishErr error
+				endpoint, establishErr = startPRCoreWorkspace(cmd.Context(), result.Workspace, cfg)
+				return establishErr
+			})
 			if startErr != nil {
 				result.SessionStartError = pullrequest.NewError(pullrequest.CodeWorkspaceCreation, "failed to start imported Core workspace", false, startErr)
 				return nil

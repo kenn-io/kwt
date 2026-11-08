@@ -84,10 +84,11 @@ replacement shell. On a launch error, inspect list --all before retrying.`,
 			if err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Created Core terminal: %s (%s)\nWorking directory: %s\n", terminal.Address, id, directory)
 			if attach {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Created Core terminal: %s (%s)\nWorking directory: %s\n", terminal.Address, id, directory)
 				return client.Attach(commandContext(cmd), terminal.Address)
 			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Created Core terminal: %s\nWorking directory: %s\n", id, directory)
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Attach with 'kwt herdr attach %s' (Ctrl+\\ detaches).\n", terminal.Address)
 			return nil
 		}),
