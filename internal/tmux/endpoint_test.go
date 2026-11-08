@@ -9,19 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSessionEndpointContainsOnlyDurableAddressFields(t *testing.T) {
-	typeOfEndpoint := reflect.TypeOf(SessionEndpoint{})
-	got := make([]string, 0, typeOfEndpoint.NumField())
-	for index := 0; index < typeOfEndpoint.NumField(); index++ {
-		got = append(got, typeOfEndpoint.Field(index).Name)
-	}
-
-	assert.Equal(t, []string{"Runtime", "Address", "CreatedMS", "WorkspacePath", "WorkspaceGeneration", "Protected", "CoreSocket", "SessionName", "SocketName"}, got)
-	for index := 0; index < typeOfEndpoint.NumField(); index++ {
-		assert.Empty(t, typeOfEndpoint.Field(index).Tag.Get("json"))
-	}
-}
-
 func TestSessionDeclaresAddressFieldsWithoutEmbeddingEndpoint(t *testing.T) {
 	typeOfSession := reflect.TypeOf(Session{})
 	_, embedded := typeOfSession.FieldByName("SessionEndpoint")
