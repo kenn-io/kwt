@@ -411,7 +411,11 @@ func (s *removalService) prepareCoreWorkspaceRemoval(ctx context.Context, cfg *m
 	if err != nil {
 		return fail(err)
 	}
-	var captured []herdrcore.Terminal
+	type capturedCoreWorkspace struct {
+		terminal   herdrcore.Terminal
+		generation string
+	}
+	var captured []capturedCoreWorkspace
 	for _, t := range observation.Terminals {
 		if t.Context() != "workspace" && t.Context() != "protected-workspace" {
 			continue
@@ -424,10 +428,17 @@ func (s *removalService) prepareCoreWorkspaceRemoval(ctx context.Context, cfg *m
 			return fail(service.NewError(service.ProtectedSessionLive, "a live or uncertain Core workspace protects this worktree; inspect 'kwt herdr list --all' and stop it before removal", false, nil, nil))
 		}
 		opts := herdrcore.RunOptions{Executable: executable, Directory: request.Path, Context: t.Context(), ProtectedNames: credentials.ProtectedNames(cfg)}
-		if err := observation.VerifyFinished(t, opts, request.ExpectedGeneration); err != nil {
+		generation := request.ExpectedGeneration
+		// A directory workspace is bound to its exact path, not the Git
+		// worktree generation. VerifyWorkspace checks the path key, helper
+		// arguments and labels before this alternate identity grants cleanup.
+		if t.Context() == "workspace" && t.Labels["kwt.generation"] == "" && filepath.Clean(t.Directory) == filepath.Clean(request.Path) {
+			generation = ""
+		}
+		if err := observation.VerifyFinished(t, opts, generation); err != nil {
 			return fail(service.NewError(service.ProtectedEndpointInventoryIncomplete, "Core workspace identity could not be verified; inspect 'kwt herdr list --all' before removal", false, nil, err))
 		}
-		captured = append(captured, t)
+		captured = append(captured, capturedCoreWorkspace{terminal: t, generation: generation})
 	}
 	cleanup := func() error {
 		if len(captured) == 0 {
@@ -440,9 +451,10 @@ func (s *removalService) prepareCoreWorkspaceRemoval(ctx context.Context, cfg *m
 		if current.Config.Workspace.CoreSocket != cfg.Workspace.CoreSocket {
 			return fmt.Errorf("Core cleanup route changed")
 		}
-		for _, expected := range captured {
+		for _, capturedWorkspace := range captured {
+			expected := capturedWorkspace.terminal
 			opts := herdrcore.RunOptions{Executable: executable, Directory: request.Path, Context: expected.Context(), ProtectedNames: credentials.ProtectedNames(current.Config)}
-			if err := observation.RemoveFinished(ctx, expected, opts, request.ExpectedGeneration); err != nil {
+			if err := observation.RemoveFinished(ctx, expected, opts, capturedWorkspace.generation); err != nil {
 				return fmt.Errorf("clean finished Core workspace %s: %w", expected.Address, err)
 			}
 		}

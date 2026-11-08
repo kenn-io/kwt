@@ -475,10 +475,7 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 					sessions := newConfiguredWorkspaceSessions(cfg, credentials.ProtectedNames(cfg), cmd.ErrOrStderr())
 					coreEndpoint, currentErr = sessions.ResolveLive(cmd.Context(), tmux.WorkspaceEndpointRequest{SessionName: record.Workspace.SessionName, WorkspacePath: record.Workspace.Path, WorkspaceGeneration: currentVerified.liveGeneration, Protected: true})
 					if currentErr != nil {
-						if errors.Is(currentErr, workspacepkg.ErrWorkspaceNotLive) {
-							return service.NewError(service.RegistrationChanged, "Core workspace exited before attachment", true, nil, currentErr)
-						}
-						return currentErr
+						return guardedCoreResolutionError(currentErr)
 					}
 					if coreEndpoint.SessionName != prAttachExpectedSession || coreEndpoint.Address != prAttachExpectedAddress || coreEndpoint.CreatedMS != prAttachExpectedCreatedMS {
 						return service.NewError(service.RegistrationChanged, "Core workspace changed before attachment", true, nil, nil)
@@ -552,6 +549,13 @@ func defaultWithPRWorkspaceGeneration(
 		return err
 	}
 	return repo.WithIdentity(ctx, workspacePath, shared.IdentityPolicy{FileName: "kwt-generation", Value: generation}, func(*shared.Scope) error { return establish() })
+}
+
+func guardedCoreResolutionError(err error) error {
+	if errors.Is(err, workspacepkg.ErrWorkspaceNotLive) {
+		return service.NewError(service.RegistrationChanged, "Core workspace exited before attachment", true, nil, err)
+	}
+	return err
 }
 
 func guardedPRAttachError(err error, guarded bool) error {

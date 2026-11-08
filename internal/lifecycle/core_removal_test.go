@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -152,9 +153,9 @@ func TestRemovalServiceCleansOnlyVerifiedFinishedCore(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix socket fixture")
 	}
-	for _, change := range []string{"same creation", "creation replacement", "server replacement", "protocol replacement", "helper replacement"} {
+	for _, change := range []string{"same creation", "creation replacement", "server replacement", "protocol replacement", "helper replacement", "path-bound creation", "path-bound helper replacement"} {
 		t.Run(change, func(t *testing.T) {
-			replacement := change != "same creation"
+			replacement := change != "same creation" && change != "path-bound creation"
 			repository, path := removalRepository(t, "core-finished")
 			generation, err := openSharedWorktrees(t, git.New(repository)).EnsureIdentity(t.Context(), path, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
 			if err != nil {
@@ -167,6 +168,14 @@ func TestRemovalServiceCleansOnlyVerifiedFinishedCore(t *testing.T) {
 			sum := sha256.Sum256([]byte("generation:" + generation))
 			name := "kwt-ws-" + hex.EncodeToString(sum[:])[:24]
 			record := map[string]any{"address": "t91", "name": name, "cwd": path, "state": "finished", "created_ms": 123, "keep": false, "exit_code": 0, "labels": map[string]string{"kwt.managed": "true", "kwt.workspace_key": "generation:" + generation, "kwt.generation": generation, "kwt.workspace_path": path, "kwt.context": "workspace", "kwt.identifier": "fixture-core", "kwt.initialized": "true"}, "argv": []string{executable, "herdr", "_run-command", "--workspace", "--workspace-path", path, "--workspace-generation", generation, "--strip", "KWT_FLEET_TOKEN", "--strip", "KWT_GITHUB_TOKEN", "--", ""}}
+			if strings.HasPrefix(change, "path-bound") {
+				pathKey := "path:" + filepath.Clean(path)
+				pathSum := sha256.Sum256([]byte(pathKey))
+				record["name"] = "kwt-ws-" + hex.EncodeToString(pathSum[:])[:24]
+				labels := record["labels"].(map[string]string)
+				labels["kwt.workspace_key"], labels["kwt.generation"] = pathKey, ""
+				record["argv"] = []string{executable, "herdr", "_run-command", "--workspace", "--workspace-path", path, "--workspace-generation", "", "--strip", "KWT_FLEET_TOKEN", "--strip", "KWT_GITHUB_TOKEN", "--", ""}
+			}
 			socketRoot, err := os.MkdirTemp("/tmp", "kwt-finished-rpc-")
 			if err != nil {
 				t.Fatal(err)
@@ -224,7 +233,7 @@ func TestRemovalServiceCleansOnlyVerifiedFinishedCore(t *testing.T) {
 									if change == "creation replacement" {
 										record["created_ms"] = 124
 									}
-									if change == "helper replacement" {
+									if change == "helper replacement" || change == "path-bound helper replacement" {
 										record["argv"] = []string{"/replacement/helper"}
 									}
 								}

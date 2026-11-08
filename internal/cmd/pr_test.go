@@ -30,6 +30,7 @@ import (
 	"go.kenn.io/kwt/internal/template"
 	"go.kenn.io/kwt/internal/tmux"
 	urlutil "go.kenn.io/kwt/internal/url"
+	workspacepkg "go.kenn.io/kwt/internal/workspace"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 	shared "go.kenn.io/kwt/worktree"
@@ -335,6 +336,14 @@ func TestGuardedCoreAttachRequiresExactEndpointIdentity(t *testing.T) {
 	prAttachExpectedCreatedMS = 0
 	_, err = validateExpectedPRAttachFlags(cmd)
 	require.Error(t, err)
+}
+
+func TestGuardedCoreResolutionClassifiesOnlyMissingEndpointAsChanged(t *testing.T) {
+	err := guardedCoreResolutionError(workspacepkg.ErrWorkspaceNotLive)
+	require.True(t, service.IsCode(err, service.RegistrationChanged))
+	assert.True(t, service.AsError(err).Retryable)
+	unavailable := errors.New("Core unavailable")
+	assert.ErrorIs(t, guardedCoreResolutionError(unavailable), unavailable)
 }
 
 func TestPRConfigInitializationFailureUsesJSONContract(t *testing.T) {
