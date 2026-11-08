@@ -425,7 +425,7 @@ func (s *removalService) prepareCoreWorkspaceRemoval(ctx context.Context, cfg *m
 		}
 		opts := herdrcore.RunOptions{Executable: executable, Directory: request.Path, Context: t.Context(), ProtectedNames: credentials.ProtectedNames(cfg)}
 		if err := observation.VerifyFinished(t, opts, request.ExpectedGeneration); err != nil {
-			return fail(err)
+			return fail(fmt.Errorf("Core terminal %s cannot be verified: %w; inspect 'kwt herdr list --all' and remove it with 'kwt herdr kill %s' if appropriate", t.Address, err, t.Address))
 		}
 		captured = append(captured, t)
 	}

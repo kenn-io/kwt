@@ -1081,6 +1081,12 @@ Automation clients may additionally pass `--expected-repository`,
 under the project lifecycle fence before creating or repairing the protected
 session; a mismatch fails with retryable `registration_changed` and does not
 touch tmux. Omit all five flags for ordinary interactive attachment.
+For a Core workspace, use `--expected-repository`, `--expected-registration`,
+`--expected-generation`, and `--expected-session` together with
+`--expected-runtime herdr-core`, `--expected-address`, and
+`--expected-created-ms` from inventory instead of `--expected-socket`. This
+guarded form attaches only to the same live Core terminal; it does not create
+a replacement when the recorded endpoint has exited.
 Provenance with a durable generation applies only to that exact worktree
 incarnation. If the path is later reused, stale provenance neither protects the
 replacement from ordinary `kwt open` nor authorizes `kwt pr attach` or merged

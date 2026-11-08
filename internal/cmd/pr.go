@@ -50,6 +50,9 @@ var (
 	prAttachExpectedGeneration   string
 	prAttachExpectedSession      string
 	prAttachExpectedSocket       string
+	prAttachExpectedRuntime      string
+	prAttachExpectedAddress      string
+	prAttachExpectedCreatedMS    int64
 
 	loadPRConfig                     = config.Load
 	loadPRTargetConfig               = config.LoadForTarget
@@ -173,6 +176,9 @@ func init() {
 		"",
 		"require this protected tmux socket name before attaching",
 	)
+	prAttachCmd.Flags().StringVar(&prAttachExpectedRuntime, "expected-runtime", "", "require this workspace runtime before attaching")
+	prAttachCmd.Flags().StringVar(&prAttachExpectedAddress, "expected-address", "", "require this Core terminal address before attaching")
+	prAttachCmd.Flags().Int64Var(&prAttachExpectedCreatedMS, "expected-created-ms", 0, "require this Core terminal creation identity before attaching")
 	prCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		return writePRError(cmd, pullrequest.NewError(pullrequest.CodeInvalidSelector, err.Error(), false, nil))
 	})
@@ -402,6 +408,9 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 			err,
 		))
 	}
+	if guarded && ((prAttachExpectedRuntime == "herdr-core") != (cfg.Workspace.Backend == "herdr-core")) {
+		return writePRError(cmd, service.NewError(service.RegistrationChanged, "workspace runtime changed before attachment", true, nil, nil))
+	}
 	home, err := config.CanonicalHome()
 	if err != nil {
 		return writePRError(cmd, err)
@@ -461,6 +470,17 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 		record = current
 		establish := func() error {
 			if cfg.Workspace.Backend == "herdr-core" {
+				if guarded {
+					sessions := newConfiguredWorkspaceSessions(cfg, credentials.ProtectedNames(cfg), cmd.ErrOrStderr())
+					coreEndpoint, currentErr = sessions.ResolveLive(cmd.Context(), tmux.WorkspaceEndpointRequest{SessionName: record.Workspace.SessionName, WorkspacePath: record.Workspace.Path, WorkspaceGeneration: currentVerified.liveGeneration, Protected: true})
+					if currentErr != nil {
+						return currentErr
+					}
+					if coreEndpoint.SessionName != prAttachExpectedSession || coreEndpoint.Address != prAttachExpectedAddress || coreEndpoint.CreatedMS != prAttachExpectedCreatedMS {
+						return service.NewError(service.RegistrationChanged, "Core workspace changed before attachment", true, nil, nil)
+					}
+					return nil
+				}
 				coreEndpoint, currentErr = startPRCoreWorkspace(cmd.Context(), record.Workspace, cfg)
 				return currentErr
 			}
@@ -544,19 +564,26 @@ func guardedPRAttachError(err error, guarded bool) error {
 }
 
 func validateExpectedPRAttachFlags(cmd *cobra.Command) (bool, error) {
+	core := commandFlagChanged(cmd, "expected-runtime") || commandFlagChanged(cmd, "expected-address") || commandFlagChanged(cmd, "expected-created-ms")
 	names := []string{
 		"expected-repository",
 		"expected-registration",
 		"expected-generation",
 		"expected-session",
-		"expected-socket",
 	}
 	values := []string{
 		prAttachExpectedRepository,
 		prAttachExpectedRegistration,
 		prAttachExpectedGeneration,
 		prAttachExpectedSession,
-		prAttachExpectedSocket,
+	}
+	if core {
+		if !commandFlagChanged(cmd, "expected-runtime") || !commandFlagChanged(cmd, "expected-address") || !commandFlagChanged(cmd, "expected-created-ms") || commandFlagChanged(cmd, "expected-socket") || prAttachExpectedRuntime != "herdr-core" || prAttachExpectedAddress == "" || strings.ContainsAny(prAttachExpectedAddress, "\t\r\n/\\") || strings.HasPrefix(prAttachExpectedAddress, "-") || prAttachExpectedCreatedMS <= 0 {
+			return false, service.NewError(service.InvalidRequest, "expected Core runtime, address, and creation identity must be provided together", false, nil, nil)
+		}
+	} else if commandFlagChanged(cmd, "expected-socket") {
+		names = append(names, "expected-socket")
+		values = append(values, prAttachExpectedSocket)
 	}
 	changed := 0
 	for _, name := range names {
@@ -564,10 +591,10 @@ func validateExpectedPRAttachFlags(cmd *cobra.Command) (bool, error) {
 			changed++
 		}
 	}
-	if changed == 0 {
+	if changed == 0 && !core {
 		return false, nil
 	}
-	if changed != len(names) {
+	if changed != len(names) || (!core && !commandFlagChanged(cmd, "expected-socket")) {
 		return false, service.NewError(
 			service.InvalidRequest,
 			"expected repository, registration, generation, session, and socket must be provided together",
@@ -608,8 +635,8 @@ func validateExpectedPRAttachFlags(cmd *cobra.Command) (bool, error) {
 		)
 	}
 	if strings.ContainsAny(prAttachExpectedSession, "\t\r\n") ||
-		strings.TrimSpace(prAttachExpectedSocket) != prAttachExpectedSocket ||
-		strings.ContainsAny(prAttachExpectedSocket, "\t\r\n/\\") {
+		(!core && (strings.TrimSpace(prAttachExpectedSocket) != prAttachExpectedSocket ||
+			strings.ContainsAny(prAttachExpectedSocket, "\t\r\n/\\"))) {
 		return false, service.NewError(
 			service.InvalidRequest,
 			"expected protected session identity is invalid",
@@ -635,10 +662,10 @@ func expectedPRAttachMatches(
 	}
 	return record.Workspace.Generation == prAttachExpectedGeneration &&
 		record.Workspace.SessionName == prAttachExpectedSession &&
-		tmux.ProtectedWorkspaceSocketName(
+		(prAttachExpectedRuntime == "herdr-core" || tmux.ProtectedWorkspaceSocketName(
 			record.Workspace.SessionName,
 			record.Workspace.Path,
-		) == prAttachExpectedSocket
+		) == prAttachExpectedSocket)
 }
 
 func provenanceMatchesProjectClaim(

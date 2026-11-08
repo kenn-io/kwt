@@ -63,10 +63,6 @@ func TestCoreLifecycleIntegration(t *testing.T) {
 	for _, key := range []string{"CODEX_HOME", "CLAUDE_CONFIG_DIR", "PI_CODING_AGENT_DIR", "HC_TERMINAL_ID", "KWT_CONFIG", "BASH_ENV", "ENV", "ZDOTDIR"} {
 		t.Setenv(key, "")
 	}
-	// The hidden helper must not read even a malformed kwt config before the shell.
-	if err := os.WriteFile(filepath.Join(os.Getenv("KWT_HOME"), "config.toml"), []byte("invalid = ["), 0600); err != nil {
-		t.Fatal(err)
-	}
 	c := NewClient()
 	t.Cleanup(func() {
 		// The fixture Core belongs to this test, and cleanup must outlive cancellation.

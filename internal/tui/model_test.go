@@ -3093,5 +3093,5 @@ func TestCoreWorkspaceSelectionShowsAddress(t *testing.T) {
 	row.SessionLive = true
 	model := NewModel(&fakeBackend{}, "/fixture")
 	model, _ = updateModel(t, model, rowsMsg{rows: []Row{row}})
-	assert.Contains(t, stripANSI(viewContent(model)), "Core live t91")
+	assert.Contains(t, stripANSI(viewContent(model)), "Core t91")
 }

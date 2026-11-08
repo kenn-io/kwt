@@ -98,6 +98,9 @@ func TestCoreInventoryDoesNotStartMissingConfiguredCore(t *testing.T) {
 	if len(result) != 1 || result[0].Err == nil || !strings.Contains(result[0].Err.Error(), "Core") {
 		t.Fatalf("missing configured Core treated as absent: %+v", result)
 	}
+	if result[0].Session.Endpoint.SessionName != "fixture" || result[0].Session.Endpoint.Runtime != "herdr-core" {
+		t.Fatalf("missing endpoint identity: %+v", result[0].Session.Endpoint)
+	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("inventory invoked hc: %v", err)
 	}

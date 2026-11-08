@@ -2310,15 +2310,15 @@ func (m Model) renderSelectionDetails() string {
 		workspace = "workspace live"
 	}
 	if row.TmuxEndpoint.Runtime == "herdr-core" {
-		workspace = "Core offline"
-		if row.SessionLive {
-			workspace = "Core live"
-		}
+		workspace = ""
 		if row.TmuxEndpoint.Address != "" {
-			workspace += " " + row.TmuxEndpoint.Address
+			workspace = "Core " + row.TmuxEndpoint.Address
 		}
 	}
-	detail := fmt.Sprintf("selected %s · layout %s · %s", rowLabel(row), m.renderLayoutLabel(), workspace)
+	detail := fmt.Sprintf("selected %s · layout %s", rowLabel(row), m.renderLayoutLabel())
+	if workspace != "" {
+		detail += " · " + workspace
+	}
 	if fleetDetail := renderLocalFleetDetails(row); fleetDetail != "" {
 		detail += "\n" + fleetDetail
 	}

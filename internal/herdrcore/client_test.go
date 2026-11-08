@@ -28,6 +28,17 @@ func TestRunUsesNativeCoreFlagsAndProtectedHelper(t *testing.T) {
 	}
 }
 
+func TestLaunchEnvironmentStripsConfiguredCredential(t *testing.T) {
+	t.Setenv("KWT_GITHUB_TOKEN", "synthetic-builtin")
+	t.Setenv("CUSTOM_TOKEN", "synthetic-custom")
+	for _, entry := range launchEnvironment([]string{"CUSTOM_TOKEN"}) {
+		name, _, _ := strings.Cut(entry, "=")
+		if name == "CUSTOM_TOKEN" || name == "KWT_GITHUB_TOKEN" {
+			t.Fatalf("protected variable inherited: %s", name)
+		}
+	}
+}
+
 func TestListGetsFullMetadataAndExcludesUnmanagedAndRemote(t *testing.T) {
 	var calls [][]string
 	c := &Client{run: func(ctx context.Context, args ...string) ([]byte, error) {

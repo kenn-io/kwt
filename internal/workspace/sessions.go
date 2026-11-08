@@ -105,7 +105,7 @@ func (s *Sessions) ResolveAllBestEffort(ctx context.Context, requests []tmux.Wor
 			return nil, err
 		}
 		if observationErr != nil {
-			out[i].Err = observationErr
+			out[i] = tmux.WorkspaceSessionResolution{Session: tmux.WorkspaceSession{Endpoint: s.endpoint(nil, r)}, Err: observationErr}
 			continue
 		}
 		opts, err := s.options(r)

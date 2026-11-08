@@ -156,7 +156,6 @@ func TestHerdrHelperBypassesConfiguration(t *testing.T) {
 		return
 	}
 	home := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte("invalid = ["), 0600))
 	marker := filepath.Join(home, "marker")
 	t.Setenv("KWT_HOME", home)
 	t.Setenv("KWT_HELPER_MARKER", marker)
@@ -167,6 +166,8 @@ func TestHerdrHelperBypassesConfiguration(t *testing.T) {
 	data, err := os.ReadFile(marker)
 	require.NoError(t, err)
 	assert.Equal(t, "ran", string(data))
+	_, err = os.Stat(filepath.Join(home, "config.toml"))
+	assert.True(t, os.IsNotExist(err), "helper initialized config: %v", err)
 }
 
 func TestHerdrListRejectsConflictingFormats(t *testing.T) {

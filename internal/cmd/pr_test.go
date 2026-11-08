@@ -85,6 +85,7 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 	oldAttachExpectedGeneration := prAttachExpectedGeneration
 	oldAttachExpectedSession := prAttachExpectedSession
 	oldAttachExpectedSocket := prAttachExpectedSocket
+	oldAttachExpectedRuntime, oldAttachExpectedAddress, oldAttachExpectedCreatedMS := prAttachExpectedRuntime, prAttachExpectedAddress, prAttachExpectedCreatedMS
 	oldValidateSessionConfig := validatePRWorkspaceSessionConfig
 	oldStartWorkspaceSession := ensurePRWorkspaceSession
 	oldAttachWorkspaceSession := attachExistingPRWorkspaceSession
@@ -107,6 +108,7 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 		prAttachExpectedGeneration = oldAttachExpectedGeneration
 		prAttachExpectedSession = oldAttachExpectedSession
 		prAttachExpectedSocket = oldAttachExpectedSocket
+		prAttachExpectedRuntime, prAttachExpectedAddress, prAttachExpectedCreatedMS = oldAttachExpectedRuntime, oldAttachExpectedAddress, oldAttachExpectedCreatedMS
 		validatePRWorkspaceSessionConfig = oldValidateSessionConfig
 		ensurePRWorkspaceSession = oldStartWorkspaceSession
 		attachExistingPRWorkspaceSession = oldAttachWorkspaceSession
@@ -140,6 +142,7 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 	prAttachExpectedGeneration = ""
 	prAttachExpectedSession = ""
 	prAttachExpectedSocket = ""
+	prAttachExpectedRuntime, prAttachExpectedAddress, prAttachExpectedCreatedMS = "", "", 0
 	validatePRWorkspaceSessionConfig = func(*models.Config) error {
 		return nil
 	}
@@ -311,6 +314,23 @@ func testPRConfig() *models.Config {
 func TestPRCommandsSkipCallerLocalConfig(t *testing.T) {
 	require.NotNil(t, prCmd.PersistentPreRunE)
 	require.NoError(t, prCmd.PersistentPreRunE(prCmd, nil))
+}
+
+func TestGuardedCoreAttachRequiresExactEndpointIdentity(t *testing.T) {
+	withPRCommandDeps(t, testPRConfig(), &fakePRService{})
+	prAttachExpectedRepository = "github.com/acme/widget"
+	prAttachExpectedRegistration = "v1:" + strings.Repeat("a", 64)
+	prAttachExpectedGeneration = "0123456789abcdef0123456789abcdef"
+	prAttachExpectedSession = "fixture"
+	prAttachExpectedRuntime, prAttachExpectedAddress, prAttachExpectedCreatedMS = "herdr-core", "t91", 123
+	cmd, _, _ := prTestCommand()
+	markCommandFlagsChanged(t, cmd, "expected-repository", "expected-registration", "expected-generation", "expected-session", "expected-runtime", "expected-address", "expected-created-ms")
+	guarded, err := validateExpectedPRAttachFlags(cmd)
+	require.NoError(t, err)
+	assert.True(t, guarded)
+	prAttachExpectedCreatedMS = 0
+	_, err = validateExpectedPRAttachFlags(cmd)
+	require.Error(t, err)
 }
 
 func TestPRConfigInitializationFailureUsesJSONContract(t *testing.T) {

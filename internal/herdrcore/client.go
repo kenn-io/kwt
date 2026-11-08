@@ -64,11 +64,18 @@ type Client struct {
 	pinned         bool
 	protectedNames []string
 	run            func(context.Context, ...string) ([]byte, error)
+	runLaunch      func(context.Context, []string, ...string) ([]byte, error)
 	attach         func(context.Context, string) error
 }
 
 func NewClient() *Client {
-	return &Client{run: runHC, attach: attachHC}
+	return &Client{run: runHC, runLaunch: func(ctx context.Context, names []string, args ...string) ([]byte, error) {
+		return runHCEnvironment(ctx, launchEnvironment(names), args...)
+	}, attach: attachHC}
+}
+
+func launchEnvironment(names []string) []string {
+	return credentials.StripEnvironment(os.Environ(), append(credentials.ProtectedNames(nil), names...))
 }
 
 type commandError struct {
@@ -129,7 +136,13 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (*Terminal, error) {
 		args = append(args, "--strip", name)
 	}
 	args = append(args, "--", opts.Command)
-	output, err := c.run(ctx, args...)
+	var output []byte
+	var err error
+	if c.runLaunch != nil {
+		output, err = c.runLaunch(ctx, opts.ProtectedNames, args...)
+	} else {
+		output, err = c.run(ctx, args...)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("Core launch failed; inspect 'kwt herdr list --all' before retrying: %w", err)
 	}
@@ -241,7 +254,7 @@ func (c *Client) Attach(ctx context.Context, address string) error {
 		return err
 	}
 	if terminal.State != "live" {
-		return fmt.Errorf("terminal %s is finished; inspect its output with 'hc read %s'", address, address)
+		return fmt.Errorf("terminal is finished; inspect its output with 'hc read %s'", address)
 	}
 	return c.attach(ctx, address)
 }
