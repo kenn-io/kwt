@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -23,7 +24,6 @@ type workspaceCoreFixture struct {
 	mu                 sync.Mutex
 	records            []map[string]any
 	launches, sends    int
-	calls              []string
 	launchErr, sendErr error
 	compactRun         bool
 	onGet              func(map[string]any)
@@ -33,7 +33,6 @@ func (f *workspaceCoreFixture) client() *Client { return &Client{run: f.run} }
 func (f *workspaceCoreFixture) run(_ context.Context, args ...string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, args[0])
 	switch args[0] {
 	case "ls":
 		entries := []map[string]string{}
@@ -123,13 +122,16 @@ func workspaceAPI(t *testing.T, c *Client) workspaceEstablisher {
 	}
 	return workspace
 }
-func workspaceOptions() RunOptions {
-	return RunOptions{Executable: "/fixture/kwt", Directory: "/fixture/repo", Identifier: "repo-main", Context: "workspace", Command: "echo ready", ProtectedNames: []string{"KWT_TOKEN"}}
+func workspaceOptions(t *testing.T) RunOptions {
+	t.Helper()
+	root := t.TempDir()
+	return RunOptions{Executable: filepath.Join(root, "kwt"), Directory: filepath.Join(root, "repo"), Identifier: "repo-main", Context: "workspace", Command: "echo ready", ProtectedNames: []string{"KWT_TOKEN"}}
 }
 
 func TestWorkspaceNameTakenWithoutLiveMatchFails(t *testing.T) {
+	opts := workspaceOptions(t)
 	fixture := &workspaceCoreFixture{launchErr: &commandError{kind: "name_taken", err: errors.New("name taken")}}
-	terminal, err := workspaceAPI(t, fixture.client()).EstablishWorkspace(t.Context(), workspaceOptions(), "0123456789abcdef0123456789abcdef")
+	terminal, err := workspaceAPI(t, fixture.client()).EstablishWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef")
 	if err == nil {
 		t.Fatalf("name conflict without a verified live workspace succeeded: %+v", terminal)
 	}
@@ -140,7 +142,7 @@ func TestWorkspaceNameTakenWithoutLiveMatchFails(t *testing.T) {
 
 func TestExpectedWorkspaceDoesNotLaunchDifferentSession(t *testing.T) {
 	fixture := &workspaceCoreFixture{}
-	opts := workspaceOptions()
+	opts := workspaceOptions(t)
 	opts.Identifier = "new-branch"
 	_, err := fixture.client().EstablishExpectedWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef", "old-branch")
 	if !errors.Is(err, ErrWorkspaceIdentityChanged) {
@@ -153,33 +155,35 @@ func TestExpectedWorkspaceDoesNotLaunchDifferentSession(t *testing.T) {
 
 // Missing reuse would run the command twice on an ordinary live reopen.
 func TestWorkspaceEstablishmentReusesVerifiedLiveTerminal(t *testing.T) {
+	opts := workspaceOptions(t)
 	fixture := &workspaceCoreFixture{}
 	workspace := workspaceAPI(t, fixture.client())
-	first, err := workspace.EstablishWorkspace(t.Context(), workspaceOptions(), "0123456789abcdef0123456789abcdef")
+	first, err := workspace.EstablishWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := workspace.EstablishWorkspace(t.Context(), workspaceOptions(), "0123456789abcdef0123456789abcdef")
+	second, err := workspace.EstablishWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.Address != "t91" || second.Address != "t91" || fixture.launches != 1 || fixture.sends != 1 {
 		t.Fatalf("reopen duplicated workspace: first=%v second=%v launches=%d sends=%d", first, second, fixture.launches, fixture.sends)
 	}
-	if !slices.Contains(first.Argv, "--workspace") || first.Directory != "/fixture/repo" {
+	if !slices.Contains(first.Argv, "--workspace") || first.Directory != opts.Directory {
 		t.Fatalf("workspace bypassed login-shell helper: %+v", first)
 	}
 }
 
 func TestWorkspaceFinalExitAllowsOneNewTerminal(t *testing.T) {
+	opts := workspaceOptions(t)
 	fixture := &workspaceCoreFixture{}
 	workspace := workspaceAPI(t, fixture.client())
-	if _, err := workspace.EstablishWorkspace(t.Context(), workspaceOptions(), "0123456789abcdef0123456789abcdef"); err != nil {
+	if _, err := workspace.EstablishWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef"); err != nil {
 		t.Fatal(err)
 	}
 	fixture.records[0]["state"] = "finished"
 	fixture.records[0]["exit_code"] = 0
-	terminal, err := workspace.EstablishWorkspace(t.Context(), workspaceOptions(), "0123456789abcdef0123456789abcdef")
+	terminal, err := workspace.EstablishWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,13 +193,14 @@ func TestWorkspaceFinalExitAllowsOneNewTerminal(t *testing.T) {
 }
 
 func TestWorkspaceUncertainDeliveryIsNeverRepeated(t *testing.T) {
+	opts := workspaceOptions(t)
 	fixture := &workspaceCoreFixture{sendErr: errors.New("connection lost after submission")}
 	workspace := workspaceAPI(t, fixture.client())
-	if _, err := workspace.EstablishWorkspace(t.Context(), workspaceOptions(), "0123456789abcdef0123456789abcdef"); err == nil {
+	if _, err := workspace.EstablishWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef"); err == nil {
 		t.Fatal("uncertain initial submission succeeded")
 	}
 	fixture.sendErr = nil
-	if _, err := workspace.EstablishWorkspace(t.Context(), workspaceOptions(), "0123456789abcdef0123456789abcdef"); err == nil {
+	if _, err := workspace.EstablishWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef"); err == nil {
 		t.Fatal("reopen ignored uncertain initialization")
 	}
 	if fixture.launches != 1 || fixture.sends != 1 {
@@ -204,8 +209,9 @@ func TestWorkspaceUncertainDeliveryIsNeverRepeated(t *testing.T) {
 }
 
 func TestWorkspaceUncertainLaunchIsNotRetried(t *testing.T) {
+	opts := workspaceOptions(t)
 	fixture := &workspaceCoreFixture{launchErr: errors.New("connection lost")}
-	_, err := workspaceAPI(t, fixture.client()).EstablishWorkspace(t.Context(), workspaceOptions(), "0123456789abcdef0123456789abcdef")
+	_, err := workspaceAPI(t, fixture.client()).EstablishWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef")
 	if err == nil || fixture.launches != 1 {
 		t.Fatalf("uncertain launch retried: launches=%d err=%v", fixture.launches, err)
 	}
@@ -216,7 +222,7 @@ func TestWorkspaceRejectsChangedAuthority(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			fixture := &workspaceCoreFixture{}
 			workspace := workspaceAPI(t, fixture.client())
-			opts := workspaceOptions()
+			opts := workspaceOptions(t)
 			if _, err := workspace.EstablishWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef"); err != nil {
 				t.Fatal(err)
 			}
@@ -253,11 +259,11 @@ func TestWorkspaceRejectsChangedAuthority(t *testing.T) {
 func TestWorkspaceGenerationSurvivesVerifiedMove(t *testing.T) {
 	fixture := &workspaceCoreFixture{}
 	workspace := workspaceAPI(t, fixture.client())
-	opts := workspaceOptions()
+	opts := workspaceOptions(t)
 	if _, err := workspace.EstablishWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef"); err != nil {
 		t.Fatal(err)
 	}
-	opts.Directory = "/fixture/moved"
+	opts.Directory = filepath.Join(filepath.Dir(opts.Directory), "moved")
 	opts.Identifier = "repo-renamed"
 	terminal, err := workspace.EstablishWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef")
 	if err != nil || terminal == nil || terminal.Address != "t91" || fixture.launches != 1 {
@@ -266,12 +272,13 @@ func TestWorkspaceGenerationSurvivesVerifiedMove(t *testing.T) {
 }
 
 func TestWorkspaceRefreshDoesNotCreate(t *testing.T) {
+	opts := workspaceOptions(t)
 	fixture := &workspaceCoreFixture{}
 	resolver, ok := any(fixture.client()).(workspaceResolver)
 	if !ok {
 		t.Fatal("Core has no observation-only workspace resolver")
 	}
-	terminal, err := resolver.ResolveWorkspace(t.Context(), workspaceOptions(), "0123456789abcdef0123456789abcdef")
+	terminal, err := resolver.ResolveWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef")
 	if err != nil || terminal != nil || fixture.launches != 0 {
 		t.Fatalf("refresh created workspace: %+v %v launches=%d", terminal, err, fixture.launches)
 	}
@@ -280,7 +287,7 @@ func TestWorkspaceRefreshDoesNotCreate(t *testing.T) {
 func TestWorkspaceConcurrentDirectoryOpen(t *testing.T) {
 	fixture := &workspaceCoreFixture{}
 	workspace := workspaceAPI(t, fixture.client())
-	opts := workspaceOptions()
+	opts := workspaceOptions(t)
 	opts.Command = ""
 	results := make(chan *Terminal, 2)
 	errs := make(chan error, 2)
@@ -315,18 +322,19 @@ func FuzzWorkspaceRejectsForgedHelper(f *testing.F) {
 	f.Add("/fixture/kwt; echo forged")
 	f.Add("$(false)")
 	f.Fuzz(func(t *testing.T, executable string) {
-		if executable == "/fixture/kwt" {
+		opts := workspaceOptions(t)
+		if executable == opts.Executable {
 			return
 		}
 		fixture := &workspaceCoreFixture{}
 		workspace := workspaceAPI(t, fixture.client())
-		if _, err := workspace.EstablishWorkspace(t.Context(), workspaceOptions(), "0123456789abcdef0123456789abcdef"); err != nil {
+		if _, err := workspace.EstablishWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef"); err != nil {
 			t.Fatal(err)
 		}
 		argv := slices.Clone(fixture.records[0]["argv"].([]string))
 		argv[0] = executable
 		fixture.records[0]["argv"] = argv
-		if _, err := workspace.EstablishWorkspace(t.Context(), workspaceOptions(), "0123456789abcdef0123456789abcdef"); err == nil {
+		if _, err := workspace.EstablishWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef"); err == nil {
 			t.Fatalf("adopted forged helper %q", executable)
 		}
 		if fixture.launches != 1 || fixture.sends != 1 {
@@ -336,17 +344,19 @@ func FuzzWorkspaceRejectsForgedHelper(f *testing.F) {
 }
 
 func TestWorkspaceGetsFullLaunchRecord(t *testing.T) {
+	opts := workspaceOptions(t)
 	fixture := &workspaceCoreFixture{compactRun: true}
-	terminal, err := workspaceAPI(t, fixture.client()).EstablishWorkspace(t.Context(), workspaceOptions(), "0123456789abcdef0123456789abcdef")
+	terminal, err := workspaceAPI(t, fixture.client()).EstablishWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef")
 	if err != nil || terminal == nil || terminal.CreatedMS != 123 || len(terminal.Argv) == 0 {
 		t.Fatalf("compact run response was trusted without full get: terminal=%+v err=%v", terminal, err)
 	}
 }
 
 func TestWorkspaceRejectsIdentityChangingOnFreshGet(t *testing.T) {
+	opts := workspaceOptions(t)
 	fixture := &workspaceCoreFixture{}
 	workspace := workspaceAPI(t, fixture.client())
-	if _, err := workspace.EstablishWorkspace(t.Context(), workspaceOptions(), "0123456789abcdef0123456789abcdef"); err != nil {
+	if _, err := workspace.EstablishWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef"); err != nil {
 		t.Fatal(err)
 	}
 	gets := 0
@@ -356,7 +366,7 @@ func TestWorkspaceRejectsIdentityChangingOnFreshGet(t *testing.T) {
 			record["created_ms"] = int64(987)
 		}
 	}
-	if _, err := workspace.EstablishWorkspace(t.Context(), workspaceOptions(), "0123456789abcdef0123456789abcdef"); err == nil {
+	if _, err := workspace.EstablishWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef"); err == nil {
 		t.Fatal("workspace creation identity changed after selection")
 	}
 	if fixture.sends != 1 || fixture.launches != 1 {
@@ -366,7 +376,7 @@ func TestWorkspaceRejectsIdentityChangingOnFreshGet(t *testing.T) {
 
 func TestWorkspaceProtectedLaunchRejectsCommand(t *testing.T) {
 	fixture := &workspaceCoreFixture{}
-	opts := workspaceOptions()
+	opts := workspaceOptions(t)
 	opts.Context = "protected-workspace"
 	if _, err := workspaceAPI(t, fixture.client()).EstablishWorkspace(t.Context(), opts, "0123456789abcdef0123456789abcdef"); err == nil {
 		t.Fatal("protected workspace ran a layout command")

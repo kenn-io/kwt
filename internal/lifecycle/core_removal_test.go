@@ -21,7 +21,7 @@ import (
 )
 
 // Even direct/force removal must not delete a checkout under a live Core
-// workspace. The fake hc only reads a synthetic terminal record.
+// workspace. The synthetic RPC server supplies the terminal record.
 func TestRemovalServiceRefusesLiveCoreWithoutSessionCondition(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fixture executable")
@@ -34,17 +34,9 @@ func TestRemovalServiceRefusesLiveCoreWithoutSessionCondition(t *testing.T) {
 				t.Fatal(err)
 			}
 			bin := t.TempDir()
-			recordPath := filepath.Join(bin, "record.json")
 			sum := sha256.Sum256([]byte("generation:" + generation))
 			name := "kwt-ws-" + hex.EncodeToString(sum[:])[:24]
 			record := map[string]any{"address": "t91", "name": name, "cwd": path, "state": "live", "created_ms": 123, "keep": false, "labels": map[string]string{"kwt.managed": "true", "kwt.workspace": name, "kwt.generation": generation, "kwt.path": path, "kwt.context": "workspace", "kwt.identifier": "fixture-core", "kwt.initialized": "true"}, "argv": []string{"/fixture/kwt", "herdr", "_run-command", "--workspace", "--workspace-path", path, "--workspace-generation", generation, "--", ""}}
-			data, err := json.Marshal(record)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(recordPath, data, 0600); err != nil {
-				t.Fatal(err)
-			}
 			socketRoot, err := os.MkdirTemp("/tmp", "kwt-remove-rpc-")
 			if err != nil {
 				t.Fatal(err)
@@ -109,7 +101,6 @@ func TestRemovalServiceRefusesLiveCoreWithoutSessionCondition(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-			t.Setenv("KWT_CORE_FIXTURE_RECORD", recordPath)
 			result, err := newFixtureRemovalService(RemovalServiceOptions{Home: home}).Remove(t.Context(), RemovalRequest{RepositoryPath: repository, Path: path, ExpectedGeneration: generation, Force: force})
 			if err == nil || result.WorktreeRemoved {
 				t.Fatalf("removed under live Core workspace: result=%+v err=%v", result, err)

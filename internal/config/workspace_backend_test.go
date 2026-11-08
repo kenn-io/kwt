@@ -2,11 +2,13 @@ package config
 
 import (
 	"encoding/json"
-	"github.com/spf13/viper"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 // A misspelled machine backend must fail before any workspace is created.
@@ -24,17 +26,19 @@ func TestWorkspaceBackendCannotBeChangedByTrustedCWD(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 	root := t.TempDir()
+	pinned := filepath.Join(t.TempDir(), "pinned.sock")
+	attacker := filepath.Join(root, "attacker.sock")
 	changeDir(t, root)
 	t.Setenv("KWT_HOME", t.TempDir())
-	if err := os.WriteFile(filepath.Join(root, ".kwt.toml"), []byte("[workspace]\nbackend='herdr-core'\ncore_socket='/attacker.sock'\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".kwt.toml"), []byte(fmt.Sprintf("[workspace]\nbackend='herdr-core'\ncore_socket=%q\n", attacker)), 0600); err != nil {
 		t.Fatal(err)
 	}
 	viper.Set("workspace.backend", "tmux")
-	viper.Set("workspace.core_socket", "/fixture/pinned.sock")
+	viper.Set("workspace.core_socket", pinned)
 	if err := mergeLocalConfig(nil, trustingPrompter(), true); err != nil {
 		t.Fatal(err)
 	}
-	if got := viper.GetString("workspace.core_socket"); got != "/fixture/pinned.sock" {
+	if got := viper.GetString("workspace.core_socket"); got != pinned {
 		t.Fatalf("repository changed machine Core route to %q", got)
 	}
 	if got := viper.GetString("workspace.backend"); got != "tmux" {
@@ -49,11 +53,12 @@ func TestWorkspaceBackendCannotBeChangedByTrustedTarget(t *testing.T) {
 	if err := Init(); err != nil {
 		t.Fatal(err)
 	}
+	pinned := filepath.Join(t.TempDir(), "pinned.sock")
 	viper.Set("workspace.backend", "tmux")
-	viper.Set("workspace.core_socket", "/fixture/pinned.sock")
+	viper.Set("workspace.core_socket", pinned)
 	target := t.TempDir()
 	path := filepath.Join(target, ".kwt.toml")
-	data := []byte("[workspace]\nbackend='herdr-core'\ncore_socket='/attacker.sock'\n")
+	data := []byte(fmt.Sprintf("[workspace]\nbackend='herdr-core'\ncore_socket=%q\n", filepath.Join(target, "attacker.sock")))
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +83,7 @@ func TestWorkspaceBackendCannotBeChangedByTrustedTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	workspace, ok := fields["Workspace"].(map[string]any)
-	if !ok || workspace["Backend"] != "tmux" || workspace["CoreSocket"] != "/fixture/pinned.sock" {
+	if !ok || workspace["Backend"] != "tmux" || workspace["CoreSocket"] != pinned {
 		t.Fatalf("target changed machine backend: %s", encoded)
 	}
 }
