@@ -680,7 +680,7 @@ func (r *WorkspaceRunner) repairBootstrap(
 	if err := r.tmux.RunCommandContext(ctx, bootCmd...); err != nil {
 		return wrapTmuxErr(bootCmd, err)
 	}
-	return nil
+	return r.restoreWorkspaceLifetime(ctx, session)
 }
 
 func (r *WorkspaceRunner) protectedUpdateEnvironment(

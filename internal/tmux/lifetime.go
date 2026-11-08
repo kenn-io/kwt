@@ -39,13 +39,16 @@ func (r *WorkspaceRunner) restoreWorkspaceLifetime(ctx context.Context, session 
 	if strings.TrimSpace(pending) == "" {
 		return nil
 	}
+	if err := r.tmux.RunCommandContext(ctx, "if-shell", "-F", "1", workspaceLifetimeHooks); err != nil {
+		return err
+	}
 	target := "=" + session + ":"
 	for _, hook := range []string{"client-attached", "client-session-changed"} {
 		output, err := r.tmux.RunCommandOutputContext(ctx, "show-options", "-q", "-t", target, hook)
 		if err != nil {
 			return err
 		}
-		if strings.TrimSpace(output) == "" {
+		if strings.TrimSpace(output) == "" || strings.Contains(output, workspaceRestoreCommand) {
 			continue
 		}
 		if err := r.tmux.RunCommandContext(ctx, "set-hook", "-a", "-t", target, hook, workspaceRestoreCommand); err != nil {

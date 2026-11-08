@@ -74,7 +74,7 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 		t.Skip("tmux is not installed")
 	}
 	for _, tc := range []struct {
-		name, installedHook                                                                             string
+		name, installedHook, reopen                                                                     string
 		warm, switchClient, localHooks, earlyAttach, followGlobal, localPolicy, user999, restrictedPath bool
 	}{
 		{name: "fresh server"},
@@ -84,6 +84,10 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 		{name: "attach before local restore installation", earlyAttach: true, localHooks: true},
 		{name: "global policy change", followGlobal: true},
 		{name: "session-local policy", localPolicy: true},
+		{name: "reload before reopen", reopen: "ensure"},
+		{name: "reload before guarded reopen", reopen: "repair"},
+		{name: "reload with session hooks", reopen: "ensure", localHooks: true},
+		{name: "reload before switching client", reopen: "ensure", warm: true, switchClient: true},
 		{name: "user hooks at 999", user999: true},
 		{name: "user hooks at 999 with local hooks", user999: true, localHooks: true, warm: true},
 		{name: "installed local hook", installedHook: "client-attached"},
@@ -198,6 +202,23 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 			}
 			runner := NewWorkspaceRunner(backend, nil)
 			require.NoError(t, runner.Ensure(ctx, "workspace", root, BlankLayout()))
+			if tc.reopen != "" {
+				before, err := command.RunCommandOutputContext(ctx, "show-options", "-q", "-t", "workspace", "client-attached")
+				require.NoError(t, err)
+				require.NoError(t, command.RunCommandContext(ctx, "source-file", config))
+				for range 2 {
+					if tc.reopen == "repair" {
+						require.NoError(t, runner.RepairExisting(ctx, "workspace", root, BlankLayout()))
+					} else {
+						require.NoError(t, runner.Ensure(ctx, "workspace", root, BlankLayout()))
+					}
+				}
+				if tc.localHooks {
+					after, err := command.RunCommandOutputContext(ctx, "show-options", "-q", "-t", "workspace", "client-attached")
+					require.NoError(t, err)
+					require.Equal(t, before, after, "reopening must reuse existing session-local restore hooks")
+				}
+			}
 			if tc.user999 {
 				before, err := command.RunCommandOutputContext(ctx, "show-hooks", "-g")
 				require.NoError(t, err)
