@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/url"
+	workspaceRuntime "go.kenn.io/kwt/internal/workspace"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
@@ -300,6 +301,9 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		if launch {
 			protectedNames = credentials.ProtectedNames(ctx.Config)
 			launchRunner = newAddWorkspaceRunner(protectedNames)
+			if ctx.Config.Workspace.Backend == "herdr-core" {
+				launchRunner = newConfiguredWorkspaceSessions(ctx.Config, protectedNames, os.Stderr)
+			}
 		}
 		err = guard.run(commandContext, func() error {
 			created, mutationErr := ctx.WorktreeManager.Create(commandContext, worktree.CreateOptions{
@@ -484,8 +488,12 @@ func shouldLaunch(autoLaunch, layoutFlagPassed, noLaunch bool) (bool, error) {
 // --layout/--select-layout pick, or a repository identity failure is caught
 // here rather than after a worktree already exists.
 func prepareLaunch(ctx *CommandContext) (models.Layout, *url.RepositoryInfo, error) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		return models.Layout{}, nil, fmt.Errorf("tmux not found; install tmux or pass --no-launch")
+	runtimeCommand := "tmux"
+	if ctx.Config.Workspace.Backend == "herdr-core" {
+		runtimeCommand = "hc"
+	}
+	if _, err := exec.LookPath(runtimeCommand); err != nil {
+		return models.Layout{}, nil, fmt.Errorf("%s not found; install it or pass --no-launch", runtimeCommand)
 	}
 	if err := tmux.ValidateLayouts(ctx.Config.Layouts, ctx.Config.Agents); err != nil {
 		return models.Layout{}, nil, err
@@ -508,6 +516,9 @@ func prepareLaunch(ctx *CommandContext) (models.Layout, *url.RepositoryInfo, err
 		return models.Layout{}, nil, err
 	}
 
+	if err := workspaceRuntime.ValidateLayout(ctx.Config, layout); err != nil {
+		return models.Layout{}, nil, err
+	}
 	info, err := worktree.RepositoryInfoWithProjects(ctx.Git, ctx.Config.Projects)
 	if err != nil {
 		return models.Layout{}, nil, fmt.Errorf("failed to determine repository identity: %w", err)

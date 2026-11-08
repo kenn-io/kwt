@@ -31,6 +31,7 @@ import (
 	dashboard "go.kenn.io/kwt/internal/tui"
 	"go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
+	workspaceRuntime "go.kenn.io/kwt/internal/workspace"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
@@ -42,7 +43,7 @@ type tuiBackend struct {
 	// mutates backend configuration and its derived tmux coordinators.
 	mu                        sync.Mutex
 	cfg                       *models.Config
-	workspaceSessions         *tmux.WorkspaceSessions
+	workspaceSessions         *workspaceRuntime.Sessions
 	protectedNames            []string
 	launchDir                 string
 	launchProjectRegistered   bool
@@ -113,7 +114,7 @@ func newTUIBackend(cfg *models.Config) *tuiBackend {
 
 func newTUIBackendWithLaunchDir(cfg *models.Config, launchDir string) *tuiBackend {
 	protectedNames := credentials.ProtectedNames(cfg)
-	sessions := newCommandWorkspaceSessions(protectedNames, os.Stderr)
+	sessions := newConfiguredWorkspaceSessions(cfg, protectedNames, os.Stderr)
 	backend := &tuiBackend{
 		cfg:               cfg,
 		workspaceSessions: sessions,
@@ -489,7 +490,7 @@ func (b *tuiBackend) applyInventoryConfigLocked(effective *models.Config) error 
 		*b.cfg = *effective
 	}
 	b.protectedNames = credentials.ProtectedNames(b.cfg)
-	b.workspaceSessions = tmux.NewWorkspaceSessions(tmux.WorkspaceSessionsOptions{
+	b.workspaceSessions = workspaceRuntime.New(b.cfg, tmux.WorkspaceSessionsOptions{
 		StripNames:       b.protectedNames,
 		ReportDiagnostic: b.reportTmuxDiagnostic,
 	})
@@ -528,6 +529,7 @@ func dashboardInventoryEntry(entry kwt.Entry) *discovery.GlobalWorktreeEntry {
 		Path: entry.Path, Branch: entry.Branch, CommitHash: entry.CommitHash,
 		IsMain: entry.IsMain, CreatedAt: entry.CreatedAt, Generation: entry.Generation,
 		TmuxEndpoint: tmux.SessionEndpoint{
+			Runtime: entry.WorkspaceRuntime, Address: entry.WorkspaceAddress, CreatedMS: entry.WorkspaceCreatedMS, WorkspacePath: entry.Path, WorkspaceGeneration: entry.Generation, Protected: entry.TmuxAttachMode == models.TmuxAttachProtected,
 			SessionName: entry.SessionName,
 			SocketName:  entry.TmuxSocketName,
 		},
@@ -2156,11 +2158,18 @@ func resolveExistingWorkspaceEndpoint(
 	if resolveLive == nil {
 		return tmux.SessionEndpoint{}, fmt.Errorf("live workspace resolver is unavailable")
 	}
-	return resolveLive(ctx, tmux.WorkspaceEndpointRequest{
+	endpoint, err := resolveLive(ctx, tmux.WorkspaceEndpointRequest{
 		SessionName:         row.SessionName,
 		WorkspacePath:       workspacePath,
 		WorkspaceGeneration: generation,
 	})
+	if err != nil {
+		return tmux.SessionEndpoint{}, err
+	}
+	if row.TmuxEndpoint.Runtime == "herdr-core" && (endpoint.Runtime != "herdr-core" || endpoint.Address != row.TmuxEndpoint.Address || endpoint.CreatedMS != row.TmuxEndpoint.CreatedMS) {
+		return tmux.SessionEndpoint{}, fmt.Errorf("cached Core workspace was replaced; refresh before attaching")
+	}
+	return endpoint, nil
 }
 
 // LayoutNames returns the names the TUI layout cycler offers: the reserved
@@ -2177,7 +2186,9 @@ func (b *tuiBackend) LayoutNames() []string {
 }
 
 func (b *tuiBackend) InsideTmux() bool {
-	return os.Getenv("TMUX") != ""
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.cfg.Workspace.Backend == "herdr-core" || os.Getenv("TMUX") != ""
 }
 
 func (b *tuiBackend) attachWorkspace(
@@ -2214,6 +2225,9 @@ func (b *tuiBackend) establishWorkspaceEndpoint(
 	}
 	layout, err := b.resolveLayout(row, layoutName, interactive)
 	if err != nil {
+		return tmux.SessionEndpoint{}, err
+	}
+	if err := workspaceRuntime.ValidateLayout(b.cfg, layout); err != nil {
 		return tmux.SessionEndpoint{}, err
 	}
 	if row.Entry == nil {

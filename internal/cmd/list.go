@@ -113,7 +113,7 @@ func writeListFailure(cmd *cobra.Command, err, humanError error) error {
 
 func listedWorktree(entry kwt.Entry) models.Worktree {
 	return models.Worktree{
-		Path: entry.Path, Branch: entry.Branch, CommitHash: entry.CommitHash,
+		WorkspaceRuntime: entry.WorkspaceRuntime, WorkspaceAddress: entry.WorkspaceAddress, WorkspaceCreatedMS: entry.WorkspaceCreatedMS, Path: entry.Path, Branch: entry.Branch, CommitHash: entry.CommitHash,
 		IsMain: entry.IsMain, CreatedAt: entry.CreatedAt, Generation: entry.Generation,
 		Repository: entry.Repository.FullPath, SessionName: entry.SessionName,
 		TmuxSocketName: entry.TmuxSocketName, TmuxAttachMode: entry.TmuxAttachMode,

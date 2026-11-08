@@ -474,3 +474,13 @@ func visualIndex(line, needle string) int {
 	}
 	return len([]rune(line[:byteIndex]))
 }
+
+func TestCoreWorkspaceStateUsesExistingColumn(t *testing.T) {
+	row := testRow("fixture", "main", "/fixture/repo")
+	row.TmuxEndpoint.Runtime = "herdr-core"
+	row.TmuxEndpoint.Address = "t91"
+	row.SessionLive = true
+	assert.Equal(t, "core live", formatWorkspace(row))
+	row.SessionLive = false
+	assert.Equal(t, "core off", formatWorkspace(row))
+}

@@ -284,6 +284,18 @@ func runPRImport(cmd *cobra.Command, args []string) error {
 		if !prStartSession {
 			return nil
 		}
+		if cfg.Workspace.Backend == "herdr-core" {
+			endpoint, startErr := startPRCoreWorkspace(cmd.Context(), result.Workspace, cfg)
+			if startErr != nil {
+				result.SessionStartError = pullrequest.NewError(pullrequest.CodeWorkspaceCreation, "failed to start imported Core workspace", false, startErr)
+				return nil
+			}
+			result.Workspace.TmuxSocketName = ""
+			result.Workspace.WorkspaceRuntime = endpoint.Runtime
+			result.Workspace.WorkspaceAddress = endpoint.Address
+			result.Workspace.WorkspaceCreatedMS = endpoint.CreatedMS
+			return nil
+		}
 		if result.Workspace.TmuxSocketName == "" {
 			result.SessionStartError = pullrequest.NewError(
 				pullrequest.CodeWorkspaceCreation,
@@ -410,6 +422,7 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 		return writePRError(cmd, err)
 	}
 	var socketName string
+	var coreEndpoint tmux.SessionEndpoint
 	err = guard.run(cmd.Context(), func() error {
 		currentVerified, currentErr := importedWorkspaceProvenance(
 			cmd.Context(), args[0],
@@ -437,14 +450,21 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 			}
 			current.Workspace.Generation = currentVerified.liveGeneration
 		}
+		if cfg.Workspace.Backend == "herdr-core" {
+			current.Workspace.Generation = currentVerified.liveGeneration
+		}
 		record = current
 		establish := func() error {
+			if cfg.Workspace.Backend == "herdr-core" {
+				coreEndpoint, currentErr = startPRCoreWorkspace(cmd.Context(), record.Workspace, cfg)
+				return currentErr
+			}
 			socketName, currentErr = ensurePRWorkspaceSession(
 				cmd.Context(), record.Workspace, cfg,
 			)
 			return currentErr
 		}
-		if !guarded {
+		if !guarded && cfg.Workspace.Backend != "herdr-core" {
 			return establish()
 		}
 		currentErr = withPRWorkspaceGeneration(
@@ -469,9 +489,11 @@ func runPRAttach(cmd *cobra.Command, args []string) error {
 		return writePRError(cmd, err)
 	}
 	if err == nil {
-		err = attachExistingPRWorkspaceSession(
-			cmd.Context(), record.Workspace, cfg, socketName,
-		)
+		if cfg.Workspace.Backend == "herdr-core" {
+			err = newConfiguredWorkspaceSessions(cfg, credentials.ProtectedNames(cfg), cmd.ErrOrStderr()).Attach(cmd.Context(), coreEndpoint)
+		} else {
+			err = attachExistingPRWorkspaceSession(cmd.Context(), record.Workspace, cfg, socketName)
+		}
 	}
 	if err != nil {
 		message := "failed to attach imported workspace session"
@@ -1516,4 +1538,11 @@ func prExitCode(code pullrequest.ErrorCode) int {
 	default:
 		return 1
 	}
+}
+
+func startPRCoreWorkspace(ctx context.Context, workspace pullrequest.Workspace, cfg *models.Config) (tmux.SessionEndpoint, error) {
+	if workspace.Path == "" || workspace.SessionName == "" || workspace.Generation == "" {
+		return tmux.SessionEndpoint{}, fmt.Errorf("imported Core workspace lacks current identity")
+	}
+	return newConfiguredWorkspaceSessions(cfg, credentials.ProtectedNames(cfg), os.Stderr).EstablishCore(ctx, tmux.WorkspaceEndpointRequest{SessionName: workspace.SessionName, WorkspacePath: workspace.Path, WorkspaceGeneration: workspace.Generation, Protected: true}, tmux.BlankLayout())
 }

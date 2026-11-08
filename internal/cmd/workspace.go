@@ -34,7 +34,11 @@ func resolveRegisteredDirectorySessions(
 			WorkspacePath: workspace.Path,
 		}
 	}
-	return newCommandWorkspaceSessions(nil, os.Stderr).ResolveAll(
+	cfg, err := loadWorkspaceConfig()
+	if err != nil {
+		return nil, err
+	}
+	return newConfiguredWorkspaceSessions(cfg, nil, os.Stderr).ResolveAll(
 		context.Background(),
 		requests,
 	)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	gitcmd "go.kenn.io/kit/git/cmd"
@@ -11,8 +12,11 @@ import (
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/git"
+	"go.kenn.io/kwt/internal/herdrcore"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/tmux"
+	"go.kenn.io/kwt/internal/utils"
+	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 	shared "go.kenn.io/kwt/worktree"
 )
@@ -99,20 +103,11 @@ func (s *removalService) Remove(
 	if err := ctx.Err(); err != nil {
 		return result, classifyRemovalError(err, result)
 	}
-	var protectedNames []string
-	if request.Session != nil {
-		configSnapshot, err := config.LoadGlobalSnapshotAtWithExpansion(
-			s.home,
-			request.Expansion.expandPath,
-		)
-		if err != nil {
-			return result, classifyRemovalError(
-				fmt.Errorf("reload removal credential policy: %w", err),
-				result,
-			)
-		}
-		protectedNames = credentials.ProtectedNames(configSnapshot.Config)
+	configSnapshot, err := config.LoadGlobalSnapshotAtWithExpansion(s.home, request.Expansion.expandPath)
+	if err != nil {
+		return result, classifyRemovalError(fmt.Errorf("reload removal runtime policy: %w", err), result)
 	}
+	protectedNames := credentials.ProtectedNames(configSnapshot.Config)
 
 	repository := newRemovalInventoryGit(ctx, request.RepositoryPath, protectedNames)
 	root, err := repository.GetMainRepositoryPath()
@@ -195,6 +190,11 @@ func (s *removalService) Remove(
 		Force:                request.Force, DeleteObservedBranch: request.DeleteBranch, ForceObservedBranch: request.ForceDeleteBranch,
 		Claim: func(_ context.Context, preflight func() error, remove func() (shared.RemovalResult, error)) (bool, error) {
 			return reg.RemoveIfMatchAfter(request.Path, record, func() error {
+				cleanupCore, closeCore, err := s.prepareCoreWorkspaceRemoval(ctx, configSnapshot.Config, request)
+				if err != nil {
+					return err
+				}
+				defer closeCore()
 				if request.Session != nil {
 					sessionCondition := *request.Session
 					// compat(kag1): default-server adoption
@@ -236,6 +236,9 @@ func (s *removalService) Remove(
 					}
 				}
 				effects, cleanupErr := remove()
+				if effects.RegistrationRemoved {
+					cleanupErr = errors.Join(cleanupErr, cleanupCore())
+				}
 				mutationErr = cleanupErr
 
 				if effects.RegistrationRemoved {
@@ -370,4 +373,61 @@ func requestSafePath(path string) string {
 		return path
 	}
 	return ""
+}
+
+// Both direct and session removal use the same pinned, non-starting check.
+// Force relaxes Git's dirty-worktree policy, never live runtime protection.
+func (s *removalService) prepareCoreWorkspaceRemoval(ctx context.Context, cfg *models.Config, request RemovalRequest) (func() error, func(), error) {
+	noop := func() error { return nil }
+	closeNoop := func() {}
+	if cfg.Workspace.CoreSocket == "" {
+		return noop, closeNoop, nil
+	}
+	observation, err := herdrcore.NewWorkspaceClient(cfg.Workspace.CoreSocket).ObserveRemoval(ctx)
+	if err != nil {
+		return nil, closeNoop, fmt.Errorf("cannot establish Core workspace absence: %w", err)
+	}
+	fail := func(err error) (func() error, func(), error) { observation.Close(); return nil, closeNoop, err }
+	executable, err := os.Executable()
+	if err != nil {
+		return fail(err)
+	}
+	var captured []herdrcore.Terminal
+	for _, t := range observation.Terminals {
+		if t.Context() != "workspace" && t.Context() != "protected-workspace" {
+			continue
+		}
+		matches := t.Labels["kwt.generation"] == request.ExpectedGeneration || utils.PathKey(t.Directory) == utils.PathKey(request.Path) || utils.PathKey(t.Labels["kwt.workspace_path"]) == utils.PathKey(request.Path)
+		if !matches {
+			continue
+		}
+		if t.State != "finished" || t.Reason == "spawn_pending" {
+			return fail(fmt.Errorf("live or uncertain Core workspace %s protects this worktree; stop it before removal", t.Address))
+		}
+		opts := herdrcore.RunOptions{Executable: executable, Directory: request.Path, Context: t.Context(), ProtectedNames: credentials.ProtectedNames(cfg)}
+		if err := observation.VerifyFinished(t, opts, request.ExpectedGeneration); err != nil {
+			return fail(err)
+		}
+		captured = append(captured, t)
+	}
+	cleanup := func() error {
+		if len(captured) == 0 {
+			return nil
+		}
+		current, err := config.LoadGlobalSnapshotAtWithExpansion(s.home, request.Expansion.expandPath)
+		if err != nil {
+			return fmt.Errorf("reload Core cleanup policy: %w", err)
+		}
+		if current.Config.Workspace.CoreSocket != cfg.Workspace.CoreSocket {
+			return fmt.Errorf("Core cleanup route changed")
+		}
+		for _, expected := range captured {
+			opts := herdrcore.RunOptions{Executable: executable, Directory: request.Path, Context: expected.Context(), ProtectedNames: credentials.ProtectedNames(current.Config)}
+			if err := observation.RemoveFinished(ctx, expected, opts, request.ExpectedGeneration); err != nil {
+				return fmt.Errorf("clean finished Core workspace %s: %w", expected.Address, err)
+			}
+		}
+		return nil
+	}
+	return cleanup, observation.Close, nil
 }

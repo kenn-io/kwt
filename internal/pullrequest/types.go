@@ -98,6 +98,10 @@ type PullRequest struct {
 }
 
 type Workspace struct {
+	WorkspaceRuntime   string `json:"workspace_runtime,omitempty"`
+	WorkspaceAddress   string `json:"workspace_address,omitempty"`
+	WorkspaceCreatedMS int64  `json:"workspace_created_ms,omitempty"`
+
 	ID          string `json:"id"`
 	Repository  string `json:"repository"`
 	Branch      string `json:"branch"`

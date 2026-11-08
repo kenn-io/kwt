@@ -2,7 +2,7 @@
 
 `kwt` is a Git worktree manager with a terminal dashboard for people and a
 scriptable CLI for agents and other tools. It creates isolated checkouts, opens
-their tmux workspaces, shows their current state, and cleans them up safely
+their persistent workspaces, shows their current state, and cleans them up safely
 across all your projects.
 
 ## Work interactively
@@ -56,7 +56,9 @@ Requirements:
 - Git 2.20 or newer. `kwt pr import` requires Git 2.42.0 or newer on macOS
   and Linux, or Git for Windows 2.53.0.windows.3 or newer. `kwt doctor`,
   `kwt prune --expired`, and `kwt prune --merged` require Git 2.31 or newer.
-- tmux 2.1 or newer for workspace launch and `kwt tmux`.
+- tmux 2.1 or newer for the default workspace backend and `kwt tmux`.
+- Herdr Core (`hc`) for the optional [Core workspace backend](docs/workflows/agent-workspaces.md#choose-herdr-core)
+  and `kwt herdr` terminal commands.
 - Go 1.27.3 or newer when installing or building from source.
 - macOS 13 or newer, Linux, or Windows.
 

@@ -22,6 +22,10 @@ const (
 
 // Worktree represents a Git worktree with its associated metadata.
 type Worktree struct {
+	WorkspaceRuntime   string `json:"workspace_runtime,omitempty"`
+	WorkspaceAddress   string `json:"workspace_address,omitempty"`
+	WorkspaceCreatedMS int64  `json:"workspace_created_ms,omitempty"`
+
 	Path           string         `json:"path"`                       // Absolute path to the worktree directory
 	Branch         string         `json:"branch"`                     // Branch name associated with this worktree
 	CommitHash     string         `json:"commit_hash"`                // Current HEAD commit hash
@@ -71,7 +75,13 @@ type SSHConfig struct {
 }
 
 // Config represents the application configuration.
+type WorkspaceConfig struct {
+	Backend    string `mapstructure:"backend" toml:"backend"`
+	CoreSocket string `mapstructure:"core_socket" toml:"core_socket"`
+}
+
 type Config struct {
+	Workspace          WorkspaceConfig     `mapstructure:"workspace" toml:"workspace"`
 	Daemon             DaemonConfig        `mapstructure:"daemon" toml:"daemon"`
 	SSH                SSHConfig           `mapstructure:"ssh" toml:"ssh"`
 	Worktree           WorktreeConfig      `mapstructure:"worktree"`                     // Worktree-related configuration

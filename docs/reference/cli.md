@@ -45,6 +45,7 @@ Other PID lookup failures report the underlying tmux error.
 | `kwt sync`       | Publish and inspect multi-machine sync state.          |
 | `kwt ssh`        | Resolve, hold, and use reviewed OpenSSH routes.        |
 | `kwt tmux`       | Manage standalone tmux sessions.                       |
+| `kwt herdr`      | Manage standalone Herdr Core terminals.                 |
 | `kwt workspace`  | Manage directory workspaces.                           |
 | `kwt config`     | Read and write config values.                          |
 | `kwt daemon`     | Manage the background local service daemon.            |
@@ -394,9 +395,12 @@ acknowledgement that opts in to its layout and pane commands.
 With no argument, `kwt open` fuzzy-picks a worktree. A pattern narrows the
 cross-project list and opens the sole match directly. An exact registered
 directory workspace path resolves before Git worktree discovery. Kwt creates
-or repairs the canonical tmux workspace on the dedicated `kwt` server with its
-resolved layout before attaching. On POSIX systems, the equivalent manual
-inventory command is:
+or reuses the workspace through the global `workspace.backend` setting.
+The default tmux backend creates or repairs the canonical workspace on the
+dedicated `kwt` server with its resolved layout before attaching. See
+[Core workspaces](../workflows/agent-workspaces.md#choose-herdr-core) for the
+required socket, single-terminal layout support, and history behavior.
+On POSIX systems, the equivalent manual tmux inventory command is:
 
 ```sh
 env -u TMUX_TMPDIR tmux -L kwt list-sessions
@@ -421,7 +425,8 @@ client may require sending the prefix twice. Protected attachment uses the same
 cross-server nesting mechanism while retaining its stricter environment rules.
 
 `kwt open <exact-workspace-path> --start-session` performs the same layout and
-session bootstrap without attaching a client. Use it before an external
+session bootstrap without attaching a client. Its JSON result preserves the
+selected runtime and address separately from tmux socket fields. Use it before an external
 direct tmux client attaches to a session that may not exist yet. Registered
 directory paths resolve from the workspace registry; worktree paths resolve
 directly from Git rather than the global worktree base. This keeps automation
@@ -443,7 +448,7 @@ new topology on a shared host.
 
 `workspace add [path]` registers a plain directory. The `workspace remove`
 command accepts its name and unregisters it without deleting the directory or
-killing a live tmux session. `workspace list` reports registered directories
+stopping a live workspace. `workspace list` reports registered directories
 and session state.
 
 `workspace list --json` emits an array of objects with `name`, canonical
@@ -451,7 +456,8 @@ absolute `path`, effective `session_name`, and boolean `session_live`. An empty
 registry emits `[]` with no table prose. When a workspace was renamed while its
 session remained live, `session_name` reports that matching live session so
 clients can attach to it; otherwise it reports the canonical name kwt will use
-when establishing the session.
+when establishing the session. Core records also carry the separate
+`workspace_runtime`, `workspace_address`, and `workspace_created_ms` fields.
 
 ## `kwt list`
 
@@ -471,6 +477,12 @@ conventional `.bare/` plus `main/` layout, the `main/` checkout retains
 identity for conditional removal), `repository` (the `host/owner/name` slug,
 or a `local/<path>` fallback for a repository without a usable remote — see
 below), `session_name`, `tmux_socket_name`, and `tmux_attach_mode`.
+Core entries additionally report `workspace_runtime: "herdr-core"`,
+`workspace_address`, and `workspace_created_ms`; they omit `tmux_socket_name`.
+An offline Core workspace has no address until an explicit open establishes
+one. Treat the address and creation timestamp together as the exact observed
+identity. Refresh does not start Core or create a terminal; an unreachable
+configured socket produces a degraded inventory note and an offline endpoint.
 When a branch is switched or renamed while its session remains live,
 `session_name` reports that verified live name even though its branch component
 is stale. Otherwise it reports the canonical name kwt will use for the next
@@ -1222,3 +1234,55 @@ launcher variables in its global environment table.
 Commands intended to launch the dashboard or attach to tmux require an
 interactive terminal. In non-interactive contexts, use data-oriented commands
 such as `list`, `status`, `get`, and `exec`.
+
+## `kwt herdr`
+
+Requires the Herdr Core CLI, `hc`, on `PATH`; this is separate from the older
+`herdr` multiplexer. Commands operate on the current local Core session and
+only terminals carrying `kwt.managed=true`. Remote terminals and personal
+terminals are excluded. kwt does not install Core or change its settings.
+
+```sh
+kwt herdr run [-w worktree] [--id identifier] [--context context] [--no-detach] [--auto-cleanup] "command"
+kwt herdr list [--all] [--json | --csv] [--watch]
+kwt herdr attach <address-or-pattern>
+kwt herdr kill [<address-or-pattern> | --all] [--force]
+```
+
+`run` executes a shell command in the current directory or a resolved worktree.
+Quote a command containing shell syntax; use `--` before command arguments
+that begin with a dash. kwt starts the terminal detached and allows it to
+outlive its parent. `--no-detach` attaches immediately; Ctrl+\ detaches.
+`--id` defaults to a command/directory identifier and `--context` to `run`.
+They are labels, so identifiers do not need Core terminal-name syntax.
+
+Before invoking the shell, kwt's internal helper removes the built-in GitHub
+and fleet credential variables and the configured fleet token variable from
+the environment inherited from Core. Core still supplies its own terminal
+identity and environment. The helper runs from the same kwt executable that
+created the terminal; leave that executable available during launch.
+
+An ordinary command exit leaves Core's finished terminal record and history.
+`--auto-cleanup` delegates removal to Core's `--rm` lifecycle (after exit is
+observed). It does not restart a shell or retry a command. A launch error may
+have an uncertain outcome: inspect `kwt herdr list --all` before retrying.
+
+`list` shows address, identifier, context, state, and launch directory. JSON
+includes the Core address, name, labels, argv, cwd, state, creation timestamp,
+exit code and agent status when supplied by Core. `--watch` refreshes every
+five seconds and stops on cancellation; JSON and CSV cannot be combined.
+
+`attach` and `kill` accept an exact immutable address or a case-insensitive
+substring of the identifier, context, or name. Multiple matches require a
+more specific pattern or exact address; no arbitrary terminal is selected.
+`kill` confirms unless `--force` is supplied. `--all` covers kwt-managed local
+terminals, including finished records. Live terminals are killed before their
+records are removed; finished records are removed directly. Errors stop that
+operation and never trigger automatic retries.
+
+These standalone commands keep their command-and-exit behavior regardless of
+`workspace.backend`. The optional [Core workspace
+backend](../workflows/agent-workspaces.md#choose-herdr-core) routes ordinary
+workspace launch and dashboard operations through Core, while retaining
+protected PR provenance and credential policy. Stop live Core terminals before
+removing their checkout.

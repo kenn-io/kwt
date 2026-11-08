@@ -17,6 +17,7 @@ type endpointCommand interface {
 // WorkspaceEndpointRequest is the identity required to resolve an existing
 // workspace session. Directory workspaces omit the generation.
 type WorkspaceEndpointRequest struct {
+	Protected           bool
 	SessionName         string
 	WorkspacePath       string
 	WorkspaceGeneration string
