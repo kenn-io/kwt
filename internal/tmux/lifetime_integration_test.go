@@ -74,7 +74,7 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 		t.Skip("tmux is not installed")
 	}
 	for _, tc := range []struct {
-		name, installedHook, reopen                                                                     string
+		name, installedHook, reopen, policyHook                                                         string
 		warm, switchClient, localHooks, earlyAttach, followGlobal, localPolicy, user999, restrictedPath bool
 		visited                                                                                         bool
 	}{
@@ -82,6 +82,11 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 		{name: "server PATH without tmux", warm: true, restrictedPath: true},
 		{name: "existing session hooks", localHooks: true},
 		{name: "switch client", warm: true, switchClient: true},
+		{name: "user attachment lifetime policy", policyHook: "client-attached"},
+		{name: "user switch lifetime policy", policyHook: "client-session-changed", warm: true, switchClient: true},
+		{name: "local attachment lifetime policy", policyHook: "client-attached", localHooks: true},
+		{name: "local switch lifetime policy", policyHook: "client-session-changed", localHooks: true, warm: true, switchClient: true},
+		{name: "early local attachment lifetime policy", policyHook: "client-attached", localHooks: true, earlyAttach: true},
 		{name: "attach before local restore installation", earlyAttach: true, localHooks: true},
 		{name: "global policy change", followGlobal: true},
 		{name: "session-local policy", localPolicy: true},
@@ -122,6 +127,17 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 			if tc.user999 {
 				contents += "set-hook -g client-attached[999] { set -gF @user-999-client \"#{hook_client}\" }\nset-hook -g client-session-changed[999] { set -g @user-999-switch yes }\n"
 			}
+			if tc.policyHook != "" {
+				if tc.localHooks {
+					contents += "set-hook -ag after-new-session { if-shell -F '#{==:#{session_name},workspace}' { set-hook " + tc.policyHook + "[0] { set-option destroy-unattached off } } }\n"
+				} else {
+					marker := "@user-attach-hook"
+					if tc.policyHook == "client-session-changed" {
+						marker = "@user-switch-hook"
+					}
+					contents += "set-hook -g " + tc.policyHook + "[0] { set-option destroy-unattached off ; set -g " + marker + " ran }\n"
+				}
+			}
 			require.NoError(t, os.WriteFile(config, []byte(contents), 0600))
 			wrapper := filepath.Join(root, "tmux")
 			require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec "+quotePOSIXShellArgument(binary)+" -f "+quotePOSIXShellArgument(config)+" \"$@\"\n"), 0700))
@@ -133,10 +149,12 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 			if tc.restrictedPath {
 				setWorkspaceServerPathWithoutTmux(t, ctx, command)
 			}
-			var globalHooks string
+			globalHooks := make(map[string]string)
 			if tc.user999 && tc.localHooks {
-				globalHooks, err = command.RunCommandOutputContext(ctx, "show-hooks", "-g")
-				require.NoError(t, err)
+				for _, hook := range []string{"client-attached[999]", "client-session-changed[999]"} {
+					globalHooks[hook], err = command.RunCommandOutputContext(ctx, "show-options", "-gqv", hook)
+					require.NoError(t, err)
+				}
 			}
 			var terminal *os.File
 			var client *exec.Cmd
@@ -245,7 +263,11 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 				before, err := command.RunCommandOutputContext(ctx, "show-hooks", "-g")
 				require.NoError(t, err)
 				if tc.localHooks {
-					require.Equal(t, globalHooks, before, "session-local arrays must not hide user-owned global slots")
+					for hook, original := range globalHooks {
+						current, err := command.RunCommandOutputContext(ctx, "show-options", "-gqv", hook)
+						require.NoError(t, err)
+						require.Equal(t, original, current, "session-local arrays must not hide user-owned global slots")
+					}
 				}
 				require.NoError(t, runner.Ensure(ctx, "workspace", root, BlankLayout()))
 				require.NoError(t, NewWorkspaceRunner(command, nil).Ensure(ctx, "spare", root, BlankLayout()))
@@ -270,12 +292,13 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 				out, err := command.RunCommandOutputContext(ctx, "show-options", "-Av", "-t", "workspace", "destroy-unattached")
 				require.NoError(t, err)
 				expectedPolicy := "on"
+				if tc.policyHook != "" {
+					expectedPolicy = "off"
+				}
 				if tc.installedHook != "" && visit > 0 {
 					expectedPolicy = "off"
 				}
-				if !tc.user999 || tc.localHooks {
-					require.Equal(t, expectedPolicy, strings.TrimSpace(out))
-				}
+				require.Equal(t, expectedPolicy, strings.TrimSpace(out))
 				if tc.installedHook != "" {
 					require.Eventually(t, func() bool {
 						if visit == 0 {
@@ -315,9 +338,9 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 				var exitErr *exec.ExitError
 				require.ErrorAs(t, client.Wait(), &exitErr)
 				require.Equal(t, -1, exitErr.ExitCode())
-				if tc.followGlobal || tc.installedHook != "" {
+				if tc.followGlobal || tc.installedHook != "" || tc.policyHook != "" {
 					require.True(t, command.HasSession("workspace"))
-				} else if !tc.user999 || tc.localHooks {
+				} else {
 					require.Eventually(t, func() bool { return !command.HasSession("workspace") }, 5*time.Second, 10*time.Millisecond)
 				}
 			}
@@ -331,4 +354,26 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 			require.Equal(t, "off", strings.TrimSpace(out))
 		})
 	}
+}
+
+func TestWorkspaceLifetimeHookSetupFailure(t *testing.T) {
+	fixture := newRealWorkspaceSessionsFixture(t)
+	ctx, cancel := context.WithTimeout(fixture.ctx, 15*time.Second)
+	defer cancel()
+	binary, err := exec.LookPath("tmux")
+	require.NoError(t, err)
+	config := filepath.Join(fixture.workspace, "tmux.conf")
+	require.NoError(t, os.WriteFile(config, []byte("set -s exit-empty off\nset -g destroy-unattached on\n"), 0600))
+	wrapper := filepath.Join(fixture.workspace, "tmux")
+	script := "#!/bin/sh\nfor argument in \"$@\"; do\n" +
+		"[ \"$argument\" != set-hook ] || exit 19\ndone\n" +
+		"exec " + quotePOSIXShellArgument(binary) + " -f " + quotePOSIXShellArgument(config) + " \"$@\"\n"
+	require.NoError(t, os.WriteFile(wrapper, []byte(script), 0700))
+	command := fixture.servers.kwtServer()
+	command.command = wrapper
+
+	err = NewWorkspaceRunner(command, nil).Ensure(ctx, "workspace", fixture.workspace, BlankLayout())
+
+	require.ErrorContains(t, err, "cannot install workspace lifetime hooks")
+	require.False(t, command.HasSession("workspace"), "failed setup must remove its partial workspace")
 }

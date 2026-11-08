@@ -434,7 +434,8 @@ With tmux 3.0 or newer, a new workspace stays alive through setup even when tmux
 session. When the first client attaches or switches to it, the session follows
 its own or global setting again. Server defaults, existing sessions, and user attachment
 hooks remain intact. With `--start-session`, the new session waits for that first
-client; detaching afterward follows the restored policy. Reopening through kwt
+client; detaching afterward follows the restored policy. Restoration runs before
+user attachment hooks, so their policy changes remain in effect. Reopening through kwt
 repairs restore hooks removed by a tmux configuration reload.
 
 During rollout, a verified matching session on the default server is adopted

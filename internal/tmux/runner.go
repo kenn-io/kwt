@@ -31,6 +31,7 @@ type workspaceTmux interface {
 	sessionOptionContext(context.Context, string, string) (string, error)
 	sessionUserOption(context.Context, string, string) (string, error)
 	globalOptionContext(context.Context, string) (string, error)
+	commandPath() (string, error)
 }
 
 // ProtectedWorkspaceSocketName returns the deterministic tmux socket name for
@@ -570,12 +571,16 @@ func (r *WorkspaceRunner) create(
 	if err != nil {
 		return fmt.Errorf("cannot inspect tmux bootstrap environment: %w", err)
 	}
-	createCmd := append(BuildSessionCreateCommand(session, worktreeDir), holdWorkspaceLifetime(session)...)
+	executable, err := r.tmux.commandPath()
+	if err != nil {
+		return err
+	}
+	createCmd := append(BuildSessionCreateCommand(session, worktreeDir), holdWorkspaceLifetime(session, executable)...)
 	firstPane, err := r.tmux.RunCommandOutputContext(ctx, createCmd...)
 	if err != nil {
 		return wrapTmuxErr(createCmd, err)
 	}
-	if err := r.restoreWorkspaceLifetime(ctx, session); err != nil {
+	if err := r.checkWorkspaceLifetimeHooks(ctx, session); err != nil {
 		return r.abort(ctx, session, []string{"restore workspace lifetime"}, err)
 	}
 	paneIDs := make([]string, 0, len(layout.Panes))

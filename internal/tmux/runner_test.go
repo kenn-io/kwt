@@ -58,6 +58,10 @@ type mockWorkspaceTmux struct {
 	sessionOptionErr    error
 }
 
+func (m *mockWorkspaceTmux) commandPath() (string, error) {
+	return "tmux", nil
+}
+
 func (m *mockWorkspaceTmux) recordQueryContext(name string, ctx context.Context) {
 	if m.queryContexts == nil {
 		m.queryContexts = make(map[string][]context.Context)
@@ -403,7 +407,7 @@ func TestEnsureAndAttachCreatesSendsToCapturedIDsAndAttaches(t *testing.T) {
 		{"send-keys", "-t", "%3", "Enter"},
 		{"select-pane", "-t", "%1"},
 	}
-	create := append(BuildSessionCreateCommand("s", "/wt"), holdWorkspaceLifetime("s")...)
+	create := append(BuildSessionCreateCommand("s", "/wt"), holdWorkspaceLifetime("s", "tmux")...)
 	require.NotEmpty(t, m.calls)
 	assert.Equal(t, create, m.calls[0])
 	assert.Equal(t, want, m.calls[1:])
@@ -672,7 +676,7 @@ func TestProtectedEnsureAndAttachCreatesMissingSession(t *testing.T) {
 	require.NoError(t, err)
 	assert.Same(t, ctx, m.protectedAttachCtx)
 	assert.Equal(t, "workspace", m.protectedAttachedTo)
-	assert.Contains(t, m.calls, append(BuildSessionCreateCommand("workspace", "/wt"), holdWorkspaceLifetime("workspace")...))
+	assert.Contains(t, m.calls, append(BuildSessionCreateCommand("workspace", "/wt"), holdWorkspaceLifetime("workspace", "tmux")...))
 	assert.Contains(t, m.calls, buildProtectedSessionBootstrapCommand(
 		"workspace",
 		"/wt",
