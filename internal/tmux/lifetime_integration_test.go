@@ -76,6 +76,7 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 	for _, tc := range []struct {
 		name, installedHook, reopen                                                                     string
 		warm, switchClient, localHooks, earlyAttach, followGlobal, localPolicy, user999, restrictedPath bool
+		visited                                                                                         bool
 	}{
 		{name: "fresh server"},
 		{name: "server PATH without tmux", warm: true, restrictedPath: true},
@@ -86,6 +87,8 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 		{name: "session-local policy", localPolicy: true},
 		{name: "reload before reopen", reopen: "ensure"},
 		{name: "reload before guarded reopen", reopen: "repair"},
+		{name: "reopen after a detached visit", reopen: "ensure", visited: true},
+		{name: "guarded reopen after a detached visit", reopen: "repair", visited: true},
 		{name: "reload with session hooks", reopen: "ensure", localHooks: true},
 		{name: "reload before switching client", reopen: "ensure", warm: true, switchClient: true},
 		{name: "user hooks at 999", user999: true},
@@ -206,11 +209,30 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 				before, err := command.RunCommandOutputContext(ctx, "show-options", "-q", "-t", "workspace", "client-attached")
 				require.NoError(t, err)
 				require.NoError(t, command.RunCommandContext(ctx, "source-file", config))
+				var panePID string
+				if tc.visited {
+					attach()
+					panePID, err = command.RunCommandOutputContext(ctx, "display-message", "-p", "-t", "workspace", "#{pane_pid}")
+					require.NoError(t, err)
+					require.NotEmpty(t, strings.TrimSpace(panePID))
+					require.NoError(t, client.Process.Kill())
+					var exitErr *exec.ExitError
+					require.ErrorAs(t, client.Wait(), &exitErr)
+					require.Eventually(t, func() bool {
+						output, err := command.RunCommandOutputContext(ctx, "list-clients", "-t", "workspace", "-F", "#{client_name}")
+						return err == nil && strings.TrimSpace(output) == ""
+					}, time.Second, 10*time.Millisecond)
+				}
 				for range 2 {
 					if tc.reopen == "repair" {
 						require.NoError(t, runner.RepairExisting(ctx, "workspace", root, BlankLayout()))
 					} else {
 						require.NoError(t, runner.Ensure(ctx, "workspace", root, BlankLayout()))
+					}
+					if tc.visited {
+						after, err := command.RunCommandOutputContext(ctx, "display-message", "-p", "-t", "workspace", "#{pane_pid}")
+						require.NoError(t, err, "reopening must preserve the detached workspace")
+						require.Equal(t, panePID, after, "reopening must preserve the running pane process")
 					}
 				}
 				if tc.localHooks {

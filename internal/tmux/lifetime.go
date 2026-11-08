@@ -55,8 +55,8 @@ func (r *WorkspaceRunner) restoreWorkspaceLifetime(ctx context.Context, session 
 			return err
 		}
 	}
-	// A client may have visited before either hook was installed. Check the
-	// attachment history after both hooks exist so that visit is also honored.
+	// A client may have attached before either hook existed. Honor a client
+	// still here, but keep a detached session alive until its next attachment.
 	return r.tmux.RunCommandContext(ctx, "if-shell", "-F", "-t", target,
-		"#{session_last_attached}", workspaceRestoreCommand)
+		"#{session_attached}", workspaceRestoreCommand)
 }
