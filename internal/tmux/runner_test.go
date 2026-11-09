@@ -407,14 +407,26 @@ func TestEnsureAndAttachCreatesSendsToCapturedIDsAndAttaches(t *testing.T) {
 		{"send-keys", "-t", "%3", "Enter"},
 		{"select-pane", "-t", "%1"},
 	}
-	create := append(BuildSessionCreateCommand("s", "/wt"), holdWorkspaceLifetime("s", "tmux")...)
 	require.NotEmpty(t, m.calls)
-	assert.Equal(t, create, m.calls[0])
+	assertCreateCommand(t, "s", m.calls[0])
 	assert.Equal(t, want, m.calls[1:])
 	assert.Equal(t, "s", m.attachedTo)
 	assert.Empty(t, m.switchedTo)
 	assert.False(t, m.sessionEnvQueried,
 		"the create path must not query the session table of a session that does not exist yet")
+}
+
+// assertCreateCommand checks the creation batch: new-session, a nonempty
+// ownership token for failure cleanup, then the lifetime hold.
+func assertCreateCommand(t *testing.T, session string, call []string) {
+	t.Helper()
+	create := BuildSessionCreateCommand(session, "/wt")
+	hold := holdWorkspaceLifetime(session, "tmux")
+	require.Len(t, call, len(create)+6+len(hold))
+	assert.Equal(t, create, call[:len(create)])
+	assert.Equal(t, []string{";", "set-option", "-t", "=" + session + ":", "@kwt-creating"}, call[len(create):len(create)+5])
+	assert.NotEmpty(t, call[len(create)+5])
+	assert.Equal(t, hold, call[len(create)+6:])
 }
 
 func TestEnsureCreatesWorkspaceWithoutAttaching(t *testing.T) {
@@ -676,7 +688,8 @@ func TestProtectedEnsureAndAttachCreatesMissingSession(t *testing.T) {
 	require.NoError(t, err)
 	assert.Same(t, ctx, m.protectedAttachCtx)
 	assert.Equal(t, "workspace", m.protectedAttachedTo)
-	assert.Contains(t, m.calls, append(BuildSessionCreateCommand("workspace", "/wt"), holdWorkspaceLifetime("workspace", "tmux")...))
+	require.NotEmpty(t, m.calls)
+	assertCreateCommand(t, "workspace", m.calls[0])
 	assert.Contains(t, m.calls, buildProtectedSessionBootstrapCommand(
 		"workspace",
 		"/wt",

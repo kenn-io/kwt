@@ -10,6 +10,7 @@ import (
 
 const workspaceDestroyOption = "@kwt-destroy-unattached"
 const workspaceLifetimeReadyOption = "@kwt-lifetime-hooks-ready"
+const workspaceCreationOption = "@kwt-creating"
 
 // The hook event supplies the session, so the global entries restore only it.
 // The marker records the local policy, or inherit when it matches the global one.

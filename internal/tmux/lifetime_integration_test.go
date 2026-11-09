@@ -374,6 +374,57 @@ func TestWorkspaceLifetimeHookSetupFailure(t *testing.T) {
 
 	err = NewWorkspaceRunner(command, nil).Ensure(ctx, "workspace", fixture.workspace, BlankLayout())
 
-	require.ErrorContains(t, err, "cannot install workspace lifetime hooks")
+	require.ErrorContains(t, err, "cannot keep workspace alive until first attach: cannot install workspace lifetime hooks")
 	require.False(t, command.HasSession("workspace"), "failed setup must remove its partial workspace")
+}
+
+func TestWorkspaceCreationCanceledDuringHookSetup(t *testing.T) {
+	fixture := newRealWorkspaceSessionsFixture(t)
+	ctx, cancel := context.WithTimeout(fixture.ctx, 15*time.Second)
+	defer cancel()
+	binary, err := exec.LookPath("tmux")
+	require.NoError(t, err)
+	config := filepath.Join(fixture.workspace, "tmux.conf")
+	require.NoError(t, os.WriteFile(config, []byte("set -s exit-empty off\nset -g destroy-unattached on\n"), 0600))
+	reached := filepath.Join(fixture.workspace, "set-hook-reached")
+	wrapper := filepath.Join(fixture.workspace, "tmux")
+	script := "#!/bin/sh\nfor argument in \"$@\"; do\n" +
+		"[ \"$argument\" != set-hook ] || { : > " + quotePOSIXShellArgument(reached) + "; sleep 5; }\ndone\n" +
+		"exec " + quotePOSIXShellArgument(binary) + " -f " + quotePOSIXShellArgument(config) + " \"$@\"\n"
+	require.NoError(t, os.WriteFile(wrapper, []byte(script), 0700))
+	command := fixture.servers.kwtServer()
+	command.command = wrapper
+	createCtx, cancelCreate := context.WithCancel(ctx)
+	defer cancelCreate()
+	go func() {
+		for {
+			if _, err := os.Stat(reached); err == nil {
+				cancelCreate()
+				return
+			}
+			select {
+			case <-createCtx.Done():
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}()
+
+	err = NewWorkspaceRunner(command, nil).Ensure(createCtx, "workspace", fixture.workspace, BlankLayout())
+
+	require.Error(t, err)
+	require.False(t, command.HasSession("workspace"), "a canceled creation must not leave its placeholder session")
+}
+
+func TestWorkspaceCreationFailureKeepsSessionItDidNotCreate(t *testing.T) {
+	fixture := newRealWorkspaceSessionsFixture(t)
+	ctx, cancel := context.WithTimeout(fixture.ctx, 15*time.Second)
+	defer cancel()
+	command := fixture.servers.kwtServer()
+	require.NoError(t, command.RunCommandContext(ctx, "-f", "/dev/null", "new-session", "-d", "-s", "workspace", "sleep", "30"))
+
+	err := NewWorkspaceRunner(command, nil).create(ctx, "workspace", fixture.workspace, "", BlankLayout())
+
+	require.Error(t, err)
+	require.True(t, command.HasSession("workspace"), "a failed creation must not kill a session another caller owns")
 }
