@@ -110,7 +110,7 @@ func (o *coreObservation) call(ctx context.Context, method string, params, resul
 		if err := o.scanner.Err(); err != nil {
 			return err
 		}
-		return fmt.Errorf("Core closed the observation stream")
+		return fmt.Errorf("herdr Core closed the observation stream")
 	}
 	var reply struct {
 		ID     int             `json:"id"`
@@ -169,7 +169,7 @@ func (o *coreObservation) managed(ctx context.Context) ([]Terminal, error) {
 		return nil, err
 	}
 	if list.Terminals == nil {
-		return nil, fmt.Errorf("Core omitted terminal inventory")
+		return nil, fmt.Errorf("herdr Core omitted terminal inventory")
 	}
 	result := make([]Terminal, 0, len(*list.Terminals))
 	for _, selected := range *list.Terminals {
@@ -177,14 +177,14 @@ func (o *coreObservation) managed(ctx context.Context) ([]Terminal, error) {
 			continue
 		}
 		if !localAddress(selected.Address) || selected.CreatedMS <= 0 {
-			return nil, fmt.Errorf("Core returned uncertain terminal identity")
+			return nil, fmt.Errorf("herdr Core returned uncertain terminal identity")
 		}
 		var fresh Terminal
 		if err := o.call(ctx, "terminal.get", map[string]any{"terminal": selected.Address}, &fresh); err != nil {
 			return nil, err
 		}
 		if fresh.Address != selected.Address || fresh.CreatedMS != selected.CreatedMS || fresh.Labels["kwt.managed"] != "true" {
-			return nil, fmt.Errorf("Core terminal changed during observation")
+			return nil, fmt.Errorf("herdr Core terminal changed during observation")
 		}
 		result = append(result, fresh)
 	}
@@ -217,7 +217,7 @@ func (c *Client) ObserveRemoval(ctx context.Context) (*RemovalObservation, error
 		return nil, err
 	}
 	if o == nil {
-		return nil, fmt.Errorf("Core removal requires an explicit live connection")
+		return nil, fmt.Errorf("herdr Core removal requires an explicit live connection")
 	}
 	terminals, err := o.managed(ctx)
 	if err != nil {
@@ -229,7 +229,7 @@ func (c *Client) ObserveRemoval(ctx context.Context) (*RemovalObservation, error
 func (o *RemovalObservation) Close() { o.observation.close() }
 func (o *RemovalObservation) VerifyFinished(t Terminal, opts RunOptions, generation string) error {
 	if o.observation.coreID == "" {
-		return fmt.Errorf("Core omitted immutable server identity")
+		return fmt.Errorf("herdr Core omitted immutable server identity")
 	}
 	if t.State != "finished" {
 		return fmt.Errorf("refusing to remove a live Core workspace")
@@ -245,14 +245,14 @@ func (o *RemovalObservation) RemoveFinished(ctx context.Context, expected Termin
 		return err
 	}
 	if hello.Generation != o.observation.generation || hello.Core.ID != o.observation.coreID {
-		return fmt.Errorf("Core server identity changed before cleanup")
+		return fmt.Errorf("herdr Core server identity changed before cleanup")
 	}
 	var fresh Terminal
 	if err := o.observation.call(ctx, "terminal.get", map[string]any{"terminal": expected.Address}, &fresh); err != nil {
 		return err
 	}
 	if fresh.Address != expected.Address || fresh.CreatedMS != expected.CreatedMS || fresh.Directory != expected.Directory || !slices.Equal(fresh.Argv, expected.Argv) {
-		return fmt.Errorf("Core workspace creation identity changed before cleanup")
+		return fmt.Errorf("herdr Core workspace creation identity changed before cleanup")
 	}
 	if err := o.VerifyFinished(fresh, opts, generation); err != nil {
 		return err
@@ -264,7 +264,7 @@ func (o *RemovalObservation) RemoveFinished(ctx context.Context, expected Termin
 		return err
 	}
 	if result.Removed != expected.Address {
-		return fmt.Errorf("Core returned uncertain removal result")
+		return fmt.Errorf("herdr Core returned uncertain removal result")
 	}
 	return nil
 }

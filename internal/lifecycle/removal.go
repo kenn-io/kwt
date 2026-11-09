@@ -449,7 +449,7 @@ func (s *removalService) prepareCoreWorkspaceRemoval(ctx context.Context, cfg *m
 			return fmt.Errorf("reload Core cleanup policy: %w", err)
 		}
 		if current.Config.Workspace.CoreSocket != cfg.Workspace.CoreSocket {
-			return fmt.Errorf("Core cleanup route changed")
+			return fmt.Errorf("herdr Core cleanup route changed")
 		}
 		for _, capturedWorkspace := range captured {
 			expected := capturedWorkspace.terminal

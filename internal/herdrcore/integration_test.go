@@ -146,7 +146,7 @@ func TestCoreLifecycleIntegration(t *testing.T) {
 	}
 	_, err = c.run(t.Context(), "wait", "--json", "--timeout", "15", "--", automatic.Address)
 	var failure *commandError
-	if err != nil && !(errors.As(err, &failure) && failure.kind == "not_found") {
+	if err != nil && (!errors.As(err, &failure) || failure.kind != "not_found") {
 		t.Fatal(err)
 	}
 	sessions, err = c.List(t.Context(), true)

@@ -99,22 +99,22 @@ func validateWorkspaceOptions(opts RunOptions) error {
 // A durable generation lets an already guarded worktree move retain its shell.
 func VerifyWorkspace(t Terminal, opts RunOptions, generation string) error {
 	if !localAddress(t.Address) || t.CreatedMS <= 0 || t.Keep || t.Reason == "spawn_pending" || t.Labels["kwt.managed"] != "true" || t.Context() != opts.Context {
-		return fmt.Errorf("Core workspace identity is uncertain or changed")
+		return fmt.Errorf("herdr Core workspace identity is uncertain or changed")
 	}
 	if t.Labels["kwt.workspace_key"] != workspaceKey(opts, generation) {
-		return fmt.Errorf("Core workspace registration changed")
+		return fmt.Errorf("herdr Core workspace registration changed")
 	}
 	if !filepath.IsAbs(t.Directory) || !slices.Equal(t.Argv, workspaceArgv(opts, generation, t.Directory)) {
-		return fmt.Errorf("Core workspace helper or credential policy changed")
+		return fmt.Errorf("herdr Core workspace helper or credential policy changed")
 	}
 	if t.Labels["kwt.workspace_path"] != t.Directory || t.Labels["kwt.generation"] != generation {
-		return fmt.Errorf("Core workspace path or generation changed")
+		return fmt.Errorf("herdr Core workspace path or generation changed")
 	}
 	if generation == "" && filepath.Clean(t.Directory) != filepath.Clean(opts.Directory) {
-		return fmt.Errorf("Core workspace directory changed")
+		return fmt.Errorf("herdr Core workspace directory changed")
 	}
 	if t.Labels["kwt.initialized"] != "true" {
-		return fmt.Errorf("Core workspace initialization is uncertain; inspect it before retrying")
+		return fmt.Errorf("herdr Core workspace initialization is uncertain; inspect it before retrying")
 	}
 	if t.State != "live" && t.State != "finished" {
 		return fmt.Errorf("unknown Core workspace state %q", t.State)
@@ -142,13 +142,13 @@ func (c *Client) resolveWorkspace(ctx context.Context, opts RunOptions, generati
 		return nil, err
 	}
 	if fresh.CreatedMS != selected.CreatedMS {
-		return nil, fmt.Errorf("Core workspace creation identity changed")
+		return nil, fmt.Errorf("herdr Core workspace creation identity changed")
 	}
 	if err := VerifyWorkspace(*fresh, opts, generation); err != nil {
 		return nil, err
 	}
 	if fresh.State != "live" {
-		return nil, fmt.Errorf("Core workspace exited during selection; open again explicitly")
+		return nil, fmt.Errorf("herdr Core workspace exited during selection; open again explicitly")
 	}
 	return fresh, nil
 }
@@ -197,7 +197,7 @@ func SelectObservedWorkspace(terminals []Terminal, opts RunOptions, generation s
 	return selected, nil
 }
 
-var ErrWorkspaceIdentityChanged = errors.New("Core workspace session identity changed")
+var ErrWorkspaceIdentityChanged = errors.New("herdr Core workspace session identity changed")
 
 func (c *Client) EstablishWorkspace(ctx context.Context, opts RunOptions, generation string) (*Terminal, error) {
 	return c.EstablishExpectedWorkspace(ctx, opts, generation, "")
@@ -240,14 +240,14 @@ func (c *Client) EstablishExpectedWorkspace(ctx context.Context, opts RunOptions
 				return nil, resolveErr
 			}
 			if existing == nil {
-				return nil, fmt.Errorf("Core workspace name conflict without a verified live workspace; inspect before retrying")
+				return nil, fmt.Errorf("herdr Core workspace name conflict without a verified live workspace; inspect before retrying")
 			}
 			if expected != "" && existing.Identifier() != expected {
 				return nil, ErrWorkspaceIdentityChanged
 			}
 			return existing, nil
 		}
-		return nil, fmt.Errorf("Core workspace launch uncertain; inspect before retrying: %w", err)
+		return nil, fmt.Errorf("herdr Core workspace launch uncertain; inspect before retrying: %w", err)
 	}
 	var compact Terminal
 	if json.Unmarshal(output, &compact) != nil || !localAddress(compact.Address) {
@@ -271,14 +271,14 @@ func (c *Client) EstablishExpectedWorkspace(ctx context.Context, opts RunOptions
 		return nil, ErrWorkspaceIdentityChanged
 	}
 	if terminal.State != "live" {
-		return nil, fmt.Errorf("Core workspace did not start; inspect before retrying")
+		return nil, fmt.Errorf("herdr Core workspace did not start; inspect before retrying")
 	}
 	if opts.Command != "" {
 		if _, err = c.run(ctx, "send", "--", terminal.Address, opts.Command); err != nil {
-			return nil, fmt.Errorf("Core initial command delivery uncertain; never resubmit automatically: %w", err)
+			return nil, fmt.Errorf("herdr Core initial command delivery uncertain; never resubmit automatically: %w", err)
 		}
 		if _, err = c.run(ctx, "label", terminal.Address, "kwt.initialized=true"); err != nil {
-			return nil, fmt.Errorf("Core initialization acknowledgement uncertain: %w", err)
+			return nil, fmt.Errorf("herdr Core initialization acknowledgement uncertain: %w", err)
 		}
 		terminal.Labels["kwt.initialized"] = "true"
 	}
@@ -291,7 +291,7 @@ func (c *Client) CurrentWorkspace(ctx context.Context, opts RunOptions, generati
 		return nil, err
 	}
 	if fresh.CreatedMS != expected.CreatedMS {
-		return nil, fmt.Errorf("Core workspace creation identity changed")
+		return nil, fmt.Errorf("herdr Core workspace creation identity changed")
 	}
 	if err := VerifyWorkspace(*fresh, opts, generation); err != nil {
 		return nil, err

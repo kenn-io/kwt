@@ -144,11 +144,11 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (*Terminal, error) {
 		output, err = c.run(ctx, args...)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("Core launch failed; inspect 'kwt herdr list --all' before retrying: %w", err)
+		return nil, fmt.Errorf("herdr Core launch failed; inspect 'kwt herdr list --all' before retrying: %w", err)
 	}
 	var terminal Terminal
 	if err := json.Unmarshal(output, &terminal); err != nil || !localAddress(terminal.Address) {
-		return nil, fmt.Errorf("Core returned an invalid launch record; inspect 'kwt herdr list --all' before retrying")
+		return nil, fmt.Errorf("herdr Core returned an invalid launch record; inspect 'kwt herdr list --all' before retrying")
 	}
 	return &terminal, nil
 }

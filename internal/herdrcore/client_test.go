@@ -131,7 +131,7 @@ func FuzzResolveNeverSelectsUnmatchedTerminal(f *testing.F) {
 	f.Fuzz(func(t *testing.T, pattern string) {
 		sessions := []Terminal{{Address: "t1", Labels: map[string]string{"kwt.identifier": "auth", "kwt.context": "run"}}}
 		got, err := Resolve(sessions, pattern)
-		if err == nil && (pattern == "" || got.Address != "t1" || !(pattern == "t1" || strings.Contains(strings.ToLower("auth"), strings.ToLower(pattern)) || strings.Contains("run", strings.ToLower(pattern)))) {
+		if err == nil && (pattern == "" || got.Address != "t1" || (pattern != "t1" && !strings.Contains(strings.ToLower("auth"), strings.ToLower(pattern)) && !strings.Contains("run", strings.ToLower(pattern)))) {
 			t.Fatalf("unsafe match %q: %+v", pattern, got)
 		}
 	})

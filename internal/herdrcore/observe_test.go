@@ -28,7 +28,7 @@ func syntheticCoreSocket(t *testing.T, reply func(string, json.RawMessage) any) 
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	path := filepath.Join(root, "core.sock")
-	listener, err := net.Listen("unix", path)
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", path)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -33,7 +33,7 @@ func New(cfg *models.Config, options tmux.WorkspaceSessionsOptions) *Sessions {
 }
 func ValidateLayout(cfg *models.Config, layout models.Layout) error {
 	if cfg != nil && cfg.Workspace.Backend == "herdr-core" && len(layout.Panes) > 1 {
-		return fmt.Errorf("Herdr Core supports one terminal; multi-pane layouts are unsupported")
+		return fmt.Errorf("herdr Core supports one terminal; multi-pane layouts are unsupported")
 	}
 	return nil
 }
@@ -158,10 +158,10 @@ func (s *Sessions) EstablishWithGeneration(ctx context.Context, name, path, gene
 }
 func (s *Sessions) EstablishCore(ctx context.Context, r tmux.WorkspaceEndpointRequest, layout models.Layout) (tmux.SessionEndpoint, error) {
 	if s.core == nil {
-		return tmux.SessionEndpoint{}, fmt.Errorf("Core backend is not selected")
+		return tmux.SessionEndpoint{}, fmt.Errorf("herdr Core backend is not selected")
 	}
 	if len(layout.Panes) > 1 {
-		return tmux.SessionEndpoint{}, fmt.Errorf("Herdr Core does not support multi-pane layouts")
+		return tmux.SessionEndpoint{}, fmt.Errorf("herdr Core does not support multi-pane layouts")
 	}
 	opts, err := s.options(r)
 	if err != nil {
@@ -182,7 +182,7 @@ func (s *Sessions) EstablishExpectedWithGeneration(ctx context.Context, name, ex
 	}
 	r := tmux.WorkspaceEndpointRequest{SessionName: name, WorkspacePath: path, WorkspaceGeneration: generation}
 	if len(layout.Panes) > 1 {
-		return tmux.SessionEndpoint{}, fmt.Errorf("Herdr Core does not support multi-pane layouts")
+		return tmux.SessionEndpoint{}, fmt.Errorf("herdr Core does not support multi-pane layouts")
 	}
 	opts, err := s.options(r)
 	if err != nil {
@@ -221,7 +221,7 @@ func (s *Sessions) PrepareResidentAttach(ctx context.Context, e tmux.SessionEndp
 		return nil, err
 	}
 	if t.State != "live" {
-		return nil, fmt.Errorf("Core workspace is finished")
+		return nil, fmt.Errorf("herdr Core workspace is finished")
 	}
 	return s.core.AttachCommand(ctx, t.Address), nil
 }
@@ -240,7 +240,7 @@ func (s *Sessions) KillMatching(ctx context.Context, e tmux.SessionEndpoint, r t
 		return s.WorkspaceSessions.KillMatching(ctx, e, r)
 	}
 	if e.WorkspacePath != r.WorkspacePath || e.WorkspaceGeneration != r.WorkspaceGeneration {
-		return fmt.Errorf("Core workspace registration changed")
+		return fmt.Errorf("herdr Core workspace registration changed")
 	}
 	_, opts, err := s.current(ctx, e)
 	if err != nil {

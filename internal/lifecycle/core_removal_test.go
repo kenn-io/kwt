@@ -43,7 +43,7 @@ func TestRemovalServiceRefusesLiveCoreWithoutSessionCondition(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = os.RemoveAll(socketRoot) })
 			socketPath := filepath.Join(socketRoot, "core.sock")
-			listener, err := net.Listen("unix", socketPath)
+			listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socketPath)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -173,7 +173,7 @@ func TestRemovalServiceCleansOnlyVerifiedFinishedCore(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = os.RemoveAll(socketRoot) })
 			socket := filepath.Join(socketRoot, "core.sock")
-			listener, err := net.Listen("unix", socket)
+			listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socket)
 			if err != nil {
 				t.Fatal(err)
 			}

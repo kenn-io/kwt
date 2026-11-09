@@ -677,7 +677,9 @@ func TestRunPRImportCoreLaunchRequiresGenerationGuard(t *testing.T) {
 	var result pullrequest.ImportResult
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
 	require.NotNil(t, result.SessionStartError)
-	assert.Contains(t, result.SessionStartError.Error(), "generation changed")
+	assert.Equal(t, pullrequest.CodeWorkspaceCreation, result.SessionStartError.Code)
+	assert.Equal(t, "failed to start imported Core workspace", result.SessionStartError.Message)
+	assert.False(t, result.SessionStartError.Retryable)
 }
 
 func TestRunPRImportRejectsSessionStartWithoutValidatedEndpoint(t *testing.T) {
