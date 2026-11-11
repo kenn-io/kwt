@@ -123,6 +123,9 @@ func (m *Manager) Acquire(
 	if err := validateHostKeyPolicy(request.HostKeyPolicy); err != nil {
 		return nil, err
 	}
+	if err := validateConnection(request.Connection); err != nil {
+		return nil, err
+	}
 	leases := make([]Lease, 0, len(request.Snapshot.Targets))
 	previousIdentity := ""
 	for index, originalTarget := range request.Snapshot.Targets {
@@ -145,6 +148,9 @@ func (m *Manager) Acquire(
 			request.Snapshot, target, index, previousIdentity, request.Environment,
 			request.HostKeyPolicy,
 		)
+		if index == len(request.Snapshot.Targets)-1 && request.Connection > 0 {
+			identity += fmt.Sprintf(":connection:%d", request.Connection)
+		}
 		lease, acquireErr := m.acquireTarget(
 			ctx, request, target, identity, previousIdentity, index,
 			index == len(request.Snapshot.Targets)-1, resolve,
@@ -174,6 +180,22 @@ func validateHostKeyPolicy(policy HostKeyPolicy) error {
 			nil,
 		)
 	}
+}
+
+// MaxLeaseConnections bounds how many masters one route may hold.
+const MaxLeaseConnections = 16
+
+func validateConnection(connection int) error {
+	if connection >= 0 && connection < MaxLeaseConnections {
+		return nil
+	}
+	return service.NewError(
+		service.InvalidRequest,
+		fmt.Sprintf("SSH connection index must be between 0 and %d", MaxLeaseConnections-1),
+		false,
+		nil,
+		nil,
+	)
 }
 
 func targetWithHostKeyPolicy(target ResolvedTarget, policy HostKeyPolicy) ResolvedTarget {
