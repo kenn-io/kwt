@@ -24,9 +24,10 @@ const (
 	dataReject  = 0x82
 )
 
-// clearScreen homes the cursor and clears the screen and scrollback before
-// the first paint.
-const clearScreen = "\x1b[H\x1b[2J\x1b[3J"
+// clearScreen homes the cursor and clears the screen before the first
+// paint. It keeps the scrollback, so the output from before the attach
+// is still there after it.
+const clearScreen = "\x1b[H\x1b[2J"
 
 // Rex sizes a block for its owner, and another viewer such as Rex.app may
 // take it. Typing takes the block back at most this often.

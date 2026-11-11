@@ -157,10 +157,11 @@ func serverGone(err error) bool {
 
 // resetTerminalModes undoes modes that the painted screen or the program
 // may have turned on and that would outlive an attach that ends abruptly:
-// the alternate screen, a hidden cursor, mouse and focus reporting,
-// bracketed paste, extended keyboard modes, application keys, and styles.
-// It does not move the cursor.
-const resetTerminalModes = "\x1b[?1047l\x1b[?25h" +
+// the alternate screen, scroll margins, a hidden cursor, mouse and focus
+// reporting, bracketed paste, extended keyboard modes, application keys,
+// and styles. It does not move the cursor: resetting the margins homes it,
+// so the cursor is saved and restored around that reset.
+const resetTerminalModes = "\x1b[?1047l\x1b7\x1b[r\x1b8\x1b[?25h" +
 	"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l" +
 	"\x1b[?1004l\x1b[?2004l\x1b[=0u\x1b[>4;0m\x1b[?1l\x1b>\x1b[0m"
 
