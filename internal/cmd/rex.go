@@ -53,12 +53,8 @@ var rexListCmd = &cobra.Command{
 			_, err = fmt.Fprintln(out, "The Rex server is not running.")
 		default:
 			for _, t := range listing.Terminals {
-				name := t.Label
-				if t.Title != "" {
-					name = t.Title
-				}
 				if _, err = fmt.Fprintf(out, "%s\t%s\t%s\t%s %s\n",
-					t.SessionLabel, t.WindowLabel, name, t.SessionID, t.BlockID); err != nil {
+					t.SessionLabel, t.WindowLabel, t.Name, t.SessionID, t.BlockID); err != nil {
 					return err
 				}
 			}

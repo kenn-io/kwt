@@ -79,6 +79,12 @@ func TestTerminalsListsTerminalBlocksInEverySession(t *testing.T) {
 		}
 		return map[string]string{"title": ""}, nil
 	})
+	server.answer("com.superlogical.terminal.process", func(p json.RawMessage) (any, *Error) {
+		return map[string]any{
+			"home":       "/home/user-a",
+			"foreground": map[string]any{"name": "zsh", "cwd": "/home/user-a/src/app"},
+		}, nil
+	})
 
 	client, err := Dial(t.Context(), server.socket)
 	require.NoError(t, err)
@@ -91,11 +97,13 @@ func TestTerminalsListsTerminalBlocksInEverySession(t *testing.T) {
 			SessionID: "session:a", SessionLabel: "work",
 			WindowID: "window:1", WindowLabel: "editor", WindowIndex: 1,
 			BlockID: "block:1", Label: "shell", Title: "vim main.go",
+			Program: "zsh", Cwd: "/home/user-a/src/app", Name: "vim main.go",
 		},
 		{
 			SessionID: "session:a", SessionLabel: "work",
 			WindowID: "window:1", WindowLabel: "editor", WindowIndex: 1,
 			BlockID: "block:2", Label: "logs", Focused: true,
+			Program: "zsh", Cwd: "/home/user-a/src/app", Name: "zsh ~/src/app",
 		},
 	}, terminals)
 	assert.Len(t, server.callsTo("session.detach"), 1, "listing leaves the session it attached to")
@@ -252,4 +260,41 @@ func indexOf(items []string, want string) int {
 		}
 	}
 	return -1
+}
+
+func TestDisplayNameFollowsRex(t *testing.T) {
+	for _, tc := range []struct {
+		title, program, cwd, home, label, want string
+	}{
+		{"vim main.go", "vim", "/home/user-a", "/home/user-a", "shell", "vim main.go"},
+		{"", "zsh", "/home/user-a", "/home/user-a", "shell", "zsh ~"},
+		{"", "zsh", "/home/user-a/src", "/home/user-a/", "shell", "zsh ~/src"},
+		{"", "zsh", "/home/user-ab", "/home/user-a", "shell", "zsh /home/user-ab"},
+		{"", "zsh", "/srv", "", "shell", "zsh /srv"},
+		{"", "zsh", "", "/home/user-a", "shell", "zsh"},
+		{"", "", "", "", "shell", "shell"},
+	} {
+		assert.Equal(t, tc.want, displayName(tc.title, tc.program, tc.cwd, tc.home, tc.label))
+	}
+}
+
+func TestTerminalsNameBlocksByLabelWithoutProcessDetails(t *testing.T) {
+	server := newFakeServer(t)
+	server.answerValue("session.list", map[string]any{"sessions": []any{
+		map[string]any{"session_id": "session:a", "label": "work"},
+	}})
+	server.answerValue("session.attach", view("session:a", "work",
+		window("window:1", "editor", "", block("block:1", terminalCreator, "shell"))))
+	server.answer("com.superlogical.terminal.process", func(json.RawMessage) (any, *Error) {
+		return nil, &Error{Code: "method_not_found", Message: "method not found"}
+	})
+
+	client, err := Dial(t.Context(), server.socket)
+	require.NoError(t, err)
+	defer client.Close()
+	terminals, err := client.Terminals(t.Context())
+	require.NoError(t, err)
+	require.Len(t, terminals, 1)
+	assert.Equal(t, "shell", terminals[0].Name)
+	assert.Empty(t, terminals[0].Program)
 }

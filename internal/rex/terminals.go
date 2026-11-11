@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Terminal is one terminal block in a Rex session window.
@@ -18,6 +19,13 @@ type Terminal struct {
 	Label       string `json:"label"`
 	// Title is the title the program running in the terminal last set.
 	Title string `json:"title,omitempty"`
+	// Program is the name of the terminal's foreground process.
+	Program string `json:"program,omitempty"`
+	// Cwd is the foreground process's working directory.
+	Cwd string `json:"cwd,omitempty"`
+	// Name is what Rex shows for the terminal: its title, or else its
+	// program and directory, with the account's home shown as ~.
+	Name string `json:"name"`
 	// Focused marks the block that has focus in its window.
 	Focused bool `json:"focused,omitempty"`
 }
@@ -106,11 +114,22 @@ func (c *Client) terminalsIn(ctx context.Context, view sessionView) ([]Terminal,
 				var title struct {
 					Title string `json:"title"`
 				}
-				err := c.BlockCall(ctx, view.SessionID, b.BlockID, "title", map[string]any{}, &title)
-				// A block that closed since the view keeps its row until
-				// the next listing; it has no title to read.
-				if err != nil && !IsCode(err, "not_found") && !IsCode(err, "block_not_found") {
-					return nil, fmt.Errorf("title of %s: %w", b.BlockID, err)
+				if err := c.blockDetail(ctx, view.SessionID, b.BlockID, "title", &title); err != nil {
+					return nil, err
+				}
+				var process struct {
+					Foreground *struct {
+						Name string `json:"name"`
+						Cwd  string `json:"cwd"`
+					} `json:"foreground"`
+					Home string `json:"home"`
+				}
+				if err := c.blockDetail(ctx, view.SessionID, b.BlockID, "process", &process); err != nil {
+					return nil, err
+				}
+				var program, cwd string
+				if fg := process.Foreground; fg != nil {
+					program, cwd = fg.Name, fg.Cwd
 				}
 				found = append(found, Terminal{
 					SessionID:    view.SessionID,
@@ -121,10 +140,47 @@ func (c *Client) terminalsIn(ctx context.Context, view sessionView) ([]Terminal,
 					BlockID:      b.BlockID,
 					Label:        b.Label,
 					Title:        title.Title,
+					Program:      program,
+					Cwd:          cwd,
+					Name:         displayName(title.Title, program, cwd, process.Home, b.Label),
 					Focused:      b.BlockID == w.FocusedBlockID,
 				})
 			}
 		}
 	}
 	return found, nil
+}
+
+// blockDetail calls a terminal block's read-only method. A block that closed
+// since the view keeps its row until the next listing, without details, as
+// does a block on a server too old to offer the method.
+func (c *Client) blockDetail(ctx context.Context, session, block, method string, out any) error {
+	err := c.BlockCall(ctx, session, block, method, map[string]any{}, out)
+	if err != nil && !IsCode(err, "not_found") && !IsCode(err, "block_not_found") &&
+		!IsCode(err, "method_not_found") {
+		return fmt.Errorf("%s of %s: %w", method, block, err)
+	}
+	return nil
+}
+
+// displayName names a terminal the way Rex does: by the title its program
+// set, else by its foreground program and directory, else by its label.
+func displayName(title, program, cwd, home, label string) string {
+	if title != "" {
+		return title
+	}
+	if program == "" {
+		return label
+	}
+	if cwd == "" {
+		return program
+	}
+	if home != "" {
+		if cwd == home {
+			cwd = "~"
+		} else if rel, ok := strings.CutPrefix(cwd, strings.TrimSuffix(home, "/")+"/"); ok {
+			cwd = "~/" + rel
+		}
+	}
+	return program + " " + cwd
 }

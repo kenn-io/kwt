@@ -643,7 +643,9 @@ kwt rex attach BLOCK_ID
 ```
 
 `ls` lists every terminal placed in a window of each session on this account's
-Rex server, with its session, window, label, and the title its program set.
+Rex server, with its session, window, label, the title its program set, and its
+foreground program and working directory. `name` is what Rex shows for the
+terminal: the title, or else the program and directory, such as `zsh ~/src`.
 `status` is `running`, `not_installed`, or `not_running`; the last two are
 normal and list no terminals. Neither command starts a Rex server. `REX_SERVER`
 selects a `unix://` server endpoint; otherwise kwt asks the `rex` command on
