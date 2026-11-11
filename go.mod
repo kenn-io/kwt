@@ -22,7 +22,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
-	go.kenn.io/kit v0.48.4
+	go.kenn.io/kit v0.52.0
 	golang.org/x/mod v0.42.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/sys v0.49.0
@@ -74,6 +74,7 @@ require (
 	golang.org/x/tools v0.52.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gotest.tools/gotestsum v1.13.0 // indirect
+	mvdan.cc/sh/v3 v3.14.1 // indirect
 )
 
 tool gotest.tools/gotestsum
