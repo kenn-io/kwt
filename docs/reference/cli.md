@@ -268,6 +268,17 @@ while stdin remains open, touches it every ten seconds, and releases it when
 stdin reaches EOF or the command is canceled. Progress and warnings are written
 as they occur rather than buffered.
 
+Every lease on a route shares one OpenSSH master by default, and every session
+a client opens through it counts against the server's per-connection limit
+(`MaxSessions` in `sshd_config`, 10 by default). A client that needs more
+concurrent sessions passes `--connection <n>` (1 through 15) to lease another
+master for the same route. Each index is its own master with its own
+authentication, idle timeout, and generation; leases that pass the same index
+share it. ProxyJump hosts stay shared across indexes because forwarded
+connections do not count as sessions. The daemon advertises this with the
+`ssh.lease.connections.v1` capability, and `kwt ssh lease` refuses a nonzero
+index when the running daemon lacks it.
+
 Tailscale SSH browser checks use a non-sensitive `ssh_browser_authentication`
 prompt on the `kwt ssh lease --json` stream. Its `details` includes
 `method: "browser"` and `authentication_url`, alongside the target and hop

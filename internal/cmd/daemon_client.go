@@ -106,6 +106,27 @@ func requireSSHLifecycleCapabilities(observation kwtdaemon.Observation) error {
 	)
 }
 
+// An older daemon ignores the connection index and would place every lease on
+// the shared master, so a caller asking for another master must not proceed.
+func requireSSHLeaseConnectionCapability(
+	observation kwtdaemon.Observation,
+	request kwt.SSHLeaseRequest,
+) error {
+	if request.Connection == 0 || slices.Contains(
+		observation.Status.Capabilities,
+		kwtdaemon.CapabilitySSHLeaseConnections,
+	) {
+		return nil
+	}
+	return service.NewError(
+		service.DaemonIncompatible,
+		"the running kwt daemon does not support additional SSH connections",
+		false,
+		nil,
+		nil,
+	)
+}
+
 type sshLeaseControl interface {
 	Touch(context.Context, string) error
 	Hold(context.Context, string) (io.ReadCloser, error)
@@ -142,6 +163,9 @@ func acquireSSHLeaseViaDaemon(
 			return kwtdaemon.SSHLeaseResult{}, backoff.Permanent(err)
 		}
 		if err := requireSSHLifecycleCapabilities(observation); err != nil {
+			return kwtdaemon.SSHLeaseResult{}, backoff.Permanent(err)
+		}
+		if err := requireSSHLeaseConnectionCapability(observation, request); err != nil {
 			return kwtdaemon.SSHLeaseResult{}, backoff.Permanent(err)
 		}
 		var exposed atomic.Bool

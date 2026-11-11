@@ -65,8 +65,13 @@ type RouteSnapshot struct {
 }
 
 type LeaseRequest struct {
-	Snapshot          RouteSnapshot `json:"snapshot"`
-	HostKeyPolicy     HostKeyPolicy `json:"host_key_policy"`
+	Snapshot      RouteSnapshot `json:"snapshot"`
+	HostKeyPolicy HostKeyPolicy `json:"host_key_policy"`
+	// Connection selects one of the route's OpenSSH masters. Zero is the
+	// shared master; each other index opens its own master to the same
+	// destination, so a caller can add sessions beyond what one connection's
+	// server-side MaxSessions allows. Jump hosts stay shared.
+	Connection        int           `json:"connection,omitempty"`
 	WorkingDirectory  string        `json:"working_directory"`
 	Environment       []string      `json:"environment"`
 	Prompt            PromptHandler `json:"-"`
