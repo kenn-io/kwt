@@ -2,6 +2,7 @@ package rex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -74,6 +75,24 @@ func (c *Client) Terminals(ctx context.Context) ([]Terminal, error) {
 		terminals = append(terminals, found...)
 	}
 	return terminals, nil
+}
+
+// ErrTerminalNotFound reports a block that no session's windows hold.
+var ErrTerminalNotFound = errors.New("no Rex terminal has that block ID")
+
+// Terminal finds the terminal block blockID. Block IDs are unique across
+// a server's sessions.
+func (c *Client) Terminal(ctx context.Context, blockID string) (Terminal, error) {
+	terminals, err := c.Terminals(ctx)
+	if err != nil {
+		return Terminal{}, err
+	}
+	for _, t := range terminals {
+		if t.BlockID == blockID {
+			return t, nil
+		}
+	}
+	return Terminal{}, fmt.Errorf("%w: %s", ErrTerminalNotFound, blockID)
 }
 
 func (c *Client) terminalsIn(ctx context.Context, view sessionView) ([]Terminal, error) {

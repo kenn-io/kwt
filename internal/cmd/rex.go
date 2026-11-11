@@ -25,7 +25,7 @@ They never start a Rex server.`,
   kwt rex ls --json
 
   # Attach to one terminal
-  kwt rex attach session:01a1... block:01a1...`,
+  kwt rex attach block:01a1...`,
 }
 
 var rexListJSON bool
@@ -68,21 +68,30 @@ var rexListCmd = &cobra.Command{
 }
 
 var rexAttachCmd = &cobra.Command{
-	Use:   "attach SESSION_ID BLOCK_ID",
+	Use:   "attach BLOCK_ID",
 	Short: "Attach this terminal to one Rex terminal",
 	Long: `Show one Rex terminal here and type into it.
 
 The attach takes the terminal's size from this one. Close this terminal to
 detach; the program in the Rex terminal keeps running. The attach ends by
 itself when that program exits.`,
-	Args: cobra.ExactArgs(2),
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := commandContext(cmd)
 		server, err := rex.FindServer(ctx, rex.Executables())
 		if err != nil {
 			return err
 		}
-		return runRexAttach(ctx, server.Socket, args[0], args[1])
+		client, err := rex.Dial(ctx, server.Socket)
+		if err != nil {
+			return err
+		}
+		terminal, err := client.Terminal(ctx, args[0])
+		_ = client.Close()
+		if err != nil {
+			return err
+		}
+		return runRexAttach(ctx, server.Socket, terminal.SessionID, terminal.BlockID)
 	},
 }
 

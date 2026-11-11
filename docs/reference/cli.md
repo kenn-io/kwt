@@ -639,7 +639,7 @@ Ghosthub can show one Rex terminal at a time.
 
 ```sh
 kwt rex ls --json
-kwt rex attach SESSION_ID BLOCK_ID
+kwt rex attach BLOCK_ID
 ```
 
 `ls` lists every terminal placed in a window of each session on this account's
@@ -649,7 +649,8 @@ normal and list no terminals. Neither command starts a Rex server. `REX_SERVER`
 selects a `unix://` server endpoint; otherwise kwt asks the `rex` command on
 `PATH`, or the one inside Rex for Mac, for its server.
 
-`attach` paints the terminal's current screen, then streams its output and
+`attach` finds the session that holds the block, paints the terminal's
+current screen, then streams its output and
 types your input into it. It takes the terminal's size from yours, so Rex.app
 or another viewer showing the same terminal follows it. Close your terminal to
 detach; the program keeps running. The attach ends when the program exits.

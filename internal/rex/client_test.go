@@ -101,6 +101,25 @@ func TestTerminalsListsTerminalBlocksInEverySession(t *testing.T) {
 	assert.Len(t, server.callsTo("session.detach"), 1, "listing leaves the session it attached to")
 }
 
+func TestTerminalFindsTheSessionThatHoldsABlock(t *testing.T) {
+	server := newFakeServer(t)
+	server.answerValue("session.list", map[string]any{"sessions": []any{
+		map[string]any{"session_id": "session:a", "label": "work"},
+	}})
+	server.answerValue("session.attach", view("session:a", "work",
+		window("window:1", "editor", "", block("block:1", terminalCreator, "shell"))))
+	client, err := Dial(t.Context(), server.socket)
+	require.NoError(t, err)
+	defer client.Close()
+
+	found, err := client.Terminal(t.Context(), "block:1")
+	require.NoError(t, err)
+	assert.Equal(t, "session:a", found.SessionID)
+
+	_, err = client.Terminal(t.Context(), "block:missing")
+	require.ErrorIs(t, err, ErrTerminalNotFound)
+}
+
 // syncBuffer collects the attach client's output for a test to inspect.
 type syncBuffer struct {
 	mu   sync.Mutex
