@@ -631,6 +631,31 @@ from the session name.
 `kwt tmux run --context` rejects `wt` and `workspace`, which are reserved for
 managed worktree and directory-workspace session names.
 
+## `kwt rex`
+
+[Rex](https://www.superlogical.com/rex/docs) has no client that runs inside
+another terminal. `kwt rex` fills that gap, so a terminal front end such as
+Ghosthub can show one Rex terminal at a time.
+
+```sh
+kwt rex ls --json
+kwt rex attach SESSION_ID BLOCK_ID
+```
+
+`ls` lists every terminal placed in a window of each session on this account's
+Rex server, with its session, window, label, and the title its program set.
+`status` is `running`, `not_installed`, or `not_running`; the last two are
+normal and list no terminals. Neither command starts a Rex server. `REX_SERVER`
+selects a `unix://` server endpoint; otherwise kwt asks the `rex` command on
+`PATH`, or the one inside Rex for Mac, for its server.
+
+`attach` paints the terminal's current screen, then streams its output and
+types your input into it. It takes the terminal's size from yours, so Rex.app
+or another viewer showing the same terminal follows it. Close your terminal to
+detach; the program keeps running. The attach ends when the program exits.
+Rex owns the session's windows and splits. `attach` shows only the selected
+terminal.
+
 ## `kwt agent-hook`
 
 Agent hooks let a terminal front end such as Ghosthub show which tmux
