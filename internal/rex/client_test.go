@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -328,4 +329,65 @@ func TestAttachKeepsACharacterSplitAcrossReadsWhole(t *testing.T) {
 	}
 	require.NoError(t, inWriter.Close())
 	require.NoError(t, <-done)
+}
+
+// gatedWriter holds its first write until released and fails the test if
+// anything is written after the attach returned.
+type gatedWriter struct {
+	t        *testing.T
+	writing  chan struct{}
+	release  chan struct{}
+	once     sync.Once
+	returned atomic.Bool
+}
+
+func (w *gatedWriter) Write(p []byte) (int, error) {
+	if w.returned.Load() {
+		w.t.Errorf("wrote %q after the attach returned", p)
+	}
+	w.once.Do(func() {
+		close(w.writing)
+		<-w.release
+	})
+	return len(p), nil
+}
+
+func TestAttachFinishesOutputBeforeReturning(t *testing.T) {
+	server := newFakeServer(t)
+	server.answerValue("com.superlogical.terminal.format", map[string]string{"content": "PAINTED"})
+	server.stream = [][]byte{
+		rexMessage(server.nonce, `{"type":"resize"}`),
+		[]byte("more output"),
+	}
+	out := &gatedWriter{t: t, writing: make(chan struct{}), release: make(chan struct{})}
+	inReader, inWriter := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		_, err := Attach(t.Context(), server.socket, AttachOptions{
+			SessionID: "session:a", BlockID: "block:1",
+			In: inReader, Out: out, Size: Size{Columns: 80, Rows: 24},
+		})
+		out.returned.Store(true)
+		done <- err
+	}()
+
+	select {
+	case <-out.writing:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the attach never painted")
+	}
+	// Detach while the paint is still being written.
+	require.NoError(t, inWriter.Close())
+	select {
+	case <-done:
+		t.Fatal("the attach returned while its output was still being written")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(out.release)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the attach did not end after its output finished")
+	}
 }

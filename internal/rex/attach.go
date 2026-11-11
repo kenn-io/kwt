@@ -88,7 +88,13 @@ func Attach(ctx context.Context, socket string, opts AttachOptions) (*int, error
 	finish := func(exit *int, err error) {
 		done <- result{exit: exit, err: err}
 	}
-	go func() { finish(a.stream(ctx, data, nonce, opts.Out)) }()
+	// Output must be finished before Attach returns, so the caller's
+	// terminal cleanup is the last thing written.
+	streamDone := make(chan struct{})
+	go func() {
+		defer close(streamDone)
+		finish(a.stream(ctx, data, nonce, opts.Out))
+	}()
 	go func() { finish(nil, a.typeInput(ctx, opts.In)) }()
 	if opts.Sizes != nil {
 		go func() {
@@ -105,15 +111,19 @@ func Attach(ctx context.Context, socket string, opts AttachOptions) (*int, error
 			}
 		}()
 	}
+	var r result
 	select {
-	case r := <-done:
-		if errors.Is(r.err, context.Canceled) && ctx.Err() != nil {
-			return r.exit, nil
-		}
-		return r.exit, r.err
+	case r = <-done:
 	case <-ctx.Done():
-		return nil, nil
 	}
+	interrupted := ctx.Err() != nil
+	cancel()
+	_ = data.CloseNow()
+	<-streamDone
+	if errors.Is(r.err, context.Canceled) && interrupted {
+		return r.exit, nil
+	}
+	return r.exit, r.err
 }
 
 type attachment struct {
