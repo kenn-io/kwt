@@ -391,3 +391,64 @@ func TestAttachFinishesOutputBeforeReturning(t *testing.T) {
 		t.Fatal("the attach did not end after its output finished")
 	}
 }
+
+func TestTerminalsLeavesOutASessionThatEndsWhileItIsRead(t *testing.T) {
+	server := newFakeServer(t)
+	server.answerValue("session.list", map[string]any{"sessions": []any{
+		map[string]any{"session_id": "session:a", "label": "work"},
+		map[string]any{"session_id": "session:b", "label": "closing"},
+	}})
+	server.answer("session.attach", func(p json.RawMessage) (any, *Error) {
+		if strings.Contains(string(p), "session:b") {
+			return view("session:b", "closing",
+				window("window:2", "", "", block("block:9", terminalCreator, "shell"))), nil
+		}
+		return view("session:a", "work",
+			window("window:1", "", "", block("block:1", terminalCreator, "shell"))), nil
+	})
+	// session:b ends after the attach, before its terminal's details are read.
+	server.answer("com.superlogical.terminal.title", func(p json.RawMessage) (any, *Error) {
+		if strings.Contains(string(p), "session:b") {
+			return nil, &Error{Code: "session_not_found", Message: "gone"}
+		}
+		return map[string]string{"title": "vim"}, nil
+	})
+	server.answer("session.detach", func(p json.RawMessage) (any, *Error) {
+		if strings.Contains(string(p), "session:b") {
+			return nil, &Error{Code: "session_not_found", Message: "gone"}
+		}
+		return map[string]any{}, nil
+	})
+	client, err := Dial(t.Context(), server.socket)
+	require.NoError(t, err)
+	defer client.Close()
+
+	terminals, err := client.Terminals(t.Context())
+	require.NoError(t, err)
+	require.Len(t, terminals, 1)
+	assert.Equal(t, "block:1", terminals[0].BlockID)
+	assert.Equal(t, "vim", terminals[0].Name)
+
+	found, err := client.Terminal(t.Context(), "block:1")
+	require.NoError(t, err)
+	assert.Equal(t, "session:a", found.SessionID)
+	assert.Len(t, server.callsTo("session.detach"), 4, "each listing tries to leave both sessions")
+}
+
+func TestTerminalsReportsOtherFailuresReadingASession(t *testing.T) {
+	server := newFakeServer(t)
+	server.answerValue("session.list", map[string]any{"sessions": []any{
+		map[string]any{"session_id": "session:a", "label": "work"},
+	}})
+	server.answerValue("session.attach", view("session:a", "work",
+		window("window:1", "", "", block("block:1", terminalCreator, "shell"))))
+	server.answer("com.superlogical.terminal.title", func(json.RawMessage) (any, *Error) {
+		return nil, &Error{Code: "internal", Message: "boom"}
+	})
+	client, err := Dial(t.Context(), server.socket)
+	require.NoError(t, err)
+	defer client.Close()
+
+	_, err = client.Terminals(t.Context())
+	assert.True(t, IsCode(err, "internal"), "got %v", err)
+}

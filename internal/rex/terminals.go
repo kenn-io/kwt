@@ -74,6 +74,9 @@ func (c *Client) Terminals(ctx context.Context) ([]Terminal, error) {
 		// Detach even after a failure so the server stops sending this
 		// connection the session's events.
 		detachErr := c.Call(ctx, "session.detach", map[string]string{"session_id": s.SessionID}, nil)
+		if IsCode(err, "session_not_found") {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
