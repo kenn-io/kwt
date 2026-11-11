@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/coder/websocket"
 )
@@ -246,12 +247,16 @@ func (a *attachment) paint(ctx context.Context, out io.Writer) error {
 	return err
 }
 
-// typeInput types what in delivers until in closes.
+// typeInput types what in delivers until in closes. A character split
+// across reads waits for its remaining bytes.
 func (a *attachment) typeInput(ctx context.Context, in io.Reader) error {
 	buf := make([]byte, 32<<10)
+	var pending []byte
 	for {
 		n, err := in.Read(buf)
-		if n > 0 {
+		var text string
+		text, pending = completeUTF8(append(pending, buf[:n]...))
+		if text != "" {
 			a.mu.Lock()
 			stale := time.Since(a.takenAt) > retakeInterval
 			a.mu.Unlock()
@@ -260,7 +265,6 @@ func (a *attachment) typeInput(ctx context.Context, in io.Reader) error {
 					return err
 				}
 			}
-			text := strings.ToValidUTF8(string(buf[:n]), "�")
 			if err := a.client.BlockCall(ctx, a.session, a.block, "write", map[string]string{"data": text}, nil); err != nil {
 				return err
 			}
@@ -272,4 +276,20 @@ func (a *attachment) typeInput(ctx context.Context, in io.Reader) error {
 			return err
 		}
 	}
+}
+
+// completeUTF8 returns b as text up to a character that its last bytes only
+// begin, and those bytes. Invalid bytes become U+FFFD.
+func completeUTF8(b []byte) (string, []byte) {
+	cut := len(b)
+	for i := len(b) - 1; i >= 0 && i >= len(b)-utf8.UTFMax; i-- {
+		if utf8.RuneStart(b[i]) {
+			if !utf8.FullRune(b[i:]) {
+				cut = i
+			}
+			break
+		}
+	}
+	rest := append([]byte(nil), b[cut:]...)
+	return strings.ToValidUTF8(string(b[:cut]), "\uFFFD"), rest
 }

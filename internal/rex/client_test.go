@@ -298,3 +298,34 @@ func TestTerminalsNameBlocksByLabelWithoutProcessDetails(t *testing.T) {
 	assert.Equal(t, "shell", terminals[0].Name)
 	assert.Empty(t, terminals[0].Program)
 }
+
+func TestAttachKeepsACharacterSplitAcrossReadsWhole(t *testing.T) {
+	server := newFakeServer(t)
+	server.answerValue("com.superlogical.terminal.format", map[string]string{"content": ""})
+	inReader, inWriter := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		_, err := Attach(t.Context(), server.socket, AttachOptions{
+			SessionID: "session:a", BlockID: "block:1",
+			In: inReader, Out: io.Discard, Size: Size{Columns: 80, Rows: 24},
+		})
+		done <- err
+	}()
+
+	accent := []byte("é")
+	for _, part := range [][]byte{append([]byte("caf"), accent[0]), append(accent[1:], '!')} {
+		_, err := inWriter.Write(part)
+		require.NoError(t, err)
+	}
+	var typed string
+	for typed != "café!" {
+		select {
+		case text := <-server.written:
+			typed += text
+		case <-time.After(5 * time.Second):
+			t.Fatalf("typed %q, want %q", typed, "café!")
+		}
+	}
+	require.NoError(t, inWriter.Close())
+	require.NoError(t, <-done)
+}

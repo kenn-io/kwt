@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/kwt/internal/rex"
@@ -26,6 +27,9 @@ They never start a Rex server.`,
 
   # Attach to one terminal
   kwt rex attach block:01a1...`,
+	// Rex commands never use repository configuration, so they skip the
+	// project merge and its trust prompt.
+	PersistentPreRunE: globalOnlyPreRun,
 }
 
 var rexListJSON bool
@@ -72,7 +76,9 @@ The attach takes the terminal's size from this one. Close this terminal to
 detach; the program in the Rex terminal keeps running. The attach ends by
 itself when that program exits.`,
 	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	// A SIGINT or SIGTERM from outside ends the attach through its context,
+	// so the terminal is restored. Ctrl-C typed here is input for Rex.
+	RunE: withGracefulSignals(func(cmd *cobra.Command, args []string) error {
 		ctx := commandContext(cmd)
 		server, err := rex.FindServer(ctx, rex.Executables())
 		if err != nil {
@@ -88,7 +94,7 @@ itself when that program exits.`,
 			return err
 		}
 		return runRexAttach(ctx, server.Socket, terminal.SessionID, terminal.BlockID)
-	},
+	}),
 }
 
 func init() {
@@ -125,6 +131,10 @@ func rexListing(ctx context.Context, executables []string) (rexListingOutput, er
 		return listing, err
 	}
 	client, err := rex.Dial(ctx, server.Socket)
+	if serverGone(err) {
+		listing.Status = rexNotRunning
+		return listing, nil
+	}
 	if err != nil {
 		return listing, err
 	}
@@ -139,6 +149,21 @@ func rexListing(ctx context.Context, executables []string) (rexListingOutput, er
 	return listing, nil
 }
 
+// serverGone reports a Rex socket that is missing or refuses connections:
+// REX_SERVER names a stopped server, or the server stopped after discovery.
+func serverGone(err error) bool {
+	return errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)
+}
+
+// resetTerminalModes undoes modes that the painted screen or the program
+// may have turned on and that would outlive an attach that ends abruptly:
+// the alternate screen, a hidden cursor, mouse and focus reporting,
+// bracketed paste, extended keyboard modes, application keys, and styles.
+// It does not move the cursor.
+const resetTerminalModes = "\x1b[?1047l\x1b[?25h" +
+	"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l" +
+	"\x1b[?1004l\x1b[?2004l\x1b[=0u\x1b[>4;0m\x1b[?1l\x1b>\x1b[0m"
+
 func runRexAttach(ctx context.Context, socket, sessionID, blockID string) error {
 	stdin := int(os.Stdin.Fd()) //nolint:gosec // File descriptors fit in int.
 	if !term.IsTerminal(stdin) {
@@ -152,7 +177,10 @@ func runRexAttach(ctx context.Context, socket, sessionID, blockID string) error 
 	if err != nil {
 		return fmt.Errorf("put the terminal in raw mode: %w", err)
 	}
-	defer func() { _ = term.Restore(stdin, state) }()
+	defer func() {
+		_, _ = io.WriteString(os.Stdout, resetTerminalModes)
+		_ = term.Restore(stdin, state)
+	}()
 
 	sizes, stop := watchTerminalSize(ctx, stdin)
 	defer stop()
