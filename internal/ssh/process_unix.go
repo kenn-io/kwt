@@ -133,7 +133,7 @@ func waitInteractiveClient(
 			// matters for terminal emulators and PTY owners without a shell in
 			// the same session. Stop the complete shell job so pipeline siblings
 			// cannot keep running while kwt is suspended.
-			if err := syscall.Kill(-ownerGroup, syscall.SIGSTOP); err != nil {
+			if err := suspendClientOwnerGroup(ownerGroup); err != nil {
 				return fmt.Errorf("suspend SSH client owner group: %w", err)
 			}
 			foregroundGroup, err := terminalForegroundProcessGroup(terminal)
@@ -159,6 +159,20 @@ func waitInteractiveClient(
 			return clientWaitError{status: status}
 		}
 	}
+}
+
+func suspendClientOwnerGroup(ownerGroup int) error {
+	resumed := make(chan os.Signal, 1)
+	signal.Notify(resumed, syscall.SIGCONT)
+	defer signal.Stop(resumed)
+	if err := syscall.Kill(-ownerGroup, syscall.SIGSTOP); err != nil {
+		return err
+	}
+	// A group-directed SIGSTOP can stop another runtime thread first. The
+	// calling thread can return from Kill before the group finishes stopping,
+	// so wait for the shell's SIGCONT before inspecting terminal ownership.
+	<-resumed
+	return nil
 }
 
 func setTerminalForeground(terminal *os.File, processGroup int) error {
