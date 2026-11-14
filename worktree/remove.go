@@ -389,11 +389,16 @@ func lockedRemovalError(path, reason string) *ConditionError {
 	quotedPath := "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
 	shell := ""
 	if runtime.GOOS == "windows" {
-		quotedPath = "'" + strings.ReplaceAll(path, "'", "''") + "'"
+		quotedPath = quotePowerShellPath(path)
 		shell = " in PowerShell"
 	}
 	return &ConditionError{
 		Reason: ReasonLocked, Path: path,
 		message: fmt.Sprintf("worktree %s is locked by Git. %s Run git worktree unlock %s from its repository%s, then retry deletion.", path, detail, quotedPath, shell),
 	}
+}
+
+func quotePowerShellPath(path string) string {
+	// PowerShell also recognizes typographic single quotes as delimiters.
+	return "'" + strings.NewReplacer("'", "''", "‘", "‘‘", "’", "’’", "‚", "‚‚", "‛", "‛‛").Replace(path) + "'"
 }
