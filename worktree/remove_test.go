@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -406,6 +408,66 @@ func TestFencedRemovalOfVanishedWorktreeReportsGenerationChange(t *testing.T) {
 			var condition *worktree.ConditionError
 			require.ErrorAs(t, err, &condition)
 			require.Equal(t, worktree.ReasonGenerationChanged, condition.Reason)
+		})
+	}
+}
+
+func TestRemovalLockedWorktreeReportsReasonAndRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		name, reason, basename string
+		force                  bool
+	}{
+		{name: "without reason", basename: "locked"},
+		{name: "with reason", reason: `{"build":"1785775286","owner":"supacode","version":"0.10.8"}`, basename: "locked", force: true},
+		{name: "quoted path", reason: "external owner", basename: "owner's ‘left’ ‚low‛ $(echo injected) worktree", force: true},
+		{name: "literal backticks", reason: "`maintenance`", basename: "locked"},
+		{name: "literal single quotes", reason: "'x'", basename: "locked"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, original := fixture(t)
+			path := filepath.Join(filepath.Dir(original), tc.basename)
+			git(t, root, "worktree", "move", original, path)
+			git(t, root, "worktree", "lock", "--reason", tc.reason, path)
+			repo := open(t, root, kwtPolicy())
+			before := git(t, root, "worktree", "list", "--porcelain")
+			req := worktree.RemovalRequest{Path: path, Force: tc.force}
+
+			_, err := repo.InspectRemoval(t.Context(), req)
+			require.Error(t, err)
+			result, removeErr := repo.Remove(t.Context(), req)
+			require.EqualError(t, removeErr, err.Error())
+			var condition *worktree.ConditionError
+			require.ErrorAs(t, removeErr, &condition)
+			require.Equal(t, worktree.ReasonLocked, condition.Reason)
+			require.Equal(t, path, condition.Path)
+			require.False(t, result.CheckoutRemoved)
+			require.False(t, result.RegistrationRemoved)
+			require.DirExists(t, path)
+			require.Equal(t, before, git(t, root, "worktree", "list", "--porcelain"))
+			require.Contains(t, removeErr.Error(), "locked by Git")
+			if tc.reason == "" {
+				require.Contains(t, removeErr.Error(), "No lock reason was recorded.")
+			} else {
+				require.Contains(t, removeErr.Error(), "Git reported: "+tc.reason)
+			}
+			_, hint, ok := strings.Cut(removeErr.Error(), "Run ")
+			require.True(t, ok)
+			command, _, ok := strings.Cut(hint, " from its repository")
+			require.True(t, ok)
+			require.Contains(t, command, "git worktree unlock ")
+			require.Contains(t, hint, "then retry deletion")
+			// Exercise the exact recovery command, not a reconstructed argv.
+			shell, args := "sh", []string{"-c", command}
+			if runtime.GOOS == "windows" {
+				shell, args = "powershell.exe", []string{"-NoProfile", "-Command", command}
+			}
+			cmd := exec.CommandContext(t.Context(), shell, args...)
+			cmd.Dir = root
+			output, err := cmd.CombinedOutput()
+			require.NoError(t, err, "%s", output)
+			result, err = repo.Remove(t.Context(), req)
+			require.NoError(t, err)
+			require.True(t, result.CheckoutRemoved)
 		})
 	}
 }

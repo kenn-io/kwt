@@ -130,6 +130,11 @@ directory of a live process. The error lists visible blocking process IDs.
 before using it. Deleting an unmerged branch is a separate decision and
 requires `--force-delete-branch` with `-b`.
 
+A Git-locked worktree cannot be removed, even with `--force`. The error shows
+Git's lock reason when available and a quoted `git worktree unlock` command.
+Check why the worktree was locked before running that command from its
+repository, then retry removal. kwt never unlocks it automatically.
+
 Automation can bind removal to the `generation` and tmux endpoint returned by
 current JSON inventory. See [`kwt remove`](../reference/cli.md#kwt-remove) for
 those guarded flags.
