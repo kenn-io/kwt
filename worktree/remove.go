@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 
 	managed "go.kenn.io/kit/git/managed"
@@ -121,7 +123,7 @@ func (s *Scope) InspectRemoval(ctx context.Context, req RemovalRequest) (Removal
 		return check, &ConditionError{Reason: ReasonMainWorktree, Path: req.Path}
 	}
 	if entry.Locked {
-		return check, &ConditionError{Reason: ReasonLocked, Path: req.Path}
+		return check, lockedRemovalError(req.Path, entry.LockedReason)
 	}
 	if req.Conditions != nil {
 		if err := s.validateRemovalConditions(ctx, req.Path, entry, *req.Conditions); err != nil {
@@ -371,4 +373,25 @@ func (s *Scope) removalPreflight(ctx context.Context, req RemovalRequest) (Remov
 		}
 	}
 	return check, nil
+}
+
+func lockedRemovalError(path, reason string) *ConditionError {
+	// Git C-quotes lock reasons containing quotes or control characters.
+	if decoded, err := strconv.Unquote(reason); err == nil {
+		reason = decoded
+	}
+	detail := "No lock reason was recorded."
+	if reason != "" {
+		detail = "Git reported: " + reason + "."
+	}
+	quotedPath := "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
+	shell := ""
+	if runtime.GOOS == "windows" {
+		quotedPath = "'" + strings.ReplaceAll(path, "'", "''") + "'"
+		shell = " in PowerShell"
+	}
+	return &ConditionError{
+		Reason: ReasonLocked, Path: path,
+		message: fmt.Sprintf("worktree %s is locked by Git. %s Run git worktree unlock %s from its repository%s, then retry deletion.", path, detail, quotedPath, shell),
+	}
 }

@@ -20,11 +20,15 @@ const (
 )
 
 type ConditionError struct {
-	Reason ConditionReason
-	Path   string
+	Reason  ConditionReason
+	Path    string
+	message string
 }
 
 func (e *ConditionError) Error() string {
+	if e.message != "" {
+		return e.message
+	}
 	return fmt.Sprintf("worktree %s for %s", e.Reason, e.Path)
 }
 
