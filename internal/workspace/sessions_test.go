@@ -11,16 +11,18 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/pkg/models"
 )
 
-func TestCoreBatchUsesOneInventory(t *testing.T) {
+func emptyCoreInventory(t *testing.T) (string, func() int) {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix socket fixture")
 	}
-	dir, err := os.MkdirTemp("/tmp", "kwt-batch-")
+	dir, err := os.MkdirTemp("/tmp", "kwt-inventory-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,15 +32,16 @@ func TestCoreBatchUsesOneInventory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan int, 1)
+	done := make(chan struct{})
+	count := 0
 	go func() {
-		count := 0
-		defer func() { done <- count }()
+		defer close(done)
 		connection, err := listener.Accept()
 		if err != nil {
 			return
 		}
 		defer connection.Close()
+		_ = connection.SetDeadline(time.Now().Add(2 * time.Second))
 		scanner := bufio.NewScanner(connection)
 		for scanner.Scan() {
 			var request struct {
@@ -48,24 +51,36 @@ func TestCoreBatchUsesOneInventory(t *testing.T) {
 			if json.Unmarshal(scanner.Bytes(), &request) != nil {
 				return
 			}
-			var result any = map[string]any{"generation": 1, "framed": false}
-			if request.Method == "terminal.list" {
+			var result any
+			switch request.Method {
+			case "hello":
+				result = map[string]any{"generation": 1, "framed": false}
+			case "terminal.list":
 				count++
 				result = map[string]any{"terminals": []any{}}
+			default:
+				t.Errorf("unexpected inventory RPC %q", request.Method)
+				return
 			}
 			if json.NewEncoder(connection).Encode(map[string]any{"id": request.ID, "result": result}) != nil {
 				return
 			}
 		}
 	}()
-	t.Cleanup(func() { _ = listener.Close() })
+	t.Cleanup(func() { _ = listener.Close(); <-done })
+	return socket, func() int { <-done; return count }
+}
+
+func TestCoreBatchUsesOneInventory(t *testing.T) {
+	socket, inventoryCalls := emptyCoreInventory(t)
+	dir := filepath.Dir(socket)
 	sessions := New(&models.Config{Workspace: models.WorkspaceConfig{Backend: "herdr-core", CoreSocket: socket}}, tmux.WorkspaceSessionsOptions{})
 	requests := []tmux.WorkspaceEndpointRequest{{SessionName: "one", WorkspacePath: dir}, {SessionName: "two", WorkspacePath: filepath.Join(dir, "two")}}
 	rows, err := sessions.ResolveAllBestEffort(t.Context(), requests)
 	if err != nil || len(rows) != 2 || rows[0].Err != nil || rows[1].Err != nil {
 		t.Fatalf("batch: %+v, %v", rows, err)
 	}
-	if count := <-done; count != 1 {
+	if count := inventoryCalls(); count != 1 {
 		t.Fatalf("inventory calls = %d, want 1", count)
 	}
 }
@@ -81,18 +96,16 @@ func TestCoreBatchCancellationIsNotPublishedAsRowErrors(t *testing.T) {
 }
 
 func TestCoreExpectedSessionMismatchDoesNotLaunch(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX fixture")
-	}
-	dir := t.TempDir()
+	socket, _ := emptyCoreInventory(t)
+	dir := filepath.Dir(socket)
 	marker := filepath.Join(dir, "launched")
-	script := "#!/bin/sh\nif [ \"$1\" = ls ]; then printf '%s\\n' '{\"terminals\":[]}'; else : > \"$KWT_FAKE_MARKER\"; exit 1; fi\n"
+	script := "#!/bin/sh\n: > \"$KWT_FAKE_MARKER\"\nexit 1\n"
 	if err := os.WriteFile(filepath.Join(dir, "hc"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
 	t.Setenv("KWT_FAKE_MARKER", marker)
-	sessions := New(&models.Config{Workspace: models.WorkspaceConfig{Backend: "herdr-core", CoreSocket: filepath.Join(dir, "core.sock")}}, tmux.WorkspaceSessionsOptions{})
+	sessions := New(&models.Config{Workspace: models.WorkspaceConfig{Backend: "herdr-core", CoreSocket: socket}}, tmux.WorkspaceSessionsOptions{})
 	_, err := sessions.EstablishExpectedWithGeneration(t.Context(), "new-branch", "old-branch", dir, "0123456789abcdef0123456789abcdef", models.Layout{Panes: []string{"echo should-not-run"}})
 	if !errors.Is(err, tmux.ErrWorkspaceSessionChanged) {
 		t.Fatalf("expected session change, got %v", err)
@@ -103,48 +116,9 @@ func TestCoreExpectedSessionMismatchDoesNotLaunch(t *testing.T) {
 }
 
 func TestCoreResolveLiveReturnsNotLiveForEmptyInventory(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix socket fixture")
-	}
-	dir, err := os.MkdirTemp("/tmp", "kwt-empty-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	socket := filepath.Join(dir, "core.sock")
-	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socket)
-	if err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		connection, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer connection.Close()
-		scanner := bufio.NewScanner(connection)
-		for scanner.Scan() {
-			var request struct {
-				ID     int    `json:"id"`
-				Method string `json:"method"`
-			}
-			if json.Unmarshal(scanner.Bytes(), &request) != nil {
-				return
-			}
-			var result any = map[string]any{"generation": 1, "framed": false}
-			if request.Method == "terminal.list" {
-				result = map[string]any{"terminals": []any{}}
-			}
-			if json.NewEncoder(connection).Encode(map[string]any{"id": request.ID, "result": result}) != nil {
-				return
-			}
-		}
-	}()
-	t.Cleanup(func() { _ = listener.Close(); <-done })
+	socket, _ := emptyCoreInventory(t)
 	sessions := New(&models.Config{Workspace: models.WorkspaceConfig{Backend: "herdr-core", CoreSocket: socket}}, tmux.WorkspaceSessionsOptions{})
-	_, err = sessions.ResolveLive(t.Context(), tmux.WorkspaceEndpointRequest{SessionName: "fixture", WorkspacePath: dir})
+	_, err := sessions.ResolveLive(t.Context(), tmux.WorkspaceEndpointRequest{SessionName: "fixture", WorkspacePath: filepath.Dir(socket)})
 	if !errors.Is(err, ErrWorkspaceNotLive) {
 		t.Fatalf("expected no live workspace, got %v", err)
 	}
