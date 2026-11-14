@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/kwt/internal/tmux"
 	repositoryurl "go.kenn.io/kwt/internal/url"
 	"go.kenn.io/kwt/internal/utils"
+	workspaceRuntime "go.kenn.io/kwt/internal/workspace"
 	internalworktree "go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
@@ -115,24 +116,32 @@ func (s *currentSource) Load(ctx context.Context, request Request) (result Resul
 			return Result{}, inventorySourceFailure("load dashboard inventory", err)
 		}
 	}
+	if snapshot.Config.Workspace.Backend == "herdr-core" {
+		if err := s.annotateProtectedSockets(ctx, false, result.Snapshot.Entries, result.Snapshot.LaunchEntries); err != nil {
+			return Result{}, inventorySourceFailure("failed to read pull-request provenance", err)
+		}
+	}
 	notes, err := s.annotateWorkspaceEndpoints(
 		ctx,
 		expansion,
 		protectedNames,
 		result.Snapshot.Entries,
 		result.Snapshot.LaunchEntries,
+		snapshot.Config,
 	)
 	if err != nil {
-		return Result{}, inventorySourceFailure("inspect KWT tmux endpoints", err)
+		return Result{}, inventorySourceFailure("inspect workspace endpoints", err)
 	}
 	result.Notes = append(result.Notes, notes...)
-	if err := s.annotateProtectedSockets(
-		ctx,
-		request.IncludeProtectedSockets,
-		result.Snapshot.Entries,
-		result.Snapshot.LaunchEntries,
-	); err != nil {
-		return Result{}, inventorySourceFailure("failed to read pull-request provenance", err)
+	if snapshot.Config.Workspace.Backend != "herdr-core" {
+		if err := s.annotateProtectedSockets(
+			ctx,
+			request.IncludeProtectedSockets,
+			result.Snapshot.Entries,
+			result.Snapshot.LaunchEntries,
+		); err != nil {
+			return Result{}, inventorySourceFailure("failed to read pull-request provenance", err)
+		}
 	}
 	return result, nil
 }
@@ -143,6 +152,7 @@ func (s *currentSource) annotateWorkspaceEndpoints(
 	stripNames []string,
 	entries []Entry,
 	launchEntries []Entry,
+	cfgs ...*models.Config,
 ) ([]Note, error) {
 	total := len(entries) + len(launchEntries)
 	if total == 0 {
@@ -155,6 +165,7 @@ func (s *currentSource) annotateWorkspaceEndpoints(
 				SessionName:         entry.SessionName,
 				WorkspacePath:       entry.Path,
 				WorkspaceGeneration: entry.Generation,
+				Protected:           entry.TmuxAttachMode == models.TmuxAttachProtected,
 			})
 		}
 	}
@@ -185,6 +196,12 @@ func (s *currentSource) annotateWorkspaceEndpoints(
 			return tmux.NewWorkspaceSessions(options).ResolveAllBestEffort(ctx, requests)
 		}
 	}
+	if len(cfgs) > 0 && cfgs[0] != nil && cfgs[0].Workspace.Backend == "herdr-core" {
+		cfg := cfgs[0]
+		resolve = func(ctx context.Context, options tmux.WorkspaceSessionsOptions, requests []tmux.WorkspaceEndpointRequest) ([]tmux.WorkspaceSessionResolution, error) {
+			return workspaceRuntime.New(cfg, options).ResolveAllBestEffort(ctx, requests)
+		}
+	}
 	resolutions, err := resolve(ctx, options, requests)
 	if err != nil {
 		return nil, err
@@ -209,7 +226,12 @@ func (s *currentSource) annotateWorkspaceEndpoints(
 			group[index].SessionName = resolution.Session.Endpoint.SessionName
 			group[index].SessionLive = resolution.Session.Live
 			group[index].TmuxSocketName = resolution.Session.Endpoint.SocketName
-			group[index].TmuxAttachMode = models.TmuxAttachDirect
+			group[index].WorkspaceRuntime = resolution.Session.Endpoint.Runtime
+			group[index].WorkspaceAddress = resolution.Session.Endpoint.Address
+			group[index].WorkspaceCreatedMS = resolution.Session.Endpoint.CreatedMS
+			if !requests[offset+index].Protected {
+				group[index].TmuxAttachMode = models.TmuxAttachDirect
+			}
 			if resolution.Err != nil {
 				notes = append(notes, Note{
 					Code:    "tmux_endpoint_degraded",

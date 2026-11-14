@@ -202,6 +202,7 @@ func mergeRequestLocal(target, local *viper.Viper) {
 		case key == "repository_settings":
 			mergeRepositorySettingsInto(target, local)
 		case key == "projects" || key == "workspaces" || strings.HasPrefix(key, "workspaces."),
+			key == "workspace" || strings.HasPrefix(key, "workspace."),
 			key == "fleet" || strings.HasPrefix(key, "fleet."),
 			key == "daemon" || strings.HasPrefix(key, "daemon."),
 			key == "ssh" || strings.HasPrefix(key, "ssh."):

@@ -3085,3 +3085,13 @@ func TestInitialAnchorMissFallsBackToCurrentRow(t *testing.T) {
 	assert.Equal(t, "/w/kata/feature", model.selectedRow().Entry.Path,
 		"an unmatched initial anchor must fall back to the current worktree row")
 }
+
+func TestCoreWorkspaceSelectionShowsAddress(t *testing.T) {
+	row := testRow("fixture", "main", "/fixture/repo")
+	row.TmuxEndpoint.Runtime = "herdr-core"
+	row.TmuxEndpoint.Address = "t91"
+	row.SessionLive = true
+	model := NewModel(&fakeBackend{}, "/fixture")
+	model, _ = updateModel(t, model, rowsMsg{rows: []Row{row}})
+	assert.Contains(t, stripANSI(viewContent(model)), "Core t91")
+}

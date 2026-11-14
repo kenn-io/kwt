@@ -42,6 +42,7 @@ func defaultAgents() map[string]string {
 }
 
 func applyGlobalDefaults(target *viper.Viper) {
+	target.SetDefault("workspace.backend", "tmux")
 	target.SetDefault("daemon.idle_timeout", 2*time.Hour)
 	target.SetDefault("daemon.auto_restart", "newer")
 	target.SetDefault("daemon.replacement_grace", 5*time.Minute)
@@ -190,6 +191,8 @@ func mergeLocalConfig(store *TrustStore, prompter trustPrompter, interactive boo
 		case key == "repository_settings":
 			mergeRepositorySettings(localViper)
 		case key == "projects" || key == "workspaces" || strings.HasPrefix(key, "workspaces."):
+			continue
+		case key == "workspace" || strings.HasPrefix(key, "workspace."):
 			continue
 		case key == "fleet" || strings.HasPrefix(key, "fleet."):
 			// Sync settings decide where bearer tokens are read from and
@@ -563,6 +566,7 @@ func loadForTarget(
 					case key == "repository_settings":
 						mergeRepositorySettingsInto(target, local)
 					case key == "projects" || key == "workspaces" || strings.HasPrefix(key, "workspaces."),
+						key == "workspace" || strings.HasPrefix(key, "workspace."),
 						key == "fleet" || strings.HasPrefix(key, "fleet."),
 						key == "daemon" || strings.HasPrefix(key, "daemon."),
 						key == "ssh" || strings.HasPrefix(key, "ssh."):
@@ -972,6 +976,9 @@ func expandConfigPathsWith(
 	cfg *models.Config,
 	expandPath func(string) (string, error),
 ) error {
+	if err := validateWorkspaceConfig(cfg.Workspace); err != nil {
+		return err
+	}
 	if expandPath == nil {
 		expandPath = utils.ExpandPath
 	}
@@ -1266,4 +1273,19 @@ func Get() *models.Config {
 		return &defaultCfg
 	}
 	return cfg
+}
+
+func validateWorkspaceConfig(cfg models.WorkspaceConfig) error {
+	switch cfg.Backend {
+	case "", "tmux", "herdr-core":
+	default:
+		return fmt.Errorf("workspace.backend must be tmux or herdr-core")
+	}
+	if cfg.CoreSocket != "" && !filepath.IsAbs(cfg.CoreSocket) {
+		return fmt.Errorf("workspace.core_socket must be absolute")
+	}
+	if cfg.Backend == "herdr-core" && cfg.CoreSocket == "" {
+		return fmt.Errorf("workspace.core_socket is required for herdr-core")
+	}
+	return nil
 }

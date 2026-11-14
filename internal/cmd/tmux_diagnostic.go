@@ -6,6 +6,8 @@ import (
 	"os"
 
 	"go.kenn.io/kwt/internal/tmux"
+	"go.kenn.io/kwt/internal/workspace"
+	"go.kenn.io/kwt/pkg/models"
 )
 
 func tmuxDiagnosticReporter(writer io.Writer) func(error) {
@@ -25,4 +27,8 @@ func newCommandWorkspaceSessions(
 		StripNames:       stripNames,
 		ReportDiagnostic: tmuxDiagnosticReporter(stderr),
 	})
+}
+
+func newConfiguredWorkspaceSessions(cfg *models.Config, names []string, stderr io.Writer) *workspace.Sessions {
+	return workspace.New(cfg, tmux.WorkspaceSessionsOptions{StripNames: names, ReportDiagnostic: tmuxDiagnosticReporter(stderr)})
 }

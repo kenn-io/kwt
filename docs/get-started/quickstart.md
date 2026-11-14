@@ -77,6 +77,40 @@ not run repository setup or launch a workspace until you review the checkout
 and open it explicitly. See [Agent workspaces](../workflows/agent-workspaces.md)
 for that loop and for tmux layouts.
 
+## Use Herdr Core terminals
+
+Install Herdr Core so `hc` is on `PATH`. You can run a command in a persistent
+Core terminal without launching tmux:
+
+```sh
+kwt add -b feature/core --no-launch
+kwt herdr run -w feature/core --id dev "npm run dev"
+kwt herdr list
+kwt herdr attach dev
+```
+
+`run` starts detached; use `--no-detach` to attach immediately. Detach with
+Ctrl+\. The terminal outlives the kwt process. When its command exits, Core
+retains a finished record and output; it does not start a replacement shell.
+Use `kwt herdr list --all` to include finished terminals, and use the exact
+address from the list when identifiers match more than one terminal.
+
+Stop the terminal before removing its checkout:
+
+```sh
+kwt herdr kill dev
+kwt remove -b feature/core
+```
+
+These standalone commands retain their command-and-exit behavior. To use Core
+for `kwt open`, automatic launch, directory workspaces, and the dashboard,
+set `workspace.backend = "herdr-core"` and an absolute `workspace.core_socket`
+in your global config. Core supports a
+blank shell or one command per workspace; multi-pane layouts require tmux.
+See [Core workspaces](../workflows/agent-workspaces.md#choose-herdr-core) for
+selection, reopening, protected PRs, and removal, and [the CLI
+reference](../reference/cli.md#kwt-herdr) for standalone terminal flags.
+
 ## What to read next
 
 - [Worktree lifecycle and maintenance](../workflows/worktree-maintenance.md)

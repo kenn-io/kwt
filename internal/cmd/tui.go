@@ -41,8 +41,12 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	if cfg.Worktree.BaseDir == "" {
 		return fmt.Errorf("worktree.basedir is not configured")
 	}
-	if _, err := exec.LookPath("tmux"); err != nil {
-		return fmt.Errorf("tmux not found: %w", err)
+	executable := "tmux"
+	if cfg.Workspace.Backend == "herdr-core" {
+		executable = "hc"
+	}
+	if _, err := exec.LookPath(executable); err != nil {
+		return fmt.Errorf("%s not found: %w", executable, err)
 	}
 	if err := tmux.ValidateLayouts(cfg.Layouts, cfg.Agents); err != nil {
 		return err

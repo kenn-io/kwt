@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/discovery"
 	"go.kenn.io/kwt/internal/git"
+	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/internal/prunepolicy"
 	"go.kenn.io/kwt/internal/pullrequest"
 	"go.kenn.io/kwt/internal/registry"
@@ -228,9 +229,14 @@ func removePruneMergedCandidate(
 						candidate.Policy.Path,
 						candidate.RegistryEntry,
 						func() error {
+							cleanup, closeObservation, guardErr := lifecycle.PrepareCoreWorkspaceRemoval(ctx, candidate.Policy.Path, candidate.Policy.Generation)
+							if guardErr != nil {
+								return guardErr
+							}
+							defer closeObservation()
 							effects, err := remove()
 							if effects.RegistrationRemoved {
-								residualWarning = err
+								residualWarning = errors.Join(err, cleanup())
 								return nil
 							}
 							return err

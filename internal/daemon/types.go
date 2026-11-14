@@ -9,7 +9,7 @@ import (
 const (
 	ServiceName               = "kwt"
 	APISchemaMajor            = 1
-	APISchemaVersion          = "1.12.0"
+	APISchemaVersion          = "1.13.0"
 	CapabilityStatus          = "daemon.status"
 	CapabilityShutdown        = "daemon.shutdown"
 	CapabilityProjectRemoval  = "project.removal.v1"
@@ -17,6 +17,7 @@ const (
 	CapabilityInventory       = "worktree.inventory.v2"
 	CapabilityRemoval         = "worktree.removal.v1"
 	CapabilityGuardedRemoval  = "worktree.removal.v2"
+	CapabilityCoreWorkspace   = "workspace.core.v1"
 	CapabilityOperationStream = "operation.stream.v1"
 	CapabilitySSHLeaseHold    = "ssh.lease.hold.v1"
 	// CapabilitySSHLeaseConnections accepts a lease connection index that
