@@ -706,22 +706,25 @@ func openSelectedDirectoryWorkspaceWithResult(
 		runner = newConfiguredWorkspaceSessions(ctx.Config, credentials.ProtectedNames(ctx.Config), os.Stderr)
 	}
 	var endpoint tmux.SessionEndpoint
-	if openExpectedSession != "" {
-		endpoint, err = runner.EstablishExpectedWithGeneration(
-			commandCtx, tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
-			openExpectedSession, workspace.Path, "", layout,
-		)
-		if errors.Is(err, tmux.ErrWorkspaceSessionChanged) {
-			return service.NewError(service.RegistrationChanged,
-				"directory workspace session changed before it was opened",
-				true, nil, err)
+	err = runDirectorySessionEstablishment(commandCtx, ctx.Config, workspace.Path, func() error {
+		if openExpectedSession != "" {
+			endpoint, err = runner.EstablishExpectedWithGeneration(
+				commandCtx, tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
+				openExpectedSession, workspace.Path, "", layout,
+			)
+			if errors.Is(err, tmux.ErrWorkspaceSessionChanged) {
+				return service.NewError(service.RegistrationChanged,
+					"directory workspace session changed before it was opened",
+					true, nil, err)
+			}
+		} else {
+			endpoint, err = runner.Establish(
+				commandCtx, tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
+				workspace.Path, layout,
+			)
 		}
-	} else {
-		endpoint, err = runner.Establish(
-			commandCtx, tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
-			workspace.Path, layout,
-		)
-	}
+		return err
+	})
 	if err != nil {
 		return err
 	}

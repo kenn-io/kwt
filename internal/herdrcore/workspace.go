@@ -122,42 +122,11 @@ func VerifyWorkspace(t Terminal, opts RunOptions, generation string) error {
 	return nil
 }
 
-func (c *Client) resolveWorkspace(ctx context.Context, opts RunOptions, generation string) (*Terminal, error) {
-	if err := validateWorkspaceOptions(opts); err != nil {
-		return nil, err
-	}
-	terminals, err := c.List(ctx, true)
-	if err != nil {
-		return nil, err
-	}
-	selected, err := SelectObservedWorkspace(terminals, opts, generation)
-	if err != nil {
-		return nil, err
-	}
-	if selected == nil {
-		return nil, nil
-	}
-	fresh, err := c.getManaged(ctx, selected.Address)
-	if err != nil {
-		return nil, err
-	}
-	if fresh.CreatedMS != selected.CreatedMS {
-		return nil, fmt.Errorf("herdr Core workspace creation identity changed")
-	}
-	if err := VerifyWorkspace(*fresh, opts, generation); err != nil {
-		return nil, err
-	}
-	if fresh.State != "live" {
-		return nil, fmt.Errorf("herdr Core workspace exited during selection; open again explicitly")
-	}
-	return fresh, nil
-}
-
 // ResolveWorkspace only observes; dashboard refresh never creates terminals.
 func (c *Client) ResolveWorkspace(ctx context.Context, opts RunOptions, generation string) (*Terminal, error) {
 	c.workspaceMu.Lock()
 	defer c.workspaceMu.Unlock()
-	return c.resolveWorkspace(ctx, opts, generation)
+	return c.ObserveWorkspace(ctx, opts, generation)
 }
 
 // ObserveWorkspace never invokes hc, including when the configured Core is absent.
@@ -208,7 +177,7 @@ func (c *Client) EstablishWorkspace(ctx context.Context, opts RunOptions, genera
 func (c *Client) EstablishExpectedWorkspace(ctx context.Context, opts RunOptions, generation, expected string) (*Terminal, error) {
 	c.workspaceMu.Lock()
 	defer c.workspaceMu.Unlock()
-	terminal, err := c.resolveWorkspace(ctx, opts, generation)
+	terminal, err := c.ObserveWorkspace(ctx, opts, generation)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +204,7 @@ func (c *Client) EstablishExpectedWorkspace(ctx context.Context, opts RunOptions
 	if err != nil {
 		var failure *commandError
 		if errors.As(err, &failure) && failure.kind == "name_taken" {
-			existing, resolveErr := c.resolveWorkspace(ctx, opts, generation)
+			existing, resolveErr := c.ObserveWorkspace(ctx, opts, generation)
 			if resolveErr != nil {
 				return nil, resolveErr
 			}

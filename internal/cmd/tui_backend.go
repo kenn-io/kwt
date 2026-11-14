@@ -2235,7 +2235,12 @@ func (b *tuiBackend) establishWorkspaceEndpoint(
 		if err != nil {
 			return tmux.SessionEndpoint{}, err
 		}
-		endpoint, err := b.ensureWorkspace(ctx, sessionName, rowPaneRoot(row), layout)
+		var endpoint tmux.SessionEndpoint
+		err = runDirectorySessionEstablishment(ctx, b.cfg, rowPaneRoot(row), func() error {
+			var establishErr error
+			endpoint, establishErr = b.ensureWorkspace(ctx, sessionName, rowPaneRoot(row), layout)
+			return establishErr
+		})
 		if err != nil {
 			return tmux.SessionEndpoint{}, err
 		}

@@ -43,27 +43,31 @@ func syntheticCoreSocket(t *testing.T, reply func(string, json.RawMessage) any) 
 	})
 	go func() {
 		defer close(done)
-		connection, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer connection.Close()
-		_ = connection.SetDeadline(time.Now().Add(2 * time.Second))
-		scanner := bufio.NewScanner(connection)
-		for scanner.Scan() {
-			var request struct {
-				ID     int             `json:"id"`
-				Method string          `json:"method"`
-				Params json.RawMessage `json:"params"`
-			}
-			if json.Unmarshal(scanner.Bytes(), &request) != nil {
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
 				return
 			}
-			result := reply(request.Method, request.Params)
-			response := map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result}
-			if err := json.NewEncoder(connection).Encode(response); err != nil {
-				return
-			}
+			func() {
+				defer connection.Close()
+				_ = connection.SetDeadline(time.Now().Add(2 * time.Second))
+				scanner := bufio.NewScanner(connection)
+				for scanner.Scan() {
+					var request struct {
+						ID     int             `json:"id"`
+						Method string          `json:"method"`
+						Params json.RawMessage `json:"params"`
+					}
+					if json.Unmarshal(scanner.Bytes(), &request) != nil {
+						return
+					}
+					result := reply(request.Method, request.Params)
+					response := map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result}
+					if err := json.NewEncoder(connection).Encode(response); err != nil {
+						return
+					}
+				}
+			}()
 		}
 	}()
 	return path
@@ -151,7 +155,11 @@ func TestObserveManagedPreservesPossibleOrphanState(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix socket discovery")
 	}
-	root := t.TempDir()
+	root, err := os.MkdirTemp("/tmp", "kwt-orphan-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	t.Setenv("HOME", root)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
@@ -165,8 +173,12 @@ func TestObserveManagedPreservesPossibleOrphanState(t *testing.T) {
 	if !ok {
 		t.Fatal("Core has no non-starting observer")
 	}
-	if _, err := observer.ObserveManaged(t.Context()); err == nil {
+	_, err = observer.ObserveManaged(t.Context())
+	if err == nil {
 		t.Fatal("missing socket erased authority of possibly surviving holders")
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("fixture did not reach the missing-socket check: %v", err)
 	}
 }
 
