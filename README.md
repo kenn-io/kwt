@@ -59,7 +59,7 @@ Requirements:
 - tmux 2.1 or newer for the default workspace backend and `kwt tmux`.
 - Herdr Core (`hc`) for the optional [Core workspace backend](docs/workflows/agent-workspaces.md#choose-herdr-core)
   and `kwt herdr` terminal commands.
-- Go 1.27.3 or newer when installing or building from source.
+- Go 1.27.4 or newer when installing or building from source.
 - macOS 13 or newer, Linux, or Windows.
 
 ## Safety boundaries

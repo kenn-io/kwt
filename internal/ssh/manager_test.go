@@ -1719,3 +1719,84 @@ func TestManagerMapsConnectionGenerationChanges(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, service.IsCode(err, service.SSHConnectionChanged))
 }
+
+func TestManagerSeparatesMastersByConnectionIndex(t *testing.T) {
+	persistent := &fakePersistentManager{}
+	manager := NewManager(ManagerOptions{
+		Persistent: persistent,
+		Runner: func(LeaseRequest, ResolvedTarget) (openssh.RunSSH, error) {
+			return func(context.Context, []string) (int, error) { return 0, nil }, nil
+		},
+	})
+	snapshot := directSnapshot("route-connections")
+	resolve := func(context.Context) (RouteSnapshot, error) { return snapshot, nil }
+
+	primary, err := manager.Acquire(t.Context(), LeaseRequest{Snapshot: snapshot}, resolve)
+	require.NoError(t, err)
+	extra, err := manager.Acquire(
+		t.Context(), LeaseRequest{Snapshot: snapshot, Connection: 1}, resolve,
+	)
+	require.NoError(t, err)
+	extraAgain, err := manager.Acquire(
+		t.Context(), LeaseRequest{Snapshot: snapshot, Connection: 1}, resolve,
+	)
+	require.NoError(t, err)
+
+	identities := persistent.identities()
+	require.Len(t, identities, 3)
+	assert.NotEqual(t, identities[0], identities[1])
+	assert.Equal(t, identities[1], identities[2])
+	require.NoError(t, extra.Release(t.Context()))
+	require.NoError(t, extraAgain.Release(t.Context()))
+	assert.Equal(t, []string{identities[1]}, persistent.disconnectedIdentities())
+	require.NoError(t, primary.Release(t.Context()))
+}
+
+func TestManagerSharesProxyHopsAcrossConnectionIndexes(t *testing.T) {
+	persistent := &fakePersistentManager{}
+	manager := NewManager(ManagerOptions{
+		Persistent: persistent,
+		Runner: func(LeaseRequest, ResolvedTarget) (openssh.RunSSH, error) {
+			return func(context.Context, []string) (int, error) { return 0, nil }, nil
+		},
+	})
+	snapshot := proxyJumpSnapshot("proxy-connections")
+	resolve := func(context.Context) (RouteSnapshot, error) { return snapshot, nil }
+
+	primary, err := manager.Acquire(t.Context(), LeaseRequest{Snapshot: snapshot}, resolve)
+	require.NoError(t, err)
+	extra, err := manager.Acquire(
+		t.Context(), LeaseRequest{Snapshot: snapshot, Connection: 2}, resolve,
+	)
+	require.NoError(t, err)
+
+	identities := persistent.identities()
+	require.Len(t, identities, 4)
+	assert.Equal(t, identities[0], identities[2], "jump host master is shared")
+	assert.NotEqual(t, identities[1], identities[3], "destination masters are separate")
+	require.NoError(t, extra.Release(t.Context()))
+	require.NoError(t, primary.Release(t.Context()))
+}
+
+func TestManagerRejectsUnsupportedConnectionIndex(t *testing.T) {
+	persistent := &fakePersistentManager{}
+	manager := NewManager(ManagerOptions{
+		Persistent: persistent,
+		Runner: func(LeaseRequest, ResolvedTarget) (openssh.RunSSH, error) {
+			return func(context.Context, []string) (int, error) { return 0, nil }, nil
+		},
+	})
+	snapshot := directSnapshot("route-bad-connection")
+	resolve := func(context.Context) (RouteSnapshot, error) { return snapshot, nil }
+
+	for _, connection := range []int{-1, MaxLeaseConnections} {
+		_, err := manager.Acquire(
+			t.Context(), LeaseRequest{Snapshot: snapshot, Connection: connection}, resolve,
+		)
+		var serviceErr *service.Error
+		require.ErrorAs(t, err, &serviceErr)
+		assert.Equal(t, service.InvalidRequest, serviceErr.Code)
+	}
+	connects, _, _, _ := persistent.counts()
+	assert.Equal(t, 0, connects)
+}

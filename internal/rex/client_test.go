@@ -1,0 +1,454 @@
+package rex
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestCallReturnsRexErrors(t *testing.T) {
+	server := newFakeServer(t)
+	server.answer("session.attach", func(json.RawMessage) (any, *Error) {
+		return nil, &Error{Code: "session_not_found", Message: "no such session"}
+	})
+	client, err := Dial(t.Context(), server.socket)
+	require.NoError(t, err)
+	defer client.Close()
+
+	err = client.Call(t.Context(), "session.attach", map[string]string{"session_id": "s"}, nil)
+	var rexErr *Error
+	require.ErrorAs(t, err, &rexErr)
+	assert.Equal(t, "session_not_found", rexErr.Code)
+}
+
+func view(sessionID, label string, windows ...map[string]any) map[string]any {
+	return map[string]any{"view": map[string]any{
+		"session_id": sessionID,
+		"label":      label,
+		"windows":    windows,
+	}}
+}
+
+func window(id, label, focused string, blocks ...map[string]any) map[string]any {
+	return map[string]any{
+		"window_id":        id,
+		"label":            label,
+		"focused_block_id": focused,
+		"layers":           []any{map[string]any{"kind": "tiled", "blocks": blocks}},
+	}
+}
+
+func block(id, creator, label string) map[string]any {
+	return map[string]any{"block_id": id, "creator_name": creator, "label": label}
+}
+
+func TestTerminalsListsTerminalBlocksInEverySession(t *testing.T) {
+	server := newFakeServer(t)
+	server.answerValue("session.list", map[string]any{"sessions": []any{
+		map[string]any{"session_id": "session:a", "label": "work"},
+		map[string]any{"session_id": "session:b", "label": "gone"},
+	}})
+	server.answer("session.attach", func(p json.RawMessage) (any, *Error) {
+		var req struct {
+			SessionID string `json:"session_id"`
+		}
+		_ = json.Unmarshal(p, &req)
+		if req.SessionID == "session:b" {
+			// The session ended between the list and the attach.
+			return nil, &Error{Code: "session_not_found", Message: "gone"}
+		}
+		return view("session:a", "work",
+			window("window:1", "editor", "block:2",
+				block("block:1", terminalCreator, "shell"),
+				block("block:2", terminalCreator, "logs"),
+				block("block:3", "com.superlogical.onboarding", "welcome"),
+			),
+		), nil
+	})
+	server.answer("com.superlogical.terminal.title", func(p json.RawMessage) (any, *Error) {
+		if strings.Contains(string(p), "block:1") {
+			return map[string]string{"title": "vim main.go"}, nil
+		}
+		return map[string]string{"title": ""}, nil
+	})
+	server.answer("com.superlogical.terminal.process", func(p json.RawMessage) (any, *Error) {
+		return map[string]any{
+			"home":       "/home/user-a",
+			"foreground": map[string]any{"name": "zsh", "cwd": "/home/user-a/src/app"},
+		}, nil
+	})
+
+	client, err := Dial(t.Context(), server.socket)
+	require.NoError(t, err)
+	defer client.Close()
+	terminals, err := client.Terminals(t.Context())
+	require.NoError(t, err)
+
+	assert.Equal(t, []Terminal{
+		{
+			SessionID: "session:a", SessionLabel: "work",
+			WindowID: "window:1", WindowLabel: "editor", WindowIndex: 1,
+			BlockID: "block:1", Label: "shell", Title: "vim main.go",
+			Program: "zsh", Cwd: "/home/user-a/src/app", Name: "vim main.go",
+		},
+		{
+			SessionID: "session:a", SessionLabel: "work",
+			WindowID: "window:1", WindowLabel: "editor", WindowIndex: 1,
+			BlockID: "block:2", Label: "logs", Focused: true,
+			Program: "zsh", Cwd: "/home/user-a/src/app", Name: "zsh ~/src/app",
+		},
+	}, terminals)
+	assert.Len(t, server.callsTo("session.detach"), 1, "listing leaves the session it attached to")
+}
+
+func TestTerminalFindsTheSessionThatHoldsABlock(t *testing.T) {
+	server := newFakeServer(t)
+	server.answerValue("session.list", map[string]any{"sessions": []any{
+		map[string]any{"session_id": "session:a", "label": "work"},
+	}})
+	server.answerValue("session.attach", view("session:a", "work",
+		window("window:1", "editor", "", block("block:1", terminalCreator, "shell"))))
+	client, err := Dial(t.Context(), server.socket)
+	require.NoError(t, err)
+	defer client.Close()
+
+	found, err := client.Terminal(t.Context(), "block:1")
+	require.NoError(t, err)
+	assert.Equal(t, "session:a", found.SessionID)
+
+	_, err = client.Terminal(t.Context(), "block:missing")
+	require.ErrorIs(t, err, ErrTerminalNotFound)
+}
+
+// syncBuffer collects the attach client's output for a test to inspect.
+type syncBuffer struct {
+	mu   sync.Mutex
+	data strings.Builder
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.data.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.data.String()
+}
+
+func rexMessage(nonce uint64, body string) []byte {
+	return fmt.Appendf(nil, "\x1b_rex1;%d;%s\x1b\\", nonce, body)
+}
+
+func TestAttachPaintsTheScreenThenStreamsOutputUntilTheProgramExits(t *testing.T) {
+	server := newFakeServer(t)
+	server.answerValue("com.superlogical.terminal.format", map[string]string{"content": "PAINTED"})
+	server.stream = [][]byte{
+		[]byte("GHOSTSNP-binary"),
+		rexMessage(server.nonce, `{"type":"resize","cols":100,"rows":30}`),
+		[]byte("live output"),
+		rexMessage(server.nonce, `{"type":"child_exited","exit_code":7}`),
+	}
+
+	var out syncBuffer
+	// Input that stays open, as a terminal's does.
+	in, inWriter := io.Pipe()
+	t.Cleanup(func() { _ = inWriter.Close() })
+	exit, err := Attach(t.Context(), server.socket, AttachOptions{
+		SessionID: "session:a",
+		BlockID:   "block:1",
+		In:        in,
+		Out:       &out,
+		Size:      Size{Columns: 100, Rows: 30},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, exit)
+	assert.Equal(t, 7, *exit)
+
+	got := out.String()
+	assert.NotContains(t, got, "GHOSTSNP", "the binary snapshot never reaches the terminal")
+	assert.NotContains(t, got, "rex1;", "Rex's own messages never reach the terminal")
+	paint := strings.Index(got, "PAINTED")
+	live := strings.Index(got, "live output")
+	require.GreaterOrEqual(t, paint, 0)
+	assert.Greater(t, live, paint, "output follows the first paint")
+
+	methods := server.methods()
+	assert.Less(t, indexOf(methods, "session.own_block"), indexOf(methods, "data.connect"),
+		"the attach takes the block and sets its size before the snapshot is taken")
+	resize := server.callsTo("com.superlogical.terminal.resize")
+	require.NotEmpty(t, resize)
+	assert.JSONEq(t, `{"session_id":"session:a","block_id":"block:1","args":{"columns":100,"rows":30}}`, string(resize[0]))
+}
+
+func TestAttachTypesInputAndFollowsResizes(t *testing.T) {
+	server := newFakeServer(t)
+	server.answerValue("com.superlogical.terminal.format", map[string]string{"content": ""})
+	server.stream = [][]byte{rexMessage(server.nonce, `{"type":"resize"}`)}
+
+	inReader, inWriter := io.Pipe()
+	sizes := make(chan Size, 1)
+	done := make(chan error, 1)
+	go func() {
+		_, err := Attach(t.Context(), server.socket, AttachOptions{
+			SessionID: "session:a",
+			BlockID:   "block:1",
+			In:        inReader,
+			Out:       io.Discard,
+			Size:      Size{Columns: 80, Rows: 24},
+			Sizes:     sizes,
+		})
+		done <- err
+	}()
+
+	_, err := inWriter.Write([]byte("ls\r"))
+	require.NoError(t, err)
+	select {
+	case typed := <-server.written:
+		assert.Equal(t, "ls\r", typed)
+	case <-time.After(5 * time.Second):
+		t.Fatal("typed input never reached Rex")
+	}
+
+	sizes <- Size{Columns: 120, Rows: 40}
+	require.Eventually(t, func() bool {
+		for _, p := range server.callsTo("com.superlogical.terminal.resize") {
+			if strings.Contains(string(p), `"columns":120`) && strings.Contains(string(p), `"rows":40`) {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 10*time.Millisecond)
+
+	// Closing input detaches; the Rex terminal keeps running.
+	require.NoError(t, inWriter.Close())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("attach did not end when its input closed")
+	}
+	assert.Empty(t, server.callsTo("block.close"))
+}
+
+func TestAttachReportsARejectedStream(t *testing.T) {
+	server := newFakeServer(t)
+	server.answerValue("data.connect", map[string]string{"ticket": "d3Jvbmc"})
+	_, err := Attach(t.Context(), server.socket, AttachOptions{
+		SessionID: "session:a", BlockID: "block:1",
+		In: strings.NewReader(""), Out: io.Discard, Size: Size{Columns: 80, Rows: 24},
+	})
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, io.EOF))
+	assert.Contains(t, err.Error(), "refused")
+}
+
+func indexOf(items []string, want string) int {
+	for i, item := range items {
+		if item == want {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestDisplayNameFollowsRex(t *testing.T) {
+	for _, tc := range []struct {
+		title, program, cwd, home, label, want string
+	}{
+		{"vim main.go", "vim", "/home/user-a", "/home/user-a", "shell", "vim main.go"},
+		{"", "zsh", "/home/user-a", "/home/user-a", "shell", "zsh ~"},
+		{"", "zsh", "/home/user-a/src", "/home/user-a/", "shell", "zsh ~/src"},
+		{"", "zsh", "/home/user-ab", "/home/user-a", "shell", "zsh /home/user-ab"},
+		{"", "zsh", "/srv", "", "shell", "zsh /srv"},
+		{"", "zsh", "", "/home/user-a", "shell", "zsh"},
+		{"", "", "", "", "shell", "shell"},
+	} {
+		assert.Equal(t, tc.want, displayName(tc.title, tc.program, tc.cwd, tc.home, tc.label))
+	}
+}
+
+func TestTerminalsNameBlocksByLabelWithoutProcessDetails(t *testing.T) {
+	server := newFakeServer(t)
+	server.answerValue("session.list", map[string]any{"sessions": []any{
+		map[string]any{"session_id": "session:a", "label": "work"},
+	}})
+	server.answerValue("session.attach", view("session:a", "work",
+		window("window:1", "editor", "", block("block:1", terminalCreator, "shell"))))
+	server.answer("com.superlogical.terminal.process", func(json.RawMessage) (any, *Error) {
+		return nil, &Error{Code: "method_not_found", Message: "method not found"}
+	})
+
+	client, err := Dial(t.Context(), server.socket)
+	require.NoError(t, err)
+	defer client.Close()
+	terminals, err := client.Terminals(t.Context())
+	require.NoError(t, err)
+	require.Len(t, terminals, 1)
+	assert.Equal(t, "shell", terminals[0].Name)
+	assert.Empty(t, terminals[0].Program)
+}
+
+func TestAttachKeepsACharacterSplitAcrossReadsWhole(t *testing.T) {
+	server := newFakeServer(t)
+	server.answerValue("com.superlogical.terminal.format", map[string]string{"content": ""})
+	inReader, inWriter := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		_, err := Attach(t.Context(), server.socket, AttachOptions{
+			SessionID: "session:a", BlockID: "block:1",
+			In: inReader, Out: io.Discard, Size: Size{Columns: 80, Rows: 24},
+		})
+		done <- err
+	}()
+
+	accent := []byte("é")
+	for _, part := range [][]byte{append([]byte("caf"), accent[0]), append(accent[1:], '!')} {
+		_, err := inWriter.Write(part)
+		require.NoError(t, err)
+	}
+	var typed string
+	for typed != "café!" {
+		select {
+		case text := <-server.written:
+			typed += text
+		case <-time.After(5 * time.Second):
+			t.Fatalf("typed %q, want %q", typed, "café!")
+		}
+	}
+	require.NoError(t, inWriter.Close())
+	require.NoError(t, <-done)
+}
+
+// gatedWriter holds its first write until released and fails the test if
+// anything is written after the attach returned.
+type gatedWriter struct {
+	t        *testing.T
+	writing  chan struct{}
+	release  chan struct{}
+	once     sync.Once
+	returned atomic.Bool
+}
+
+func (w *gatedWriter) Write(p []byte) (int, error) {
+	if w.returned.Load() {
+		w.t.Errorf("wrote %q after the attach returned", p)
+	}
+	w.once.Do(func() {
+		close(w.writing)
+		<-w.release
+	})
+	return len(p), nil
+}
+
+func TestAttachFinishesOutputBeforeReturning(t *testing.T) {
+	server := newFakeServer(t)
+	server.answerValue("com.superlogical.terminal.format", map[string]string{"content": "PAINTED"})
+	server.stream = [][]byte{
+		rexMessage(server.nonce, `{"type":"resize"}`),
+		[]byte("more output"),
+	}
+	out := &gatedWriter{t: t, writing: make(chan struct{}), release: make(chan struct{})}
+	inReader, inWriter := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		_, err := Attach(t.Context(), server.socket, AttachOptions{
+			SessionID: "session:a", BlockID: "block:1",
+			In: inReader, Out: out, Size: Size{Columns: 80, Rows: 24},
+		})
+		out.returned.Store(true)
+		done <- err
+	}()
+
+	select {
+	case <-out.writing:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the attach never painted")
+	}
+	// Detach while the paint is still being written.
+	require.NoError(t, inWriter.Close())
+	select {
+	case <-done:
+		t.Fatal("the attach returned while its output was still being written")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(out.release)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the attach did not end after its output finished")
+	}
+}
+
+func TestTerminalsLeavesOutASessionThatEndsWhileItIsRead(t *testing.T) {
+	server := newFakeServer(t)
+	server.answerValue("session.list", map[string]any{"sessions": []any{
+		map[string]any{"session_id": "session:a", "label": "work"},
+		map[string]any{"session_id": "session:b", "label": "closing"},
+	}})
+	server.answer("session.attach", func(p json.RawMessage) (any, *Error) {
+		if strings.Contains(string(p), "session:b") {
+			return view("session:b", "closing",
+				window("window:2", "", "", block("block:9", terminalCreator, "shell"))), nil
+		}
+		return view("session:a", "work",
+			window("window:1", "", "", block("block:1", terminalCreator, "shell"))), nil
+	})
+	// session:b ends after the attach, before its terminal's details are read.
+	server.answer("com.superlogical.terminal.title", func(p json.RawMessage) (any, *Error) {
+		if strings.Contains(string(p), "session:b") {
+			return nil, &Error{Code: "session_not_found", Message: "gone"}
+		}
+		return map[string]string{"title": "vim"}, nil
+	})
+	server.answer("session.detach", func(p json.RawMessage) (any, *Error) {
+		if strings.Contains(string(p), "session:b") {
+			return nil, &Error{Code: "session_not_found", Message: "gone"}
+		}
+		return map[string]any{}, nil
+	})
+	client, err := Dial(t.Context(), server.socket)
+	require.NoError(t, err)
+	defer client.Close()
+
+	terminals, err := client.Terminals(t.Context())
+	require.NoError(t, err)
+	require.Len(t, terminals, 1)
+	assert.Equal(t, "block:1", terminals[0].BlockID)
+	assert.Equal(t, "vim", terminals[0].Name)
+
+	found, err := client.Terminal(t.Context(), "block:1")
+	require.NoError(t, err)
+	assert.Equal(t, "session:a", found.SessionID)
+	assert.Len(t, server.callsTo("session.detach"), 4, "each listing tries to leave both sessions")
+}
+
+func TestTerminalsReportsOtherFailuresReadingASession(t *testing.T) {
+	server := newFakeServer(t)
+	server.answerValue("session.list", map[string]any{"sessions": []any{
+		map[string]any{"session_id": "session:a", "label": "work"},
+	}})
+	server.answerValue("session.attach", view("session:a", "work",
+		window("window:1", "", "", block("block:1", terminalCreator, "shell"))))
+	server.answer("com.superlogical.terminal.title", func(json.RawMessage) (any, *Error) {
+		return nil, &Error{Code: "internal", Message: "boom"}
+	})
+	client, err := Dial(t.Context(), server.socket)
+	require.NoError(t, err)
+	defer client.Close()
+
+	_, err = client.Terminals(t.Context())
+	assert.True(t, IsCode(err, "internal"), "got %v", err)
+}

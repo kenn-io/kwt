@@ -150,6 +150,16 @@ func runOpenWithContext(
 			)
 		}
 	}
+	if !guardedOpen && commandFlagChanged(cmd, "expected-session") {
+		if _, err := discoverOpenWorktree(args[0], ctx.Config.Projects); err == nil {
+			return service.NewError(service.InvalidRequest,
+				"expected repository, registration, generation, and session must be provided together",
+				false, nil, nil)
+		}
+		return service.NewError(service.RegistrationChanged,
+			"directory workspace is no longer registered at the requested path",
+			true, nil, nil)
+	}
 
 	var entry *discovery.GlobalWorktreeEntry
 	requestedPath := ""
@@ -257,6 +267,14 @@ func validateExpectedOpenFlags(cmd *cobra.Command, args []string) (bool, error) 
 		}
 	}
 	if set == 0 {
+		return false, nil
+	}
+	if set == 1 && commandFlagChanged(cmd, "expected-session") {
+		if len(args) != 1 || openExpectedSession == "" {
+			return false, service.NewError(service.InvalidRequest,
+				"directory open requires one exact path and a nonempty expected session",
+				false, nil, nil)
+		}
 		return false, nil
 	}
 	if set != len(values) {
@@ -687,12 +705,23 @@ func openSelectedDirectoryWorkspaceWithResult(
 	if ctx.Config.Workspace.Backend == "herdr-core" {
 		runner = newConfiguredWorkspaceSessions(ctx.Config, credentials.ProtectedNames(ctx.Config), os.Stderr)
 	}
-	endpoint, err := runner.Establish(
-		commandCtx,
-		tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
-		workspace.Path,
-		layout,
-	)
+	var endpoint tmux.SessionEndpoint
+	if openExpectedSession != "" {
+		endpoint, err = runner.EstablishExpectedWithGeneration(
+			commandCtx, tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
+			openExpectedSession, workspace.Path, "", layout,
+		)
+		if errors.Is(err, tmux.ErrWorkspaceSessionChanged) {
+			return service.NewError(service.RegistrationChanged,
+				"directory workspace session changed before it was opened",
+				true, nil, err)
+		}
+	} else {
+		endpoint, err = runner.Establish(
+			commandCtx, tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
+			workspace.Path, layout,
+		)
+	}
 	if err != nil {
 		return err
 	}

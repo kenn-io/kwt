@@ -1,6 +1,6 @@
 module go.kenn.io/kwt
 
-go 1.27.3
+go 1.27.4
 
 require (
 	charm.land/bubbles/v2 v2.2.1
@@ -9,6 +9,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.4
 	github.com/bmatcuk/doublestar/v4 v4.10.4
 	github.com/cenkalti/backoff/v7 v7.0.3
+	github.com/coder/websocket v1.8.15
 	github.com/creack/pty v1.1.24
 	github.com/danielgtaylor/huma/v2 v2.40.0
 	github.com/go-viper/mapstructure/v2 v2.5.0
@@ -22,11 +23,11 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
-	go.kenn.io/kit v0.48.1
+	go.kenn.io/kit v0.53.0
 	golang.org/x/mod v0.42.0
-	golang.org/x/sync v0.24.0
-	golang.org/x/sys v0.49.0
-	golang.org/x/term v0.47.0
+	golang.org/x/sync v0.25.0
+	golang.org/x/sys v0.50.0
+	golang.org/x/term v0.48.0
 )
 
 require (
@@ -70,10 +71,11 @@ require (
 	github.com/xo/terminfo v1.0.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 	golang.org/x/tools v0.52.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gotest.tools/gotestsum v1.13.0 // indirect
+	mvdan.cc/sh/v3 v3.14.1 // indirect
 )
 
 tool gotest.tools/gotestsum

@@ -20,8 +20,11 @@ const (
 	CapabilityCoreWorkspace   = "workspace.core.v1"
 	CapabilityOperationStream = "operation.stream.v1"
 	CapabilitySSHLeaseHold    = "ssh.lease.hold.v1"
-	CapabilitySSHLifecycle    = "ssh.lifecycle.v1"
-	CapabilitySSHResolve      = "ssh.resolve.v1"
+	// CapabilitySSHLeaseConnections accepts a lease connection index that
+	// selects one of several OpenSSH masters for the same route.
+	CapabilitySSHLeaseConnections = "ssh.lease.connections.v1"
+	CapabilitySSHLifecycle        = "ssh.lifecycle.v1"
+	CapabilitySSHResolve          = "ssh.resolve.v1"
 )
 
 type State string

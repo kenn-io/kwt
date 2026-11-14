@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -31,6 +32,7 @@ type workspaceTmux interface {
 	sessionOptionContext(context.Context, string, string) (string, error)
 	sessionUserOption(context.Context, string, string) (string, error)
 	globalOptionContext(context.Context, string) (string, error)
+	commandPath() (string, error)
 }
 
 // ProtectedWorkspaceSocketName returns the deterministic tmux socket name for
@@ -570,10 +572,22 @@ func (r *WorkspaceRunner) create(
 	if err != nil {
 		return fmt.Errorf("cannot inspect tmux bootstrap environment: %w", err)
 	}
-	createCmd := BuildSessionCreateCommand(session, worktreeDir)
+	executable, err := r.tmux.commandPath()
+	if err != nil {
+		return err
+	}
+	// The token marks the session as this call's, so a failed batch removes
+	// only a session it created, even when cancellation hides that outcome.
+	token := rand.Text()
+	createCmd := append(BuildSessionCreateCommand(session, worktreeDir),
+		";", "set-option", "-t", "="+session+":", workspaceCreationOption, token)
+	createCmd = append(createCmd, holdWorkspaceLifetime(session, executable)...)
 	firstPane, err := r.tmux.RunCommandOutputContext(ctx, createCmd...)
 	if err != nil {
-		return wrapTmuxErr(createCmd, err)
+		return r.removeOwnedSession(ctx, session, token, wrapTmuxErr(createCmd, err))
+	}
+	if err := r.checkWorkspaceLifetimeHooks(ctx, session); err != nil {
+		return r.abortWith(ctx, session, fmt.Errorf("cannot keep workspace alive until first attach: %w", err))
 	}
 	paneIDs := make([]string, 0, len(layout.Panes))
 	paneIDs = append(paneIDs, strings.TrimSpace(firstPane))
@@ -677,7 +691,7 @@ func (r *WorkspaceRunner) repairBootstrap(
 	if err := r.tmux.RunCommandContext(ctx, bootCmd...); err != nil {
 		return wrapTmuxErr(bootCmd, err)
 	}
-	return nil
+	return r.restoreWorkspaceLifetime(ctx, session)
 }
 
 func (r *WorkspaceRunner) protectedUpdateEnvironment(
@@ -716,16 +730,44 @@ func (r *WorkspaceRunner) abort(
 	args []string,
 	err error,
 ) error {
-	wrapped := wrapTmuxErr(args, err)
+	return r.abortWith(ctx, session, wrapTmuxErr(args, err))
+}
+
+// abortWith kills the session this call created and returns err.
+func (r *WorkspaceRunner) abortWith(ctx context.Context, session string, err error) error {
+	// Cleanup must finish after the caller cancels.
 	cleanupCtx, cancel := context.WithTimeout(
 		context.WithoutCancel(ctx),
 		partialSessionCleanupTimeout,
 	)
 	defer cancel()
 	if killErr := r.tmux.KillSessionContext(cleanupCtx, session); killErr != nil {
-		return fmt.Errorf("%w (also failed to kill partial session: %v)", wrapped, killErr)
+		return fmt.Errorf("%w (also failed to kill partial session: %v)", err, killErr)
 	}
-	return wrapped
+	return err
+}
+
+// removeOwnedSession kills session only when it carries token. A failed
+// creation batch may have created nothing, or the name may belong to another
+// caller; cancellation can also stop kwt from seeing how far the batch ran.
+func (r *WorkspaceRunner) removeOwnedSession(ctx context.Context, session, token string, err error) error {
+	// Cleanup must finish after the caller cancels.
+	cleanupCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		partialSessionCleanupTimeout,
+	)
+	defer cancel()
+	target := "=" + session + ":"
+	cleanupErr := r.tmux.RunCommandContext(cleanupCtx, "if-shell", "-F", "-t", target,
+		"#{==:#{"+workspaceCreationOption+"},"+token+"}", "kill-session -t "+quoteTmuxCommandArgument(target))
+	if cleanupErr == nil {
+		return err
+	}
+	exists, existsErr := r.tmux.HasSessionContext(cleanupCtx, session)
+	if existsErr == nil && !exists {
+		return err
+	}
+	return fmt.Errorf("%w (also failed to remove partial session: %v)", err, errors.Join(cleanupErr, existsErr))
 }
 
 // wrapTmuxErr annotates a failed tmux invocation with the command that failed.

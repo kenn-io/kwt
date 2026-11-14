@@ -34,6 +34,7 @@ var (
 	sshLeaseRouteIdentity    string
 	sshLeaseProjectionPolicy string
 	sshLeaseHostKeyPolicy    string
+	sshLeaseConnection       int
 	sshExecUser              string
 	sshExecPort              int
 	sshExecRouteIdentity     string
@@ -157,6 +158,10 @@ func init() {
 	sshLeaseCmd.Flags().StringVar(
 		&sshLeaseHostKeyPolicy, "host-key-policy", string(kwt.SSHHostKeyPolicyReview),
 		"Host-key handling: review or strict",
+	)
+	sshLeaseCmd.Flags().IntVar(
+		&sshLeaseConnection, "connection", 0,
+		"Use this route's numbered OpenSSH master; 0 is the shared master",
 	)
 	sshLeaseCmd.Flags().BoolVar(
 		&sshLeaseJSON, "json", false, "Stream machine-readable lifecycle events",
@@ -694,6 +699,7 @@ func runSSHLease(cmd *cobra.Command, args []string) (returnErr error) {
 		kwt.SSHLeaseRequest{
 			HostKeyPolicy: kwt.SSHHostKeyPolicy(sshLeaseHostKeyPolicy),
 			Snapshot:      snapshot,
+			Connection:    sshLeaseConnection,
 		},
 		callbacks,
 	)

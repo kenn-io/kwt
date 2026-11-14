@@ -269,6 +269,17 @@ while stdin remains open, touches it every ten seconds, and releases it when
 stdin reaches EOF or the command is canceled. Progress and warnings are written
 as they occur rather than buffered.
 
+Every lease on a route shares one OpenSSH master by default, and every session
+a client opens through it counts against the server's per-connection limit
+(`MaxSessions` in `sshd_config`, 10 by default). A client that needs more
+concurrent sessions passes `--connection <n>` (1 through 15) to lease another
+master for the same route. Each index is its own master with its own
+authentication, idle timeout, and generation; leases that pass the same index
+share it. ProxyJump hosts stay shared across indexes because forwarded
+connections do not count as sessions. The daemon advertises this with the
+`ssh.lease.connections.v1` capability, and `kwt ssh lease` refuses a nonzero
+index when the running daemon lacks it.
+
 Tailscale SSH browser checks use a non-sensitive `ssh_browser_authentication`
 prompt on the `kwt ssh lease --json` stream. Its `details` includes
 `method: "browser"` and `authentication_url`, alongside the target and hop
@@ -434,6 +445,15 @@ noninteractive and supports both plain directories and linked worktrees stored
 outside that base.
 Protected pull-request imports remain restricted to `kwt pr attach`.
 
+With tmux 3.0 or newer, a new workspace stays alive through setup even when tmux has
+`destroy-unattached` enabled. Kwt temporarily disables that option for the new
+session. When the first client attaches or switches to it, the session follows
+its own or global setting again. Server defaults, existing sessions, and user attachment
+hooks remain intact. With `--start-session`, the new session waits for that first
+client; detaching afterward follows the restored policy. Restoration runs before
+user attachment hooks, so their policy changes remain in effect. Reopening through kwt
+repairs restore hooks removed by a tmux configuration reload.
+
 During rollout, a verified matching session on the default server is adopted
 instead of creating a parallel session. If matching sessions
 exist on both servers, the `kwt` server wins. Mixed old and new Kwt binaries can
@@ -514,6 +534,11 @@ repairs a session. This includes a retained session that exits before the open,
 because kwt would otherwise create a session under the current branch's name.
 When the flag matches the current branch's name, kwt creates that session if it
 is not running.
+For a registered directory, pass its exact path and `--expected-session` alone,
+using `session_name` from `kwt workspace list --json`. Kwt rejects a removed
+registration or a different resolved session before creating or repairing it.
+Git worktrees still require the complete repository, registration, generation,
+and session guard together.
 `kwt open` and dashboard open actions refuse protected pull-request imports
 and direct the user through `kwt pr attach`.
 `created_at` and `generation` are populated in both local and `-g` mode.
@@ -628,6 +653,34 @@ server. Attach and kill retain the selected endpoint rather than inferring it
 from the session name.
 `kwt tmux run --context` rejects `wt` and `workspace`, which are reserved for
 managed worktree and directory-workspace session names.
+
+## `kwt rex`
+
+[Rex](https://www.superlogical.com/rex/docs) has no client that runs inside
+another terminal. `kwt rex` fills that gap, so a terminal front end such as
+Ghosthub can show one Rex terminal at a time.
+
+```sh
+kwt rex ls --json
+kwt rex attach BLOCK_ID
+```
+
+`ls` lists every terminal placed in a window of each session on this account's
+Rex server, with its session, window, label, the title its program set, and its
+foreground program and working directory. `name` is what Rex shows for the
+terminal: the title, or else the program and directory, such as `zsh ~/src`.
+`status` is `running`, `not_installed`, or `not_running`; the last two are
+normal and list no terminals. Neither command starts a Rex server. `REX_SERVER`
+selects a `unix://` server endpoint; otherwise kwt asks the `rex` command on
+`PATH`, or the one inside Rex for Mac, for its server.
+
+`attach` finds the session that holds the block, paints the terminal's
+current screen, then streams its output and
+types your input into it. It takes the terminal's size from yours, so Rex.app
+or another viewer showing the same terminal follows it. Close your terminal to
+detach; the program keeps running. The attach ends when the program exits.
+Rex owns the session's windows and splits. `attach` shows only the selected
+terminal.
 
 ## `kwt agent-hook`
 
