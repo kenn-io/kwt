@@ -377,8 +377,10 @@ func (s *Scope) removalPreflight(ctx context.Context, req RemovalRequest) (Remov
 
 func lockedRemovalError(path, reason string) *ConditionError {
 	// Git C-quotes lock reasons containing quotes or control characters.
-	if decoded, err := strconv.Unquote(reason); err == nil {
-		reason = decoded
+	if strings.HasPrefix(reason, "\"") {
+		if decoded, err := strconv.Unquote(reason); err == nil {
+			reason = decoded
+		}
 	}
 	detail := "No lock reason was recorded."
 	if reason != "" {

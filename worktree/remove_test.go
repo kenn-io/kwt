@@ -420,6 +420,8 @@ func TestRemovalLockedWorktreeReportsReasonAndRecovery(t *testing.T) {
 		{name: "without reason", basename: "locked"},
 		{name: "with reason", reason: `{"build":"1785775286","owner":"supacode","version":"0.10.8"}`, basename: "locked", force: true},
 		{name: "quoted path", reason: "external owner", basename: "owner's $(echo injected) worktree", force: true},
+		{name: "literal backticks", reason: "`maintenance`", basename: "locked"},
+		{name: "literal single quotes", reason: "'x'", basename: "locked"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root, original := fixture(t)
