@@ -153,8 +153,8 @@ never published over multi-machine sync. Manage entries with
 
 ## Repository setup
 
-Optional repository settings can copy files or run commands when new worktrees
-are created by `kwt add`:
+Optional repository settings can copy files or run commands when `kwt add -b`
+creates a new branch and worktree:
 
 ```toml
 [[repository_settings]]
@@ -172,6 +172,10 @@ Template variables include `Host`, `Owner`, `Repository`, `FullPath`, `Branch`,
 spaces. `repository` may also be a glob such as `**/acme/widget`; trusted
 repository-local glob selectors remain repository selectors rather than being
 resolved as paths beneath that repository.
+
+Existing local and remote branches and PR imports skip `copy_files` and
+`setup_commands`, including when you later open or attach to the workspace.
+Run any desired project bootstrap explicitly after reviewing the checkout.
 
 Remote-only multi-machine sync skips repository setup (`copy_files` and
 `setup_commands`) because the branch name is reported by another host. Run any

@@ -380,7 +380,7 @@ left untouched. When the source branch is reachable, plain `git push` updates
 exactly the PR's original head branch. If Kit cannot establish that exact fork
 tracking, or KWT cannot validate it, import fails and rolls back the worktree
 instead of leaving a checkout whose plain push could fall back to the base
-repository. Unlike an ordinary `kwt add`, PR import does not apply `copy_files`
+repository. Unlike `kwt add -b`, PR import does not apply `copy_files`
 or `setup_commands`; run any desired project setup explicitly after reviewing
 the imported files.
 When Kit creates a fork remote, it preserves the project's working push

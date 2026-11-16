@@ -53,13 +53,15 @@ Use -i flag to interactively select a branch using fuzzy finder.
 
 When -b creates a branch, kwt fetches origin and starts from its default branch.
 If that remote base is unavailable, it falls back to local main, then master,
-then the branch checked out in the primary worktree.
+then the branch checked out in the primary worktree. Repository setup runs
+automatically only when -b creates a new branch.
 
 Use --from with a fetched remote ref to create a local tracking branch and its
 worktree. Shorthand such as origin/topic is verified and resolved to its full
-refs/remotes/... identity before creation. Existing-branch worktrees skip
-repository setup and workspace launch until you inspect the checkout and
-explicitly open it.`,
+refs/remotes/... identity before creation. Existing local and remote-branch
+worktrees skip repository setup. They also skip workspace launch until you
+inspect the checkout and explicitly open it. Opening does not run repository
+setup; run any desired project bootstrap explicitly after review.`,
 	Example: `  # Create worktree from existing branch
   kwt add feature/new-ui
 
