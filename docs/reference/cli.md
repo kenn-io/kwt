@@ -1147,6 +1147,19 @@ separators normalized to `/`). Every surface that reports repository identity â€
 resolves it through the same code, so the fallback is identical across all
 three and the surfaces remain joinable even for local-only repositories.
 
+## Terminal client features
+
+Embedding terminals can set `KWT_TMUX_CLIENT_FEATURES` to a comma-separated
+list of tmux terminal features, for example `hyperlinks,RGB`. Kwt passes it
+as one `tmux -T` argument when attaching a new client, including cross-server
+and protected PR attachments. This requires tmux 3.2 or later; hyperlink
+forwarding requires tmux 3.4 or later.
+
+An empty or unset value keeps normal tmux detection. The hint does not change
+server settings, inventory commands, or an existing client's features when
+switching sessions. It is removed from child and pane environments, so a
+workspace does not retain the launching terminal's capability hint.
+
 ## Workspace session bootstrap
 
 Every workspace session kwt creates (`add`, `open`, and the TUI) applies the
@@ -1198,7 +1211,8 @@ explicit, documented exception, so they cannot silently drift apart:
   itself now keeps them.
 
 The full list: exact names `__CFBundleIdentifier`, `EDITOR`,
-`KWT_FLEET_TOKEN`, `KWT_GITHUB_TOKEN`, `OLDPWD`, `PROMPT`, `PROMPT_COMMAND`,
+`KWT_FLEET_TOKEN`, `KWT_GITHUB_TOKEN`, `KWT_TMUX_CLIENT_FEATURES`, `OLDPWD`,
+`PROMPT`, `PROMPT_COMMAND`,
 `PWD`, `RPROMPT`, `SHLVL`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, `VISUAL`,
 `WINDOWID`, `_`; and prefixes `ALACRITTY_`, `CONDA_`, `FZF_`, `ITERM`,
 `KITTY_`, `NVM_`, `PYENV_`, `STARSHIP_`, `VIRTUAL_ENV`, `WEZTERM_`, `WT_`,

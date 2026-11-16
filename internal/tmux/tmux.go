@@ -626,14 +626,16 @@ func (t *TmuxCommand) newCmd(ctx context.Context, args []string) *exec.Cmd {
 	return cmd
 }
 
-// newAttachCmd is the exec seam for attach-class commands (attach-session,
-// switch-client), which connect a client to an existing server and can never
-// start one. They use AttachSanitizedEnviron — the full launcher-state strip
+// newAttachCmd builds a new client attached to an existing server. It never
+// starts a server. New clients use AttachSanitizedEnviron — the full launcher-state strip
 // with no EDITOR/VISUAL carve-out — because tmux's update-environment option
 // imports listed variables from the attaching client's environment into the
 // session table, which would override the bootstrap's remove-markers if the
 // client still carried them.
 func (t *TmuxCommand) newAttachCmd(ctx context.Context, args []string) *exec.Cmd {
+	if features := os.Getenv("KWT_TMUX_CLIENT_FEATURES"); features != "" {
+		args = append([]string{"-T", features}, args...)
+	}
 	cmd := exec.CommandContext(ctx, t.command, t.socketArgs(args)...)
 	cmd.Env = t.socketEnvironment(AttachSanitizedEnviron(os.Environ()))
 	return cmd
