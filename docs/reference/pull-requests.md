@@ -37,6 +37,41 @@ Direct `kwt open` and dashboard attachment refuse imported pull-request
 workspaces. The protected command rechecks the live worktree and its recorded
 project before it creates or repairs the isolated tmux session.
 
+## Working with `gh stack`
+
+Use a PR import to review a pull request or make isolated changes to it. Run
+`gh stack rebase`, `gh stack sync`, and other commands that rewrite a stack's
+branches in a separate tracking worktree.
+
+An import checks out a generated local branch, such as
+`pr-1819-feature-model-overrides` for a PR from `feature/model-overrides`. The
+import result's `workspace.branch` gives the exact name. Plain `git push` from
+the import updates the PR's source branch, but `gh stack` does not treat the
+generated branch as that source branch.
+
+To run stack commands, create a tracking worktree from the remote that holds
+the source branch (for a fork, that may not be `origin`):
+
+```sh
+kwt add --from origin/feature/model-overrides feature/model-overrides
+```
+
+If the local branch already exists, run `kwt add feature/model-overrides`, or
+use its existing worktree. A tracking worktree opens with the ordinary
+workspace policy, not the protected PR attachment boundary.
+
+Do not switch an imported worktree to the source branch. kwt records the
+generated branch as part of the import's identity, so after a switch
+`kwt pr attach` fails with `workspace no longer matches its pull-request
+provenance`, and `kwt open` still refuses the workspace. To recover, preserve
+any local work, then switch back to the recorded branch without forcing it:
+
+```sh
+git -C <workspace-path> status
+git -C <workspace-path> switch pr-1819-feature-model-overrides
+kwt pr attach <workspace-path>
+```
+
 ## Automation contract
 
 kwt owns GitHub discovery, Git refs, worktree naming, push routing, and protected
