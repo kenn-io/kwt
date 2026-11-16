@@ -101,7 +101,7 @@ func TestCanonicalStripExactNamesIsSortedAndComplete(t *testing.T) {
 	got := CanonicalStripExactNames()
 
 	want := []string{
-		"EDITOR", "KWT_FLEET_TOKEN", "KWT_GITHUB_TOKEN", "OLDPWD", "PROMPT", "PROMPT_COMMAND",
+		"EDITOR", "KWT_FLEET_TOKEN", "KWT_GITHUB_TOKEN", "KWT_TMUX_CLIENT_FEATURES", "OLDPWD", "PROMPT", "PROMPT_COMMAND",
 		"PWD", "RPROMPT", "SHLVL", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "VISUAL",
 		"WINDOWID", "_", "__CFBundleIdentifier",
 	}

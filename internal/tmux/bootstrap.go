@@ -55,21 +55,22 @@ func FirstPanePlaceholderArgv() []string {
 // list is preferred over a curated subset that has to be kept in sync by
 // hand.
 var canonicalStripExact = map[string]bool{
-	"__CFBundleIdentifier": true,
-	"EDITOR":               true,
-	"KWT_FLEET_TOKEN":      true,
-	"KWT_GITHUB_TOKEN":     true,
-	"OLDPWD":               true,
-	"PROMPT":               true,
-	"PROMPT_COMMAND":       true,
-	"PWD":                  true,
-	"RPROMPT":              true,
-	"SHLVL":                true,
-	"TERM_PROGRAM":         true,
-	"TERM_PROGRAM_VERSION": true,
-	"VISUAL":               true,
-	"WINDOWID":             true,
-	"_":                    true,
+	"__CFBundleIdentifier":     true,
+	"EDITOR":                   true,
+	"KWT_FLEET_TOKEN":          true,
+	"KWT_GITHUB_TOKEN":         true,
+	"KWT_TMUX_CLIENT_FEATURES": true,
+	"OLDPWD":                   true,
+	"PROMPT":                   true,
+	"PROMPT_COMMAND":           true,
+	"PWD":                      true,
+	"RPROMPT":                  true,
+	"SHLVL":                    true,
+	"TERM_PROGRAM":             true,
+	"TERM_PROGRAM_VERSION":     true,
+	"VISUAL":                   true,
+	"WINDOWID":                 true,
+	"_":                        true,
 }
 
 // canonicalStripPrefixes is the prefix-match half of the shared definition

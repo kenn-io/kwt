@@ -640,3 +640,32 @@ func TestProtectedExternalAttachReturnsCanceledContextBeforeReplacement(
 func hasEnvName(entry, name string) bool {
 	return len(entry) > len(name) && entry[:len(name)] == name && entry[len(name)] == '='
 }
+
+func TestClientFeaturesApplyOnlyToNewAttachments(t *testing.T) {
+	t.Setenv("KWT_TMUX_CLIENT_FEATURES", "hyperlinks,RGB")
+	tc := NewTmuxCommandForSocketWithStripNames("tmux", "kwt", nil)
+	for _, test := range []struct {
+		name    string
+		command *exec.Cmd
+		want    []string
+	}{
+		{"ordinary", tc.attachSessionCmd("work"), []string{"tmux", "-L", "kwt", "-T", "hyperlinks,RGB", "attach-session", "-t", "=work"}},
+		{"nested", tc.AttachSessionNestedCommand(t.Context(), "work"), []string{"tmux", "-L", "kwt", "-T", "hyperlinks,RGB", "attach-session", "-t", "=work"}},
+		{"protected", tc.attachSessionWithoutEnvironmentCmd(t.Context(), "work"), []string{"tmux", "-L", "kwt", "-T", "hyperlinks,RGB", "attach-session", "-E", "-t", "=work"}},
+		{"inventory", tc.newCmd(t.Context(), []string{"list-sessions"}), []string{"tmux", "-L", "kwt", "list-sessions"}},
+		{"existing client", tc.switchClientCmd("work"), []string{"tmux", "-L", "kwt", "switch-client", "-t", "=work"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.want, test.command.Args)
+			for _, entry := range test.command.Env {
+				require.False(t, hasEnvName(entry, "KWT_TMUX_CLIENT_FEATURES"), "client features reached the child environment")
+			}
+		})
+	}
+}
+
+func TestEmptyClientFeaturesKeepOrdinaryAttachment(t *testing.T) {
+	t.Setenv("KWT_TMUX_CLIENT_FEATURES", "")
+	command := NewTmuxCommand("tmux").attachSessionCmd("work")
+	require.Equal(t, []string{"tmux", "attach-session", "-t", "=work"}, command.Args)
+}
