@@ -13,7 +13,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/danielgtaylor/huma/v2 v2.40.0
 	github.com/go-viper/mapstructure/v2 v2.5.0
-	github.com/gofrs/flock v0.13.1
+	github.com/gofrs/flock v0.13.2
 	github.com/google/go-github/v93 v93.0.0
 	github.com/ktr0731/go-fuzzyfinder v0.9.0
 	github.com/mattn/go-runewidth v0.0.31
