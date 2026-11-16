@@ -72,6 +72,57 @@ func TestSSHCommandsPassCompressionOverride(t *testing.T) {
 	}
 }
 
+func TestSSHCommandsPassForwardAgentOverride(t *testing.T) {
+	for _, forwardAgent := range []string{"", "yes", "no"} {
+		for _, invocation := range []struct {
+			name     string
+			run      func(*cobra.Command, []string) error
+			identity string
+			args     []string
+		}{
+			{name: "resolve", run: runSSHResolve},
+			{name: "lease", run: runSSHLease},
+			{name: "reviewed lease", run: runSSHLease, identity: "route-one"},
+			{name: "exec", run: runSSHExec, args: []string{"true"}},
+			{name: "copy", run: runSSHCopy, args: []string{"source", "destination"}},
+		} {
+			t.Run(invocation.name+"/"+forwardAgent, func(t *testing.T) {
+				oldForwardAgent, oldIdentity := sshForwardAgent, sshLeaseRouteIdentity
+				forwardAgentFlag := sshCmd.PersistentFlags().Lookup("forward-agent")
+				oldChanged := forwardAgentFlag.Changed
+				oldRun := runSSHClientProcess
+				t.Cleanup(func() {
+					sshForwardAgent, sshLeaseRouteIdentity = oldForwardAgent, oldIdentity
+					forwardAgentFlag.Changed = oldChanged
+					runSSHClientProcess = oldRun
+				})
+				stubShortSSHLease(t, &fakeSSHLeaseControl{})
+				require.NoError(t, sshCmd.PersistentFlags().Set("forward-agent", forwardAgent))
+				forwardAgentFlag.Changed = forwardAgent != ""
+				sshLeaseRouteIdentity = invocation.identity
+				var expected *bool
+				if forwardAgent != "" {
+					expected = new(forwardAgent == "yes")
+				}
+				resolveSSHThroughDaemon = func(_ context.Context, request kwt.SSHResolveRequest) (kwt.SSHRouteSnapshot, error) {
+					assert.Equal(t, expected, request.ForwardAgent)
+					return kwt.SSHRouteSnapshot{LogicalTarget: request.Target, ForwardAgent: request.ForwardAgent}, nil
+				}
+				acquireSSHLeaseThroughDaemon = func(_ context.Context, request kwt.SSHLeaseRequest, _ kwtdaemon.OperationCallbacks) (kwtdaemon.SSHLeaseResult, sshLeaseControl, error) {
+					assert.Equal(t, expected, request.Snapshot.ForwardAgent)
+					return kwtdaemon.SSHLeaseResult{LeaseID: "lease-one"}, &fakeSSHLeaseControl{}, nil
+				}
+				runSSHClientProcess = func(context.Context, string, []string, string, []string, io.Reader, io.Writer, io.Writer) (int, bool, error) {
+					return 0, true, nil
+				}
+				command, _, _ := sshResolveTestCommand()
+				command.SetIn(strings.NewReader(""))
+				require.NoError(t, invocation.run(command, append([]string{"build.example.test"}, invocation.args...)))
+			})
+		}
+	}
+}
+
 func TestSSHResolveCommandPassesStructuredTargetAndPrintsJSON(t *testing.T) {
 	oldResolve := resolveSSHThroughDaemon
 	oldJSON, oldUser, oldPort := sshResolveJSON, sshResolveUser, sshResolvePort

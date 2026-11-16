@@ -96,7 +96,14 @@ func (r *Resolver) Resolve(ctx context.Context, request ResolveRequest) (routeOb
 				if *request.Compression {
 					compression = "yes"
 				}
-				arguments = []string{"-o", "Compression=" + compression}
+				arguments = append(arguments, "-o", "Compression="+compression)
+			}
+			if target == endpoint && request.ForwardAgent != nil {
+				forwardAgent := "no"
+				if *request.ForwardAgent {
+					forwardAgent = "yes"
+				}
+				arguments = append(arguments, "-o", "ForwardAgent="+forwardAgent)
 			}
 			config, err := r.resolveConfig(ctx, target, arguments)
 			if err != nil {

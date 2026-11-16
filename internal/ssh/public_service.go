@@ -151,6 +151,7 @@ func (s *PublicService) Acquire(
 	request.Environment = requestContext.environment
 	resolveRequest := ResolveRequest{
 		Target: request.Snapshot.LogicalTarget, Compression: request.Snapshot.Compression,
+		ForwardAgent: request.Snapshot.ForwardAgent,
 	}
 	resolve := func(ctx context.Context) (RouteSnapshot, error) {
 		return requestContext.resolver.Resolve(ctx, resolveRequest)

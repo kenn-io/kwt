@@ -48,6 +48,7 @@ func (s *Service) Acquire(ctx context.Context, request LeaseRequest) (Lease, err
 	resolve := func(ctx context.Context) (RouteSnapshot, error) {
 		return s.Resolve(ctx, ResolveRequest{
 			Target: request.Snapshot.LogicalTarget, Compression: request.Snapshot.Compression,
+			ForwardAgent: request.Snapshot.ForwardAgent,
 		})
 	}
 	current, err := resolve(ctx)
@@ -101,6 +102,7 @@ func (s *Service) Resolve(
 	return RouteSnapshot{
 		LogicalTarget: request.Target,
 		Compression:   request.Compression,
+		ForwardAgent:  request.ForwardAgent,
 		Targets:       targets,
 		RouteIdentity: routeIdentity(
 			projectionPolicyV2,

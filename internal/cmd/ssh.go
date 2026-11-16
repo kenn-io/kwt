@@ -25,6 +25,7 @@ import (
 var (
 	sshOpenBrowser           bool
 	sshCompression           string
+	sshForwardAgent          string
 	sshResolveJSON           bool
 	sshResolveUser           string
 	sshResolvePort           int
@@ -138,6 +139,7 @@ func init() {
 	sshCmd.AddCommand(sshCopyCmd)
 	sshCmd.PersistentFlags().BoolVar(&sshOpenBrowser, "open-browser", false, "Open SSH authentication links in a desktop browser; otherwise defer to the caller")
 	sshCmd.PersistentFlags().StringVar(&sshCompression, "compression", "", "Override destination compression: yes or no; omitted uses OpenSSH configuration")
+	sshCmd.PersistentFlags().StringVar(&sshForwardAgent, "forward-agent", "", "Override destination agent forwarding: yes or no; omitted uses OpenSSH configuration")
 	sshResolveCmd.Flags().StringVar(&sshResolveUser, "user", "", "Override the SSH user")
 	sshResolveCmd.Flags().IntVar(&sshResolvePort, "port", 0, "Override the SSH port")
 	sshResolveCmd.Flags().BoolVar(&sshResolveJSON, "json", false, "Output a machine-readable route snapshot")
@@ -311,12 +313,17 @@ func acquireShortSSHLease(
 	quiet bool,
 ) (kwt.SSHRouteSnapshot, kwtdaemon.SSHLeaseResult, sshLeaseControl, error) {
 	ctx := commandContext(cmd)
-	compression, err := sshCompressionOverride()
+	compression, err := sshBooleanOverride("compression", sshCompression)
 	if err != nil {
 		return kwt.SSHRouteSnapshot{}, kwtdaemon.SSHLeaseResult{}, nil, err
 	}
+	forwardAgent, err := sshBooleanOverride("forward-agent", sshForwardAgent)
+	if err != nil {
+		return kwt.SSHRouteSnapshot{}, kwtdaemon.SSHLeaseResult{}, nil, err
+	}
+
 	snapshot, err := resolveSSHThroughDaemon(ctx, kwt.SSHResolveRequest{
-		Target: target, Compression: compression,
+		Target: target, Compression: compression, ForwardAgent: forwardAgent,
 	})
 	if err != nil {
 		return kwt.SSHRouteSnapshot{}, kwtdaemon.SSHLeaseResult{}, nil, err
@@ -546,30 +553,35 @@ func writeSSHClientFailure(cmd *cobra.Command, prefix string, jsonRequested bool
 	return writeSSHFailureRecord(cmd, prefix, err, jsonRequested)
 }
 
-func sshCompressionOverride() (*bool, error) {
-	if !sshCmd.PersistentFlags().Changed("compression") {
+func sshBooleanOverride(name, value string) (*bool, error) {
+	if !sshCmd.PersistentFlags().Changed(name) {
 		return nil, nil
 	}
-	switch sshCompression {
+	switch value {
 	case "yes", "no":
-		return new(sshCompression == "yes"), nil
+		return new(value == "yes"), nil
 	default:
 		return nil, service.NewError(
-			service.InvalidRequest, "SSH compression must be yes or no", false, nil, nil,
+			service.InvalidRequest, "SSH "+name+" must be yes or no", false, nil, nil,
 		)
 	}
 }
 
 func runSSHResolve(cmd *cobra.Command, args []string) error {
-	compression, err := sshCompressionOverride()
+	compression, err := sshBooleanOverride("compression", sshCompression)
 	if err != nil {
 		return writeSSHResolveFailure(cmd, err)
 	}
+	forwardAgent, err := sshBooleanOverride("forward-agent", sshForwardAgent)
+	if err != nil {
+		return writeSSHResolveFailure(cmd, err)
+	}
+
 	snapshot, err := resolveSSHThroughDaemon(cmd.Context(), kwt.SSHResolveRequest{
 		Target: kwt.SSHTarget{
 			Hostname: args[0], User: sshResolveUser, Port: sshResolvePort,
 		},
-		Compression: compression,
+		Compression: compression, ForwardAgent: forwardAgent,
 	})
 	if err != nil {
 		return writeSSHResolveFailure(cmd, err)
@@ -603,10 +615,15 @@ func writeSSHResolveFailure(cmd *cobra.Command, err error) error {
 }
 
 func runSSHLease(cmd *cobra.Command, args []string) (returnErr error) {
-	compression, err := sshCompressionOverride()
+	compression, err := sshBooleanOverride("compression", sshCompression)
 	if err != nil {
 		return writeSSHLeaseFailure(cmd, err)
 	}
+	forwardAgent, err := sshBooleanOverride("forward-agent", sshForwardAgent)
+	if err != nil {
+		return writeSSHLeaseFailure(cmd, err)
+	}
+
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -616,12 +633,12 @@ func runSSHLease(cmd *cobra.Command, args []string) (returnErr error) {
 	}
 	snapshot := kwt.SSHRouteSnapshot{
 		LogicalTarget: target, RouteIdentity: sshLeaseRouteIdentity,
-		Compression:      compression,
+		Compression: compression, ForwardAgent: forwardAgent,
 		ProjectionPolicy: sshLeaseProjectionPolicy,
 	}
 	if sshLeaseRouteIdentity == "" {
 		snapshot, err = resolveSSHThroughDaemon(ctx, kwt.SSHResolveRequest{
-			Target: target, Compression: compression,
+			Target: target, Compression: compression, ForwardAgent: forwardAgent,
 		})
 		if err != nil {
 			return writeSSHLeaseFailure(cmd, err)

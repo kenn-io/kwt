@@ -226,6 +226,14 @@ lease snapshot, or pass the same CLI flag when acquiring a reviewed route.
 Compression is fixed when a connection opens. Consumers that validate the
 projection policy must accept v2 before upgrading their bundled kwt.
 
+`--forward-agent=yes|no` overrides `ForwardAgent` for the destination on the
+same SSH commands. Omission follows OpenSSH configuration, including agent
+socket paths. Jump hosts retain their own forwarding settings. Resolve
+requests and route snapshots carry this choice as the optional boolean
+`forward_agent`; pass it through when acquiring a lease. The effective choice
+participates in connection identity. A forwarded-agent connection closes when
+its last lease is released.
+
 ## SSH connection leases
 
 ```sh
@@ -239,7 +247,8 @@ kwt ssh lease build.example.com \
 `kwt ssh lease` is the long-lived native-client bridge to the same-machine
 daemon. Native clients that already reviewed a snapshot pass
 `--route-identity` and `--projection-policy`; kwt refuses a changed route.
-If resolution used `--compression`, pass the same value to `ssh lease`.
+If resolution used `--compression` or `--forward-agent`, pass the same values
+to `ssh lease`.
 When those flags are omitted, the same CLI invocation resolves the route and
 immediately acquires it, avoiding a second helper process while retaining the
 daemon's pre- and post-connection revalidation. The daemon prepares
