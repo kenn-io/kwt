@@ -39,54 +39,38 @@ project before it creates or repairs the isolated tmux session.
 
 ## Working with `gh stack`
 
-Use PR imports to review or make isolated changes to a pull request. Use a
-normal tracking worktree for `gh stack rebase`, `gh stack sync`, and other
-commands that change a stack's branches.
+Use a PR import to review a pull request or make isolated changes to it. Run
+`gh stack rebase`, `gh stack sync`, and other commands that rewrite a stack's
+branches in a separate tracking worktree.
 
-An import uses a generated local branch, such as
-`pr-1819-feature-model-overrides` for a PR from `feature/model-overrides`.
-Use the import result's `workspace.branch` as the exact name; a later reimport
-may need a disambiguating suffix. Plain `git push` is configured to update the
-PR's original source branch, but this push routing does not make the generated
-branch an alias for the original branch in `gh stack`'s stack records.
+An import checks out a generated local branch, such as
+`pr-1819-feature-model-overrides` for a PR from `feature/model-overrides`. The
+import result's `workspace.branch` gives the exact name. Plain `git push` from
+the import updates the PR's source branch, but `gh stack` does not treat the
+generated branch as that source branch.
 
-For a branch you have reviewed and intend to edit, create a separate tracking
-worktree from a fetched remote ref. For example, when the source branch is on
-`origin`, run this from the project's repository:
+To run stack commands, create a tracking worktree from the remote that holds
+the source branch (for a fork, that may not be `origin`):
 
 ```sh
 kwt add --from origin/feature/model-overrides feature/model-overrides
 ```
 
-If the local `feature/model-overrides` branch already exists, use
-`kwt add feature/model-overrides` instead, or use its existing worktree if it
-is already checked out. For a fork, select the remote that actually contains
-the source branch rather than assuming `origin` does. Inspect the new checkout,
-then change into its reported path and use `gh stack` there. A tracking
-worktree is not a protected PR import: opening it uses the ordinary workspace
-policy, not the isolated PR attachment boundary.
+If the local branch already exists, run `kwt add feature/model-overrides`, or
+use its existing worktree. A tracking worktree opens with the ordinary
+workspace policy, not the protected PR attachment boundary.
 
-Do not switch a PR-imported worktree to the original branch as a workaround.
-kwt records the generated branch as part of the import's protected identity.
-After a branch switch, `kwt pr attach <workspace-path>` refuses it with
-`workspace no longer matches its pull-request provenance`. Ordinary `kwt open`
-is not a fallback; it still refuses the protected import. Inventory may no
-longer report the protected socket while the branch differs.
-
-If only the checked-out branch changed, inspect and preserve any work before
-switching back to the recorded `workspace.branch`. For the example above:
+Do not switch an imported worktree to the source branch. kwt records the
+generated branch as part of the import's identity, so after a switch
+`kwt pr attach` fails with `workspace no longer matches its pull-request
+provenance`, and `kwt open` still refuses the workspace. To recover, preserve
+any local work, then switch back to the recorded branch without forcing it:
 
 ```sh
 git -C <workspace-path> status
 git -C <workspace-path> switch pr-1819-feature-model-overrides
-kwt list --json
 kwt pr attach <workspace-path>
 ```
-
-Do not force the switch if Git reports conflicting local changes. Once the
-recorded branch is restored, inventory can identify the protected endpoint
-again, provided the rest of the workspace identity still matches. Keep stack
-operations in the separate tracking worktree.
 
 ## Automation contract
 
