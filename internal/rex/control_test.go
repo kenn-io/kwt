@@ -3,6 +3,7 @@ package rex
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -291,4 +292,51 @@ func TestControlAnswersAMalformedRequest(t *testing.T) {
 	reply := run.next()
 	assert.Nil(t, reply["id"])
 	assert.Equal(t, "malformed_request", reply["error"].(map[string]any)["code"])
+}
+
+func TestControlRunsRequestsInTheOrderTheyArrive(t *testing.T) {
+	server := layoutServer(t)
+	run := startControl(t, server, "window:1")
+	run.next()
+
+	const count = 20
+	for i := range count {
+		run.send(fmt.Sprintf(`{"id":%d,"method":"session.focus_block","params":{"block_id":"block:%d"}}`, i, i))
+	}
+	for range count {
+		assert.Equal(t, "reply", run.next()["type"])
+	}
+
+	calls := server.callsTo("session.focus_block")
+	require.Len(t, calls, count)
+	for i, call := range calls {
+		var sent struct {
+			BlockID string `json:"block_id"`
+		}
+		require.NoError(t, json.Unmarshal(call, &sent))
+		assert.Equal(t, fmt.Sprintf("block:%d", i), sent.BlockID)
+	}
+}
+
+func TestControlWritesEndedLast(t *testing.T) {
+	server := layoutServer(t)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	server.answer("session.focus_block", func(json.RawMessage) (any, *Error) {
+		<-release
+		return map[string]any{}, nil
+	})
+	run := startControl(t, server, "window:1")
+	run.next()
+	run.send(`{"id":1,"method":"session.focus_block","params":{"block_id":"block:1"}}`)
+	require.Eventually(t, func() bool { return len(server.callsTo("session.focus_block")) == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	server.pushServerEvent("session_destroyed", map[string]any{"session_id": "session:a"})
+
+	var last map[string]any
+	for line := range run.lines {
+		last = line
+	}
+	assert.Equal(t, map[string]any{"type": "ended"}, last)
+	require.NoError(t, run.wait())
 }

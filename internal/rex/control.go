@@ -84,6 +84,17 @@ func Control(ctx context.Context, client *Client, windowID string, in io.Reader,
 			<-refreshed
 		}
 	}()
+	// ended is the last line: requests and reads still running stop first,
+	// so no reply or view follows it.
+	end := func() error {
+		cancel()
+		if reading {
+			<-refreshed
+			reading = false
+		}
+		c.stopRequests()
+		return c.write(map[string]any{"type": "ended"})
+	}
 
 	for {
 		select {
@@ -95,7 +106,7 @@ func Control(ctx context.Context, client *Client, windowID string, in io.Reader,
 			reading = false
 			err := result.err
 			if IsCode(err, "session_not_found") {
-				return c.write(map[string]any{"type": "ended"})
+				return end()
 			}
 			if err != nil {
 				return err
@@ -117,7 +128,7 @@ func Control(ctx context.Context, client *Client, windowID string, in io.Reader,
 			}
 			switch event.Type {
 			case "session_destroyed":
-				return c.write(map[string]any{"type": "ended"})
+				return end()
 			case "session_view_changed":
 				startRead()
 			case "block_event":
@@ -260,8 +271,8 @@ type controlRequest struct {
 	Params map[string]any  `json:"params"`
 }
 
-// readRequests runs each request line until in ends. Requests run side by
-// side so a slow one does not hold up the rest.
+// readRequests runs each request line, in order, until in ends. A later
+// request can depend on an earlier one, such as two focus moves.
 func (c *controller) readRequests(ctx context.Context, in io.Reader) error {
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 0, 4096), maxControlLine)
@@ -276,10 +287,11 @@ func (c *controller) readRequests(ctx context.Context, in io.Reader) error {
 		if !c.startRequest() {
 			return nil
 		}
-		go func() {
-			defer c.requests.Done()
-			_ = c.handle(ctx, req)
-		}()
+		err := c.handle(ctx, req)
+		c.requests.Done()
+		if err != nil {
+			return err
+		}
 	}
 	return scanner.Err()
 }
