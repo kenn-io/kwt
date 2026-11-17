@@ -277,23 +277,26 @@ func (c *controller) readRequests(ctx context.Context, in io.Reader) error {
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 0, 4096), maxControlLine)
 	for scanner.Scan() {
-		var req controlRequest
-		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
-			if err := c.reply(nil, nil, &Error{Code: "malformed_request", Message: err.Error()}); err != nil {
-				return err
-			}
-			continue
-		}
+		// Reserve before decoding, so a malformed line's reply cannot
+		// follow ended either.
 		if !c.startRequest() {
 			return nil
 		}
-		err := c.handle(ctx, req)
+		err := c.handleLine(ctx, scanner.Bytes())
 		c.requests.Done()
 		if err != nil {
 			return err
 		}
 	}
 	return scanner.Err()
+}
+
+func (c *controller) handleLine(ctx context.Context, line []byte) error {
+	var req controlRequest
+	if err := json.Unmarshal(line, &req); err != nil {
+		return c.reply(nil, nil, &Error{Code: "malformed_request", Message: err.Error()})
+	}
+	return c.handle(ctx, req)
 }
 
 func (c *controller) handle(ctx context.Context, req controlRequest) error {
