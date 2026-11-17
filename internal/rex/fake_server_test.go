@@ -33,6 +33,7 @@ type fakeServer struct {
 	written chan string
 	// controls are the open control connections, which push sends events to.
 	controls map[*websocket.Conn]struct{}
+	seq      int
 }
 
 type fakeCall struct {
@@ -91,21 +92,30 @@ func (f *fakeServer) answerValue(method string, value any) {
 	f.answer(method, func(json.RawMessage) (any, *Error) { return value, nil })
 }
 
-// push sends a session event to every open control connection, the way
-// Rex delivers events to connections attached to the session.
+// push sends a session's own event, such as session_view_changed, to every
+// open control connection, framed the way Rex 0.1.0-preview.14 frames it.
 func (f *fakeServer) push(sessionID string, event map[string]any) {
 	f.t.Helper()
-	frame, err := json.Marshal(map[string]any{
-		"type":    "session_event",
-		"payload": map[string]any{"session_id": sessionID, "event": event},
-	})
-	require.NoError(f.t, err)
+	f.pushServerEvent("session_event", map[string]any{"session_id": sessionID, "event": event})
+}
+
+// pushServerEvent sends a server event, such as session_destroyed, to every
+// open control connection.
+func (f *fakeServer) pushServerEvent(kind string, payload map[string]any) {
+	f.t.Helper()
 	f.mu.Lock()
+	f.seq++
+	frame, err := json.Marshal(map[string]any{
+		"type":    "event",
+		"seq":     f.seq,
+		"payload": map[string]any{"type": kind, "payload": payload},
+	})
 	conns := make([]*websocket.Conn, 0, len(f.controls))
 	for conn := range f.controls {
 		conns = append(conns, conn)
 	}
 	f.mu.Unlock()
+	require.NoError(f.t, err)
 	for _, conn := range conns {
 		_ = conn.Write(context.WithoutCancel(f.t.Context()), websocket.MessageText, frame)
 	}

@@ -231,12 +231,23 @@ func TestControlRefusesOtherMethods(t *testing.T) {
 	assert.Empty(t, server.callsTo("session.destroy"))
 }
 
+func TestControlIgnoresAnotherSessionEnding(t *testing.T) {
+	server := layoutServer(t)
+	run := startControl(t, server, "window:1")
+	run.next()
+
+	server.pushServerEvent("session_destroyed", map[string]any{"session_id": "session:other"})
+	server.push("session:a", map[string]any{"type": "session_view_changed", "payload": map[string]any{"revision": 5}})
+
+	assert.Equal(t, "view", run.next()["type"])
+}
+
 func TestControlEndsWhenTheSessionEnds(t *testing.T) {
 	server := layoutServer(t)
 	run := startControl(t, server, "window:1")
 	run.next()
 
-	server.push("session:a", map[string]any{"type": "session_destroyed", "payload": map[string]any{}})
+	server.pushServerEvent("session_destroyed", map[string]any{"session_id": "session:a"})
 
 	assert.Equal(t, map[string]any{"type": "ended"}, run.next())
 	require.NoError(t, run.wait())

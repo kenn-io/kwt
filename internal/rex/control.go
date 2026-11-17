@@ -66,15 +66,17 @@ func Control(ctx context.Context, client *Client, windowID string, in io.Reader,
 	inputDone := make(chan error, 1)
 	go func() { inputDone <- c.readRequests(ctx, in) }()
 
-	refreshed := make(chan error, 1)
+	// A read reports its result as a refresh so that waiting for one that
+	// no longer matters is not an ignored error.
+	refreshed := make(chan refresh, 1)
 	reading, again := false, false
-	refresh := func() {
+	startRead := func() {
 		if reading {
 			again = true
 			return
 		}
 		reading = true
-		go func() { refreshed <- c.refresh(ctx) }()
+		go func() { refreshed <- refresh{err: c.refresh(ctx)} }()
 	}
 	defer func() {
 		if reading {
@@ -89,8 +91,9 @@ func Control(ctx context.Context, client *Client, windowID string, in io.Reader,
 			return ctx.Err()
 		case err := <-inputDone:
 			return err
-		case err := <-refreshed:
+		case result := <-refreshed:
 			reading = false
+			err := result.err
 			if IsCode(err, "session_not_found") {
 				return c.write(map[string]any{"type": "ended"})
 			}
@@ -99,14 +102,14 @@ func Control(ctx context.Context, client *Client, windowID string, in io.Reader,
 			}
 			if again {
 				again = false
-				refresh()
+				startRead()
 			}
 		case event, ok := <-client.Events():
 			if !ok {
 				return ErrDisconnected
 			}
 			if event.Type == EventOverflow {
-				refresh()
+				startRead()
 				continue
 			}
 			if event.SessionID != sessionID {
@@ -116,7 +119,7 @@ func Control(ctx context.Context, client *Client, windowID string, in io.Reader,
 			case "session_destroyed":
 				return c.write(map[string]any{"type": "ended"})
 			case "session_view_changed":
-				refresh()
+				startRead()
 			case "block_event":
 				var block struct {
 					Creator string `json:"creator_name"`
@@ -124,7 +127,7 @@ func Control(ctx context.Context, client *Client, windowID string, in io.Reader,
 				}
 				if json.Unmarshal(event.Payload, &block) == nil &&
 					block.Creator == terminalCreator && terminalChanges[block.Name] {
-					refresh()
+					startRead()
 				}
 			}
 		}
@@ -169,6 +172,8 @@ func (c *Client) sessionWithWindow(ctx context.Context, windowID string) (string
 	}
 	return "", nil, fmt.Errorf("%w: %s", ErrWindowNotFound, windowID)
 }
+
+type refresh struct{ err error }
 
 type controller struct {
 	client    *Client

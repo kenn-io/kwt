@@ -43,8 +43,8 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("%s (%s)", e.Message, e.Code)
 }
 
-// Event is one event the server sent about a session this connection is
-// attached to.
+// Event is one event the server sent this connection: a change in a session
+// it attached to, or a server change such as session_destroyed.
 type Event struct {
 	SessionID string
 	Type      string
@@ -169,7 +169,7 @@ func (c *Client) read(ctx context.Context) {
 		if json.Unmarshal(data, &msg) != nil {
 			continue
 		}
-		if msg.Type == "session_event" {
+		if msg.Type == "event" {
 			c.deliver(msg.Payload)
 			continue
 		}
@@ -198,21 +198,40 @@ func (c *Client) Events() <-chan Event {
 	return c.events
 }
 
-// deliver queues a session_event without ever blocking the read loop, which
-// also completes calls. When the queue is full, the oldest events give way
-// to an EventOverflow marker and the new event.
+// deliver queues an event without ever blocking the read loop, which also
+// completes calls. Rex wraps a session's own events, such as
+// session_view_changed, in a session_event; server events such as
+// session_destroyed name their session in their payload. Both arrive here
+// as one Event. When the queue is full, the oldest events give way to an
+// EventOverflow marker and the new event.
 func (c *Client) deliver(payload json.RawMessage) {
 	var frame struct {
-		SessionID string `json:"session_id"`
-		Event     struct {
-			Type    string          `json:"type"`
-			Payload json.RawMessage `json:"payload"`
-		} `json:"event"`
+		Type    string          `json:"type"`
+		Payload json.RawMessage `json:"payload"`
 	}
 	if json.Unmarshal(payload, &frame) != nil {
 		return
 	}
-	event := Event{SessionID: frame.SessionID, Type: frame.Event.Type, Payload: frame.Event.Payload}
+	var event Event
+	if frame.Type == "session_event" {
+		var inner struct {
+			SessionID string `json:"session_id"`
+			Event     struct {
+				Type    string          `json:"type"`
+				Payload json.RawMessage `json:"payload"`
+			} `json:"event"`
+		}
+		if json.Unmarshal(frame.Payload, &inner) != nil {
+			return
+		}
+		event = Event{SessionID: inner.SessionID, Type: inner.Event.Type, Payload: inner.Event.Payload}
+	} else {
+		var named struct {
+			SessionID string `json:"session_id"`
+		}
+		_ = json.Unmarshal(frame.Payload, &named)
+		event = Event{SessionID: named.SessionID, Type: frame.Type, Payload: frame.Payload}
+	}
 	select {
 	case c.events <- event:
 		return
