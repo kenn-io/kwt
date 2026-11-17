@@ -1,14 +1,17 @@
 package cmd
 
 import (
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kwt/internal/rex"
 )
 
 func TestRexListingTreatsAMissingOrStoppedRexAsEmpty(t *testing.T) {
@@ -53,4 +56,25 @@ func TestRexListingTreatsAStoppedServerSocketAsNotRunning(t *testing.T) {
 		assert.Equal(t, "not_running", listing.Status, socket)
 		assert.Empty(t, listing.Terminals)
 	}
+}
+
+func TestRexControlRefusesAnythingButAWindowID(t *testing.T) {
+	t.Setenv("REX_SERVER", "")
+	for _, id := range []string{"block:01a1", "--help", "window:", "window:a b"} {
+		err := runRexControl(t.Context(), id, nil, strings.NewReader(""), io.Discard)
+		require.ErrorContains(t, err, "is not a Rex window ID", id)
+	}
+}
+
+func TestRexControlReportsAStoppedServer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Rex servers run on macOS, Linux, and FreeBSD")
+	}
+	dir, err := os.MkdirTemp("", "rex")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Setenv("REX_SERVER", "unix://"+filepath.Join(dir, "missing.sock"))
+
+	err = runRexControl(t.Context(), "window:01a1", nil, strings.NewReader(""), io.Discard)
+	require.ErrorIs(t, err, rex.ErrNotRunning)
 }

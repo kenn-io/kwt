@@ -655,11 +655,12 @@ managed worktree and directory-workspace session names.
 
 [Rex](https://www.superlogical.com/rex/docs) has no client that runs inside
 another terminal. `kwt rex` fills that gap, so a terminal front end such as
-Ghosthub can show one Rex terminal at a time.
+Ghosthub can show Rex terminals and draw a Rex window's splits itself.
 
 ```sh
 kwt rex ls --json
 kwt rex attach BLOCK_ID
+kwt rex control WINDOW_ID
 ```
 
 `ls` lists every terminal placed in a window of each session on this account's
@@ -678,6 +679,34 @@ or another viewer showing the same terminal follows it. Close your terminal to
 detach; the program keeps running. The attach ends when the program exits.
 Rex owns the session's windows and splits. `attach` shows only the selected
 terminal.
+
+`control` is for a front end that draws a whole window: it attaches each pane
+with `attach` and follows and changes the layout through `control`. It speaks
+JSON, one object per line. It writes the window's session view, as Rex's
+`session.view` returns it, with a `terminals` map from each of the window's
+terminal blocks to its `name`, `title`, `program`, and `cwd`. It writes the
+view when it starts and again after each layout change or pane name change.
+Changes that arrive while it reads cost one more read, not one each.
+
+```json
+{"type":"view","view":{"session_id":"session:...","windows":[...]},"terminals":{"block:...":{"name":"zsh ~/src"}}}
+```
+
+Each request line names a method and its parameters; the command fills in
+the session and writes a reply with the request's `id`:
+
+```json
+{"id":1,"method":"session.new_split","params":{"anchor_id":"block:...","direction":"horizontal","side":"after","focus":true,"layout":{"block":{"flavor":"com.superlogical.terminal.shell"}}}}
+{"type":"reply","id":1,"result":{"block_ids":["block:..."]}}
+{"type":"reply","id":2,"error":{"code":"block_not_found","message":"..."}}
+```
+
+The methods are `session.new_split`, `session.resize_pane`,
+`session.focus_block`, `session.focus_direction`, `session.focus_next_pane`,
+`session.focus_previous_pane`, `session.zoom_block`, and `block.close`; any
+other method gets a `method_not_allowed` error. The command writes
+`{"type":"ended"}` and exits when the session ends, and exits when its input
+closes.
 
 ## `kwt agent-hook`
 

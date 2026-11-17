@@ -114,25 +114,9 @@ func (c *Client) terminalsIn(ctx context.Context, view sessionView) ([]Terminal,
 				if b.CreatorName != terminalCreator {
 					continue
 				}
-				var title struct {
-					Title string `json:"title"`
-				}
-				if err := c.blockDetail(ctx, view.SessionID, b.BlockID, "title", &title); err != nil {
+				detail, err := c.describeTerminal(ctx, view.SessionID, b.BlockID, b.Label)
+				if err != nil {
 					return nil, err
-				}
-				var process struct {
-					Foreground *struct {
-						Name string `json:"name"`
-						Cwd  string `json:"cwd"`
-					} `json:"foreground"`
-					Home string `json:"home"`
-				}
-				if err := c.blockDetail(ctx, view.SessionID, b.BlockID, "process", &process); err != nil {
-					return nil, err
-				}
-				var program, cwd string
-				if fg := process.Foreground; fg != nil {
-					program, cwd = fg.Name, fg.Cwd
 				}
 				found = append(found, Terminal{
 					SessionID:    view.SessionID,
@@ -142,16 +126,50 @@ func (c *Client) terminalsIn(ctx context.Context, view sessionView) ([]Terminal,
 					WindowIndex:  i + 1,
 					BlockID:      b.BlockID,
 					Label:        b.Label,
-					Title:        title.Title,
-					Program:      program,
-					Cwd:          cwd,
-					Name:         displayName(title.Title, program, cwd, process.Home, b.Label),
+					Title:        detail.Title,
+					Program:      detail.Program,
+					Cwd:          detail.Cwd,
+					Name:         detail.Name,
 					Focused:      b.BlockID == w.FocusedBlockID,
 				})
 			}
 		}
 	}
 	return found, nil
+}
+
+// terminalDetail is what Rex shows about a terminal block.
+type terminalDetail struct {
+	Name    string `json:"name"`
+	Title   string `json:"title,omitempty"`
+	Program string `json:"program,omitempty"`
+	Cwd     string `json:"cwd,omitempty"`
+}
+
+// describeTerminal reads a terminal block's title and foreground process.
+func (c *Client) describeTerminal(ctx context.Context, sessionID, blockID, label string) (terminalDetail, error) {
+	var title struct {
+		Title string `json:"title"`
+	}
+	if err := c.blockDetail(ctx, sessionID, blockID, "title", &title); err != nil {
+		return terminalDetail{}, err
+	}
+	var process struct {
+		Foreground *struct {
+			Name string `json:"name"`
+			Cwd  string `json:"cwd"`
+		} `json:"foreground"`
+		Home string `json:"home"`
+	}
+	if err := c.blockDetail(ctx, sessionID, blockID, "process", &process); err != nil {
+		return terminalDetail{}, err
+	}
+	detail := terminalDetail{Title: title.Title}
+	if fg := process.Foreground; fg != nil {
+		detail.Program, detail.Cwd = fg.Name, fg.Cwd
+	}
+	detail.Name = displayName(detail.Title, detail.Program, detail.Cwd, process.Home, label)
+	return detail, nil
 }
 
 // blockDetail calls a terminal block's read-only method. A block that closed

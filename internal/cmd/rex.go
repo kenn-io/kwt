@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -19,14 +20,18 @@ var rexCmd = &cobra.Command{
 	Short: "List and attach to terminals on a Rex server",
 	Long: `List and attach to the terminals on this account's Rex server.
 
-Rex owns its sessions, windows, and layout. These commands show one Rex
-terminal at a time in an ordinary terminal; detaching leaves it running.
-They never start a Rex server.`,
+Rex owns its sessions, windows, and layout. attach shows one Rex terminal
+in an ordinary terminal; detaching leaves it running. control lets a front
+end that draws a window's panes follow and change its layout. None of
+these commands starts a Rex server.`,
 	Example: `  # List Rex terminals as JSON
   kwt rex ls --json
 
   # Attach to one terminal
-  kwt rex attach block:01a1...`,
+  kwt rex attach block:01a1...
+
+  # Follow and change one window's layout (JSON lines)
+  kwt rex control window:01a1...`,
 	// Rex commands never use repository configuration, so they skip the
 	// project merge and its trust prompt.
 	PersistentPreRunE: globalOnlyPreRun,
@@ -97,9 +102,62 @@ itself when that program exits.`,
 	}),
 }
 
+var rexControlCmd = &cobra.Command{
+	Use:   "control WINDOW_ID",
+	Short: "Follow one Rex window's layout and change it",
+	Long: `Follow the layout of one Rex window and change it, for a terminal
+front end that draws the window's panes itself.
+
+The command speaks JSON, one object per line. It writes the window's
+session view when it starts and again after each layout change or pane
+name change:
+
+  {"type":"view","view":SESSION_VIEW,"terminals":{BLOCK_ID:{"name":...}}}
+
+It reads requests from standard input and writes one reply for each:
+
+  {"id":1,"method":"session.new_split","params":{...}}
+  {"type":"reply","id":1,"result":{...}}
+
+The methods are session.new_split, session.resize_pane,
+session.focus_block, session.focus_direction, session.focus_next_pane,
+session.focus_previous_pane, session.zoom_block, and block.close. The
+command fills in the session. It writes {"type":"ended"} and exits when the
+session ends, and exits when standard input closes. It never starts a Rex
+server.`,
+	Args: cobra.ExactArgs(1),
+	RunE: withGracefulSignals(func(cmd *cobra.Command, args []string) error {
+		return runRexControl(commandContext(cmd), args[0], rex.Executables(), cmd.InOrStdin(), cmd.OutOrStdout())
+	}),
+}
+
+// rexWindowID matches a Rex window ID such as
+// window:01a1c874-d309-72f9-b5e6-8ef31add4481. Anything else could be read
+// as an option.
+var rexWindowID = regexp.MustCompile(`^window:[0-9A-Za-z-]+$`)
+
+func runRexControl(ctx context.Context, windowID string, executables []string, in io.Reader, out io.Writer) error {
+	if !rexWindowID.MatchString(windowID) {
+		return fmt.Errorf("%q is not a Rex window ID", windowID)
+	}
+	server, err := rex.FindServer(ctx, executables)
+	if err != nil {
+		return err
+	}
+	client, err := rex.Dial(ctx, server.Socket)
+	if serverGone(err) {
+		return fmt.Errorf("%w: %w", rex.ErrNotRunning, err)
+	}
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	return rex.Control(ctx, client, windowID, in, out)
+}
+
 func init() {
 	rootCmd.AddCommand(rexCmd)
-	rexCmd.AddCommand(rexListCmd, rexAttachCmd)
+	rexCmd.AddCommand(rexListCmd, rexAttachCmd, rexControlCmd)
 	rexListCmd.Flags().BoolVar(&rexListJSON, "json", false, "Output as JSON")
 }
 

@@ -43,6 +43,22 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("%s (%s)", e.Message, e.Code)
 }
 
+// Event is one event the server sent this connection: a change in a session
+// it attached to, or a server change such as session_destroyed.
+type Event struct {
+	SessionID string
+	Type      string
+	Payload   json.RawMessage
+}
+
+// EventOverflow is delivered in place of events dropped because the reader
+// fell behind. A reader that sees it re-reads whatever it was following.
+const EventOverflow = "overflow"
+
+// eventBuffer is how many events wait for a slow reader before the oldest
+// are dropped.
+const eventBuffer = 256
+
 // ErrDisconnected reports a control connection that the server closed.
 var ErrDisconnected = errors.New("lost the connection to the Rex server")
 
@@ -53,6 +69,7 @@ type Client struct {
 	mu     sync.Mutex
 	wait   map[string]chan response
 	closed chan struct{}
+	events chan Event
 }
 
 type response struct {
@@ -116,7 +133,12 @@ func Dial(ctx context.Context, socket string) (*Client, error) {
 		}
 		return nil, fmt.Errorf("unexpected first message from Rex: %.200s", data)
 	}
-	c := &Client{conn: conn, wait: map[string]chan response{}, closed: make(chan struct{})}
+	c := &Client{
+		conn:   conn,
+		wait:   map[string]chan response{},
+		closed: make(chan struct{}),
+		events: make(chan Event, eventBuffer),
+	}
 	// The read loop outlives Dial's context; Close ends it.
 	go c.read(context.WithoutCancel(ctx))
 	return c, nil
@@ -131,6 +153,7 @@ func (c *Client) read(ctx context.Context) {
 		}
 		c.mu.Unlock()
 		close(c.closed)
+		close(c.events)
 	}()
 	for {
 		_, data, err := c.conn.Read(ctx)
@@ -143,8 +166,14 @@ func (c *Client) read(ctx context.Context) {
 			Payload json.RawMessage `json:"payload"`
 			Error   *Error          `json:"error"`
 		}
-		// Events are not used; only responses complete a call.
-		if json.Unmarshal(data, &msg) != nil || msg.Type != "response" {
+		if json.Unmarshal(data, &msg) != nil {
+			continue
+		}
+		if msg.Type == "event" {
+			c.deliver(msg.Payload)
+			continue
+		}
+		if msg.Type != "response" {
 			continue
 		}
 		c.mu.Lock()
@@ -159,6 +188,69 @@ func (c *Client) read(ctx context.Context) {
 		} else {
 			ch <- response{payload: msg.Payload}
 		}
+	}
+}
+
+// Events returns the session events the server sends. Only sessions this
+// connection attached to send events. The channel closes with the
+// connection.
+func (c *Client) Events() <-chan Event {
+	return c.events
+}
+
+// deliver queues an event without ever blocking the read loop, which also
+// completes calls. Rex wraps a session's own events, such as
+// session_view_changed, in a session_event; server events such as
+// session_destroyed name their session in their payload. Both arrive here
+// as one Event. When the queue is full, the oldest events give way to an
+// EventOverflow marker and the new event.
+func (c *Client) deliver(payload json.RawMessage) {
+	var frame struct {
+		Type    string          `json:"type"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if json.Unmarshal(payload, &frame) != nil {
+		return
+	}
+	var event Event
+	if frame.Type == "session_event" {
+		var inner struct {
+			SessionID string `json:"session_id"`
+			Event     struct {
+				Type    string          `json:"type"`
+				Payload json.RawMessage `json:"payload"`
+			} `json:"event"`
+		}
+		if json.Unmarshal(frame.Payload, &inner) != nil {
+			return
+		}
+		event = Event{SessionID: inner.SessionID, Type: inner.Event.Type, Payload: inner.Event.Payload}
+	} else {
+		var named struct {
+			SessionID string `json:"session_id"`
+		}
+		_ = json.Unmarshal(frame.Payload, &named)
+		event = Event{SessionID: named.SessionID, Type: frame.Type, Payload: frame.Payload}
+	}
+	select {
+	case c.events <- event:
+		return
+	default:
+	}
+	// Make room for the marker and the new event, which is never the one lost.
+	for range 2 {
+		select {
+		case <-c.events:
+		default:
+		}
+	}
+	select {
+	case c.events <- Event{Type: EventOverflow}:
+	default:
+	}
+	select {
+	case c.events <- event:
+	default:
 	}
 }
 
