@@ -31,6 +31,8 @@ type fakeServer struct {
 	nonce  uint64
 	// written receives each com.superlogical.terminal.write payload.
 	written chan string
+	// controls are the open control connections, which push sends events to.
+	controls map[*websocket.Conn]struct{}
 }
 
 type fakeCall struct {
@@ -47,11 +49,12 @@ func newFakeServer(t *testing.T) *fakeServer {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	f := &fakeServer{
-		t:       t,
-		socket:  filepath.Join(dir, "s.sock"),
-		answers: map[string]func(json.RawMessage) (any, *Error){},
-		nonce:   42,
-		written: make(chan string, 64),
+		t:        t,
+		socket:   filepath.Join(dir, "s.sock"),
+		answers:  map[string]func(json.RawMessage) (any, *Error){},
+		nonce:    42,
+		written:  make(chan string, 64),
+		controls: map[*websocket.Conn]struct{}{},
 	}
 	f.answer("data.connect", func(json.RawMessage) (any, *Error) {
 		return map[string]any{"ticket": base64.RawURLEncoding.EncodeToString([]byte(fakeTicket))}, nil
@@ -86,6 +89,42 @@ func (f *fakeServer) answer(method string, fn func(json.RawMessage) (any, *Error
 
 func (f *fakeServer) answerValue(method string, value any) {
 	f.answer(method, func(json.RawMessage) (any, *Error) { return value, nil })
+}
+
+// push sends a session event to every open control connection, the way
+// Rex delivers events to connections attached to the session.
+func (f *fakeServer) push(sessionID string, event map[string]any) {
+	f.t.Helper()
+	frame, err := json.Marshal(map[string]any{
+		"type":    "session_event",
+		"payload": map[string]any{"session_id": sessionID, "event": event},
+	})
+	require.NoError(f.t, err)
+	f.mu.Lock()
+	conns := make([]*websocket.Conn, 0, len(f.controls))
+	for conn := range f.controls {
+		conns = append(conns, conn)
+	}
+	f.mu.Unlock()
+	for _, conn := range conns {
+		_ = conn.Write(context.WithoutCancel(f.t.Context()), websocket.MessageText, frame)
+	}
+}
+
+// dropControls closes every open control connection.
+func (f *fakeServer) dropControls() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for conn := range f.controls {
+		_ = conn.CloseNow()
+	}
+}
+
+// controlCount reports how many control connections are open.
+func (f *fakeServer) controlCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.controls)
 }
 
 func (f *fakeServer) methods() []string {
@@ -127,6 +166,14 @@ func (f *fakeServer) serveControl(w http.ResponseWriter, r *http.Request) {
 	if conn.Write(ctx, websocket.MessageText, welcome) != nil {
 		return
 	}
+	f.mu.Lock()
+	f.controls[conn] = struct{}{}
+	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		delete(f.controls, conn)
+		f.mu.Unlock()
+	}()
 	for {
 		_, data, err := conn.Read(ctx)
 		if err != nil {
