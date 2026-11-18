@@ -20,7 +20,7 @@ func TestCallReturnsRexErrors(t *testing.T) {
 	server.answer("session.attach", func(json.RawMessage) (any, *Error) {
 		return nil, &Error{Code: "session_not_found", Message: "no such session"}
 	})
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -87,7 +87,7 @@ func TestTerminalsListsTerminalBlocksInEverySession(t *testing.T) {
 		}, nil
 	})
 
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 	terminals, err := client.Terminals(t.Context())
@@ -117,7 +117,7 @@ func TestTerminalFindsTheSessionThatHoldsABlock(t *testing.T) {
 	}})
 	server.answerValue("session.attach", view("session:a", "work",
 		window("window:1", "editor", "", block("block:1", terminalCreator, "shell"))))
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -165,7 +165,7 @@ func TestAttachPaintsTheScreenThenStreamsOutputUntilTheProgramExits(t *testing.T
 	// Input that stays open, as a terminal's does.
 	in, inWriter := io.Pipe()
 	t.Cleanup(func() { _ = inWriter.Close() })
-	exit, err := Attach(t.Context(), server.socket, AttachOptions{
+	exit, err := Attach(t.Context(), server.endpoint, AttachOptions{
 		SessionID: "session:a",
 		BlockID:   "block:1",
 		In:        in,
@@ -192,6 +192,29 @@ func TestAttachPaintsTheScreenThenStreamsOutputUntilTheProgramExits(t *testing.T
 	assert.JSONEq(t, `{"session_id":"session:a","block_id":"block:1","args":{"columns":100,"rows":30}}`, string(resize[0]))
 }
 
+func TestAttachReachesAServerAtANetworkAddress(t *testing.T) {
+	server := newFakeNetworkServer(t)
+	server.answerValue("com.superlogical.terminal.format", map[string]string{"content": "PAINTED"})
+	server.stream = [][]byte{
+		[]byte("GHOSTSNP-binary"),
+		rexMessage(server.nonce, `{"type":"resize","cols":80,"rows":24}`),
+		[]byte("over the network"),
+		rexMessage(server.nonce, `{"type":"child_exited","exit_code":0}`),
+	}
+	in, inWriter := io.Pipe()
+	t.Cleanup(func() { _ = inWriter.Close() })
+
+	var out syncBuffer
+	exit, err := Attach(t.Context(), server.endpoint, AttachOptions{
+		SessionID: "session:a", BlockID: "block:1", In: in, Out: &out, Size: Size{Columns: 80, Rows: 24},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, exit)
+	assert.Contains(t, out.String(), "PAINTED")
+	assert.Contains(t, out.String(), "over the network")
+}
+
 func TestAttachTypesInputAndFollowsResizes(t *testing.T) {
 	server := newFakeServer(t)
 	server.answerValue("com.superlogical.terminal.format", map[string]string{"content": ""})
@@ -201,7 +224,7 @@ func TestAttachTypesInputAndFollowsResizes(t *testing.T) {
 	sizes := make(chan Size, 1)
 	done := make(chan error, 1)
 	go func() {
-		_, err := Attach(t.Context(), server.socket, AttachOptions{
+		_, err := Attach(t.Context(), server.endpoint, AttachOptions{
 			SessionID: "session:a",
 			BlockID:   "block:1",
 			In:        inReader,
@@ -245,7 +268,7 @@ func TestAttachTypesInputAndFollowsResizes(t *testing.T) {
 func TestAttachReportsARejectedStream(t *testing.T) {
 	server := newFakeServer(t)
 	server.answerValue("data.connect", map[string]string{"ticket": "d3Jvbmc"})
-	_, err := Attach(t.Context(), server.socket, AttachOptions{
+	_, err := Attach(t.Context(), server.endpoint, AttachOptions{
 		SessionID: "session:a", BlockID: "block:1",
 		In: strings.NewReader(""), Out: io.Discard, Size: Size{Columns: 80, Rows: 24},
 	})
@@ -290,7 +313,7 @@ func TestTerminalsNameBlocksByLabelWithoutProcessDetails(t *testing.T) {
 		return nil, &Error{Code: "method_not_found", Message: "method not found"}
 	})
 
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 	terminals, err := client.Terminals(t.Context())
@@ -306,7 +329,7 @@ func TestAttachKeepsACharacterSplitAcrossReadsWhole(t *testing.T) {
 	inReader, inWriter := io.Pipe()
 	done := make(chan error, 1)
 	go func() {
-		_, err := Attach(t.Context(), server.socket, AttachOptions{
+		_, err := Attach(t.Context(), server.endpoint, AttachOptions{
 			SessionID: "session:a", BlockID: "block:1",
 			In: inReader, Out: io.Discard, Size: Size{Columns: 80, Rows: 24},
 		})
@@ -363,7 +386,7 @@ func TestAttachFinishesOutputBeforeReturning(t *testing.T) {
 	inReader, inWriter := io.Pipe()
 	done := make(chan error, 1)
 	go func() {
-		_, err := Attach(t.Context(), server.socket, AttachOptions{
+		_, err := Attach(t.Context(), server.endpoint, AttachOptions{
 			SessionID: "session:a", BlockID: "block:1",
 			In: inReader, Out: out, Size: Size{Columns: 80, Rows: 24},
 		})
@@ -419,7 +442,7 @@ func TestTerminalsLeavesOutASessionThatEndsWhileItIsRead(t *testing.T) {
 		}
 		return map[string]any{}, nil
 	})
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -445,7 +468,7 @@ func TestTerminalsReportsOtherFailuresReadingASession(t *testing.T) {
 	server.answer("com.superlogical.terminal.title", func(json.RawMessage) (any, *Error) {
 		return nil, &Error{Code: "internal", Message: "boom"}
 	})
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 

@@ -27,7 +27,7 @@ func TestNewWindowCreatesASessionWithAShell(t *testing.T) {
 			{"window_id": "window:new", "block_ids": []string{"block:1"}, "revision": 1},
 		},
 	})
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -50,7 +50,7 @@ func TestNewWindowStartsARelativeDirectoryFromHere(t *testing.T) {
 		"session_id":      "session:new",
 		"initial_windows": []map[string]any{{"window_id": "window:new", "revision": 1}},
 	})
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 	t.Chdir(t.TempDir())
@@ -74,7 +74,7 @@ func TestNewWindowLetsRexNameTheSessionAndChooseTheDirectory(t *testing.T) {
 		"session_id":      "session:new",
 		"initial_windows": []map[string]any{{"window_id": "window:new", "revision": 1}},
 	})
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -102,7 +102,7 @@ func TestNewWindowAddsAWindowToASession(t *testing.T) {
 		}
 		return map[string]any{"window_id": "window:2", "block_ids": []string{"block:9"}, "revision": 4}, nil
 	})
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -128,7 +128,7 @@ func TestNewWindowReportsRexRefusing(t *testing.T) {
 	server.answer("session.attach", func(json.RawMessage) (any, *Error) {
 		return nil, &Error{Code: "not_found", Message: "no such session"}
 	})
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 

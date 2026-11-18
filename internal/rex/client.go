@@ -4,7 +4,7 @@
 // sessions, and its apps draw terminals from WebSocket data connections.
 // This package speaks the server's control protocol (rex.control.v1) and
 // terminal data protocol (rex.data.terminal.v1) over the server's Unix
-// socket, so a terminal program such as Ghosthub can show one Rex terminal.
+// socket or network address, so a terminal program such as Ghosthub can show one Rex terminal.
 package rex
 
 import (
@@ -12,8 +12,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
-	"net/http"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -77,29 +75,28 @@ type response struct {
 	err     error
 }
 
-func dial(ctx context.Context, socket, path, protocol string) (*websocket.Conn, error) {
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "unix", socket)
-		},
+func dial(ctx context.Context, endpoint, path, protocol string) (*websocket.Conn, error) {
+	target, client, err := webSocketTarget(endpoint, path)
+	if err != nil {
+		return nil, err
 	}
-	conn, resp, err := websocket.Dial(ctx, "ws://rex"+path, &websocket.DialOptions{
-		HTTPClient:   &http.Client{Transport: transport},
+	conn, resp, err := websocket.Dial(ctx, target, &websocket.DialOptions{
+		HTTPClient:   client,
 		Subprotocols: []string{protocol},
 	})
 	if resp != nil && resp.Body != nil {
 		_ = resp.Body.Close()
 	}
 	if err != nil {
-		return nil, fmt.Errorf("cannot reach the Rex server at %s: %w", socket, err)
+		return nil, fmt.Errorf("cannot reach the Rex server at %s: %w", endpoint, err)
 	}
 	conn.SetReadLimit(readLimit)
 	return conn, nil
 }
 
-// Dial opens a control connection to the server listening on socket.
-func Dial(ctx context.Context, socket string) (*Client, error) {
-	conn, err := dial(ctx, socket, "/api/control", controlProtocol)
+// Dial opens a control connection to the server at endpoint.
+func Dial(ctx context.Context, endpoint string) (*Client, error) {
+	conn, err := dial(ctx, endpoint, "/api/control", controlProtocol)
 	if err != nil {
 		return nil, err
 	}

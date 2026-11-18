@@ -58,6 +58,19 @@ func TestRexListingTreatsAStoppedServerSocketAsNotRunning(t *testing.T) {
 	}
 }
 
+func TestRexListingTreatsAStoppedNetworkServerAsNotRunning(t *testing.T) {
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := listener.Addr().String()
+	require.NoError(t, listener.Close())
+
+	t.Setenv("REX_SERVER", "http://"+address)
+	listing, err := rexListing(t.Context(), nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, "not_running", listing.Status)
+}
+
 func TestRexControlRefusesAnythingButAWindowID(t *testing.T) {
 	t.Setenv("REX_SERVER", "")
 	for _, id := range []string{"block:01a1", "--help", "window:", "window:a b"} {

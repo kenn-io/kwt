@@ -23,7 +23,7 @@ func nextEvent(t *testing.T, client *Client) Event {
 
 func TestClientDeliversSessionEvents(t *testing.T) {
 	server := newFakeServer(t)
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 	require.Eventually(t, func() bool { return server.controlCount() == 1 }, 5*time.Second, 10*time.Millisecond)
@@ -38,7 +38,7 @@ func TestClientDeliversSessionEvents(t *testing.T) {
 
 func TestClientDeliversServerEventsWithTheirSession(t *testing.T) {
 	server := newFakeServer(t)
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 	require.Eventually(t, func() bool { return server.controlCount() == 1 }, 5*time.Second, 10*time.Millisecond)
@@ -52,7 +52,7 @@ func TestClientDeliversServerEventsWithTheirSession(t *testing.T) {
 
 func TestClientEventsCloseWithTheConnection(t *testing.T) {
 	server := newFakeServer(t)
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 	require.Eventually(t, func() bool { return server.controlCount() == 1 }, 5*time.Second, 10*time.Millisecond)

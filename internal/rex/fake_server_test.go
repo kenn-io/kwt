@@ -20,8 +20,9 @@ import (
 // the client: it answers requests from a table and replays one terminal
 // stream to each data connection.
 type fakeServer struct {
-	t      *testing.T
-	socket string
+	t *testing.T
+	// endpoint is the server's address in REX_SERVER form.
+	endpoint string
 
 	mu      sync.Mutex
 	calls   []fakeCall
@@ -43,15 +44,33 @@ type fakeCall struct {
 
 const fakeTicket = "ticket-bytes"
 
+// newFakeServer listens on a Unix socket, as a local Rex server does.
 func newFakeServer(t *testing.T) *fakeServer {
 	t.Helper()
 	// Unix socket paths are limited to about 100 bytes; t.TempDir can exceed it.
 	dir, err := os.MkdirTemp("", "rex")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "s.sock")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socket)
+	require.NoError(t, err)
+	return serveFake(t, listener, "unix://"+socket)
+}
+
+// newFakeNetworkServer listens on a loopback TCP port, as a Rex server on a
+// tailnet address does.
+func newFakeNetworkServer(t *testing.T) *fakeServer {
+	t.Helper()
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	return serveFake(t, listener, "http://"+listener.Addr().String())
+}
+
+func serveFake(t *testing.T, listener net.Listener, endpoint string) *fakeServer {
+	t.Helper()
 	f := &fakeServer{
 		t:        t,
-		socket:   filepath.Join(dir, "s.sock"),
+		endpoint: endpoint,
 		answers:  map[string]func(json.RawMessage) (any, *Error){},
 		nonce:    42,
 		written:  make(chan string, 64),
@@ -71,12 +90,10 @@ func newFakeServer(t *testing.T) *fakeServer {
 		return map[string]any{}, nil
 	})
 
-	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", f.socket)
-	require.NoError(t, err)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/control", f.serveControl)
 	mux.HandleFunc("/api/data", f.serveData)
-	server := &http.Server{Handler: mux} //nolint:gosec // Test server on a private Unix socket.
+	server := &http.Server{Handler: mux} //nolint:gosec // Test server on a private socket or loopback port.
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
 	return f

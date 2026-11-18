@@ -92,7 +92,7 @@ itself when that program exits.`,
 		if err != nil {
 			return err
 		}
-		client, err := rex.Dial(ctx, server.Socket)
+		client, err := rex.Dial(ctx, server.Endpoint)
 		if err != nil {
 			return err
 		}
@@ -101,7 +101,7 @@ itself when that program exits.`,
 		if err != nil {
 			return err
 		}
-		return runRexAttach(ctx, server.Socket, terminal.SessionID, terminal.BlockID)
+		return runRexAttach(ctx, server.Endpoint, terminal.SessionID, terminal.BlockID)
 	}),
 }
 
@@ -178,7 +178,7 @@ func dialRexServer(ctx context.Context, executables []string) (*rex.Client, erro
 	if err != nil {
 		return nil, err
 	}
-	client, err := rex.Dial(ctx, server.Socket)
+	client, err := rex.Dial(ctx, server.Endpoint)
 	if serverGone(err) {
 		return nil, fmt.Errorf("%w: %w", rex.ErrNotRunning, err)
 	}
@@ -238,7 +238,7 @@ func rexListing(ctx context.Context, executables []string) (rexListingOutput, er
 	case err != nil:
 		return listing, err
 	}
-	client, err := rex.Dial(ctx, server.Socket)
+	client, err := rex.Dial(ctx, server.Endpoint)
 	if serverGone(err) {
 		listing.Status = rexNotRunning
 		return listing, nil
@@ -273,7 +273,7 @@ const resetTerminalModes = "\x1b[?1047l\x1b7\x1b[r\x1b8\x1b[?25h" +
 	"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l" +
 	"\x1b[?1004l\x1b[?2004l\x1b[=0u\x1b[>4;0m\x1b[?1l\x1b>\x1b[0m"
 
-func runRexAttach(ctx context.Context, socket, sessionID, blockID string) error {
+func runRexAttach(ctx context.Context, endpoint, sessionID, blockID string) error {
 	stdin := int(os.Stdin.Fd()) //nolint:gosec // File descriptors fit in int.
 	if !term.IsTerminal(stdin) {
 		return errors.New("kwt rex attach needs a terminal")
@@ -293,7 +293,7 @@ func runRexAttach(ctx context.Context, socket, sessionID, blockID string) error 
 
 	sizes, stop := watchTerminalSize(ctx, stdin)
 	defer stop()
-	_, err = rex.Attach(ctx, socket, rex.AttachOptions{
+	_, err = rex.Attach(ctx, endpoint, rex.AttachOptions{
 		SessionID: sessionID,
 		BlockID:   blockID,
 		In:        os.Stdin,

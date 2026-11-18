@@ -55,11 +55,11 @@ type AttachOptions struct {
 // returns the program's exit status when the program ends, or nil when the
 // attach ends first: opts.In closed or ctx was canceled. Detaching never
 // stops the program.
-func Attach(ctx context.Context, socket string, opts AttachOptions) (*int, error) {
+func Attach(ctx context.Context, endpoint string, opts AttachOptions) (*int, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	client, err := Dial(ctx, socket)
+	client, err := Dial(ctx, endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func Attach(ctx context.Context, socket string, opts AttachOptions) (*int, error
 	if err := a.resize(ctx, opts.Size); err != nil {
 		return nil, err
 	}
-	data, nonce, err := a.openData(ctx, socket)
+	data, nonce, err := a.openData(ctx, endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +156,7 @@ func (a *attachment) resize(ctx context.Context, size Size) error {
 		map[string]int{"columns": size.Columns, "rows": size.Rows}, nil)
 }
 
-func (a *attachment) openData(ctx context.Context, socket string) (*websocket.Conn, uint64, error) {
+func (a *attachment) openData(ctx context.Context, endpoint string) (*websocket.Conn, uint64, error) {
 	var ticket struct {
 		Ticket string `json:"ticket"`
 	}
@@ -171,7 +171,7 @@ func (a *attachment) openData(ctx context.Context, socket string) (*websocket.Co
 	if err != nil {
 		return nil, 0, fmt.Errorf("rex sent an unreadable data ticket: %w", err)
 	}
-	conn, err := dial(ctx, socket, "/api/data", dataProtocol)
+	conn, err := dial(ctx, endpoint, "/api/data", dataProtocol)
 	if err != nil {
 		return nil, 0, err
 	}
