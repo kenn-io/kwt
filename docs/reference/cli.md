@@ -717,7 +717,7 @@ closes.
 window IDs, so a front end can show it with `control`:
 
 ```json
-{"session_id":"session:...","window_id":"window:..."}
+{ "session_id": "session:...", "window_id": "window:..." }
 ```
 
 Without `--session`, the window starts a new session, and `--label` names the
