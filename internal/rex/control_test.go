@@ -205,6 +205,37 @@ func TestControlForwardsLayoutRequestsForItsSession(t *testing.T) {
 	assert.Equal(t, "block:2", sent["anchor_id"])
 }
 
+func TestControlForwardsFloatingLayerRequests(t *testing.T) {
+	for _, method := range []string{
+		"session.new_layer",
+		"session.float_block",
+		"session.move_block",
+		"session.resize_layer",
+		"session.raise_layer",
+		"session.lower_layer",
+		"session.set_layer_state",
+		"session.close_layer",
+	} {
+		t.Run(method, func(t *testing.T) {
+			server := layoutServer(t)
+			server.answerValue(method, map[string]any{"revision": 6})
+			run := startControl(t, server, "window:1")
+			run.next()
+
+			run.send(`{"id":1,"method":"` + method + `","params":{"layer_id":"layer:2"}}`)
+
+			reply := run.next()
+			assert.Equal(t, map[string]any{"revision": float64(6)}, reply["result"], "%v", reply["error"])
+			calls := server.callsTo(method)
+			require.Len(t, calls, 1)
+			var sent map[string]any
+			require.NoError(t, json.Unmarshal(calls[0], &sent))
+			assert.Equal(t, "session:a", sent["session_id"])
+			assert.Equal(t, "layer:2", sent["layer_id"])
+		})
+	}
+}
+
 func TestControlReturnsRexErrorsToTheRequest(t *testing.T) {
 	server := layoutServer(t)
 	server.answer("session.focus_block", func(json.RawMessage) (any, *Error) {

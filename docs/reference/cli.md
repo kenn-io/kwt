@@ -701,10 +701,14 @@ the session and writes a reply with the request's `id`:
 {"type":"reply","id":2,"error":{"code":"block_not_found","message":"..."}}
 ```
 
-The methods are `session.new_split`, `session.resize_pane`,
-`session.focus_block`, `session.focus_direction`, `session.focus_next_pane`,
-`session.focus_previous_pane`, `session.zoom_block`, and `block.close`; any
-other method gets a `method_not_allowed` error. The command writes
+The methods for the tiled layout are `session.new_split`,
+`session.resize_pane`, `session.focus_block`, `session.focus_direction`,
+`session.focus_next_pane`, `session.focus_previous_pane`,
+`session.zoom_block`, and `block.close`. The methods for floating layers are
+`session.new_layer`, `session.float_block`, `session.move_block`,
+`session.resize_layer`, `session.raise_layer`, `session.lower_layer`,
+`session.set_layer_state`, and `session.close_layer`. Any other method gets a
+`method_not_allowed` error. The command writes
 `{"type":"ended"}` and exits when the session ends, and exits when its input
 closes.
 
