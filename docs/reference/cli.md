@@ -661,6 +661,7 @@ Ghosthub can show Rex terminals and draw a Rex window's splits itself.
 kwt rex ls --json
 kwt rex attach BLOCK_ID
 kwt rex control WINDOW_ID
+kwt rex new [--label LABEL] [--cwd DIR] [--session SESSION_ID]
 ```
 
 `ls` lists every terminal placed in a window of each session on this account's
@@ -668,7 +669,7 @@ Rex server, with its session, window, label, the title its program set, and its
 foreground program and working directory. `name` is what Rex shows for the
 terminal: the title, or else the program and directory, such as `zsh ~/src`.
 `status` is `running`, `not_installed`, or `not_running`; the last two are
-normal and list no terminals. Neither command starts a Rex server. `REX_SERVER`
+normal and list no terminals. None of these commands starts a Rex server. `REX_SERVER`
 selects a `unix://` server endpoint; otherwise kwt asks the `rex` command on
 `PATH`, or the one inside Rex for Mac, for its server.
 
@@ -711,6 +712,18 @@ The methods for the tiled layout are `session.new_split`,
 `method_not_allowed` error. The command writes
 `{"type":"ended"}` and exits when the session ends, and exits when its input
 closes.
+
+`new` opens a shell in a new window and prints the window's session and
+window IDs, so a front end can show it with `control`:
+
+```json
+{"session_id":"session:...","window_id":"window:..."}
+```
+
+Without `--session`, the window starts a new session, and `--label` names the
+session; Rex chooses a name otherwise. With `--session`, the window joins that
+session as its active window, and `--label` names the window. `--cwd` starts
+the shell in that directory instead of Rex's default.
 
 ## `kwt agent-hook`
 

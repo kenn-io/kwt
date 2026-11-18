@@ -22,8 +22,8 @@ var rexCmd = &cobra.Command{
 
 Rex owns its sessions, windows, and layout. attach shows one Rex terminal
 in an ordinary terminal; detaching leaves it running. control lets a front
-end that draws a window's panes follow and change its layout. None of
-these commands starts a Rex server.`,
+end that draws a window's panes follow and change its layout. new opens a
+window with a shell. None of these commands starts a Rex server.`,
 	Example: `  # List Rex terminals as JSON
   kwt rex ls --json
 
@@ -31,7 +31,10 @@ these commands starts a Rex server.`,
   kwt rex attach block:01a1...
 
   # Follow and change one window's layout (JSON lines)
-  kwt rex control window:01a1...`,
+  kwt rex control window:01a1...
+
+  # Open a shell in a new session
+  kwt rex new --label work`,
 	// Rex commands never use repository configuration, so they skip the
 	// project merge and its trust prompt.
 	PersistentPreRunE: globalOnlyPreRun,
@@ -131,6 +134,57 @@ server.`,
 	}),
 }
 
+var rexNewOptions rex.NewWindowOptions
+
+var rexNewCmd = &cobra.Command{
+	Use:   "new",
+	Short: "Open a shell in a new Rex window",
+	Long: `Open a shell in a new Rex window and print the window's IDs as JSON:
+
+  {"session_id":"session:...","window_id":"window:..."}
+
+The window starts a new session unless --session names one; then it
+becomes that session's active window. --label names the new session, or
+the new window with --session. The command never starts a Rex server.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		return runRexNew(commandContext(cmd), rexNewOptions, rex.Executables(), cmd.OutOrStdout())
+	},
+}
+
+// rexSessionID matches a Rex session ID such as
+// session:01a1c874-d309-72f9-b5e6-8ef31add4481.
+var rexSessionID = regexp.MustCompile(`^session:[0-9A-Za-z-]+$`)
+
+func runRexNew(ctx context.Context, options rex.NewWindowOptions, executables []string, out io.Writer) error {
+	if options.SessionID != "" && !rexSessionID.MatchString(options.SessionID) {
+		return fmt.Errorf("%q is not a Rex session ID", options.SessionID)
+	}
+	client, err := dialRexServer(ctx, executables)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	created, err := rex.NewWindow(ctx, client, options)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(out).Encode(created)
+}
+
+// dialRexServer connects to the account's running Rex server.
+func dialRexServer(ctx context.Context, executables []string) (*rex.Client, error) {
+	server, err := rex.FindServer(ctx, executables)
+	if err != nil {
+		return nil, err
+	}
+	client, err := rex.Dial(ctx, server.Socket)
+	if serverGone(err) {
+		return nil, fmt.Errorf("%w: %w", rex.ErrNotRunning, err)
+	}
+	return client, err
+}
+
 // rexWindowID matches a Rex window ID such as
 // window:01a1c874-d309-72f9-b5e6-8ef31add4481. Anything else could be read
 // as an option.
@@ -140,14 +194,7 @@ func runRexControl(ctx context.Context, windowID string, executables []string, i
 	if !rexWindowID.MatchString(windowID) {
 		return fmt.Errorf("%q is not a Rex window ID", windowID)
 	}
-	server, err := rex.FindServer(ctx, executables)
-	if err != nil {
-		return err
-	}
-	client, err := rex.Dial(ctx, server.Socket)
-	if serverGone(err) {
-		return fmt.Errorf("%w: %w", rex.ErrNotRunning, err)
-	}
+	client, err := dialRexServer(ctx, executables)
 	if err != nil {
 		return err
 	}
@@ -157,8 +204,11 @@ func runRexControl(ctx context.Context, windowID string, executables []string, i
 
 func init() {
 	rootCmd.AddCommand(rexCmd)
-	rexCmd.AddCommand(rexListCmd, rexAttachCmd, rexControlCmd)
+	rexCmd.AddCommand(rexListCmd, rexAttachCmd, rexControlCmd, rexNewCmd)
 	rexListCmd.Flags().BoolVar(&rexListJSON, "json", false, "Output as JSON")
+	rexNewCmd.Flags().StringVar(&rexNewOptions.SessionID, "session", "", "Add the window to this session")
+	rexNewCmd.Flags().StringVar(&rexNewOptions.Label, "label", "", "Name the new session, or the window with --session")
+	rexNewCmd.Flags().StringVarP(&rexNewOptions.Cwd, "cwd", "c", "", "Start the shell in this directory")
 }
 
 const (
