@@ -13,8 +13,9 @@ import (
 // ErrWindowNotFound reports a window that no session holds.
 var ErrWindowNotFound = errors.New("no Rex session has that window ID")
 
-// controlMethods are the layout requests Control forwards. Each acts on the
-// controlled session; everything else is refused.
+// controlMethods are the layout requests Control forwards, for a window's
+// tiled layout and its floating layers. Each acts on the controlled
+// session; everything else is refused.
 var controlMethods = map[string]bool{
 	"session.new_split":           true,
 	"session.resize_pane":         true,
@@ -24,6 +25,14 @@ var controlMethods = map[string]bool{
 	"session.focus_previous_pane": true,
 	"session.zoom_block":          true,
 	"block.close":                 true,
+	"session.new_layer":           true,
+	"session.float_block":         true,
+	"session.move_block":          true,
+	"session.resize_layer":        true,
+	"session.raise_layer":         true,
+	"session.lower_layer":         true,
+	"session.set_layer_state":     true,
+	"session.close_layer":         true,
 }
 
 // terminalChanges are the terminal block events that change a pane's name.
