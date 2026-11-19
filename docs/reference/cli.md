@@ -45,6 +45,7 @@ Other PID lookup failures report the underlying tmux error.
 | `kwt sync`       | Publish and inspect multi-machine sync state.          |
 | `kwt ssh`        | Resolve, hold, and use reviewed OpenSSH routes.        |
 | `kwt tmux`       | Manage standalone tmux sessions.                       |
+| `kwt session`    | Save and restore tmux sessions across reboots.         |
 | `kwt workspace`  | Manage directory workspaces.                           |
 | `kwt config`     | Read and write config values.                          |
 | `kwt daemon`     | Manage the background local service daemon.            |
@@ -751,6 +752,101 @@ interrupts the agent.
 `available` (config directory exists), `installed` (any kwt hook present), and
 `current` (hooks match this kwt executable and event set). Pass
 `--executable` to install or compare a different kwt path.
+
+The same hooks keep [saved tmux sessions](#kwt-session) current. After writing
+`@kwt_agent`, a hook records the pane's conversation and launch settings in
+the pane option `@kwt_agent_resume`, then saves the pane's tmux server with
+the time left in its 2-second budget. A busy lock or a spent budget skips the
+save and keeps the last one.
+
+## `kwt session`
+
+`kwt session` brings tmux sessions back after a reboot or a tmux
+`kill-server`, with each pane's Claude Code or Codex conversation resumed in
+the pane where it ran.
+
+```sh
+kwt session snapshot --json   # save now, list what can be restored
+kwt session restore --all
+kwt session restore ID...
+kwt session dismiss ID...     # or --all
+kwt session forget --socket PATH --session-id '$3' --server-pid PID --created TIME
+```
+
+kwt saves the default tmux server, kwt's own server, and every server it saved
+before. [Agent hooks](#kwt-agent-hook) save as agents work, and
+`snapshot` saves on demand. A session becomes restorable once the server it
+ran on is gone: a save that finds no server, or a server with a new PID or
+start time, turns the last saved state into restorable entries. A save that
+cannot reach the server changes nothing.
+
+`snapshot --json` prints `{"entries": [...]}`. Each entry has an opaque `id`,
+its `socket` (`path`, and `name` for a `-L` socket), `session`, `saved_at`
+(Unix milliseconds), `windows` and `panes` counts, the `agents` it will
+resume, `name_taken` when a live session already uses the name, `worktree`
+for a kwt worktree session, and `state` (`pending`, `creating`, or
+`launching`). Entry IDs change each time a server is lost.
+
+`restore` rebuilds each session on the server it came from:
+
+- **Layout:** windows come back at their saved indexes with their names,
+  pane geometry, active pane, and zoom. When tmux cannot reproduce the saved
+  layout, the window is tiled and the report notes `layout differs`.
+- **Directories:** each pane starts in its saved directory. A pane whose
+  directory is gone starts in your home directory, runs nothing, and is
+  reported as `directory missing`.
+- **Conversations:** a pane that ran Claude Code or Codex resumes that
+  conversation with the launch settings kwt recognized, such as the model and
+  permission mode. The report names any flags it dropped, never their values.
+  A pane whose conversation file is gone runs nothing and is reported as
+  `conversation not found`.
+- **Preset agents:** a pane where a layout preset started a configured agent
+  runs that agent's configured command again.
+- **Worktree sessions** are created through `kwt open`'s path, so they keep
+  kwt's environment cleanup and workspace markers. Opening a worktree with
+  `kwt open` also restores its saved session when the checkout and session
+  name still match. A worktree whose path now holds another checkout is
+  skipped as `worktree changed`.
+- **Pull-request workspaces** are never saved, and no program starts in a
+  pull-request checkout.
+- A session whose name is in use is skipped. Rename or kill the live session,
+  or dismiss the saved one.
+
+Restore types `kwt session exec` into each pane that resumes a conversation;
+the pane starts the agent once and only in its own shell. `restore --json`
+reports each entry's `outcome` (`restored`, `partially restored`, `skipped`,
+`failed`, or `not found`), a `reason`, the new session's `live` endpoint, and
+each pane's `status` (`none`, `waiting`, `started`, or `failed`) with its
+`note`. `partially restored` means a pane is still starting or failed to
+start. The command exits non-zero when an entry failed or an ID was not
+found. Running `restore` again after an interruption cleans up the unfinished
+session and starts over; a session whose programs already started is
+reported as `already restored`.
+
+`dismiss` deletes saved entries without restoring them. Front ends run
+`forget` after they kill a session on purpose, so it is not offered for
+restore. The server PID and `#{session_created}` time keep a reused session ID
+from matching another session.
+
+Saved state lives in `$KWT_HOME/tmux/` (or `~/.config/kwt/tmux/`): one live
+snapshot and one restorable file per tmux socket, written atomically with mode
+`0600`, because launch arguments can contain secrets.
+
+Known limits:
+
+- A session killed with plain tmux commands stays saved until the next save
+  while its server runs. Killing the last session stops the server, which kwt
+  cannot tell apart from a reboot, so that session becomes restorable; dismiss
+  it.
+- Codex does not report a deliberate exit, so kwt infers one from two saves.
+  A reboot right after quitting Codex can resume the closed conversation, and
+  a slow shutdown can drop a live one.
+- kwt replays the Claude permission mode the last hook saw. A mode change
+  after that is lost.
+- kwt does not confirm that the agent found its conversation. The agent
+  reports its own errors in the pane.
+- The dashboard and daemon open worktrees without the restore step. Use
+  `kwt session restore` for those sessions.
 
 ## `kwt remove`
 

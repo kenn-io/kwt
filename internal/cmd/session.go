@@ -60,8 +60,9 @@ it came from, then resume each pane's Claude Code or Codex conversation with
 the settings it was started with. Panes that ran a layout preset's agent run
 its configured command again. Other panes open a shell in their directory.
 
-A session whose name is in use is skipped. Get IDs from
-"kwt session snapshot".`,
+Worktree sessions are created the way "kwt open" creates them; one whose
+worktree now holds a different checkout is skipped. A session whose name is
+in use is skipped. Get IDs from "kwt session snapshot".`,
 	Args:    sessionTargets,
 	PreRunE: globalOnlyPreRun,
 	RunE:    runSessionRestore,
