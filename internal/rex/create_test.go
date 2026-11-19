@@ -2,6 +2,8 @@ package rex
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,6 +40,30 @@ func TestNewWindowCreatesASessionWithAShell(t *testing.T) {
 		"initial_windows": []any{map[string]any{"layout": map[string]any{"block": map[string]any{
 			"flavor":  "com.superlogical.terminal.shell",
 			"options": map[string]any{"cwd": "/home/user-a/src"},
+		}}}},
+	}, sentPayload(t, server, "session.create"))
+}
+
+func TestNewWindowStartsARelativeDirectoryFromHere(t *testing.T) {
+	server := newFakeServer(t)
+	server.answerValue("session.create", map[string]any{
+		"session_id":      "session:new",
+		"initial_windows": []map[string]any{{"window_id": "window:new", "revision": 1}},
+	})
+	client, err := Dial(t.Context(), server.socket)
+	require.NoError(t, err)
+	defer client.Close()
+	t.Chdir(t.TempDir())
+	here, err := os.Getwd()
+	require.NoError(t, err)
+
+	_, err = NewWindow(t.Context(), client, NewWindowOptions{Cwd: "src"})
+
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{
+		"initial_windows": []any{map[string]any{"layout": map[string]any{"block": map[string]any{
+			"flavor":  "com.superlogical.terminal.shell",
+			"options": map[string]any{"cwd": filepath.Join(here, "src")},
 		}}}},
 	}, sentPayload(t, server, "session.create"))
 }

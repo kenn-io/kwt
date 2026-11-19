@@ -3,6 +3,7 @@ package rex
 import (
 	"context"
 	"errors"
+	"path/filepath"
 )
 
 // shellFlavor is the block flavor for the user's login shell.
@@ -16,7 +17,8 @@ type NewWindowOptions struct {
 	// Label names the new session, or the new window when SessionID is
 	// set. Empty lets Rex choose.
 	Label string
-	// Cwd is the shell's working directory. Empty lets Rex choose.
+	// Cwd is the shell's working directory, relative to this process's
+	// directory unless absolute. Empty lets Rex choose.
 	Cwd string
 }
 
@@ -31,7 +33,12 @@ type Created struct {
 func NewWindow(ctx context.Context, client *Client, options NewWindowOptions) (Created, error) {
 	block := map[string]any{"flavor": shellFlavor}
 	if options.Cwd != "" {
-		block["options"] = map[string]any{"cwd": options.Cwd}
+		// The server has its own working directory.
+		cwd, err := filepath.Abs(options.Cwd)
+		if err != nil {
+			return Created{}, err
+		}
+		block["options"] = map[string]any{"cwd": cwd}
 	}
 	layout := map[string]any{"block": block}
 
