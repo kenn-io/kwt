@@ -1,14 +1,18 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/kit/agenthook"
 	"go.kenn.io/kwt/internal/agentstate"
+	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/tmuxrestore"
 )
 
 var (
@@ -208,6 +212,7 @@ func runAgentHookRun(cmd *cobra.Command, _ []string) error {
 	if agentHookRunSource != strings.TrimPrefix(agentstate.Marker, "--source ") {
 		return nil
 	}
+	started := time.Now()
 	agent, err := agenthook.ParseAgent(agentHookRunAgent)
 	if err != nil {
 		return nil
@@ -217,9 +222,134 @@ func runAgentHookRun(cmd *cobra.Command, _ []string) error {
 		agent,
 		cmd.InOrStdin(),
 		cmd.OutOrStdout(),
-		agentstate.Handler{Agent: agent, Recorder: agentstate.NewTmuxRecorder()},
+		restoreHookHandler{
+			Handler: agentstate.Handler{Agent: agent, Recorder: agentstate.NewTmuxRecorder()},
+			tracker: newHookTracker(started.Add(hookBudget)),
+		},
 	)
 	return nil
+}
+
+// hookBudget leaves a margin inside the two-second timeout kwt installs for
+// every hook, so a slow save is abandoned before the agent kills the hook.
+const hookBudget = 1500 * time.Millisecond
+
+// newHookTracker returns a tracker for the pane named by $TMUX_PANE, or one
+// that does nothing outside tmux or without a kwt home.
+func newHookTracker(deadline time.Time) *tmuxrestore.HookTracker {
+	socket, ok := tmuxrestore.SocketFromTMUX(os.Getenv("TMUX"))
+	if !ok {
+		return nil
+	}
+	executable, err := agentstate.TmuxExecutable()
+	if err != nil {
+		return nil
+	}
+	home, err := config.CanonicalHome()
+	if err != nil {
+		return nil
+	}
+	return &tmuxrestore.HookTracker{
+		Tmux:       tmuxrestore.Tmux{Executable: executable, Socket: socket},
+		Pane:       strings.TrimSpace(os.Getenv("TMUX_PANE")),
+		Store:      tmuxrestore.OpenStore(home),
+		Processes:  tmuxrestore.SystemProcesses(),
+		Protection: tmuxrestore.ProvenanceProtection(prStorePath()),
+		Deadline:   deadline,
+	}
+}
+
+// restoreHookHandler records attention state first, then the pane's resume
+// record and snapshot, so a slow save never delays the attention badge.
+type restoreHookHandler struct {
+	agentstate.Handler
+	tracker *tmuxrestore.HookTracker
+}
+
+func (h restoreHookHandler) track(ctx context.Context, input agenthook.CommonInput, end bool, reason string) {
+	if h.tracker == nil || input.AgentID != "" {
+		return
+	}
+	h.tracker.Track(ctx, tmuxrestore.Event{
+		Agent:          string(h.Agent),
+		ConversationID: input.SessionID,
+		TranscriptPath: input.TranscriptPath,
+		PermissionMode: string(input.PermissionMode),
+		IsEnd:          end,
+		EndReason:      reason,
+	})
+}
+
+func (h restoreHookHandler) SessionStart(
+	ctx context.Context, input agenthook.SessionStartInput,
+) (agenthook.SessionStartOutput, error) {
+	output, err := h.Handler.SessionStart(ctx, input)
+	h.track(ctx, input.CommonInput, false, "")
+	return output, err
+}
+
+func (h restoreHookHandler) UserPromptSubmit(
+	ctx context.Context, input agenthook.UserPromptSubmitInput,
+) (agenthook.UserPromptSubmitOutput, error) {
+	output, err := h.Handler.UserPromptSubmit(ctx, input)
+	h.track(ctx, input.CommonInput, false, "")
+	return output, err
+}
+
+func (h restoreHookHandler) PreToolUse(
+	ctx context.Context, input agenthook.PreToolUseInput,
+) (agenthook.PreToolUseOutput, error) {
+	output, err := h.Handler.PreToolUse(ctx, input)
+	h.track(ctx, input.CommonInput, false, "")
+	return output, err
+}
+
+func (h restoreHookHandler) PostToolUse(
+	ctx context.Context, input agenthook.PostToolUseInput,
+) (agenthook.PostToolUseOutput, error) {
+	output, err := h.Handler.PostToolUse(ctx, input)
+	h.track(ctx, input.CommonInput, false, "")
+	return output, err
+}
+
+func (h restoreHookHandler) PostToolUseFailure(
+	ctx context.Context, input agenthook.PostToolUseFailureInput,
+) (agenthook.PostToolUseFailureOutput, error) {
+	output, err := h.Handler.PostToolUseFailure(ctx, input)
+	h.track(ctx, input.CommonInput, false, "")
+	return output, err
+}
+
+func (h restoreHookHandler) PermissionRequest(
+	ctx context.Context, input agenthook.PermissionRequestInput,
+) (agenthook.PermissionRequestOutput, error) {
+	output, err := h.Handler.PermissionRequest(ctx, input)
+	h.track(ctx, input.CommonInput, false, "")
+	return output, err
+}
+
+func (h restoreHookHandler) Notification(
+	ctx context.Context, input agenthook.NotificationInput,
+) (agenthook.NotificationOutput, error) {
+	output, err := h.Handler.Notification(ctx, input)
+	h.track(ctx, input.CommonInput, false, "")
+	return output, err
+}
+
+func (h restoreHookHandler) Stop(
+	ctx context.Context, input agenthook.StopInput,
+) (agenthook.StopOutput, error) {
+	output, err := h.Handler.Stop(ctx, input)
+	h.track(ctx, input.CommonInput, false, "")
+	return output, err
+}
+
+func (h restoreHookHandler) SessionEnd(
+	ctx context.Context, input agenthook.SessionEndInput,
+) (agenthook.SessionEndOutput, error) {
+	output, err := h.Handler.SessionEnd(ctx, input)
+	h.track(ctx, input.CommonInput, true, string(input.Reason))
+	return output, err
 }
 
 func parseHookAgents(names []string) ([]agenthook.Agent, error) {
