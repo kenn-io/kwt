@@ -12,10 +12,6 @@ import (
 // ResumeOption is the tmux pane user option holding a pane's Record.
 const ResumeOption = "@kwt_agent_resume"
 
-// PresetAgentOption is the tmux pane user option naming the configured agent
-// a kwt layout preset started in the pane.
-const PresetAgentOption = "@kwt_pane_agent"
-
 // ProcessRef identifies one process. The start time keeps a reused PID from
 // being mistaken for the original process.
 type ProcessRef struct {

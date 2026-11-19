@@ -10,7 +10,11 @@ import (
 
 const workspaceDestroyOption = "@kwt-destroy-unattached"
 const workspaceLifetimeReadyOption = "@kwt-lifetime-hooks-ready"
-const workspaceCreationOption = "@kwt-creating"
+
+// CreationTokenOption marks a session with the token of the kwt call that
+// created it. Cleanup after a failed create removes a session only when it
+// carries that call's token, never a same-named session someone else made.
+const CreationTokenOption = "@kwt-creating"
 
 // The hook event supplies the session, so the global entries restore only it.
 // The marker records the local policy, or inherit when it matches the global one.

@@ -63,7 +63,11 @@ func NewWorkspaceSessions(options WorkspaceSessionsOptions) *WorkspaceSessions {
 		if err != nil {
 			return nil, err
 		}
-		return NewWorkspaceRunner(command, options.StripNames), nil
+		runner := NewWorkspaceRunner(command, options.StripNames)
+		runner.restore = options.Restore
+		runner.socketName = endpoint.SocketName
+		runner.socketTempDir = servers.socketTempDir(endpoint)
+		return runner, nil
 	}
 	sessions.attachForEndpoint = func(
 		endpoint SessionEndpoint,

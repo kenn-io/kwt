@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kwttmux "go.kenn.io/kwt/internal/tmux"
 )
 
 func paneLine(fields ...string) string { return strings.Join(fields, "\t") }
@@ -72,7 +73,7 @@ func TestReadSnapshotFromLiveServer(t *testing.T) {
 	_, err = tm.Run(ctx, "set-option", "-p", "-t", "work:edit.1", ResumeOption,
 		`{"agent":"codex","conversation_id":"x-1","recorded_at":3}`)
 	require.NoError(t, err)
-	_, err = tm.Run(ctx, "set-option", "-p", "-t", "work:edit.0", PresetAgentOption, "roborev")
+	_, err = tm.Run(ctx, "set-option", "-p", "-t", "work:edit.0", kwttmux.PaneAgentOption, "roborev")
 	require.NoError(t, err)
 	_, err = tm.Run(ctx, "new-session", "-d", "-s", "ops", "-c", dir)
 	require.NoError(t, err)

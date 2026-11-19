@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -56,6 +57,9 @@ type WorkspaceSessionsOptions struct {
 	// TMUX_TMPDIR instead of inheriting it.
 	DefaultServerTempDirSet bool
 	ReportDiagnostic        func(error)
+	// Restore, when set, is offered each missing worktree session before
+	// a layout preset builds it.
+	Restore SkeletonRestorer
 }
 
 type serverCommands struct {
@@ -91,6 +95,20 @@ func (f serverCommands) kwtServer() *TmuxCommand {
 		KWTServerSocketName,
 		f.stripNames,
 	)
+}
+
+// socketTempDir returns the TMUX_TMPDIR the endpoint's server runs with, or
+// "" when it runs with TMUX_TMPDIR unset and so keeps its socket under /tmp.
+// kwt's server never inherits TMUX_TMPDIR; the default server does unless a
+// directory was set.
+func (f serverCommands) socketTempDir(endpoint SessionEndpoint) string {
+	if endpoint.SocketName == KWTServerSocketName {
+		return f.kwtServerTempDir
+	}
+	if f.defaultServerTempDirSet {
+		return f.defaultServerTempDir
+	}
+	return os.Getenv("TMUX_TMPDIR")
 }
 
 // compat(kag1): default-server adoption

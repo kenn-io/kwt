@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	kwttmux "go.kenn.io/kwt/internal/tmux"
 )
 
 // Pane is one saved pane, keyed by its index in the window. tmux assigns
@@ -78,7 +80,7 @@ var paneFields = []string{
 	"#{window_active}", "#{window_zoomed_flag}",
 	"#{pane_index}", "#{pane_left}", "#{pane_top}", "#{pane_width}", "#{pane_height}",
 	"#{pane_active}", "#{pane_current_path}", "#{pane_id}",
-	"#{" + PresetAgentOption + "}", "#{" + ResumeOption + "}",
+	"#{" + kwttmux.PaneAgentOption + "}", "#{" + ResumeOption + "}",
 }
 
 var paneFormat = strings.Join(paneFields, "\t")

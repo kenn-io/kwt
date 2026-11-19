@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kwttmux "go.kenn.io/kwt/internal/tmux"
 )
 
 // restoreFixture is one private tmux socket with an isolated home. Panes run
@@ -115,7 +116,7 @@ func TestRestoreRebuildsTheSessionAndHandsOffLaunches(t *testing.T) {
 	startServer(t, f.tm, "-s", "work", "-c", f.dir, "-x", "120", "-y", "30")
 	mustRun(t, f.tm, "split-window", "-h", "-t", "work", "-c", f.dir)
 	setResume(t, f.tm, "work.0", claudeRecord("c-1", "claude", "--model", "opus", "--frobnicate=secret", "hi"))
-	mustRun(t, f.tm, "set-option", "-p", "-t", "work.1", PresetAgentOption, "roborev")
+	mustRun(t, f.tm, "set-option", "-p", "-t", "work.1", kwttmux.PaneAgentOption, "roborev")
 	f.lose(t)
 	id := f.entryNamed(t, "work").ID
 

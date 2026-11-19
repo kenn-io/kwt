@@ -64,7 +64,32 @@ type WorkspaceRunner struct {
 	extraStripNames []string
 	credentialNames []string
 	protected       bool
+	// restore, when set, is offered each missing worktree session before
+	// the layout preset builds it.
+	restore       SkeletonRestorer
+	socketName    string
+	socketTempDir string
 }
+
+// SkeletonRequest describes a worktree session about to be created.
+type SkeletonRequest struct {
+	// SocketName is the server's socket name, or "" for the default server.
+	SocketName string
+	// SocketTempDir is the TMUX_TMPDIR the server runs with, or "" when it
+	// runs with TMUX_TMPDIR unset.
+	SocketTempDir string
+	Session       string
+	WorkspacePath string
+	Generation    string
+	// Create builds the session through the worktree create path, as
+	// CreateFromSkeleton does.
+	Create func(ctx context.Context, token string, build func(ctx context.Context, firstPane string) error) error
+}
+
+// SkeletonRestorer creates a missing worktree session from saved state. It
+// reports false when nothing is saved for the session, so the layout preset
+// builds it instead.
+type SkeletonRestorer func(ctx context.Context, request SkeletonRequest) (bool, error)
 
 const partialSessionCleanupTimeout = 2 * time.Second
 
@@ -234,13 +259,24 @@ func (r *WorkspaceRunner) ensure(
 		}
 	}
 	if sessionExists {
-		if err := r.repairBootstrap(ctx, session, worktreeDir, generation); err != nil {
+		return r.repairBootstrap(ctx, session, worktreeDir, generation)
+	}
+	if r.restore != nil && generation != "" && !r.protected {
+		restored, err := r.restore(ctx, SkeletonRequest{
+			SocketName:    r.socketName,
+			SocketTempDir: r.socketTempDir,
+			Session:       session,
+			WorkspacePath: worktreeDir,
+			Generation:    generation,
+			Create: func(ctx context.Context, token string, build func(context.Context, string) error) error {
+				return r.CreateFromSkeleton(ctx, session, worktreeDir, generation, token, build)
+			},
+		})
+		if err != nil || restored {
 			return err
 		}
-	} else if err := r.create(ctx, session, worktreeDir, generation, layout); err != nil {
-		return err
 	}
-	return nil
+	return r.create(ctx, session, worktreeDir, generation, layout)
 }
 
 func (r *WorkspaceRunner) validateExistingWorktreeIdentity(
@@ -565,6 +601,59 @@ func (r *WorkspaceRunner) create(
 	session, worktreeDir, generation string,
 	layout models.Layout,
 ) error {
+	return r.createWith(ctx, session, worktreeDir, generation, rand.Text(), false,
+		func(ctx context.Context, firstPane string) error {
+			paneIDs := make([]string, 0, len(layout.Panes))
+			paneIDs = append(paneIDs, firstPane)
+			for _, args := range BuildRemainingPaneSequence(session, worktreeDir, layout) {
+				if args[0] == "split-window" {
+					out, err := r.tmux.RunCommandOutputContext(ctx, args...)
+					if err != nil {
+						return wrapTmuxErr(args, err)
+					}
+					paneIDs = append(paneIDs, strings.TrimSpace(out))
+				} else if err := r.tmux.RunCommandContext(ctx, args...); err != nil {
+					return wrapTmuxErr(args, err)
+				}
+			}
+			for _, args := range BuildPaneCommandSequence(paneIDs, layout.Panes, layout.Agents) {
+				if err := r.tmux.RunCommandContext(ctx, args...); err != nil {
+					return wrapTmuxErr(args, err)
+				}
+			}
+			return nil
+		})
+}
+
+// CreateFromSkeleton creates a worktree session the way create does — the
+// same bootstrap, lifetime hold, and first-pane login shell — but runs build
+// in place of a layout preset. Session restore uses it to rebuild a saved
+// session's windows. token marks the session in the create batch, so the
+// caller can find its unfinished session after an interruption. Every
+// failure removes the session only if it still carries token.
+func (r *WorkspaceRunner) CreateFromSkeleton(
+	ctx context.Context,
+	session, worktreeDir, generation, token string,
+	build func(ctx context.Context, firstPane string) error,
+) error {
+	return r.createWith(ctx, session, worktreeDir, generation, token, true, build)
+}
+
+// createWith runs the shared create steps, then fill. owned selects
+// token-checked removal for failures after new-session; otherwise the
+// session is killed by name.
+func (r *WorkspaceRunner) createWith(
+	ctx context.Context,
+	session, worktreeDir, generation, token string,
+	owned bool,
+	fill func(ctx context.Context, firstPane string) error,
+) error {
+	fail := func(err error) error {
+		if owned {
+			return r.removeOwnedSession(ctx, session, token, err)
+		}
+		return r.abortWith(ctx, session, err)
+	}
 	// The session does not exist yet, so only the launcher and server-global
 	// sources contribute strip names; querying the session table would be a
 	// guaranteed-to-fail subprocess.
@@ -578,19 +667,17 @@ func (r *WorkspaceRunner) create(
 	}
 	// The token marks the session as this call's, so a failed batch removes
 	// only a session it created, even when cancellation hides that outcome.
-	token := rand.Text()
 	createCmd := append(BuildSessionCreateCommand(session, worktreeDir),
-		";", "set-option", "-t", "="+session+":", workspaceCreationOption, token)
+		";", "set-option", "-t", "="+session+":", CreationTokenOption, token)
 	createCmd = append(createCmd, holdWorkspaceLifetime(session, executable)...)
 	firstPane, err := r.tmux.RunCommandOutputContext(ctx, createCmd...)
 	if err != nil {
 		return r.removeOwnedSession(ctx, session, token, wrapTmuxErr(createCmd, err))
 	}
 	if err := r.checkWorkspaceLifetimeHooks(ctx, session); err != nil {
-		return r.abortWith(ctx, session, fmt.Errorf("cannot keep workspace alive until first attach: %w", err))
+		return fail(fmt.Errorf("cannot keep workspace alive until first attach: %w", err))
 	}
-	paneIDs := make([]string, 0, len(layout.Panes))
-	paneIDs = append(paneIDs, strings.TrimSpace(firstPane))
+	firstPane = strings.TrimSpace(firstPane)
 
 	bootCmd := buildWorkspaceSessionBootstrapCommand(
 		session, worktreeDir, generation, stripNames,
@@ -598,9 +685,9 @@ func (r *WorkspaceRunner) create(
 	if r.protected {
 		updateEnvironment, updateErr := r.protectedUpdateEnvironment(ctx, session)
 		if updateErr != nil {
-			return r.abort(ctx, session, []string{
+			return fail(wrapTmuxErr([]string{
 				"show-options", "-t", session, "update-environment",
-			}, updateErr)
+			}, updateErr))
 		}
 		bootCmd = buildProtectedSessionBootstrapCommand(
 			session,
@@ -611,14 +698,14 @@ func (r *WorkspaceRunner) create(
 		)
 	}
 	if err := r.tmux.RunCommandContext(ctx, bootCmd...); err != nil {
-		return r.abort(ctx, session, bootCmd, err)
+		return fail(wrapTmuxErr(bootCmd, err))
 	}
 	defaultShellCmd := []string{
 		"show-options", "-v", "-t", session, "default-shell",
 	}
 	defaultShellOut, err := r.tmux.RunCommandOutputContext(ctx, defaultShellCmd...)
 	if err != nil {
-		return r.abort(ctx, session, defaultShellCmd, err)
+		return fail(wrapTmuxErr(defaultShellCmd, err))
 	}
 	defaultShell := strings.TrimSpace(defaultShellOut)
 	if defaultShell == "" {
@@ -628,32 +715,19 @@ func (r *WorkspaceRunner) create(
 			defaultShellCmd...,
 		)
 		if err != nil {
-			return r.abort(ctx, session, defaultShellCmd, err)
+			return fail(wrapTmuxErr(defaultShellCmd, err))
 		}
 		defaultShell = strings.TrimSpace(defaultShellOut)
 	}
 	if defaultShell == "" {
-		return r.abort(ctx, session, defaultShellCmd, fmt.Errorf("tmux returned an empty default-shell"))
+		return fail(wrapTmuxErr(defaultShellCmd, fmt.Errorf("tmux returned an empty default-shell")))
 	}
-	respawnCmd := BuildFirstPaneRespawnCommand(paneIDs[0], worktreeDir, defaultShell)
+	respawnCmd := BuildFirstPaneRespawnCommand(firstPane, worktreeDir, defaultShell)
 	if err := r.tmux.RunCommandContext(ctx, respawnCmd...); err != nil {
-		return r.abort(ctx, session, respawnCmd, err)
+		return fail(wrapTmuxErr(respawnCmd, err))
 	}
-	for _, args := range BuildRemainingPaneSequence(session, worktreeDir, layout) {
-		if args[0] == "split-window" {
-			out, err := r.tmux.RunCommandOutputContext(ctx, args...)
-			if err != nil {
-				return r.abort(ctx, session, args, err)
-			}
-			paneIDs = append(paneIDs, strings.TrimSpace(out))
-		} else if err := r.tmux.RunCommandContext(ctx, args...); err != nil {
-			return r.abort(ctx, session, args, err)
-		}
-	}
-	for _, args := range BuildPaneCommandSequence(paneIDs, layout.Panes) {
-		if err := r.tmux.RunCommandContext(ctx, args...); err != nil {
-			return r.abort(ctx, session, args, err)
-		}
+	if err := fill(ctx, firstPane); err != nil {
+		return fail(err)
 	}
 	return nil
 }
@@ -721,19 +795,9 @@ func (r *WorkspaceRunner) protectedUpdateEnvironment(
 	return strings.Join(kept, " "), nil
 }
 
-// abort wraps a construction-command failure and kills the just-created
-// session so it does not linger half-built. Killing is best-effort: a failure
-// there is annotated onto the returned error but never replaces it.
-func (r *WorkspaceRunner) abort(
-	ctx context.Context,
-	session string,
-	args []string,
-	err error,
-) error {
-	return r.abortWith(ctx, session, wrapTmuxErr(args, err))
-}
-
-// abortWith kills the session this call created and returns err.
+// abortWith kills the session this call created so it does not linger
+// half-built, and returns err. Killing is best-effort: a failure there is
+// annotated onto the returned error but never replaces it.
 func (r *WorkspaceRunner) abortWith(ctx context.Context, session string, err error) error {
 	// Cleanup must finish after the caller cancels.
 	cleanupCtx, cancel := context.WithTimeout(
@@ -759,7 +823,7 @@ func (r *WorkspaceRunner) removeOwnedSession(ctx context.Context, session, token
 	defer cancel()
 	target := "=" + session + ":"
 	cleanupErr := r.tmux.RunCommandContext(cleanupCtx, "if-shell", "-F", "-t", target,
-		"#{==:#{"+workspaceCreationOption+"},"+token+"}", "kill-session -t "+quoteTmuxCommandArgument(target))
+		"#{==:#{"+CreationTokenOption+"},"+token+"}", "kill-session -t "+quoteTmuxCommandArgument(target))
 	if cleanupErr == nil {
 		return err
 	}

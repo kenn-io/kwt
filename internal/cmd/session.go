@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"slices"
@@ -15,8 +16,10 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/kwt/internal/agentstate"
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/credentials"
 	kwttmux "go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/tmuxrestore"
+	shared "go.kenn.io/kwt/worktree"
 )
 
 var sessionJSON bool
@@ -215,38 +218,98 @@ func runSessionSnapshot(cmd *cobra.Command, _ []string) error {
 // programs before reporting them as still waiting.
 const sessionClaimWait = 3 * time.Second
 
+// sessionRestoreDeps returns the inputs every restore shares.
+func sessionRestoreDeps(agents map[string]string) (tmuxrestore.RestoreDeps, error) {
+	store, err := sessionStore()
+	if err != nil {
+		return tmuxrestore.RestoreDeps{}, err
+	}
+	executable, err := agentstate.TmuxExecutable()
+	if err != nil {
+		return tmuxrestore.RestoreDeps{}, err
+	}
+	kwtPath, err := os.Executable()
+	if err != nil {
+		return tmuxrestore.RestoreDeps{}, fmt.Errorf("locate kwt: %w", err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return tmuxrestore.RestoreDeps{}, fmt.Errorf("locate home directory: %w", err)
+	}
+	return tmuxrestore.RestoreDeps{
+		Store:      store,
+		Executable: executable,
+		Kwt:        kwtPath,
+		Agents:     agents,
+		Home:       home,
+		Protection: tmuxrestore.ProvenanceProtection(prStorePath()),
+	}, nil
+}
+
+// restoreSavedWorktreeSession brings a missing worktree session back from
+// its saved state when kwt has one for it. Opening does not wait for the
+// panes to start their programs.
+func restoreSavedWorktreeSession(ctx context.Context, req kwttmux.SkeletonRequest) (bool, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return false, err
+	}
+	deps, err := sessionRestoreDeps(cfg.Agents)
+	if err != nil {
+		return false, err
+	}
+	_, restored, err := tmuxrestore.RestoreWorkspace(ctx, deps, req)
+	return restored, err
+}
+
+// newSavedWorktreeSessions returns the worktree sessions restore opens a
+// saved worktree session through. Tests replace it to keep off kwt's server.
+var newSavedWorktreeSessions = func(names []string, restore kwttmux.SkeletonRestorer) openWorkspaceRunner {
+	return kwttmux.NewWorkspaceSessions(kwttmux.WorkspaceSessionsOptions{
+		StripNames:       names,
+		ReportDiagnostic: tmuxDiagnosticReporter(os.Stderr),
+		Restore:          restore,
+	})
+}
+
+// openSavedWorktreeSession opens a saved worktree session the way
+// `kwt open --start-session` does, under the same project and worktree
+// identity checks, with restore in place of the layout preset.
+func openSavedWorktreeSession(names []string) func(context.Context, tmuxrestore.Entry, kwttmux.SkeletonRestorer) error {
+	return func(ctx context.Context, entry tmuxrestore.Entry, restore kwttmux.SkeletonRestorer) error {
+		path, generation := entry.Session.Path, entry.Session.WorkspaceGeneration
+		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+			return tmuxrestore.ErrWorktreeChanged
+		}
+		sessions := newSavedWorktreeSessions(names, restore)
+		_, err := runWorktreeSessionEstablishment(ctx, path, generation, names, func(session string) error {
+			if session != entry.Session.Name {
+				return tmuxrestore.ErrWorktreeChanged
+			}
+			_, err := sessions.EstablishWithGeneration(ctx, session, path, generation, kwttmux.BlankLayout())
+			return err
+		})
+		if condition, ok := errors.AsType[*shared.ConditionError](err); ok && condition.Reason == shared.ReasonGenerationChanged {
+			return tmuxrestore.ErrWorktreeChanged
+		}
+		return err
+	}
+}
+
 func runSessionRestore(cmd *cobra.Command, args []string) error {
 	return ExecuteWithContext(false, func(appCtx *CommandContext) error {
-		store, err := sessionStore()
+		deps, err := sessionRestoreDeps(appCtx.Config.Agents)
 		if err != nil {
 			return err
-		}
-		executable, err := agentstate.TmuxExecutable()
-		if err != nil {
-			return err
-		}
-		kwtPath, err := os.Executable()
-		if err != nil {
-			return fmt.Errorf("locate kwt: %w", err)
-		}
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("locate home directory: %w", err)
 		}
 		// A save first turns sessions from a server that is now gone into
 		// restorable entries.
-		if _, err := saveSessions(cmd, store, executable); err != nil {
+		if _, err := saveSessions(cmd, deps.Store, deps.Executable); err != nil {
 			return err
 		}
-		reports, restoreErr := tmuxrestore.Restore(commandContext(cmd), tmuxrestore.RestoreDeps{
-			Store:      store,
-			Executable: executable,
-			Kwt:        kwtPath,
-			Agents:     appCtx.Config.Agents,
-			Home:       home,
-			Protection: tmuxrestore.ProvenanceProtection(prStorePath()),
-			ClaimWait:  sessionClaimWait,
-		}, args, sessionAll)
+		deps.ClaimWait = sessionClaimWait
+		deps.Workspace = openSavedWorktreeSession(credentials.ProtectedNames(appCtx.Config))
+		reports, restoreErr := tmuxrestore.Restore(commandContext(cmd), deps, args, sessionAll)
 		if err := printRestoreReports(cmd, reports); err != nil {
 			return err
 		}

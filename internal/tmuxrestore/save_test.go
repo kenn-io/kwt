@@ -191,7 +191,7 @@ func TestSaveExcludesPullRequestWorkspaces(t *testing.T) {
 	require.NoError(t, err)
 	setResume(t, f.tm, "plain:0.0", Record{Agent: "claude", ConversationID: "c-0"})
 	setResume(t, f.tm, "plain:0.1", Record{Agent: "claude", ConversationID: "c-1"})
-	_, err = f.tm.Run(t.Context(), "set-option", "-p", "-t", "plain:0.1", PresetAgentOption, "roborev")
+	_, err = f.tm.Run(t.Context(), "set-option", "-p", "-t", "plain:0.1", kwttmux.PaneAgentOption, "roborev")
 	require.NoError(t, err)
 
 	f.save(t)

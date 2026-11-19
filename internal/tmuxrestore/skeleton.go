@@ -6,12 +6,9 @@ import (
 	"os"
 	"slices"
 	"strings"
-)
 
-// RestoreTokenOption marks a session a restore created. Cleanup kills only
-// sessions that carry the restore's own token, so it never touches a session
-// the user made with the same name.
-const RestoreTokenOption = "@kwt_restore_token"
+	kwttmux "go.kenn.io/kwt/internal/tmux"
+)
 
 const maxWindowSize = 10000
 
@@ -78,7 +75,7 @@ func (b Builder) CreateSession(ctx context.Context, s Session, first Window) (Cr
 	}
 	// "=name:" is an exact session match; tmux does not resolve a bare
 	// "=name" for set-option.
-	args = append(args, ";", "set-option", "-t", "="+s.Name+":", RestoreTokenOption, b.Token)
+	args = append(args, ";", "set-option", "-t", "="+s.Name+":", kwttmux.CreationTokenOption, b.Token)
 	out, err := b.Tmux.Run(ctx, args...)
 	if err != nil {
 		return CreatedSession{}, fmt.Errorf("create session %q: %w", s.Name, err)
@@ -100,6 +97,44 @@ func (b Builder) CreateSession(ctx context.Context, s Session, first Window) (Cr
 		// pane gets its own saved directory before anything runs in it.
 		if _, err := b.Tmux.Run(ctx, "respawn-pane", "-k", "-c", paneDir, "-t", created.PaneID); err != nil {
 			return created, fmt.Errorf("move first pane of %q: %w", s.Name, err)
+		}
+	}
+	return created, nil
+}
+
+// Adopt takes over a session kwt's worktree create path made, from its first
+// pane, as CreateSession would have made it. The pane moves to its saved
+// directory when that still exists; otherwise it stays where kwt started it.
+func (b Builder) Adopt(ctx context.Context, paneID string, first Window) (CreatedSession, error) {
+	out, err := b.Tmux.Run(ctx, "display-message", "-p", "-t", paneID,
+		"#{session_id}\t#{window_id}\t#{window_index}\t#{pane_current_path}")
+	if err != nil {
+		return CreatedSession{}, fmt.Errorf("read new session: %w", err)
+	}
+	f := strings.Split(strings.TrimSpace(out), "\t")
+	if len(f) != 4 {
+		return CreatedSession{}, fmt.Errorf("read new session: unexpected tmux output %q", out)
+	}
+	index, err := atois(f[2])
+	if err != nil {
+		return CreatedSession{}, err
+	}
+	created := CreatedSession{ID: f[0], WindowID: f[1], WindowIndex: index[0], PaneID: paneID}
+	if !first.AutoRename && first.Name != "" {
+		if _, err := b.Tmux.Run(ctx, "rename-window", "-t", created.WindowID, first.Name); err != nil {
+			return created, fmt.Errorf("name window: %w", err)
+		}
+	}
+	if len(first.Panes) == 0 {
+		return created, nil
+	}
+	dir, ok := resolveDir(first.Panes[0].Dir, b.Home)
+	created.PaneDirMissing = !ok
+	if ok && dir != f[3] {
+		// Respawning without a command reruns kwt's login shell in the
+		// saved directory.
+		if _, err := b.Tmux.Run(ctx, "respawn-pane", "-k", "-c", dir, "-t", paneID); err != nil {
+			return created, fmt.Errorf("move first pane: %w", err)
 		}
 	}
 	return created, nil
@@ -255,7 +290,7 @@ func (b Builder) FinishSession(ctx context.Context, sessionID string, s Session)
 // whether there was one. Matching by token rather than by ID covers a
 // restore interrupted before it recorded the session ID.
 func (b Builder) CleanupOwned(ctx context.Context) (bool, error) {
-	out, err := b.Tmux.Run(ctx, "list-sessions", "-F", "#{session_id}\t#{"+RestoreTokenOption+"}")
+	out, err := b.Tmux.Run(ctx, "list-sessions", "-F", "#{session_id}\t#{"+kwttmux.CreationTokenOption+"}")
 	if err != nil {
 		if state, _, _ := b.Tmux.Probe(ctx); state == ServerAbsent {
 			return false, nil

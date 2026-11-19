@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -363,7 +364,7 @@ func TestAbortUsesBoundedCleanupContextAfterCancellation(t *testing.T) {
 	m := &mockWorkspaceTmux{}
 	runner := NewWorkspaceRunner(m, nil)
 
-	err := runner.abort(ctx, "workspace", []string{"set-option"}, context.Canceled)
+	err := runner.abortWith(ctx, "workspace", context.Canceled)
 
 	require.Error(t, err)
 	require.NotNil(t, m.killContext)
@@ -888,4 +889,88 @@ func TestEnsureAndAttachKillsPartialSessionOnPaneCommandFailure(t *testing.T) {
 	assert.Equal(t, "s", m.killedSession)
 	assert.Empty(t, m.attachedTo, "must not attach to a killed session")
 	assert.Empty(t, m.switchedTo, "must not switch to a killed session")
+}
+
+func hasCall(calls [][]string, want ...string) bool {
+	for _, call := range calls {
+		if len(call) >= len(want) && slices.Equal(call[:len(want)], want) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestCreateFromSkeletonMarksTheSessionAndBuildsFromTheFirstPane(t *testing.T) {
+	m := &mockWorkspaceTmux{hasSession: false}
+	r := NewWorkspaceRunner(m, nil)
+	var firstPane string
+
+	err := r.CreateFromSkeleton(t.Context(), "s", "/wt", "gen-1", "tok", func(_ context.Context, pane string) error {
+		firstPane = pane
+		return nil
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "%1", firstPane)
+	assert.Contains(t, m.calls[0], "tok", "the caller's token marks the session in the create batch")
+	assert.True(t, hasCall(m.calls, "respawn-pane", "-k", "-c", "/wt", "-t", "%1"),
+		"the first pane gets the login shell as on any create")
+	assert.False(t, hasCall(m.calls, "split-window"), "no preset layout is built")
+}
+
+func TestCreateFromSkeletonRemovesOnlyItsOwnSessionOnFailure(t *testing.T) {
+	m := &mockWorkspaceTmux{hasSession: false}
+	r := NewWorkspaceRunner(m, nil)
+
+	err := r.CreateFromSkeleton(t.Context(), "s", "/wt", "gen-1", "tok", func(context.Context, string) error {
+		return errors.New("layout failed")
+	})
+
+	require.ErrorContains(t, err, "layout failed")
+	assert.False(t, m.killSessionCalled, "a same-named session without the token is not killed")
+	assert.True(t, hasCall(m.calls, "if-shell", "-F", "-t", "=s:", "#{==:#{"+CreationTokenOption+"},tok}"))
+}
+
+func TestEnsureOffersAMissingWorktreeSessionToTheRestorer(t *testing.T) {
+	layout := models.Layout{Arrange: "even-horizontal", Panes: []string{"codex", "vim"}}
+	cases := []struct {
+		name       string
+		exists     bool
+		generation string
+		handled    bool
+		offered    bool
+		built      bool
+	}{
+		{"restored", false, "gen-1", true, true, false},
+		{"nothing saved", false, "gen-1", false, true, true},
+		{"session already running", true, "gen-1", true, false, false},
+		{"directory workspace", false, "", true, false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &mockWorkspaceTmux{
+				hasSession: tc.exists, sessionWorkspace: "/wt",
+				sessionWorkspaceID: WorkspacePathIdentity("/wt"), sessionGeneration: "gen-1",
+			}
+			r := NewWorkspaceRunner(m, nil)
+			var offered *SkeletonRequest
+			r.restore = func(_ context.Context, request SkeletonRequest) (bool, error) {
+				offered = &request
+				return tc.handled, nil
+			}
+			r.socketName = KWTServerSocketName
+
+			err := r.ensure(t.Context(), "s", "/wt", tc.generation, layout)
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.offered, offered != nil)
+			if offered != nil {
+				assert.Equal(t, "s", offered.Session)
+				assert.Equal(t, "/wt", offered.WorkspacePath)
+				assert.Equal(t, "gen-1", offered.Generation)
+				assert.Equal(t, KWTServerSocketName, offered.SocketName)
+			}
+			assert.Equal(t, tc.built, hasCall(m.calls, "split-window"))
+		})
+	}
 }

@@ -33,8 +33,14 @@ var (
 
 	discoverOpenWorktree = discovery.DiscoverWorktree
 
+	// A missing worktree session with saved state comes back as it was
+	// saved rather than from the layout preset.
 	newOpenWorkspaceRunner = func(names []string) openWorkspaceRunner {
-		return newCommandWorkspaceSessions(names, os.Stderr)
+		return tmux.NewWorkspaceSessions(tmux.WorkspaceSessionsOptions{
+			StripNames:       names,
+			ReportDiagnostic: tmuxDiagnosticReporter(os.Stderr),
+			Restore:          restoreSavedWorktreeSession,
+		})
 	}
 )
 

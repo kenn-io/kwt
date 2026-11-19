@@ -8,6 +8,10 @@ import (
 	"go.kenn.io/kwt/pkg/models"
 )
 
+// PaneAgentOption is the pane option naming the configured agent a layout
+// preset started in the pane.
+const PaneAgentOption = "@kwt_pane_agent"
+
 // ValidArranges returns the set of tmux select-layout presets kwt accepts.
 func ValidArranges() map[string]bool {
 	return map[string]bool{
@@ -117,11 +121,18 @@ func BuildRemainingPaneSequence(session, worktreeDir string, layout models.Layou
 // creation order with one entry per element of panes (len(paneIDs) ==
 // len(panes)); paneIDs[i] is the ID of the pane for panes[i]. An empty command
 // leaves that pane a plain login shell. It performs no I/O.
-func BuildPaneCommandSequence(paneIDs, panes []string) [][]string {
-	seq := make([][]string, 0, len(panes)*2+1)
+//
+// agents parallels panes: a pane that runs a configured agent is marked with
+// PaneAgentOption, so session restore can start that agent again. A shorter
+// or nil agents slice marks nothing past its end.
+func BuildPaneCommandSequence(paneIDs, panes, agents []string) [][]string {
+	seq := make([][]string, 0, len(panes)*3+1)
 	for i, cmd := range panes {
 		if cmd == "" {
 			continue
+		}
+		if i < len(agents) && agents[i] != "" {
+			seq = append(seq, []string{"set-option", "-p", "-t", paneIDs[i], PaneAgentOption, agents[i]})
 		}
 		seq = append(seq,
 			[]string{"send-keys", "-t", paneIDs[i], "-l", "--", cmd},
@@ -190,11 +201,16 @@ func validatePaneCommand(layoutName string, pane string, agents map[string]strin
 func ResolvePaneCommands(layout models.Layout, agents map[string]string) (models.Layout, error) {
 	resolved := layout
 	resolved.Panes = append([]string(nil), layout.Panes...)
+	resolved.Agents = nil
 	for i, pane := range resolved.Panes {
 		agent, ok := agentReference(pane)
 		if !ok {
 			continue
 		}
+		if resolved.Agents == nil {
+			resolved.Agents = make([]string, len(resolved.Panes))
+		}
+		resolved.Agents[i] = agent
 		command, ok := agents[agent]
 		if !ok {
 			return models.Layout{}, fmt.Errorf("layout %q references unknown agent %q", layout.Name, agent)
