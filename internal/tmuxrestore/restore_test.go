@@ -148,24 +148,18 @@ func TestRestoreRebuildsTheSessionAndHandsOffLaunches(t *testing.T) {
 }
 
 func TestRestoreHandsOffWithItsOwnKwtHome(t *testing.T) {
-	// The server's panes need not have the KWT_HOME restore runs with, and
-	// the handoff must read the restorable file restore wrote.
+	// The server's panes can carry another KWT_HOME than the default one
+	// restore runs with, and the handoff must read the file restore wrote.
 	f := newRestoreFixture(t)
+	t.Setenv("KWT_HOME", filepath.Join(t.TempDir(), "other"))
 	script := "#!/bin/sh\nprintf '%s %s\\n' \"$KWT_HOME\" \"$*\" >> \"$FAKE_KWT_LOG/$(printf %s \"$TMUX_PANE\" | tr -d %)\"\n"
 	require.NoError(t, os.WriteFile(f.kwt, []byte(script), 0o700))
 	startServer(t, f.tm, "-s", "work", "-c", f.dir)
 	setResume(t, f.tm, "work.0", claudeRecord("c-1", "claude"))
 	f.lose(t)
 	id := f.entryNamed(t, "work").ID
-	deps := f.deps()
-	deps.Getenv = func(name string) string {
-		if name == "KWT_HOME" {
-			return "custom"
-		}
-		return ""
-	}
 
-	f.restore(t, deps, id)
+	f.restore(t, f.deps(), id)
 
 	pane := strings.TrimSpace(mustRun(t, f.tm, "list-panes", "-t", "work", "-F", "#{pane_id}"))
 	assert.Equal(t, []string{filepath.Dir(f.store.Dir) + " session exec " + id + " 0"}, f.handoffs(t, pane))
@@ -239,6 +233,30 @@ func TestARestoredSessionSurvivesTheNextServerLoss(t *testing.T) {
 	f.save(t)
 
 	assert.Equal(t, StatePending, f.entryNamed(t, "work").State)
+}
+
+func TestARestoredConversationSurvivesALossBeforeItsAgentStarts(t *testing.T) {
+	// Restore's own save records the session while the pane still waits to
+	// start its agent; that snapshot must still name the conversation.
+	f := newRestoreFixture(t)
+	startServer(t, f.tm, "-s", "work", "-c", f.dir)
+	setResume(t, f.tm, "work.0", claudeRecord("c-1", "claude"))
+	f.lose(t)
+	reports := f.restore(t, f.deps())
+	require.Len(t, reports, 1)
+	require.Equal(t, LaunchWaiting, reports[0].Panes[0].Status)
+
+	mustRun(t, f.tm, "kill-server")
+	f.save(t)
+
+	entry := f.entryNamed(t, "work")
+	var window Window
+	require.NoError(t, f.store.WithLock(t.Context(), f.tm.Socket, func(files *Files) error {
+		window = files.Restorable.Windows[entry.Session.Windows[0].Key].Window
+		return nil
+	}))
+	require.NotNil(t, window.Panes[0].Resume)
+	assert.Equal(t, "c-1", window.Panes[0].Resume.ConversationID)
 }
 
 func TestRestoreStoppedMidBuildRemovesWhatItBuilt(t *testing.T) {

@@ -59,6 +59,11 @@ func TestBuildLaunchClaude(t *testing.T) {
 			argv: "node /lib/@anthropic-ai/claude-code/cli.js --model opus hello",
 			want: "node /lib/@anthropic-ai/claude-code/cli.js --model opus --resume c-1",
 		},
+		{
+			name: "node options before the script stay with node",
+			argv: "node --max-old-space-size=8192 --no-warnings /lib/@anthropic-ai/claude-code/cli.js --model opus",
+			want: "node --max-old-space-size=8192 --no-warnings /lib/@anthropic-ai/claude-code/cli.js --model opus --resume c-1",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

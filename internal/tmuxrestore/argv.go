@@ -125,9 +125,16 @@ func BuildLaunch(rec Record, configured string) LaunchArgs {
 	if rec.Agent == "claude" {
 		flags = claudeFlags
 	}
+	// A runtime keeps its own options and the agent's script, found the way
+	// process detection finds it.
 	prefix := 1
 	if base := filepath.Base(argv[0]); (base == "node" || base == "bun") && len(argv) > 1 {
 		prefix = 2
+		if pkg, ok := agentPackages[rec.Agent]; ok {
+			if i := slices.IndexFunc(argv, func(arg string) bool { return strings.Contains(arg, pkg) }); i > 0 {
+				prefix = i + 1
+			}
+		}
 	}
 	groups, dropped := parseFlags(argv[prefix:], flags)
 	result.Dropped = dropped

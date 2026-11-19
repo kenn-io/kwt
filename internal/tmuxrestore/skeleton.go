@@ -99,6 +99,12 @@ func (b Builder) CreateSession(ctx context.Context, s Session, first Window) (Cr
 		return CreatedSession{}, fmt.Errorf("find tmux: %w", err)
 	}
 	args = append(args, kwttmux.HoldSessionLifetime(s.Name, executable)...)
+	// A server started outside kwt can hold launcher state and configured
+	// credentials; the session masks them before any shell starts, as kwt's
+	// workspace sessions do.
+	for _, name := range b.maskedNames(ctx) {
+		args = append(args, ";", "set-environment", "-t", "="+s.Name, "-r", name)
+	}
 	// A reboot empties /tmp, and tmux given a socket path does not create
 	// its directory the way it does for a socket name.
 	if err := os.MkdirAll(filepath.Dir(b.Tmux.Socket.Path), 0o700); err != nil {
@@ -131,6 +137,25 @@ func (b Builder) CreateSession(ctx context.Context, s Session, first Window) (Cr
 		return created, fmt.Errorf("start first pane of %q: %w", s.Name, err)
 	}
 	return created, nil
+}
+
+// maskedNames lists the variables a restored session hides from its panes:
+// kwt's launcher-state names and the configured credentials, spelled as the
+// server spells them when it has them. Masking a name the server lacks does
+// nothing, so a server that cannot be read still gets every known name.
+func (b Builder) maskedNames(ctx context.Context) []string {
+	names := append(kwttmux.CanonicalStripExactNames(), b.Tmux.StripNames...)
+	if out, err := b.Tmux.Run(ctx, "show-environment", "-g"); err == nil {
+		server := kwttmux.ParseServerEnvNames(out)
+		names = append(names, kwttmux.CanonicalStripNames(server)...)
+		for _, name := range server {
+			if slices.ContainsFunc(b.Tmux.StripNames, func(s string) bool { return strings.EqualFold(s, name) }) {
+				names = append(names, name)
+			}
+		}
+	}
+	slices.Sort(names)
+	return slices.Compact(names)
 }
 
 // shell returns the command restored panes start with: tmux's default shell
@@ -259,15 +284,26 @@ func (b Builder) fill(ctx context.Context, windowID string, first BuiltPane, w W
 		newest = strings.TrimSpace(out)
 		built.Panes = append(built.Panes, BuiltPane{Index: pane.Index, ID: newest, DirMissing: !ok})
 	}
-	// The mark tells later saves which agent a preset started, so the pane
-	// stays restorable after the next server loss too.
+	// The marks tell later saves which agent a preset started and which
+	// conversation the pane holds, so the pane stays restorable after the
+	// next server loss, even one before its agent starts. A copied record
+	// still names the old process, so saves drop it as usual if no agent
+	// replaces it.
 	for i, pane := range w.Panes {
-		if pane.PresetAgent == "" {
-			continue
+		if pane.PresetAgent != "" {
+			if _, err := b.Tmux.Run(ctx, "set-option", "-p", "-t", built.Panes[i].ID,
+				kwttmux.PaneAgentOption, pane.PresetAgent); err != nil {
+				return built, fmt.Errorf("mark pane %d agent: %w", pane.Index, err)
+			}
 		}
-		if _, err := b.Tmux.Run(ctx, "set-option", "-p", "-t", built.Panes[i].ID,
-			kwttmux.PaneAgentOption, pane.PresetAgent); err != nil {
-			return built, fmt.Errorf("mark pane %d agent: %w", pane.Index, err)
+		if pane.Resume != nil {
+			record, err := pane.Resume.Encode()
+			if err != nil {
+				return built, fmt.Errorf("mark pane %d conversation: %w", pane.Index, err)
+			}
+			if _, err := b.Tmux.Run(ctx, "set-option", "-p", "-t", built.Panes[i].ID, ResumeOption, record); err != nil {
+				return built, fmt.Errorf("mark pane %d conversation: %w", pane.Index, err)
+			}
 		}
 	}
 

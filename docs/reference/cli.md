@@ -792,6 +792,9 @@ for a kwt worktree session, and `state` (`pending`, `creating`, or
 - **Layout:** windows come back at their saved indexes with their names,
   pane geometry, active pane, and zoom. When tmux cannot reproduce the saved
   layout, the window is tiled and the report notes `layout differs`.
+- **Environment:** restored panes do not see kwt's launcher-state variables
+  or configured credentials, even on a server started outside kwt, as in
+  kwt's workspace sessions.
 - **Directories:** each pane starts in its saved directory. A pane whose
   directory is gone starts in your home directory, runs nothing, and is
   reported as `directory missing`.

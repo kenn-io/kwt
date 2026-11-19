@@ -619,17 +619,15 @@ func (r restorer) typeLaunches(ctx context.Context, entry *Entry) {
 				l.Status, l.Note = LaunchFailed, "unsafe kwt path"
 				continue
 			}
-			line = fmt.Sprintf("'%s' session exec %s %d", r.deps.Kwt, entry.ID, i)
-			// The pane's shell may not have the KWT_HOME restore runs
-			// with; the handoff must find the file restore wrote.
-			if r.deps.Getenv("KWT_HOME") != "" {
-				home := filepath.Dir(r.deps.Store.Dir)
-				if !safeKwtPath(home) {
-					l.Status, l.Note = LaunchFailed, "unsafe kwt home"
-					continue
-				}
-				line = fmt.Sprintf("env KWT_HOME='%s' %s", home, line)
+			// The pane's shell can have another KWT_HOME than restore,
+			// even when restore uses the default one; the handoff must
+			// find the file restore wrote.
+			home := filepath.Dir(r.deps.Store.Dir)
+			if !safeKwtPath(home) {
+				l.Status, l.Note = LaunchFailed, "unsafe kwt home"
+				continue
 			}
+			line = fmt.Sprintf("env KWT_HOME='%s' '%s' session exec %s %d", home, r.deps.Kwt, entry.ID, i)
 		}
 		if _, err := r.tm.Run(ctx, "send-keys", "-t", l.PaneID, "-l", line,
 			";", "send-keys", "-t", l.PaneID, "Enter"); err != nil {

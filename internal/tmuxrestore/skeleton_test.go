@@ -347,6 +347,41 @@ func TestCreateSessionKeepsProtectedCredentialsOutOfTheServer(t *testing.T) {
 	assert.NotContains(t, out, "secret")
 }
 
+func TestRestoredPanesOnARunningServerDoNotSeeProtectedVariables(t *testing.T) {
+	// The server was started outside kwt and holds a configured credential
+	// and launcher state in its global environment.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	t.Setenv("SHELL", "/bin/sh")
+	tm := privateSocket(t)
+	startServer(t, tm, "-s", "other")
+	mustRun(t, tm, "set-environment", "-g", "CUSTOM_FLEET_TOKEN", "secret")
+	mustRun(t, tm, "set-environment", "-g", "VSCODE_IPC_HOOK", "launcher")
+	tm.StripNames = []string{"custom_fleet_token"}
+	b := Builder{Tmux: tm, Token: "tok", Home: home}
+
+	created, err := b.CreateSession(t.Context(), Session{Name: "work", Path: home}, Window{Width: 80, Height: 24, Panes: []Pane{{Dir: home}}})
+	require.NoError(t, err)
+	later, err := b.BuildWindow(t.Context(), created.ID, 1, Window{Width: 80, Height: 24, Panes: []Pane{{Dir: home}}})
+	require.NoError(t, err)
+
+	for i, pane := range []string{created.PaneID, later.Panes[0].ID} {
+		out := filepath.Join(home, fmt.Sprintf("env-%d", i))
+		mustRun(t, tm, "send-keys", "-t", pane, "-l", "env > "+out+".tmp; mv "+out+".tmp "+out)
+		mustRun(t, tm, "send-keys", "-t", pane, "Enter")
+		var env []byte
+		require.Eventually(t, func() bool {
+			env, err = os.ReadFile(out)
+			return err == nil
+		}, 5*time.Second, 20*time.Millisecond)
+		// Compare names only; a failure must not print the environment.
+		for _, name := range []string{"CUSTOM_FLEET_TOKEN", "VSCODE_IPC_HOOK"} {
+			assert.False(t, strings.Contains(string(env), name+"="), "pane %d sees %s", i, name)
+		}
+	}
+}
+
 func TestBuildPlacesThePanesOfAZoomedWindow(t *testing.T) {
 	// A zoomed window saves zoomed pane sizes; its places come from the
 	// saved layout, which tmux keeps unzoomed.
