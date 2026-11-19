@@ -28,32 +28,47 @@ const (
 
 // Launch status values for one pane.
 const (
+	// LaunchWaiting: the handoff was typed and the pane has not claimed it.
 	LaunchWaiting = "waiting"
 	LaunchStarted = "started"
 	LaunchFailed  = "failed"
+	// LaunchNone: nothing was started in the pane; Note says why.
+	LaunchNone = "none"
 )
 
-// PaneLaunch is one pane's program start during a restore.
+// PaneLaunch is what a restore did in one pane of a window it created.
 type PaneLaunch struct {
-	WindowKey string   `json:"window_key"`
-	Index     int      `json:"index"`
-	PaneID    string   `json:"pane_id"`
-	Status    string   `json:"status"`
-	Argv      []string `json:"argv,omitempty"`
-	Dir       string   `json:"dir,omitempty"`
+	WindowKey   string `json:"window_key"`
+	WindowIndex int    `json:"window_index"`
+	Index       int    `json:"index"`
+	PaneID      string `json:"pane_id"`
+	Agent       string `json:"agent,omitempty"`
+	Status      string `json:"status"`
+	Note        string `json:"note,omitempty"`
+	// Dropped names launch flags that were not replayed.
+	Dropped []string `json:"dropped,omitempty"`
+	// Argv is a resumed conversation's command, handed over by Claim.
+	Argv []string `json:"argv,omitempty"`
+	// Command is a preset agent's configured command, typed as presets
+	// type it.
+	Command string `json:"command,omitempty"`
+	Dir     string `json:"dir,omitempty"`
 }
 
 // Entry is a session from a server that is gone.
 type Entry struct {
-	ID            string       `json:"id"`
-	Server        ServerID     `json:"server"`
-	Session       Session      `json:"session"`
-	SavedAt       int64        `json:"saved_at"`
-	State         EntryState   `json:"state"`
-	Token         string       `json:"token,omitempty"`
-	LiveSessionID string       `json:"live_session_id,omitempty"`
-	LiveServerPID string       `json:"live_server_pid,omitempty"`
-	Launches      []PaneLaunch `json:"launches,omitempty"`
+	ID            string     `json:"id"`
+	Server        ServerID   `json:"server"`
+	Session       Session    `json:"session"`
+	SavedAt       int64      `json:"saved_at"`
+	State         EntryState `json:"state"`
+	Token         string     `json:"token,omitempty"`
+	LiveSessionID string     `json:"live_session_id,omitempty"`
+	LiveServerPID string     `json:"live_server_pid,omitempty"`
+	LiveCreated   string     `json:"live_created,omitempty"`
+	// LaunchedAt is when the entry entered launching, in Unix milliseconds.
+	LaunchedAt int64        `json:"launched_at,omitempty"`
+	Launches   []PaneLaunch `json:"launches,omitempty"`
 }
 
 // SharedWindow is a saved window and, once a restore has created it, where
@@ -87,6 +102,17 @@ func OpenStore(kwtHome string) Store {
 type Files struct {
 	Live       *Snapshot
 	Restorable Restorable
+	commit     func() error
+}
+
+// Commit writes the files now, before the update ends and while the lock is
+// still held. Restore uses it to record each state before the step it
+// describes.
+func (f *Files) Commit() error {
+	if f.commit == nil {
+		return errors.New("commit outside a locked update")
+	}
+	return f.commit()
 }
 
 const (
@@ -128,24 +154,34 @@ func (s Store) WithLock(ctx context.Context, sock Socket, fn func(*Files) error)
 	if files.Restorable.Windows == nil {
 		files.Restorable.Windows = map[string]SharedWindow{}
 	}
-	files.Restorable.Socket = sock
+	if files.Restorable.Socket.Path == "" {
+		files.Restorable.Socket = sock
+	}
+	files.commit = func() error {
+		var err error
+		if liveBefore, err = writeOrRemove(base+liveSuffix, files.Live, files.Live == nil, liveBefore); err != nil {
+			return err
+		}
+		restorableBefore, err = writeOrRemove(base+restorableSuffix, files.Restorable,
+			len(files.Restorable.Entries) == 0, restorableBefore)
+		return err
+	}
 	if err := fn(&files); err != nil {
 		return err
 	}
-	if files.Live == nil {
-		if err := os.Remove(base + liveSuffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("remove live snapshot: %w", err)
+	return files.commit()
+}
+
+// writeOrRemove writes value to path, or removes path when empty, and
+// returns the bytes now on disk.
+func writeOrRemove(path string, value any, empty bool, before []byte) ([]byte, error) {
+	if empty {
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return before, fmt.Errorf("remove %s: %w", filepath.Base(path), err)
 		}
-	} else if err := writeJSON(base+liveSuffix, files.Live, liveBefore); err != nil {
-		return err
+		return nil, nil
 	}
-	if len(files.Restorable.Entries) == 0 {
-		if err := os.Remove(base + restorableSuffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("remove restorable snapshot: %w", err)
-		}
-		return nil
-	}
-	return writeJSON(base+restorableSuffix, files.Restorable, restorableBefore)
+	return writeJSON(path, value, before)
 }
 
 // loadJSON decodes path into target and returns the bytes read. A file that
@@ -167,30 +203,30 @@ func loadJSON(path string, target any) ([]byte, error) {
 	return data, nil
 }
 
-func writeJSON(path string, value any, before []byte) error {
+func writeJSON(path string, value any, before []byte) ([]byte, error) {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode %s: %w", filepath.Base(path), err)
+		return before, fmt.Errorf("encode %s: %w", filepath.Base(path), err)
 	}
 	if bytes.Equal(data, before) {
-		return nil
+		return before, nil
 	}
 	temp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp*")
 	if err != nil {
-		return fmt.Errorf("create %s: %w", filepath.Base(path), err)
+		return before, fmt.Errorf("create %s: %w", filepath.Base(path), err)
 	}
 	defer func() { _ = os.Remove(temp.Name()) }()
 	if _, err := temp.Write(data); err != nil {
 		_ = temp.Close()
-		return fmt.Errorf("write %s: %w", filepath.Base(path), err)
+		return before, fmt.Errorf("write %s: %w", filepath.Base(path), err)
 	}
 	if err := temp.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", filepath.Base(path), err)
+		return before, fmt.Errorf("close %s: %w", filepath.Base(path), err)
 	}
 	if err := os.Rename(temp.Name(), path); err != nil {
-		return fmt.Errorf("replace %s: %w", filepath.Base(path), err)
+		return before, fmt.Errorf("replace %s: %w", filepath.Base(path), err)
 	}
-	return nil
+	return data, nil
 }
 
 func newEntryID() string { return strings.ToLower(rand.Text()) }
@@ -198,13 +234,17 @@ func newEntryID() string { return strings.ToLower(rand.Text()) }
 // Promote turns the live snapshot's sessions into pending entries and
 // clears the live snapshot. A pending entry with the same session name is
 // replaced: the newer entry is the state the user had most recently. Entries
-// already being restored are kept.
+// being restored are kept, unless their restore was onto the server now
+// lost: that server's own snapshot supersedes them.
 func (f *Files) Promote() {
 	if f.Live == nil {
 		return
 	}
 	live := f.Live
 	f.Live = nil
+	f.Restorable.Entries = slices.DeleteFunc(f.Restorable.Entries, func(e Entry) bool {
+		return e.State != StatePending && e.LiveServerPID == live.Server.PID
+	})
 	for _, session := range live.Sessions {
 		f.Restorable.Entries = slices.DeleteFunc(f.Restorable.Entries, func(e Entry) bool {
 			return e.State == StatePending && e.Session.Name == session.Name
@@ -225,6 +265,28 @@ func (f *Files) Promote() {
 	f.GarbageCollectWindows()
 }
 
+// Settle finishes restores on snap's server. A waiting pane that no longer
+// exists has closed; an entry with no waiting pane is done and removed.
+// readAt is when the snapshot read began, in Unix milliseconds: a read that
+// began before a restore entered launching cannot show its panes.
+func (f *Files) Settle(snap *Snapshot, readAt int64) {
+	panes := map[string]bool{}
+	for _, window := range snap.Windows {
+		for _, pane := range window.Panes {
+			panes[pane.ID] = true
+		}
+	}
+	f.Restorable.Entries = slices.DeleteFunc(f.Restorable.Entries, func(e Entry) bool {
+		if e.State != StateLaunching || e.LiveServerPID != snap.Server.PID || readAt <= e.LaunchedAt {
+			return false
+		}
+		return !slices.ContainsFunc(e.Launches, func(l PaneLaunch) bool {
+			return l.Status == LaunchWaiting && panes[l.PaneID]
+		})
+	})
+	f.GarbageCollectWindows()
+}
+
 // Forget removes one exact session from the live snapshot and from the
 // restorable entries.
 func (f *Files) Forget(server ServerID, sessionID, created string) bool {
@@ -237,7 +299,8 @@ func (f *Files) Forget(server ServerID, sessionID, created string) bool {
 	}
 	before := len(f.Restorable.Entries)
 	f.Restorable.Entries = slices.DeleteFunc(f.Restorable.Entries, func(e Entry) bool {
-		return e.Server.PID == server.PID && matches(e.Session)
+		restored := e.LiveServerPID == server.PID && e.LiveSessionID == sessionID && e.LiveCreated == created
+		return restored || e.Server.PID == server.PID && matches(e.Session)
 	})
 	removed = removed || len(f.Restorable.Entries) != before
 	f.GarbageCollectWindows()

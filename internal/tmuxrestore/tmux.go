@@ -68,6 +68,15 @@ func SocketFromTMUX(value string) (Socket, bool) {
 	return socket, true
 }
 
+// ServerPIDFromTMUX returns the server PID from a $TMUX value.
+func ServerPIDFromTMUX(value string) string {
+	fields := strings.Split(value, ",")
+	if len(fields) < 2 {
+		return ""
+	}
+	return fields[1]
+}
+
 // Tmux runs tmux against one socket.
 type Tmux struct {
 	Executable string

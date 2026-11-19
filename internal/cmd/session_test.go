@@ -149,3 +149,71 @@ func TestSessionSnapshotListsSessionsFromAStoppedServer(t *testing.T) {
 	assert.Equal(t, []string{"codex"}, entries[0].Agents)
 	assert.False(t, entries[0].NameTaken)
 }
+
+func TestSessionDismissAndForget(t *testing.T) {
+	env := newSessionEnv(t)
+	for _, name := range []string{"work", "ops"} {
+		pane := env.mustTmux(t, "-L", "default", "new-session", "-d", "-s", name, "-P", "-F", "#{pane_id}")
+		env.hook(t, "claude", pane, sessionStartPayload("c-"+name))
+	}
+	env.mustTmux(t, "-L", "default", "new-session", "-d", "-s", "scratch")
+	identity := strings.Fields(env.mustTmux(t, "-L", "default", "display-message", "-p", "-t", "scratch",
+		"#{socket_path} #{session_id} #{pid} #{session_created}"))
+	require.Len(t, identity, 4)
+	env.snapshot(t)
+
+	_, err := env.kwt(t, "", nil, "session", "forget", "--socket", identity[0],
+		"--session-id", identity[1], "--server-pid", identity[2], "--created", identity[3])
+	require.NoError(t, err)
+	env.mustTmux(t, "-L", "default", "kill-server")
+	entries := env.snapshot(t)
+	require.Len(t, entries, 2, "a forgotten session is not restorable")
+
+	_, err = env.kwt(t, "", nil, "session", "dismiss", "nope")
+	require.Error(t, err)
+	_, err = env.kwt(t, "", nil, "session", "dismiss", entries[0].ID)
+	require.NoError(t, err)
+	remaining := env.snapshot(t)
+	require.Len(t, remaining, 1)
+	assert.Equal(t, entries[1].ID, remaining[0].ID)
+
+	_, err = env.kwt(t, "", nil, "session", "dismiss", "--all")
+	require.NoError(t, err)
+	assert.Empty(t, env.snapshot(t))
+}
+
+func TestSessionExecRunsTheClaimedLaunchOnce(t *testing.T) {
+	env := newSessionEnv(t)
+	pane := env.mustTmux(t, "-L", "default", "new-session", "-d", "-s", "work", "-P", "-F", "#{pane_id}")
+	fields := strings.Fields(env.mustTmux(t, "-L", "default", "display-message", "-p", "-t", pane, "#{socket_path} #{pid}"))
+	require.Len(t, fields, 2)
+	socket := tmuxrestore.Socket{Path: fields[0], Name: "default"}
+	dir := t.TempDir()
+	out := filepath.Join(t.TempDir(), "ran")
+	var id string
+	store := tmuxrestore.OpenStore(env.home)
+	require.NoError(t, store.WithLock(t.Context(), socket, func(f *tmuxrestore.Files) error {
+		f.Live = &tmuxrestore.Snapshot{Socket: socket, Server: tmuxrestore.ServerID{PID: "1"}, Sessions: []tmuxrestore.Session{{Name: "work"}}}
+		f.Promote()
+		entry := &f.Restorable.Entries[0]
+		id = entry.ID
+		entry.State, entry.LiveServerPID = tmuxrestore.StateLaunching, fields[1]
+		entry.Launches = []tmuxrestore.PaneLaunch{{
+			PaneID: pane, Status: tmuxrestore.LaunchWaiting, Dir: dir,
+			Argv: []string{"/bin/sh", "-c", "pwd -P > " + out},
+		}}
+		return nil
+	}))
+	tmuxEnv := []string{"TMUX=" + fields[0] + "," + fields[1] + ",0", "TMUX_PANE=" + pane}
+
+	_, err := env.kwt(t, "", tmuxEnv, "session", "exec", id, "0")
+	require.NoError(t, err)
+	ran, err := os.ReadFile(out)
+	require.NoError(t, err)
+	resolved, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	assert.Equal(t, resolved, strings.TrimSpace(string(ran)), "the program runs in the saved directory")
+
+	_, err = env.kwt(t, "", tmuxEnv, "session", "exec", id, "0")
+	assert.Error(t, err, "a launch runs once")
+}

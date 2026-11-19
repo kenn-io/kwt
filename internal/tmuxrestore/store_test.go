@@ -210,3 +210,115 @@ func TestStoreListsSockets(t *testing.T) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []Socket{storeSocket, other}, sockets)
 }
+
+func TestForgetRemovesARestoredSession(t *testing.T) {
+	var files Files
+	files.Restorable.Windows = map[string]SharedWindow{}
+	entry := launchingEntry(&files, "30", 100, map[string]string{"%1": LaunchWaiting})
+	entry.LiveSessionID, entry.LiveCreated = "$4", "500"
+
+	assert.False(t, files.Forget(ServerID{PID: "30"}, "$4", "499"), "another session that reused the ID")
+	assert.True(t, files.Forget(ServerID{PID: "30"}, "$4", "500"))
+	assert.Empty(t, files.Restorable.Entries)
+}
+
+func TestUpdatesByPathKeepTheSocketName(t *testing.T) {
+	store := OpenStore(t.TempDir())
+	update(t, store, func(f *Files) error {
+		f.Live = liveSnapshot("10", "work")
+		f.Promote()
+		return nil
+	})
+	require.NoError(t, store.WithLock(t.Context(), Socket{Path: storeSocket.Path}, func(*Files) error { return nil }))
+	sockets, err := store.Sockets()
+	require.NoError(t, err)
+	assert.Equal(t, []Socket{storeSocket}, sockets)
+}
+
+func TestCommitWritesBeforeTheUpdateEnds(t *testing.T) {
+	store := OpenStore(t.TempDir())
+	update(t, store, func(f *Files) error {
+		f.Live = liveSnapshot("10", "work")
+		f.Promote()
+		return nil
+	})
+	failed := store.WithLock(t.Context(), storeSocket, func(f *Files) error {
+		f.Restorable.Entries[0].State = StateCreating
+		f.Restorable.Entries[0].Token = "tok"
+		if err := f.Commit(); err != nil {
+			return err
+		}
+		return assert.AnError
+	})
+	require.ErrorIs(t, failed, assert.AnError)
+	entry := read(t, store).Restorable.Entries[0]
+	assert.Equal(t, StateCreating, entry.State, "a committed step survives a later failure")
+	assert.Equal(t, "tok", entry.Token)
+}
+
+func launchingEntry(f *Files, server string, launchedAt int64, statuses map[string]string) *Entry {
+	f.Live = liveSnapshot("10", "work")
+	f.Promote()
+	entry := &f.Restorable.Entries[len(f.Restorable.Entries)-1]
+	entry.State = StateLaunching
+	entry.LiveServerPID = server
+	entry.LaunchedAt = launchedAt
+	for pane, status := range statuses {
+		entry.Launches = append(entry.Launches, PaneLaunch{PaneID: pane, Status: status})
+	}
+	return entry
+}
+
+func TestSettleRemovesEntriesWhoseLaunchesFinished(t *testing.T) {
+	running := func(panes ...string) *Snapshot {
+		snap := liveSnapshot("30", "work")
+		window := snap.Windows["30:@work"]
+		window.Panes = nil
+		for _, id := range panes {
+			window.Panes = append(window.Panes, Pane{ID: id})
+		}
+		snap.Windows["30:@work"] = window
+		return snap
+	}
+	cases := []struct {
+		name     string
+		server   string
+		statuses map[string]string
+		readAt   int64
+		snap     *Snapshot
+		kept     bool
+	}{
+		{"every launch started", "30", map[string]string{"%1": LaunchStarted, "%2": LaunchFailed}, 200, running("%1", "%2"), false},
+		{"a pane still waiting", "30", map[string]string{"%1": LaunchWaiting, "%2": LaunchStarted}, 200, running("%1", "%2"), true},
+		{"the waiting pane closed", "30", map[string]string{"%1": LaunchWaiting, "%2": LaunchStarted}, 200, running("%2"), false},
+		{"a read from before the launch proves nothing", "30", map[string]string{"%1": LaunchWaiting}, 50, running(), true},
+		{"another server's launches are left alone", "31", map[string]string{"%1": LaunchWaiting}, 200, running(), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var files Files
+			files.Restorable.Windows = map[string]SharedWindow{}
+			launchingEntry(&files, tc.server, 100, tc.statuses)
+			files.Settle(tc.snap, tc.readAt)
+			assert.Equal(t, tc.kept, len(files.Restorable.Entries) == 1)
+		})
+	}
+}
+
+func TestPromoteReplacesALaunchingEntryRestoredOntoTheLostServer(t *testing.T) {
+	var files Files
+	files.Restorable.Windows = map[string]SharedWindow{}
+	launchingEntry(&files, "30", 100, map[string]string{"%1": LaunchWaiting})
+	other := launchingEntry(&files, "99", 100, map[string]string{"%1": LaunchWaiting})
+	other.Session.Name = "ops"
+
+	files.Live = liveSnapshot("30", "work")
+	files.Promote()
+
+	var states []string
+	for _, entry := range files.Restorable.Entries {
+		states = append(states, entry.Session.Name+" "+string(entry.State))
+	}
+	assert.Equal(t, []string{"ops launching", "work pending"}, states,
+		"the restore onto server 30 is superseded by what server 30 last had")
+}

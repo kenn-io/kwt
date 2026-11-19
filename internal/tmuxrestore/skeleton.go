@@ -226,10 +226,14 @@ func (b Builder) sameGeometry(ctx context.Context, windowID string, w Window) (b
 	return true, nil
 }
 
-// LinkWindow links an existing window into a session at index.
-func (b Builder) LinkWindow(ctx context.Context, sessionID, windowID string, index int) error {
-	if _, err := b.Tmux.Run(ctx, "link-window", "-d", "-s", windowID,
-		"-t", fmt.Sprintf("%s:%d", sessionID, index)); err != nil {
+// LinkWindow links an existing window into a session at index. replace
+// unlinks the window already at index.
+func (b Builder) LinkWindow(ctx context.Context, sessionID, windowID string, index int, replace bool) error {
+	args := []string{"link-window", "-d", "-s", windowID, "-t", fmt.Sprintf("%s:%d", sessionID, index)}
+	if replace {
+		args = append(args, "-k")
+	}
+	if _, err := b.Tmux.Run(ctx, args...); err != nil {
 		return fmt.Errorf("link window to %d: %w", index, err)
 	}
 	return nil

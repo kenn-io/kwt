@@ -49,6 +49,7 @@ func Save(ctx context.Context, deps SaveDeps) (SaveResult, error) {
 		return result, err
 	}
 
+	readAt := now().UnixMilli()
 	snap, err := ReadSnapshot(ctx, deps.Tmux)
 	if err != nil {
 		return SaveResult{Server: ServerUnknown}, err
@@ -59,6 +60,7 @@ func Save(ctx context.Context, deps SaveDeps) (SaveResult, error) {
 			f.Promote()
 			result.Promoted = true
 		}
+		f.Settle(&snap, readAt)
 		var previous map[string]int64
 		if f.Live != nil {
 			previous = f.Live.Gone
