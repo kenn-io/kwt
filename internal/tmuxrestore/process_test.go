@@ -146,8 +146,11 @@ func TestSystemProcessesTracksARealProcess(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX process tree")
 	}
-	// The test binary is the process, so the check does not depend on how
-	// the host packages system tools.
+	// kwt's test harness points gopsutil at an empty process table on Linux;
+	// this test needs the real one.
+	if runtime.GOOS == "linux" {
+		t.Setenv("HOST_PROC", "/proc")
+	}
 	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestProcessHelper$")
 	cmd.Env = append(os.Environ(), "KWT_PROCESS_HELPER=1")
 	require.NoError(t, cmd.Start())
