@@ -73,10 +73,32 @@ func TestNamedSocketUsesTmuxTmpdir(t *testing.T) {
 	resolved, err := filepath.EvalSymlinks(dir)
 	require.NoError(t, err)
 
-	socket, err := NamedSocket("kwt")
+	socket, err := NamedSocket("default")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(resolved, "tmux-"+uidString(), "default"), socket.Path)
+	assert.Equal(t, "default", socket.Name)
+}
+
+func TestKWTSocketIgnoresTmuxTmpdirLikeKwtsServer(t *testing.T) {
+	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	tmp, err := filepath.EvalSymlinks("/tmp")
+	require.NoError(t, err)
+	want := filepath.Join(tmp, "tmux-"+uidString(), "kwt")
+
+	socket, err := SocketIn("", "kwt")
+	require.NoError(t, err)
+	assert.Equal(t, Socket{Path: want, Name: "kwt"}, socket)
+
+	fromPane, ok := SocketFromTMUX(want + ",123,0")
+	require.True(t, ok)
+	assert.Equal(t, "kwt", fromPane.Name, "a pane on kwt's server names its socket")
+
+	dir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	socket, err = SocketIn(dir, "kwt")
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(resolved, "tmux-"+uidString(), "kwt"), socket.Path)
-	assert.Equal(t, "kwt", socket.Name)
 }
 
 func TestProbe(t *testing.T) {

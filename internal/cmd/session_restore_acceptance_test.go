@@ -125,11 +125,11 @@ func TestColdRestoreOfTwoSameNamedSessions(t *testing.T) {
 	geometry := "#{pane_index} #{pane_left} #{pane_top} #{pane_width} #{pane_height} #{pane_active}"
 	saved := a.mustTmux(t, "-L", "default", "list-panes", "-t", "work", "-F", geometry)
 
-	kwtPane := a.mustTmux(t, "-L", "kwt", "new-session", "-d", "-s", "work", "-c", other, "-P", "-F", "#{pane_id}")
-	a.startAgent(t, "kwt", kwtPane, "codex", "x-1")
+	otherPane := a.mustTmux(t, "-L", "other", "new-session", "-d", "-s", "work", "-c", other, "-P", "-F", "#{pane_id}")
+	a.startAgent(t, "other", otherPane, "codex", "x-1")
 
 	a.mustTmux(t, "-L", "default", "kill-server")
-	a.mustTmux(t, "-L", "kwt", "kill-server")
+	a.mustTmux(t, "-L", "other", "kill-server")
 
 	entries := a.entries(t)
 	require.Len(t, entries, 2, "both servers' sessions survive with the same name")
@@ -139,9 +139,9 @@ func TestColdRestoreOfTwoSameNamedSessions(t *testing.T) {
 		bySocket[entry.Socket.Name] = entry
 	}
 	require.Contains(t, bySocket, "default")
-	require.Contains(t, bySocket, "kwt")
+	require.Contains(t, bySocket, "other")
 	assert.Equal(t, []string{"claude"}, bySocket["default"].Agents)
-	assert.Equal(t, []string{"codex"}, bySocket["kwt"].Agents)
+	assert.Equal(t, []string{"codex"}, bySocket["other"].Agents)
 
 	var restored struct {
 		Entries []tmuxrestore.EntryReport `json:"entries"`
@@ -169,5 +169,5 @@ func TestColdRestoreOfTwoSameNamedSessions(t *testing.T) {
 
 	remaining := a.entries(t)
 	require.Len(t, remaining, 1, "the other socket's session is still restorable")
-	assert.Equal(t, "kwt", remaining[0].Socket.Name)
+	assert.Equal(t, "other", remaining[0].Socket.Name)
 }

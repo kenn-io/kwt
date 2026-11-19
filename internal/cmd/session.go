@@ -141,21 +141,22 @@ func sessionStore() (tmuxrestore.Store, error) {
 }
 
 // sessionSockets returns the default socket, kwt's socket, and every socket
-// with saved files.
+// with saved files. kwt runs its server with TMUX_TMPDIR unset, so its socket
+// does not follow TMUX_TMPDIR the way the default socket does.
 func sessionSockets(store tmuxrestore.Store) ([]tmuxrestore.Socket, error) {
-	var sockets []tmuxrestore.Socket
-	for _, name := range []string{"default", kwttmux.KWTServerSocketName} {
-		socket, err := tmuxrestore.NamedSocket(name)
-		if err != nil {
-			return nil, err
-		}
-		sockets = append(sockets, socket)
+	defaultSocket, err := tmuxrestore.NamedSocket("default")
+	if err != nil {
+		return nil, err
+	}
+	kwtSocket, err := tmuxrestore.SocketIn("", kwttmux.KWTServerSocketName)
+	if err != nil {
+		return nil, err
 	}
 	saved, err := store.Sockets()
 	if err != nil {
 		return nil, err
 	}
-	return append(sockets, saved...), nil
+	return append([]tmuxrestore.Socket{defaultSocket, kwtSocket}, saved...), nil
 }
 
 // saveSessions saves every known socket and returns what can be restored.

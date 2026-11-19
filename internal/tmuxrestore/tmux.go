@@ -32,27 +32,34 @@ func (s Socket) Key() string {
 
 func uidString() string { return strconv.Itoa(os.Getuid()) }
 
-// DefaultSocketDir returns the directory tmux uses for -L sockets:
-// $TMUX_TMPDIR or /tmp, then tmux-<uid>, with symlinks resolved as tmux does.
-func DefaultSocketDir() (string, error) {
-	base := os.Getenv("TMUX_TMPDIR")
-	if base == "" {
-		base = "/tmp"
+// socketDir returns the directory tmux uses for -L sockets under tempDir, or
+// under /tmp when tempDir is empty: tempDir, then tmux-<uid>, with symlinks
+// resolved as tmux does.
+func socketDir(tempDir string) (string, error) {
+	if tempDir == "" {
+		tempDir = "/tmp"
 	}
-	resolved, err := filepath.EvalSymlinks(base)
+	resolved, err := filepath.EvalSymlinks(tempDir)
 	if err != nil {
 		return "", fmt.Errorf("resolve tmux socket directory: %w", err)
 	}
 	return filepath.Join(resolved, "tmux-"+uidString()), nil
 }
 
-// NamedSocket returns the socket tmux -L name would use.
-func NamedSocket(name string) (Socket, error) {
-	dir, err := DefaultSocketDir()
+// SocketIn returns the socket tmux -L name uses with TMUX_TMPDIR set to
+// tempDir, or unset when tempDir is empty. kwt runs its own server with
+// TMUX_TMPDIR unset, so its socket is SocketIn("", "kwt").
+func SocketIn(tempDir, name string) (Socket, error) {
+	dir, err := socketDir(tempDir)
 	if err != nil {
 		return Socket{}, err
 	}
 	return Socket{Path: filepath.Join(dir, name), Name: name}, nil
+}
+
+// NamedSocket returns the socket tmux -L name uses in this environment.
+func NamedSocket(name string) (Socket, error) {
+	return SocketIn(os.Getenv("TMUX_TMPDIR"), name)
 }
 
 // SocketFromTMUX parses the socket path from a $TMUX value.
@@ -62,8 +69,11 @@ func SocketFromTMUX(value string) (Socket, bool) {
 		return Socket{}, false
 	}
 	socket := Socket{Path: path}
-	if dir, err := DefaultSocketDir(); err == nil && filepath.Dir(path) == dir {
-		socket.Name = filepath.Base(path)
+	for _, tempDir := range []string{os.Getenv("TMUX_TMPDIR"), ""} {
+		if dir, err := socketDir(tempDir); err == nil && filepath.Dir(path) == dir {
+			socket.Name = filepath.Base(path)
+			break
+		}
 	}
 	return socket, true
 }

@@ -51,7 +51,7 @@ func newSessionEnv(t *testing.T) sessionEnv {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
 		defer cancel()
-		for _, name := range []string{"default", "kwt"} {
+		for _, name := range []string{"default", "kwt", "other"} {
 			_ = env.tmux(ctx, "-L", name, "kill-server").Run()
 		}
 		_ = os.RemoveAll(tmpdir)
