@@ -243,7 +243,7 @@ func (g *removalSessionGuard) validateSharedEndpointAbsence(
 	}
 	workspaceIdentity := ""
 	if condition.WorkspacePath != "" {
-		workspaceIdentity = workspacePathIdentity(condition.WorkspacePath)
+		workspaceIdentity = WorkspacePathIdentity(condition.WorkspacePath)
 	}
 	for _, row := range rows {
 		if err := validateRemovalSessionRow(row); err != nil {

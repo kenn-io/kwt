@@ -326,7 +326,9 @@ func workspaceCleanupOption(identity string) string {
 	return workspaceCleanupOptionPrefix + identity
 }
 
-func workspacePathIdentity(worktreeDir string) string {
+// WorkspacePathIdentity is the value kwt records in a worktree session's
+// workspace identity option for worktreeDir.
+func WorkspacePathIdentity(worktreeDir string) string {
 	digest := sha256.Sum256([]byte(utils.PathKey(worktreeDir)))
 	return hex.EncodeToString(digest[:])
 }
@@ -339,7 +341,7 @@ func buildWorkspaceSessionBootstrapCommand(
 	session, worktreeDir, generation string,
 	stripNames []string,
 ) []string {
-	workspaceIdentity := workspacePathIdentity(worktreeDir)
+	workspaceIdentity := WorkspacePathIdentity(worktreeDir)
 	cmd := BuildSessionBootstrapCommand(session, stripNames)
 	cmd = append(
 		cmd,

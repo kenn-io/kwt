@@ -275,7 +275,7 @@ func (r *WorkspaceRunner) validateExistingWorkspaceIdentity(
 			session,
 		)}
 	}
-	if workspaceIdentity != workspacePathIdentity(worktreeDir) {
+	if workspaceIdentity != WorkspacePathIdentity(worktreeDir) {
 		return &SessionSafetyError{Reason: fmt.Sprintf(
 			"tmux session %q belongs to a different workspace identity",
 			session,

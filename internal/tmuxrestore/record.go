@@ -37,8 +37,6 @@ type Record struct {
 	// PermissionMode is the last Claude permission mode a hook reported.
 	PermissionMode string `json:"permission_mode,omitempty"`
 	RecordedAt     int64  `json:"recorded_at"`
-	// GoneSince is set by a save that found the agent process gone.
-	GoneSince int64 `json:"gone_since,omitempty"`
 }
 
 // Event is one agent hook event reduced to the fields a Record uses.
@@ -69,7 +67,6 @@ func Apply(prev *Record, ev Event, identify func() (*ProcessRef, []string)) (*Re
 		next.Process, next.Argv = identify()
 	} else {
 		next = *prev
-		next.GoneSince = 0
 	}
 	if ev.TranscriptPath != "" {
 		next.TranscriptPath = ev.TranscriptPath

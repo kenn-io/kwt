@@ -14,11 +14,11 @@ func TestParsePanesGroupsSessionsWindowsAndPanes(t *testing.T) {
 	record := `{"agent":"claude","conversation_id":"c-1","recorded_at":5}`
 	output := strings.Join([]string{
 		// session, window @1 with two panes listed out of index order
-		paneLine("$1", "work", "100", "/src/a", "", "", "@1", "0", "edit", "0", "120", "40", "abcd,120x40,0,0{60x40,0,0,1,59x40,61,0,2}", "1", "0", "1", "61", "0", "59", "40", "0", "/src/a/sub", "", ""),
-		paneLine("$1", "work", "100", "/src/a", "", "", "@1", "0", "edit", "0", "120", "40", "abcd,120x40,0,0{60x40,0,0,1,59x40,61,0,2}", "1", "0", "0", "0", "0", "60", "40", "1", "/src/a", "roborev", record),
+		paneLine("$1", "work", "100", "/src/a", "", "", "@1", "0", "edit", "0", "120", "40", "abcd,120x40,0,0{60x40,0,0,1,59x40,61,0,2}", "1", "0", "1", "61", "0", "59", "40", "0", "/src/a/sub", "%2", "", ""),
+		paneLine("$1", "work", "100", "/src/a", "", "", "@1", "0", "edit", "0", "120", "40", "abcd,120x40,0,0{60x40,0,0,1,59x40,61,0,2}", "1", "0", "0", "0", "0", "60", "40", "1", "/src/a", "%1", "roborev", record),
 		// window @2 is linked into both sessions
-		paneLine("$1", "work", "100", "/src/a", "", "", "@2", "1", "logs", "1", "120", "40", "ef01,120x40,0,0,3", "0", "1", "0", "0", "0", "120", "40", "1", "/var/log", "", ""),
-		paneLine("$2", "ops", "200", "/src/b", "id-b", "7", "@2", "4", "logs", "1", "120", "40", "ef01,120x40,0,0,3", "1", "1", "0", "0", "0", "120", "40", "1", "/var/log", "", "not json"),
+		paneLine("$1", "work", "100", "/src/a", "", "", "@2", "1", "logs", "1", "120", "40", "ef01,120x40,0,0,3", "0", "1", "0", "0", "0", "120", "40", "1", "/var/log", "%3", "", ""),
+		paneLine("$2", "ops", "200", "/src/b", "id-b", "7", "@2", "4", "logs", "1", "120", "40", "ef01,120x40,0,0,3", "1", "1", "0", "0", "0", "120", "40", "1", "/var/log", "%3", "", "not json"),
 	}, "\n") + "\n"
 
 	snap, err := parsePanes(ServerID{PID: "77", StartTime: "9"}, output)
@@ -48,7 +48,7 @@ func TestParsePanesGroupsSessionsWindowsAndPanes(t *testing.T) {
 	assert.Equal(t, "roborev", edit.Panes[0].PresetAgent)
 	require.NotNil(t, edit.Panes[0].Resume)
 	assert.Equal(t, "c-1", edit.Panes[0].Resume.ConversationID)
-	assert.Equal(t, Pane{Index: 1, Left: 61, Top: 0, Width: 59, Height: 40, Dir: "/src/a/sub"}, edit.Panes[1])
+	assert.Equal(t, Pane{Index: 1, ID: "%2", Left: 61, Top: 0, Width: 59, Height: 40, Dir: "/src/a/sub"}, edit.Panes[1])
 
 	logs := snap.Windows["77:@2"]
 	assert.True(t, logs.AutoRename)

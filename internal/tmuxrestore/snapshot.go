@@ -14,6 +14,7 @@ import (
 // place in the layout.
 type Pane struct {
 	Index       int     `json:"index"`
+	ID          string  `json:"id"`
 	Left        int     `json:"left"`
 	Top         int     `json:"top"`
 	Width       int     `json:"width"`
@@ -62,6 +63,9 @@ type Snapshot struct {
 	SavedAt  int64             `json:"saved_at"`
 	Sessions []Session         `json:"sessions"`
 	Windows  map[string]Window `json:"windows"`
+	// Gone maps a pane ID and conversation ID to when a save first found
+	// that conversation's agent process gone.
+	Gone map[string]int64 `json:"gone,omitempty"`
 }
 
 // paneFields lists the list-panes format fields in order. The resume record
@@ -73,7 +77,7 @@ var paneFields = []string{
 	"#{window_width}", "#{window_height}", "#{window_layout}",
 	"#{window_active}", "#{window_zoomed_flag}",
 	"#{pane_index}", "#{pane_left}", "#{pane_top}", "#{pane_width}", "#{pane_height}",
-	"#{pane_active}", "#{pane_current_path}",
+	"#{pane_active}", "#{pane_current_path}", "#{pane_id}",
 	"#{" + PresetAgentOption + "}", "#{" + ResumeOption + "}",
 }
 
@@ -157,10 +161,10 @@ func parsePanes(server ServerID, output string) (Snapshot, error) {
 			seenPane[paneKey] = true
 			pane := Pane{
 				Index: ints[3], Left: ints[4], Top: ints[5], Width: ints[6], Height: ints[7],
-				Active: f[20] == "1", Dir: f[21], PresetAgent: f[22],
+				Active: f[20] == "1", Dir: f[21], ID: f[22], PresetAgent: f[23],
 			}
-			if f[23] != "" {
-				if record, err := DecodeRecord(f[23]); err == nil {
+			if f[24] != "" {
+				if record, err := DecodeRecord(f[24]); err == nil {
 					pane.Resume = record
 				}
 			}

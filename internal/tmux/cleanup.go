@@ -61,7 +61,7 @@ func killWorkspaceSessionIfMatching(
 			)
 		}
 	} else {
-		expectedIdentity = workspacePathIdentity(request.WorkspacePath)
+		expectedIdentity = WorkspacePathIdentity(request.WorkspacePath)
 		markerOption = workspaceIdentityOption
 		mismatchReason = "belongs to a different workspace identity"
 		malformedReason = "has malformed workspace identity markers"

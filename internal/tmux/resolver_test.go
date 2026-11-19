@@ -72,7 +72,7 @@ func (f *fakeEndpointCommand) AttachSessionNested(_ context.Context, session str
 
 func newResolverTestCommands(path, session string) (*fakeEndpointCommand, *fakeEndpointCommand) {
 	matching := map[string]string{
-		workspaceIdentityOption:   workspacePathIdentity(path),
+		workspaceIdentityOption:   WorkspacePathIdentity(path),
 		workspaceGenerationOption: resolverTestGeneration,
 	}
 	return &fakeEndpointCommand{
@@ -187,13 +187,13 @@ func TestResolverReturnsRenamedLiveEndpointsByWorkspaceMarkers(t *testing.T) {
 	defaultRenamed := "kwt-wt-widget-previous-bbbbbbbb"
 	unrelated := "kwt-wt-other-main-cccccccc"
 	matching := map[string]string{
-		workspaceIdentityOption:   workspacePathIdentity(request.WorkspacePath),
+		workspaceIdentityOption:   WorkspacePathIdentity(request.WorkspacePath),
 		workspaceGenerationOption: request.WorkspaceGeneration,
 	}
 	canonical.sessions = []string{unrelated, canonicalRenamed}
 	canonical.optionsBySession = map[string]map[string]string{
 		unrelated: {
-			workspaceIdentityOption:   workspacePathIdentity("/work/other"),
+			workspaceIdentityOption:   WorkspacePathIdentity("/work/other"),
 			workspaceGenerationOption: "fedcba9876543210fedcba9876543210",
 		},
 		canonicalRenamed: cloneStringMap(matching),
@@ -220,7 +220,7 @@ func TestResolverReturnsMovedWorktreeEndpointByGeneration(t *testing.T) {
 	canonical.sessions = []string{oldSessionName}
 	canonical.optionsBySession = map[string]map[string]string{
 		oldSessionName: {
-			workspaceIdentityOption:   workspacePathIdentity("/work/widget-before-move"),
+			workspaceIdentityOption:   WorkspacePathIdentity("/work/widget-before-move"),
 			workspaceGenerationOption: request.WorkspaceGeneration,
 		},
 	}
@@ -242,7 +242,7 @@ func TestResolverTreatsGeneratedLegacyDirPrefixAsWorktree(t *testing.T) {
 	canonical.sessions = []string{canonicalSession}
 	canonical.optionsBySession = map[string]map[string]string{
 		canonicalSession: {
-			workspaceIdentityOption:   workspacePathIdentity(request.WorkspacePath),
+			workspaceIdentityOption:   WorkspacePathIdentity(request.WorkspacePath),
 			workspaceGenerationOption: request.WorkspaceGeneration,
 		},
 	}
@@ -278,7 +278,7 @@ func TestResolverIgnoresMismatchedDefaultServerMarkers(t *testing.T) {
 	request := resolverTestRequest()
 	canonical, defaultServer := newResolverTestCommands(request.WorkspacePath, request.SessionName)
 	defaultServer.sessions = []string{request.SessionName}
-	defaultServer.options[workspaceIdentityOption] = workspacePathIdentity("/work/other")
+	defaultServer.options[workspaceIdentityOption] = WorkspacePathIdentity("/work/other")
 	resolver := newEndpointResolver(canonical, defaultServer, nil)
 
 	got, err := resolver.resolve(t.Context(), request)
@@ -455,11 +455,11 @@ func TestResolverBatchKeepsResolvingAfterWorkspaceSafetyError(t *testing.T) {
 	canonical.sessions = []string{first.SessionName, second.SessionName}
 	canonical.optionsBySession = map[string]map[string]string{
 		first.SessionName: {
-			workspaceIdentityOption:   workspacePathIdentity(first.WorkspacePath),
+			workspaceIdentityOption:   WorkspacePathIdentity(first.WorkspacePath),
 			workspaceGenerationOption: "fedcba9876543210fedcba9876543210",
 		},
 		second.SessionName: {
-			workspaceIdentityOption:   workspacePathIdentity(second.WorkspacePath),
+			workspaceIdentityOption:   WorkspacePathIdentity(second.WorkspacePath),
 			workspaceGenerationOption: second.WorkspaceGeneration,
 		},
 	}

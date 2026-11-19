@@ -137,13 +137,13 @@ func TestEnsureWithGenerationRejectsStaleExistingSessionIdentity(t *testing.T) {
 	}{
 		{
 			name:               "workspace identity changed",
-			workspaceIdentity:  workspacePathIdentity("/old-worktree"),
+			workspaceIdentity:  WorkspacePathIdentity("/old-worktree"),
 			existingGeneration: generation,
 			want:               "workspace identity",
 		},
 		{
 			name:               "generation changed",
-			workspaceIdentity:  workspacePathIdentity("/new-worktree"),
+			workspaceIdentity:  WorkspacePathIdentity("/new-worktree"),
 			existingGeneration: "fedcba9876543210fedcba9876543210",
 			want:               "generation",
 		},
@@ -154,7 +154,7 @@ func TestEnsureWithGenerationRejectsStaleExistingSessionIdentity(t *testing.T) {
 		},
 		{
 			name:              "generation missing",
-			workspaceIdentity: workspacePathIdentity("/new-worktree"),
+			workspaceIdentity: WorkspacePathIdentity("/new-worktree"),
 			want:              "identity markers",
 		},
 	} {
@@ -187,7 +187,7 @@ func TestEnsureWithGenerationReusesMatchingSession(t *testing.T) {
 	ctx := context.WithValue(t.Context(), operationContextKey{}, "operation")
 	m := &mockWorkspaceTmux{
 		hasSession:         true,
-		sessionWorkspaceID: workspacePathIdentity("/worktree"),
+		sessionWorkspaceID: WorkspacePathIdentity("/worktree"),
 		sessionGeneration:  generation,
 	}
 	runner := NewWorkspaceRunner(m, nil)

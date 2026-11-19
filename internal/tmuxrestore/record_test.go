@@ -62,7 +62,6 @@ func TestApplyNewConversationKeepsNothingFromThePrevious(t *testing.T) {
 		TranscriptPath: "/old.jsonl",
 		PermissionMode: "plan",
 		RecordedAt:     1,
-		GoneSince:      5,
 	}
 	identify := &identifyCounter{}
 	ev := Event{Agent: "claude", ConversationID: "c-2", Now: recordClock}
@@ -88,7 +87,6 @@ func TestApplySameConversationUpdatesHintsOnly(t *testing.T) {
 		TranscriptPath: "/old.jsonl",
 		PermissionMode: "plan",
 		RecordedAt:     1,
-		GoneSince:      5,
 	}
 	identify := &identifyCounter{}
 
@@ -102,7 +100,6 @@ func TestApplySameConversationUpdatesHintsOnly(t *testing.T) {
 	assert.Equal(t, "/old.jsonl", next.TranscriptPath)
 	assert.Equal(t, []string{"claude"}, next.Argv)
 	assert.Equal(t, &ProcessRef{PID: 42, StartMillis: 7}, next.Process)
-	assert.Zero(t, next.GoneSince)
 	assert.Equal(t, recordClock.Unix(), next.RecordedAt)
 
 	withoutMode := Event{

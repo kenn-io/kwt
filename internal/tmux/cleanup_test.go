@@ -130,9 +130,9 @@ func TestKillWorkspaceSessionIfMatching(t *testing.T) {
 			},
 			identity: workspaceCleanupIdentity{
 				SessionID:         "$9",
-				WorkspaceIdentity: workspacePathIdentity("/work/replacement"),
+				WorkspaceIdentity: WorkspacePathIdentity("/work/replacement"),
 			},
-			wantOption: workspaceCleanupOption(workspacePathIdentity("/work/widget")),
+			wantOption: workspaceCleanupOption(WorkspacePathIdentity("/work/widget")),
 			wantCalls:  []string{"atomic", "inspect"},
 			wantError:  "different workspace identity",
 		},
