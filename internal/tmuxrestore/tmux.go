@@ -160,7 +160,9 @@ func (t Tmux) Probe(ctx context.Context) (ServerState, ServerID, error) {
 		}
 		return ServerUnknown, ServerID{}, fmt.Errorf("inspect tmux socket: %w", err)
 	}
-	output, err := t.Run(ctx, "list-sessions", "-F", "#{pid} #{start_time}")
+	// display-message answers even when the server has no sessions, so a
+	// server kept up by exit-empty off is not mistaken for a lost one.
+	output, err := t.Run(ctx, "display-message", "-p", "#{pid} #{start_time}")
 	if err != nil {
 		if commandErr, ok := errors.AsType[*CommandError](err); ok && ctx.Err() == nil {
 			if exitErr, ok := errors.AsType[*exec.ExitError](commandErr.Err); ok &&
@@ -171,12 +173,9 @@ func (t Tmux) Probe(ctx context.Context) (ServerState, ServerID, error) {
 		}
 		return ServerUnknown, ServerID{}, fmt.Errorf("probe tmux server: %w", err)
 	}
-	line, _, _ := strings.Cut(output, "\n")
-	pid, start, ok := strings.Cut(strings.TrimSpace(line), " ")
-	if !ok {
-		// A server without sessions has nothing to save; treat it like one
-		// that has exited.
-		return ServerAbsent, ServerID{}, nil
+	pid, start, ok := strings.Cut(strings.TrimSpace(output), " ")
+	if !ok || pid == "" || start == "" {
+		return ServerUnknown, ServerID{}, fmt.Errorf("probe tmux server: unexpected identity %q", output)
 	}
 	return ServerRunning, ServerID{PID: pid, StartTime: start}, nil
 }

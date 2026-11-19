@@ -45,7 +45,7 @@ func (h HookTracker) Track(ctx context.Context, ev Event) {
 	}
 	protection := h.Protection
 	if protection != nil {
-		protection = func(ctx context.Context) ([]string, error) {
+		protection = func(ctx context.Context) ([]ProtectedWorkspace, error) {
 			ctx, cancel := context.WithTimeout(ctx, protectionBudget)
 			defer cancel()
 			return h.Protection(ctx)

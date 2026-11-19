@@ -73,6 +73,15 @@ func CanonicalHome() (string, error) {
 	return filepath.Clean(resolved), nil
 }
 
+// EnsureHome creates kwt home when it is missing and returns its canonical
+// path, for commands that run before any configuration is written.
+func EnsureHome() (string, error) {
+	if err := os.MkdirAll(getConfigDir(), 0o755); err != nil {
+		return "", fmt.Errorf("create kwt home: %w", err)
+	}
+	return CanonicalHome()
+}
+
 // getConfigDir returns the configuration directory path.
 func getConfigDir() string {
 	if kwtHome := os.Getenv("KWT_HOME"); kwtHome != "" {

@@ -237,8 +237,9 @@ func newEntryID() string { return strings.ToLower(rand.Text()) }
 // Promote turns the live snapshot's sessions into pending entries and
 // clears the live snapshot. A pending entry with the same session name is
 // replaced: the newer entry is the state the user had most recently. Entries
-// being restored are kept, unless their restore was onto the server now
-// lost: that server's own snapshot supersedes them.
+// being restored are kept. One restored onto the server now lost is
+// superseded when that server's snapshot holds the restored session, and is
+// pending again when it does not.
 func (f *Files) Promote() {
 	if f.Live == nil {
 		return
@@ -246,8 +247,18 @@ func (f *Files) Promote() {
 	live := f.Live
 	f.Live = nil
 	f.Restorable.Entries = slices.DeleteFunc(f.Restorable.Entries, func(e Entry) bool {
-		return e.State != StatePending && e.LiveServer == live.Server
+		return e.State != StatePending && e.LiveServer == live.Server &&
+			slices.ContainsFunc(live.Sessions, func(s Session) bool {
+				return s.ID == e.LiveSessionID && s.Created == e.LiveCreated
+			})
 	})
+	// A restore onto the lost server that no save recorded is still the
+	// only copy of its session.
+	for i := range f.Restorable.Entries {
+		if e := &f.Restorable.Entries[i]; e.State != StatePending && e.LiveServer == live.Server {
+			resetEntry(e)
+		}
+	}
 	for _, session := range live.Sessions {
 		f.Restorable.Entries = slices.DeleteFunc(f.Restorable.Entries, func(e Entry) bool {
 			return e.State == StatePending && e.Session.Name == session.Name
@@ -268,10 +279,23 @@ func (f *Files) Promote() {
 	f.GarbageCollectWindows()
 }
 
+// Release returns restores onto any server but current to pending: that
+// server is gone, and no save recorded what was restored onto it. current is
+// the zero ServerID when no server runs.
+func (f *Files) Release(current ServerID) {
+	for i := range f.Restorable.Entries {
+		if e := &f.Restorable.Entries[i]; e.State == StateLaunching && e.LiveServer != current {
+			resetEntry(e)
+		}
+	}
+}
+
 // Settle finishes restores on snap's server. A waiting pane that no longer
-// exists has closed; an entry with no waiting pane is done and removed.
-// readAt is when the snapshot read began, in Unix milliseconds: a read that
-// began before a restore entered launching cannot show its panes.
+// exists has closed; an entry with no waiting pane is done and removed, in
+// the same update that makes snap, which holds the restored session, the
+// live snapshot. readAt is when the snapshot read began, in Unix
+// milliseconds: a read that began before a restore entered launching cannot
+// show its panes.
 func (f *Files) Settle(snap *Snapshot, readAt int64) {
 	panes := map[string]bool{}
 	for _, window := range snap.Windows {
@@ -280,7 +304,7 @@ func (f *Files) Settle(snap *Snapshot, readAt int64) {
 		}
 	}
 	f.Restorable.Entries = slices.DeleteFunc(f.Restorable.Entries, func(e Entry) bool {
-		if e.State != StateLaunching || e.LiveServer != snap.Server || readAt <= e.LaunchedAt {
+		if e.State != StateLaunching || e.LiveServer != snap.Server || readAt < e.LaunchedAt {
 			return false
 		}
 		return !slices.ContainsFunc(e.Launches, func(l PaneLaunch) bool {

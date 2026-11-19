@@ -86,9 +86,20 @@ var paneFields = []string{
 var paneFormat = strings.Join(paneFields, "\t")
 
 // ReadSnapshot reads every session on the server. The server ID is read in
-// the same call so the snapshot cannot mix two servers.
+// the same call as the panes so the snapshot cannot mix two servers.
 func ReadSnapshot(ctx context.Context, t Tmux) (Snapshot, error) {
-	output, err := t.Run(ctx, "list-panes", "-a", "-F", "#{pid}\t#{start_time}\t"+paneFormat)
+	// list-panes -a fails on a server with no sessions, which exit-empty off
+	// keeps running; such a server's snapshot is empty.
+	output, err := t.Run(ctx, "display-message", "-p", "#{pid}\t#{start_time}\t#{server_sessions}")
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("read tmux server: %w", err)
+	}
+	if f := strings.Split(strings.TrimSpace(output), "\t"); len(f) == 3 && f[2] == "0" {
+		snap, err := parsePanes(ServerID{PID: f[0], StartTime: f[1]}, "")
+		snap.Socket = t.Socket
+		return snap, err
+	}
+	output, err = t.Run(ctx, "list-panes", "-a", "-F", "#{pid}\t#{start_time}\t"+paneFormat)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("read tmux panes: %w", err)
 	}

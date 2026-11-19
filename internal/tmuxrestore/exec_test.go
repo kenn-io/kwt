@@ -1,6 +1,7 @@
 package tmuxrestore
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -8,28 +9,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func claimFixture(t *testing.T) (Store, string) {
+// claimFixture has a waiting launch of the test binary, a program that
+// exists on every platform.
+func claimFixture(t *testing.T) (Store, string, string) {
 	t.Helper()
+	program, err := os.Executable()
+	require.NoError(t, err)
 	store := OpenStore(t.TempDir())
 	var id string
 	update(t, store, func(f *Files) error {
 		entry := launchingEntry(f, "30", 100, nil)
 		entry.Launches = []PaneLaunch{
-			{PaneID: "%4", Status: LaunchWaiting, Argv: []string{"claude", "--resume", "c-1"}, Dir: "/src"},
+			{PaneID: "%4", Status: LaunchWaiting, Argv: []string{program, "--resume", "c-1"}, Dir: "/src"},
 			{PaneID: "%5", Status: LaunchNone},
 		}
 		id = entry.ID
 		return nil
 	})
-	return store, id
+	return store, id, program
 }
 
 func TestClaimHandsTheLaunchToItsPaneOnce(t *testing.T) {
-	store, id := claimFixture(t)
+	store, id, program := claimFixture(t)
 
 	target, err := Claim(t.Context(), store, storeSocket, id, 0, "%4", "30")
 	require.NoError(t, err)
-	assert.Equal(t, ExecTarget{Argv: []string{"claude", "--resume", "c-1"}, Dir: "/src"}, target)
+	assert.Equal(t, ExecTarget{Path: program, Argv: []string{program, "--resume", "c-1"}, Dir: "/src"}, target)
 	assert.Equal(t, LaunchStarted, read(t, store).Restorable.Entries[0].Launches[0].Status)
 
 	_, err = Claim(t.Context(), store, storeSocket, id, 0, "%4", "30")
@@ -46,12 +51,14 @@ func TestLaunchRecordsAProgramThatCannotStart(t *testing.T) {
 		return nil
 	})
 
-	err := Launch(t.Context(), store, storeSocket, id, 0, "%4", "30")
+	_, err := Claim(t.Context(), store, storeSocket, id, 0, "%4", "30")
 
 	require.Error(t, err)
 	l := read(t, store).Restorable.Entries[0].Launches[0]
-	assert.Equal(t, LaunchFailed, l.Status, "the restore report must not say it started")
+	assert.Equal(t, LaunchFailed, l.Status, "the launch is never reported started")
 	assert.Contains(t, l.Note, "did not start")
+	_, err = Claim(t.Context(), store, storeSocket, id, 0, "%4", "30")
+	assert.ErrorContains(t, err, "nothing to start", "a failed launch runs once too")
 }
 
 func TestClaimRejectsTheWrongPane(t *testing.T) {
@@ -71,7 +78,7 @@ func TestClaimRejectsTheWrongPane(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			store, id := claimFixture(t)
+			store, id, _ := claimFixture(t)
 			if tc.id != "" {
 				id = tc.id
 			}

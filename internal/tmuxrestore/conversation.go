@@ -51,20 +51,28 @@ func FindConversation(rec Record, home string, getenv func(string) string) Prese
 	}
 }
 
-// searchByName walks dirs for a file whose name matches. Any directory that
-// cannot be read leaves the answer unknown.
+// searchByName walks dirs for a file whose name matches. A linked directory
+// is searched; a link inside it is not followed, so it leaves the answer
+// unknown, as does any directory that cannot be read.
 func searchByName(id string, match func(string) bool, dirs ...string) Presence {
 	if id == "" {
 		return PresenceUnknown
 	}
 	errFound := errors.New("found")
+	unfollowed := false
 	for _, dir := range dirs {
-		err := filepath.WalkDir(dir, func(_ string, entry fs.DirEntry, err error) error {
-			if err != nil {
+		root, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			return PresenceUnknown
+		}
+		err = filepath.WalkDir(root, func(_ string, entry fs.DirEntry, err error) error {
+			switch {
+			case err != nil:
 				return err
-			}
-			if !entry.IsDir() && match(entry.Name()) {
+			case !entry.IsDir() && match(entry.Name()):
 				return errFound
+			case entry.Type()&fs.ModeSymlink != 0:
+				unfollowed = true
 			}
 			return nil
 		})
@@ -74,6 +82,9 @@ func searchByName(id string, match func(string) bool, dirs ...string) Presence {
 		if err != nil {
 			return PresenceUnknown
 		}
+	}
+	if unfollowed {
+		return PresenceUnknown
 	}
 	return PresenceAbsent
 }

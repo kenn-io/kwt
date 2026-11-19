@@ -185,7 +185,23 @@ func Restore(ctx context.Context, deps RestoreDeps, ids []string, all bool) ([]E
 	if err := awaitClaims(ctx, deps, reports); err != nil {
 		errs = append(errs, err)
 	}
+	// Save what was restored, so a server lost before the next save still
+	// leaves it restorable and finished entries are settled. A failed save
+	// keeps the entries until a later one.
+	for _, sock := range sockets {
+		if slices.ContainsFunc(reports, func(r EntryReport) bool { return r.Live != nil && r.Socket == sock }) {
+			_, _ = Save(ctx, deps.saveDeps(sock))
+		}
+	}
 	return reports, errors.Join(errs...)
+}
+
+func (d RestoreDeps) saveDeps(sock Socket) SaveDeps {
+	return SaveDeps{
+		Tmux:  Tmux{Executable: d.Executable, Socket: sock, StripNames: d.StripNames},
+		Store: d.Store, Processes: SystemProcesses(),
+		Protection: d.Protection, Now: d.Now,
+	}
 }
 
 // RestoreWorkspace restores the saved worktree session req describes when a
@@ -209,12 +225,29 @@ func RestoreWorkspace(ctx context.Context, deps RestoreDeps, req kwttmux.Skeleto
 	// Opening first after a reboot comes before any save has seen the
 	// server go, so save now to make its sessions restorable. A failed save
 	// leaves the files as they were, and entries saved earlier still match.
-	_, _ = Save(ctx, SaveDeps{
-		Tmux:  Tmux{Executable: deps.Executable, Socket: sock},
-		Store: deps.Store, Processes: SystemProcesses(),
-		Protection: deps.Protection, Now: deps.Now,
-	})
+	if _, err := Save(ctx, deps.saveDeps(sock)); err != nil {
+		// Without the save, a lost server's snapshot of this session is not
+		// yet restorable, and the preset would take the session's name.
+		held, checkErr := liveHolds(ctx, deps.Store, sock, req)
+		if held || checkErr != nil {
+			return EntryReport{}, false, fmt.Errorf("save tmux sessions before opening %q: %w", req.Session, errors.Join(err, checkErr))
+		}
+	}
 	return restoreWorkspace(ctx, deps, sock, req, "")
+}
+
+// liveHolds reports whether the socket's live snapshot has the session req
+// creates.
+func liveHolds(ctx context.Context, store Store, sock Socket, req kwttmux.SkeletonRequest) (bool, error) {
+	identity := kwttmux.WorkspacePathIdentity(req.WorkspacePath)
+	held := false
+	err := store.WithLock(ctx, sock, func(f *Files) error {
+		held = f.Live != nil && slices.ContainsFunc(f.Live.Sessions, func(s Session) bool {
+			return s.Name == req.Session && s.WorkspaceIdentity == identity && s.WorkspaceGeneration == req.Generation
+		})
+		return nil
+	})
+	return held, err
 }
 
 func requestSocket(req kwttmux.SkeletonRequest) (Socket, error) {
@@ -426,19 +459,11 @@ func (r restorer) create(ctx context.Context, entry *Entry, report EntryReport, 
 	}
 	r.typeLaunches(ctx, entry)
 	fillLaunches(&report, *entry, r.tm.Socket)
-	if !hasWaiting(report) {
-		r.remove(entry.ID)
-	}
 	return report
 }
 
 func (r restorer) firstWindow(entry *Entry) Window {
 	return r.files.Restorable.Windows[entry.Session.Windows[0].Key].Window
-}
-
-func (r restorer) remove(id string) {
-	r.files.Restorable.Entries = slices.DeleteFunc(r.files.Restorable.Entries, func(e Entry) bool { return e.ID == id })
-	r.files.GarbageCollectWindows()
 }
 
 func resetEntry(e *Entry) {
@@ -530,7 +555,7 @@ func (r restorer) buildWindows(ctx context.Context, b Builder, entry *Entry, cre
 		if built.LayoutDiffers {
 			notes = append(notes, fmt.Sprintf("window %d: layout differs", ref.Index))
 		}
-		entry.Launches = append(entry.Launches, r.plan(ref, shared.Window, built)...)
+		entry.Launches = append(entry.Launches, r.plan(ctx, ref, shared.Window, built)...)
 	}
 	if err := b.FinishSession(ctx, created.ID, entry.Session); err != nil {
 		return live, notes, err
@@ -539,7 +564,7 @@ func (r restorer) buildWindows(ctx context.Context, b Builder, entry *Entry, cre
 }
 
 // plan decides what starts in each pane of a window this restore created.
-func (r restorer) plan(ref WindowRef, w Window, built BuiltWindow) []PaneLaunch {
+func (r restorer) plan(ctx context.Context, ref WindowRef, w Window, built BuiltWindow) []PaneLaunch {
 	launches := make([]PaneLaunch, 0, len(built.Panes))
 	for i, bp := range built.Panes {
 		pane := w.Panes[i]
@@ -552,7 +577,7 @@ func (r restorer) plan(ref WindowRef, w Window, built BuiltWindow) []PaneLaunch 
 		case !hasProgram:
 		case bp.DirMissing:
 			l.Note = "directory missing"
-		case r.protected.dir(pane.Dir):
+		case r.protected.dir(ctx, pane.Dir):
 			l.Note = "pull-request directory"
 		case pane.Resume != nil:
 			l.Agent = pane.Resume.Agent
@@ -645,8 +670,7 @@ func setOutcome(report *EntryReport) {
 	}
 }
 
-// awaitClaims polls until no reported pane is waiting or ClaimWait passes,
-// then removes entries whose panes have all claimed their launches.
+// awaitClaims polls until no reported pane is waiting or ClaimWait passes.
 func awaitClaims(ctx context.Context, deps RestoreDeps, reports []EntryReport) error {
 	deadline := time.Now().Add(deps.ClaimWait)
 	for {
@@ -677,8 +701,7 @@ func hasWaiting(report EntryReport) bool {
 	return slices.ContainsFunc(report.Panes, func(p PaneReport) bool { return p.Status == LaunchWaiting })
 }
 
-// refresh rereads an entry's launches and removes the entry once none is
-// waiting.
+// refresh rereads an entry's launches.
 func refresh(ctx context.Context, store Store, report *EntryReport) error {
 	return store.WithLock(ctx, report.Socket, func(f *Files) error {
 		entry := f.Entry(report.ID)
@@ -695,9 +718,6 @@ func refresh(ctx context.Context, store Store, report *EntryReport) error {
 			return nil
 		}
 		fillLaunches(report, *entry, report.Socket)
-		if !hasWaiting(*report) {
-			restorer{files: f}.remove(report.ID)
-		}
 		return nil
 	})
 }

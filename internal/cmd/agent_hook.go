@@ -245,7 +245,7 @@ func newHookTracker(deadline time.Time) *tmuxrestore.HookTracker {
 	if err != nil {
 		return nil
 	}
-	home, err := config.CanonicalHome()
+	home, err := config.EnsureHome()
 	if err != nil {
 		return nil
 	}

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,7 +16,7 @@ import (
 	kwttmux "go.kenn.io/kwt/internal/tmux"
 )
 
-func noProtection(context.Context) ([]string, error) { return nil, nil }
+func noProtection(context.Context) ([]ProtectedWorkspace, error) { return nil, nil }
 
 type saveFixture struct {
 	tm    Tmux
@@ -73,7 +75,7 @@ func TestSaveFollowsTheServerLifecycle(t *testing.T) {
 	files := f.files(t)
 	require.NotNil(t, files.Live)
 	assert.Equal(t, "work", files.Live.Sessions[0].Name)
-	assert.Equal(t, f.now.Unix(), files.Live.SavedAt)
+	assert.Equal(t, f.now.UnixMilli(), files.Live.SavedAt, "saved_at is in Unix milliseconds")
 	assert.Empty(t, files.Restorable.Entries)
 
 	_, err := f.tm.Run(t.Context(), "kill-server")
@@ -109,12 +111,26 @@ func TestSavePromotesWhenTheServerIsReplaced(t *testing.T) {
 	assert.Equal(t, "other", files.Live.Sessions[0].Name)
 }
 
+func TestSaveForgetsSessionsKilledOnAServerThatStaysUp(t *testing.T) {
+	f := newSaveFixture(t)
+	startServer(t, f.tm, "-s", "work", ";", "set-option", "-g", "exit-empty", "off")
+	f.save(t)
+	_, err := f.tm.Run(t.Context(), "kill-session", "-t", "work")
+	require.NoError(t, err)
+
+	result := f.save(t)
+
+	assert.Equal(t, ServerRunning, result.Server, "the server has no sessions but is still up")
+	assert.False(t, result.Promoted)
+	assert.Empty(t, f.files(t).Restorable.Entries, "a session the user killed is not offered back")
+}
+
 func TestSaveNeverPublishesAnOlderViewThanAnotherSave(t *testing.T) {
 	f := newSaveFixture(t)
 	startServer(t, f.tm, "-s", "work")
 	// While this save loads its protection list, the session is renamed and
 	// a second save records the rename.
-	f.prs = func(ctx context.Context) ([]string, error) {
+	f.prs = func(ctx context.Context) ([]ProtectedWorkspace, error) {
 		f.prs = noProtection
 		_, err := f.tm.Run(ctx, "rename-session", "-t", "work", "renamed")
 		require.NoError(t, err)
@@ -200,7 +216,7 @@ func TestSaveExcludesPullRequestWorkspaces(t *testing.T) {
 	f := newSaveFixture(t)
 	prDir := t.TempDir()
 	plainDir := t.TempDir()
-	f.prs = func(context.Context) ([]string, error) { return []string{prDir}, nil }
+	f.prs = func(context.Context) ([]ProtectedWorkspace, error) { return []ProtectedWorkspace{{Path: prDir}}, nil }
 
 	startServer(t, f.tm, "-s", "pr", "-c", prDir)
 	_, err := f.tm.Run(t.Context(), "set-option", "-t", "pr", "@kwt-workspace-id", kwttmux.WorkspacePathIdentity(prDir))
@@ -227,9 +243,51 @@ func TestSaveExcludesPullRequestWorkspaces(t *testing.T) {
 	assert.Len(t, files.Live.Windows, 1, "the excluded session's window is not kept")
 }
 
+func TestSaveProtectsAPullRequestCheckoutThatMoved(t *testing.T) {
+	// Provenance records the path at import. A moved checkout keeps its
+	// generation, which kwt's open guard also matches.
+	f := newSaveFixture(t)
+	gitRun := func(args ...string) string {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), "git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com"}, args...)...)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+	repo := t.TempDir()
+	gitRun("-C", repo, "init", "-q")
+	gitRun("-C", repo, "commit", "-q", "--allow-empty", "-m", "init")
+	recorded := filepath.Join(t.TempDir(), "pr")
+	gitRun("-C", repo, "worktree", "add", "-q", "-b", "pr", recorded)
+	gitDir := gitRun("-C", recorded, "rev-parse", "--absolute-git-dir")
+	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "kwt-generation"), []byte(worktreeGeneration+"\n"), 0o600))
+	moved := filepath.Join(t.TempDir(), "moved")
+	gitRun("-C", repo, "worktree", "move", recorded, moved)
+	f.prs = func(context.Context) ([]ProtectedWorkspace, error) {
+		return []ProtectedWorkspace{{Path: recorded, Generation: worktreeGeneration}}, nil
+	}
+
+	startServer(t, f.tm, "-s", "pr", "-c", moved)
+	mustRun(t, f.tm, "set-option", "-t", "pr", "@kwt-workspace-id", kwttmux.WorkspacePathIdentity(moved))
+	mustRun(t, f.tm, "set-option", "-t", "pr", "@kwt-workspace-generation", worktreeGeneration)
+	mustRun(t, f.tm, "new-session", "-d", "-s", "plain", "-c", t.TempDir())
+	mustRun(t, f.tm, "split-window", "-t", "plain", "-c", moved)
+	setResume(t, f.tm, "plain:0.0", Record{Agent: "claude", ConversationID: "c-0"})
+	setResume(t, f.tm, "plain:0.1", Record{Agent: "claude", ConversationID: "c-1"})
+
+	f.save(t)
+
+	files := f.files(t)
+	require.Len(t, files.Live.Sessions, 1, "the moved pull-request session is not saved")
+	panes := files.Live.Windows[files.Live.Sessions[0].Windows[0].Key].Panes
+	require.Len(t, panes, 2)
+	assert.NotNil(t, panes[0].Resume)
+	assert.Nil(t, panes[1].Resume, "no program restarts inside the moved checkout")
+}
+
 func TestSaveFailsClosedWhenProtectionIsUnreadable(t *testing.T) {
 	f := newSaveFixture(t)
-	f.prs = func(context.Context) ([]string, error) { return nil, errors.New("locked") }
+	f.prs = func(context.Context) ([]ProtectedWorkspace, error) { return nil, errors.New("locked") }
 	startServer(t, f.tm, "-s", "marked")
 	_, err := f.tm.Run(t.Context(), "set-option", "-t", "marked", "@kwt-workspace-id", "abc")
 	require.NoError(t, err)

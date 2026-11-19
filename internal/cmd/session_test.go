@@ -135,6 +135,25 @@ func TestAgentHookRecordsTheConversationAndSaves(t *testing.T) {
 	assert.Len(t, files, 1, "the hook saved the live snapshot")
 }
 
+func TestAgentHookSavesIntoAFreshKwtHome(t *testing.T) {
+	env := newSessionEnv(t)
+	env.home = filepath.Join(env.home, "not-yet")
+	pane := env.mustTmux(t, "-L", "default", "new-session", "-d", "-s", "work", "-P", "-F", "#{pane_id}")
+
+	env.hook(t, "claude", pane, sessionStartPayload("c-1"))
+
+	files, err := filepath.Glob(filepath.Join(env.home, "tmux", "*.json"))
+	require.NoError(t, err)
+	assert.Len(t, files, 1)
+}
+
+func TestSessionSnapshotWorksWithAFreshKwtHome(t *testing.T) {
+	env := newSessionEnv(t)
+	env.home = filepath.Join(env.home, "not-yet")
+
+	assert.Empty(t, env.snapshot(t))
+}
+
 func TestSessionSnapshotListsSessionsFromAStoppedServer(t *testing.T) {
 	env := newSessionEnv(t)
 	pane := env.mustTmux(t, "-L", "default", "new-session", "-d", "-s", "work", "-P", "-F", "#{pane_id}")

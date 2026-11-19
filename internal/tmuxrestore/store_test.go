@@ -344,3 +344,35 @@ func TestPromoteReplacesALaunchingEntryRestoredOntoTheLostServer(t *testing.T) {
 	assert.Equal(t, []string{"ops launching", "work pending"}, states,
 		"the restore onto server 30 is superseded by what server 30 last had")
 }
+
+func TestPromoteKeepsARestoreTheLostServerNeverSaved(t *testing.T) {
+	// The server went down before any save recorded the restored session,
+	// so the entry is still its only copy.
+	var files Files
+	files.Restorable.Windows = map[string]SharedWindow{}
+	restored := launchingEntry(&files, "30", 100, map[string]string{"%1": LaunchStarted})
+	restored.LiveSessionID, restored.LiveCreated = "$9", "900"
+
+	files.Live = liveSnapshot("30", "ops")
+	files.Promote()
+
+	var states []string
+	for _, entry := range files.Restorable.Entries {
+		states = append(states, entry.Session.Name+" "+string(entry.State))
+	}
+	assert.Equal(t, []string{"work pending", "ops pending"}, states)
+	assert.Empty(t, files.Restorable.Entries[0].Launches)
+}
+
+func TestReleaseReturnsRestoresOnAGoneServerToPending(t *testing.T) {
+	var files Files
+	files.Restorable.Windows = map[string]SharedWindow{}
+	launchingEntry(&files, "30", 100, map[string]string{"%1": LaunchStarted})
+	launchingEntry(&files, "31", 100, map[string]string{"%1": LaunchStarted})
+
+	files.Release(ServerID{PID: "31", StartTime: "1"})
+
+	require.Len(t, files.Restorable.Entries, 2)
+	assert.Equal(t, StatePending, files.Restorable.Entries[0].State, "server 30 is gone")
+	assert.Equal(t, StateLaunching, files.Restorable.Entries[1].State, "server 31 still runs it")
+}

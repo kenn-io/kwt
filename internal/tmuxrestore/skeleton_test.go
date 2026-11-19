@@ -281,6 +281,35 @@ func TestBuildTakesSavedDirectoriesLiterally(t *testing.T) {
 	}
 }
 
+func TestBuildStartsShellsRatherThanTheDefaultCommand(t *testing.T) {
+	// Restore types launches into shells it starts, and no program may
+	// start before the layout is ready.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	marker := filepath.Join(home, "default-command-ran")
+	config := "set -g default-shell /bin/sh\nset -g default-command 'touch " + marker + "; exec /bin/sh'\n"
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".tmux.conf"), []byte(config), 0o600))
+	tm := privateSocket(t)
+	panes := []Pane{{ID: "%0", Dir: home}, {ID: "%1", Dir: home}}
+	first := Window{Width: 80, Height: 24, Panes: panes}
+	second := Window{Width: 80, Height: 24, Panes: panes}
+
+	b := Builder{Tmux: tm, Token: "tok", Home: home}
+	created, err := b.CreateSession(t.Context(), Session{Name: "work", Path: home}, first)
+	require.NoError(t, err)
+	_, err = b.BuildFirstWindow(t.Context(), created, created.WindowIndex, first)
+	require.NoError(t, err)
+	_, err = b.BuildWindow(t.Context(), created.ID, created.WindowIndex+1, second)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		out := mustRun(t, tm, "list-panes", "-s", "-t", "work", "-F", "#{pane_current_command}")
+		return strings.Count(out, "sh\n") == 4
+	}, 5*time.Second, 20*time.Millisecond, "every pane runs the shell")
+	assert.NoFileExists(t, marker)
+}
+
 func TestCreatedSessionOutlivesDestroyUnattached(t *testing.T) {
 	// A restore after a reboot starts the server with the user's
 	// configuration, and its sessions stay unattached while they are built.

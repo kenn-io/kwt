@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -82,6 +83,9 @@ func (b Builder) CreateSession(ctx context.Context, s Session, first Window) (Cr
 	if !first.AutoRename && first.Name != "" {
 		args = append(args, "-n", first.Name)
 	}
+	// The first pane holds an inert placeholder until it is respawned with
+	// a shell, as kwt's workspace create path does.
+	args = append(args, kwttmux.FirstPanePlaceholderArgv()...)
 	// "=name:" is an exact session match; tmux does not resolve a bare
 	// "=name" for set-option.
 	args = append(args, ";", "set-option", "-t", "="+s.Name+":", kwttmux.CreationTokenOption, b.Token)
@@ -116,14 +120,33 @@ func (b Builder) CreateSession(ctx context.Context, s Session, first Window) (Cr
 		ID: f[0], WindowID: f[1], WindowIndex: index[0], PaneID: f[3],
 		PathMissing: !pathOK, PaneDirMissing: !paneOK,
 	}
-	if paneDir != path {
-		// The session directory is where later windows open; the first
-		// pane gets its own saved directory before anything runs in it.
-		if _, err := b.Tmux.Run(ctx, "respawn-pane", "-k", "-c", literalDir(paneDir), "-t", created.PaneID); err != nil {
-			return created, fmt.Errorf("move first pane of %q: %w", s.Name, err)
-		}
+	// The session directory is where later windows open; the first pane
+	// starts its shell in its own saved directory.
+	shell, err := b.shell(ctx, created.PaneID)
+	if err != nil {
+		return created, err
+	}
+	respawn := append([]string{"respawn-pane", "-k", "-c", literalDir(paneDir), "-t", created.PaneID}, shell...)
+	if _, err := b.Tmux.Run(ctx, respawn...); err != nil {
+		return created, fmt.Errorf("start first pane of %q: %w", s.Name, err)
 	}
 	return created, nil
+}
+
+// shell returns the command restored panes start with: tmux's default shell
+// for target, as a login shell. tmux would run default-command instead, and
+// that may start a program before the layout is ready or one that receives
+// the launch restore types for a shell.
+func (b Builder) shell(ctx context.Context, target string) ([]string, error) {
+	out, err := b.Tmux.Run(ctx, "display-message", "-p", "-t", target, "#{default-shell}")
+	if err != nil {
+		return nil, fmt.Errorf("read default shell: %w", err)
+	}
+	shell := strings.TrimSpace(out)
+	if shell == "" {
+		return nil, errors.New("read default shell: tmux reported none")
+	}
+	return []string{shell, "-l"}, nil
 }
 
 // Adopt takes over a session kwt's worktree create path made, from its first
@@ -188,7 +211,11 @@ func (b Builder) BuildWindow(ctx context.Context, sessionID string, index int, w
 	if !w.AutoRename && w.Name != "" {
 		args = append(args, "-n", w.Name)
 	}
-	out, err := b.Tmux.Run(ctx, args...)
+	shell, err := b.shell(ctx, sessionID)
+	if err != nil {
+		return BuiltWindow{}, err
+	}
+	out, err := b.Tmux.Run(ctx, append(args, shell...)...)
 	if err != nil {
 		return BuiltWindow{}, fmt.Errorf("create window %d: %w", index, err)
 	}
@@ -217,11 +244,15 @@ func (b Builder) fill(ctx context.Context, windowID string, first BuiltPane, w W
 		"-x", fmt.Sprint(max(w.Width, room)), "-y", fmt.Sprint(max(w.Height, room))); err != nil {
 		return built, fmt.Errorf("size window: %w", err)
 	}
+	shell, err := b.shell(ctx, windowID)
+	if err != nil {
+		return built, err
+	}
 	newest := first.ID
 	for _, pane := range w.Panes[1:] {
 		dir, ok := resolveDir(pane.Dir, b.Home)
-		out, err := b.Tmux.Run(ctx, "split-window", "-d", "-P", "-F", "#{pane_id}",
-			"-c", literalDir(dir), "-t", newest, ";", "select-layout", "-t", windowID, "even-vertical")
+		split := append([]string{"split-window", "-d", "-P", "-F", "#{pane_id}", "-c", literalDir(dir), "-t", newest}, shell...)
+		out, err := b.Tmux.Run(ctx, append(split, ";", "select-layout", "-t", windowID, "even-vertical")...)
 		if err != nil {
 			return built, fmt.Errorf("split pane %d: %w", pane.Index, err)
 		}

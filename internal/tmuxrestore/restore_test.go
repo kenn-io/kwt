@@ -226,6 +226,21 @@ func TestRestoreRetriesAnInterruptedCreate(t *testing.T) {
 	}
 }
 
+func TestARestoredSessionSurvivesTheNextServerLoss(t *testing.T) {
+	// The restored server can go before anything else saves it.
+	f := newRestoreFixture(t)
+	startServer(t, f.tm, "-s", "work", "-c", f.dir)
+	f.lose(t)
+	reports := f.restore(t, f.deps())
+	require.Len(t, reports, 1)
+	require.Equal(t, OutcomeRestored, reports[0].Outcome)
+
+	mustRun(t, f.tm, "kill-server")
+	f.save(t)
+
+	assert.Equal(t, StatePending, f.entryNamed(t, "work").State)
+}
+
 func TestRestoreStoppedMidBuildRemovesWhatItBuilt(t *testing.T) {
 	// Interrupting kwt cancels the restore; the half-built session must
 	// still go, or a retry finds its name in use.

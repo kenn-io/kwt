@@ -806,16 +806,20 @@ for a kwt worktree session, and `state` (`pending`, `creating`, or
   `kwt open`'s path, so they keep kwt's environment cleanup and workspace
   markers. Opening one with `kwt open` also restores its saved session when
   the path and session name still match, and for a worktree, the checkout.
-  `--layout` or `--select-layout` opens the chosen layout instead. A
+  `--layout` or `--select-layout` opens the chosen layout instead. When kwt
+  cannot read the server to tell whether a saved session applies, `kwt open`
+  fails rather than reuse the saved session's name. A
   worktree whose path now holds another checkout, or a directory that is no
   longer registered under the same name, is skipped as `worktree changed`.
 - **Pull-request workspaces** are never saved, and no program starts in a
-  pull-request checkout.
+  pull-request checkout, including one moved to another path.
 - A session whose name is in use is skipped. Rename or kill the live session,
   or dismiss the saved one.
 
-Restore types `kwt session exec` into each pane that resumes a conversation;
-the pane starts the agent once and only in its own shell. `restore --json`
+Each restored pane starts tmux's `default-shell` as a login shell, never
+`default-command`, so no program runs before the layout is ready. Restore
+types `kwt session exec` into each pane that resumes a conversation; the pane
+starts the agent once and only in its own shell. `restore --json`
 reports each entry's `outcome` (`restored`, `partially restored`, `skipped`,
 `failed`, or `not found`), a `reason`, the new session's `live` endpoint, and
 each pane's `status` (`none`, `waiting`, `started`, or `failed`) with its
@@ -823,7 +827,9 @@ each pane's `status` (`none`, `waiting`, `started`, or `failed`) with its
 start. The command exits non-zero when an entry failed or an ID was not
 found. Running `restore` again after an interruption cleans up the unfinished
 session and starts over; a session whose launches were handed off is
-reported as `already restored`.
+reported as `already restored`. A restored entry stays saved until a save
+records the restored session, so losing the server again before then leaves
+it restorable.
 
 `dismiss` deletes saved entries without restoring them. Front ends run
 `forget` after they kill a session on purpose, so it is not offered for
@@ -837,9 +843,9 @@ snapshot and one restorable file per tmux socket, written atomically with mode
 Known limits:
 
 - A session killed with plain tmux commands stays saved until the next save
-  while its server runs. Killing the last session stops the server, which kwt
-  cannot tell apart from a reboot, so that session becomes restorable; dismiss
-  it.
+  while its server runs. Killing the last session stops the server unless
+  tmux's `exit-empty` option is off. kwt cannot tell that stop apart from a
+  reboot, so the session becomes restorable; dismiss it.
 - Codex does not report a deliberate exit, so kwt infers one from two saves.
   A reboot right after quitting Codex can resume the closed conversation, and
   a slow shutdown can drop a live one.
@@ -856,9 +862,6 @@ Known limits:
 - A restore stopped while it types the handoffs leaves the untyped panes
   `waiting`, and running `restore` again reports `already restored`. Dismiss
   the entry and resume those conversations by hand.
-- Panes of sessions outside workspaces start with tmux's `default-command`.
-  When that runs a program rather than a shell, the handoff is typed into
-  that program.
 - A tab or newline in a directory or window name breaks saves of that tmux
   server.
 

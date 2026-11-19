@@ -48,6 +48,7 @@ func Save(ctx context.Context, deps SaveDeps) (SaveResult, error) {
 				f.Promote()
 				result.Promoted = true
 			}
+			f.Release(ServerID{})
 			return nil
 		}
 
@@ -57,18 +58,19 @@ func Save(ctx context.Context, deps SaveDeps) (SaveResult, error) {
 			result.Server = ServerUnknown
 			return err
 		}
-		protected.apply(&snap)
+		protected.apply(ctx, &snap)
 		if f.Live != nil && f.Live.Server != snap.Server {
 			f.Promote()
 			result.Promoted = true
 		}
+		f.Release(snap.Server)
 		f.Settle(&snap, readAt)
 		var previous map[string]int64
 		if f.Live != nil {
 			previous = f.Live.Gone
 		}
 		reconcile(ctx, &snap, previous, deps.Processes, now())
-		snap.SavedAt = now().Unix()
+		snap.SavedAt = now().UnixMilli()
 		f.Live = &snap
 		return nil
 	})

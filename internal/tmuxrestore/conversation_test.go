@@ -57,3 +57,20 @@ func TestFindCodexConversation(t *testing.T) {
 	touch(t, filepath.Join(home, ".codex", "sessions", "2026", "11", "18", "rollout-2026-11-18T01-02-03-0199-abc.jsonl.zst"))
 	assert.Equal(t, PresenceFound, FindConversation(rec, home, noEnv), "a compressed rollout still resumes")
 }
+
+func TestFindConversationBehindSymlinks(t *testing.T) {
+	home := t.TempDir()
+	real := t.TempDir()
+	touch(t, filepath.Join(real, "p", "c-1.jsonl"))
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".claude"), 0o700))
+	require.NoError(t, os.Symlink(real, filepath.Join(home, ".claude", "projects")))
+	rec := Record{Agent: "claude", ConversationID: "c-1"}
+
+	assert.Equal(t, PresenceFound, FindConversation(rec, home, noEnv), "a linked transcript directory is searched")
+
+	other := t.TempDir()
+	touch(t, filepath.Join(other, "c-2.jsonl"))
+	require.NoError(t, os.Symlink(other, filepath.Join(real, "linked")))
+	assert.NotEqual(t, PresenceAbsent, FindConversation(Record{Agent: "claude", ConversationID: "c-2"}, home, noEnv),
+		"a link kwt does not follow leaves the search unfinished")
+}

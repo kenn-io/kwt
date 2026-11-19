@@ -139,7 +139,7 @@ func sessionTargets(_ *cobra.Command, args []string) error {
 }
 
 func sessionStore() (tmuxrestore.Store, error) {
-	home, err := config.CanonicalHome()
+	home, err := config.EnsureHome()
 	if err != nil {
 		return tmuxrestore.Store{}, fmt.Errorf("resolve kwt home: %w", err)
 	}

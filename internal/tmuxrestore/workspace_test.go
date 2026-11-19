@@ -120,6 +120,32 @@ func TestOpeningAWorktreeFirstAfterTheServerIsLostRestoresIt(t *testing.T) {
 	assert.Equal(t, saved, f.geometry(t), "the saved layout, not the blank preset")
 }
 
+func TestOpeningAWorktreeWhoseSaveFailsKeepsItsSavedSession(t *testing.T) {
+	// A new server is running, but kwt cannot read it, so it cannot make
+	// the lost server's snapshot restorable.
+	f := newWorktreeFixture(t)
+	require.NoError(t, f.open(t, worktreeGeneration, nil))
+	mustRun(t, f.tm, "split-window", "-h", "-t", "="+worktreeSession+":", "-c", f.worktree)
+	f.save(t)
+	mustRun(t, f.tm, "kill-server")
+	startServer(t, f.tm, "-s", "other")
+	broken := filepath.Join(t.TempDir(), "tmux")
+	script := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = list-panes ] && exit 1; done\nexec '" + f.tm.Executable + "' \"$@\"\n"
+	require.NoError(t, os.WriteFile(broken, []byte(script), 0o700))
+	hook := func(ctx context.Context, req kwttmux.SkeletonRequest) (bool, error) {
+		deps := f.deps()
+		deps.Executable = broken
+		_, restored, err := RestoreWorkspace(ctx, deps, req)
+		return restored, err
+	}
+
+	err := f.open(t, worktreeGeneration, hook)
+
+	require.ErrorContains(t, err, "save tmux sessions")
+	_, err = f.tm.Run(t.Context(), "has-session", "-t", "="+worktreeSession)
+	assert.Error(t, err, "no preset session takes the saved session's name")
+}
+
 func TestOpeningADirectoryWorkspaceRestoresItsSavedSession(t *testing.T) {
 	// A registered directory has kwt's workspace markers but no checkout
 	// generation.
