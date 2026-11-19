@@ -128,9 +128,9 @@ func TestRunOutputBoundsOutputAndCancelsResolverProcess(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			// Bound a broken cancellation path without treating process startup as a benchmark.
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			started := time.Now()
 			stdout, stderr, _, err := runOutput(
 				ctx,
 				[]string{"/bin/sh", "-c", test.script},
@@ -138,9 +138,9 @@ func TestRunOutputBoundsOutputAndCancelsResolverProcess(t *testing.T) {
 				os.Environ(),
 				nil,
 			)
-			require.Error(t, err)
-			assert.LessOrEqual(t, len(test.stream(stdout, stderr)), 1<<20)
-			assert.Less(t, time.Since(started), 2*time.Second)
+			require.ErrorIs(t, err, errResolverOutputLimit)
+			assert.Len(t, test.stream(stdout, stderr), 1<<20)
+			assert.NoError(t, ctx.Err(), "output limit must stop the process before the deadline")
 		})
 	}
 }
