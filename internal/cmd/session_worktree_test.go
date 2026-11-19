@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/kwt/internal/lifecycle"
 	kwttmux "go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/tmuxrestore"
+	"go.kenn.io/kwt/pkg/models"
 	shared "go.kenn.io/kwt/worktree"
 )
 
@@ -50,7 +51,7 @@ func (w savedWorktree) entry(session, path, generation string) tmuxrestore.Entry
 func TestSavedWorktreeSessionOpensThroughKwt(t *testing.T) {
 	w := newSavedWorktree(t)
 
-	err := openSavedWorktreeSession(nil)(t.Context(), w.entry(w.session, w.path, w.generation), nil)
+	err := openSavedWorktreeSession(nil, nil)(t.Context(), w.entry(w.session, w.path, w.generation), nil)
 
 	require.NoError(t, err)
 	assert.True(t, w.runner.ensured)
@@ -74,7 +75,40 @@ func TestSavedWorktreeSessionThatNoLongerMatchesIsLeftAlone(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			w := newSavedWorktree(t)
 
-			err := openSavedWorktreeSession(nil)(t.Context(), entry(w), nil)
+			err := openSavedWorktreeSession(nil, nil)(t.Context(), entry(w), nil)
+
+			require.ErrorIs(t, err, tmuxrestore.ErrWorktreeChanged)
+			assert.False(t, w.runner.ensured, "no session is created in its place")
+		})
+	}
+}
+
+func TestSavedDirectoryWorkspaceSessionOpensThroughKwt(t *testing.T) {
+	w := newSavedWorktree(t)
+	dir := t.TempDir()
+	workspaces := []models.Workspace{{Name: "notes", Path: dir}}
+	session := kwttmux.DirWorkspaceSessionName("notes", dir)
+
+	err := openSavedWorktreeSession(nil, workspaces)(t.Context(), w.entry(session, dir, ""), nil)
+
+	require.NoError(t, err)
+	assert.True(t, w.runner.ensured)
+	assert.Equal(t, session, w.runner.sessionName)
+	assert.Equal(t, dir, w.runner.workingDirectory)
+	assert.Empty(t, w.runner.generation)
+}
+
+func TestSavedDirectoryWorkspaceSessionThatIsNoLongerRegisteredIsLeftAlone(t *testing.T) {
+	dir := t.TempDir()
+	session := kwttmux.DirWorkspaceSessionName("notes", dir)
+	for name, workspaces := range map[string][]models.Workspace{
+		"unregistered": nil,
+		"renamed":      {{Name: "journal", Path: dir}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newSavedWorktree(t)
+
+			err := openSavedWorktreeSession(nil, workspaces)(t.Context(), w.entry(session, dir, ""), nil)
 
 			require.ErrorIs(t, err, tmuxrestore.ErrWorktreeChanged)
 			assert.False(t, w.runner.ensured, "no session is created in its place")

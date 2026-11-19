@@ -109,6 +109,26 @@ func TestSavePromotesWhenTheServerIsReplaced(t *testing.T) {
 	assert.Equal(t, "other", files.Live.Sessions[0].Name)
 }
 
+func TestSaveNeverPublishesAnOlderViewThanAnotherSave(t *testing.T) {
+	f := newSaveFixture(t)
+	startServer(t, f.tm, "-s", "work")
+	// While this save loads its protection list, the session is renamed and
+	// a second save records the rename.
+	f.prs = func(ctx context.Context) ([]string, error) {
+		f.prs = noProtection
+		_, err := f.tm.Run(ctx, "rename-session", "-t", "work", "renamed")
+		require.NoError(t, err)
+		f.save(t)
+		return nil, nil
+	}
+
+	f.save(t)
+
+	files := f.files(t)
+	require.NotNil(t, files.Live)
+	assert.Equal(t, "renamed", files.Live.Sessions[0].Name)
+}
+
 func TestSaveLeavesFilesAloneWhenTheProbeFails(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root ignores directory permissions")

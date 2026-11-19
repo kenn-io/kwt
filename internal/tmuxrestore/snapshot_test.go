@@ -17,8 +17,8 @@ func TestParsePanesGroupsSessionsWindowsAndPanes(t *testing.T) {
 		// session, window @1 with two panes listed out of index order
 		paneLine("$1", "work", "100", "/src/a", "", "", "@1", "0", "edit", "0", "120", "40", "abcd,120x40,0,0{60x40,0,0,1,59x40,61,0,2}", "1", "0", "1", "61", "0", "59", "40", "0", "/src/a/sub", "%2", "", ""),
 		paneLine("$1", "work", "100", "/src/a", "", "", "@1", "0", "edit", "0", "120", "40", "abcd,120x40,0,0{60x40,0,0,1,59x40,61,0,2}", "1", "0", "0", "0", "0", "60", "40", "1", "/src/a", "%1", "roborev", record),
-		// window @2 is linked into both sessions
-		paneLine("$1", "work", "100", "/src/a", "", "", "@2", "1", "logs", "1", "120", "40", "ef01,120x40,0,0,3", "0", "1", "0", "0", "0", "120", "40", "1", "/var/log", "%3", "", ""),
+		// window @2 is linked into both sessions; its pane has an unreadable record
+		paneLine("$1", "work", "100", "/src/a", "", "", "@2", "1", "logs", "1", "120", "40", "ef01,120x40,0,0,3", "0", "1", "0", "0", "0", "120", "40", "1", "/var/log", "%3", "", "not json"),
 		paneLine("$2", "ops", "200", "/src/b", "id-b", "7", "@2", "4", "logs", "1", "120", "40", "ef01,120x40,0,0,3", "1", "1", "0", "0", "0", "120", "40", "1", "/var/log", "%3", "", "not json"),
 	}, "\n") + "\n"
 
@@ -30,17 +30,17 @@ func TestParsePanesGroupsSessionsWindowsAndPanes(t *testing.T) {
 	assert.Equal(t, Session{
 		ID: "$1", Name: "work", Created: "100", Path: "/src/a",
 		Windows: []WindowRef{
-			{Key: "77:@1", Index: 0, Active: true},
-			{Key: "77:@2", Index: 1, Active: false},
+			{Key: "77:9:@1", Index: 0, Active: true},
+			{Key: "77:9:@2", Index: 1, Active: false},
 		},
 	}, work)
 	ops := snap.Sessions[1]
 	assert.Equal(t, "id-b", ops.WorkspaceIdentity)
 	assert.Equal(t, "7", ops.WorkspaceGeneration)
-	assert.Equal(t, []WindowRef{{Key: "77:@2", Index: 4, Active: true}}, ops.Windows)
+	assert.Equal(t, []WindowRef{{Key: "77:9:@2", Index: 4, Active: true}}, ops.Windows)
 
 	require.Len(t, snap.Windows, 2, "a linked window is stored once")
-	edit := snap.Windows["77:@1"]
+	edit := snap.Windows["77:9:@1"]
 	assert.Equal(t, "edit", edit.Name)
 	assert.False(t, edit.AutoRename)
 	assert.False(t, edit.Zoomed)
@@ -51,7 +51,7 @@ func TestParsePanesGroupsSessionsWindowsAndPanes(t *testing.T) {
 	assert.Equal(t, "c-1", edit.Panes[0].Resume.ConversationID)
 	assert.Equal(t, Pane{Index: 1, ID: "%2", Left: 61, Top: 0, Width: 59, Height: 40, Dir: "/src/a/sub"}, edit.Panes[1])
 
-	logs := snap.Windows["77:@2"]
+	logs := snap.Windows["77:9:@2"]
 	assert.True(t, logs.AutoRename)
 	assert.True(t, logs.Zoomed)
 	require.Len(t, logs.Panes, 1, "the linked window's pane is not duplicated")

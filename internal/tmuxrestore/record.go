@@ -47,9 +47,10 @@ type Event struct {
 }
 
 // Apply returns the record a pane should hold after ev, and whether the pane
-// option should be cleared instead. identify runs only when a new
-// conversation starts, because the agent process and its arguments belong to
-// that conversation.
+// option should be cleared instead. identify finds the agent process the
+// event came from. A new conversation starts a new record; the same
+// conversation in a new process, such as "codex resume" after an exit, keeps
+// its hints and takes that process and its arguments.
 func Apply(prev *Record, ev Event, identify func() (*ProcessRef, []string)) (*Record, bool) {
 	if ev.ConversationID == "" {
 		return prev, false
@@ -57,12 +58,15 @@ func Apply(prev *Record, ev Event, identify func() (*ProcessRef, []string)) (*Re
 	if ev.IsEnd && deliberateEnd(ev.Agent, ev.EndReason) {
 		return nil, true
 	}
+	ref, argv := identify()
 	var next Record
 	if prev == nil || prev.ConversationID != ev.ConversationID || prev.Agent != ev.Agent {
-		next = Record{Agent: ev.Agent, ConversationID: ev.ConversationID}
-		next.Process, next.Argv = identify()
+		next = Record{Agent: ev.Agent, ConversationID: ev.ConversationID, Process: ref, Argv: argv}
 	} else {
 		next = *prev
+		if ref != nil && (prev.Process == nil || *ref != *prev.Process) {
+			next.Process, next.Argv = ref, argv
+		}
 	}
 	if ev.TranscriptPath != "" {
 		next.TranscriptPath = ev.TranscriptPath

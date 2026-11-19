@@ -157,13 +157,16 @@ func (s Store) WithLock(ctx context.Context, sock Socket, fn func(*Files) error)
 	if files.Restorable.Socket.Path == "" {
 		files.Restorable.Socket = sock
 	}
+	// The entries are written first: a promotion that fails part way then
+	// leaves the lost server's snapshot for the next save to promote again,
+	// which replaces pending entries by name rather than adding to them.
 	files.commit = func() error {
 		var err error
-		if liveBefore, err = writeOrRemove(base+liveSuffix, files.Live, files.Live == nil, liveBefore); err != nil {
+		if restorableBefore, err = writeOrRemove(base+restorableSuffix, files.Restorable,
+			len(files.Restorable.Entries) == 0, restorableBefore); err != nil {
 			return err
 		}
-		restorableBefore, err = writeOrRemove(base+restorableSuffix, files.Restorable,
-			len(files.Restorable.Entries) == 0, restorableBefore)
+		liveBefore, err = writeOrRemove(base+liveSuffix, files.Live, files.Live == nil, liveBefore)
 		return err
 	}
 	if err := fn(&files); err != nil {

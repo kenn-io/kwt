@@ -1,14 +1,18 @@
 package tmuxrestore
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	kwttmux "go.kenn.io/kwt/internal/tmux"
 )
 
 func mustRun(t *testing.T, tm Tmux, args ...string) string {
@@ -121,6 +125,27 @@ func TestBuildKeepsWindowIndexesAndNaming(t *testing.T) {
 	assert.True(t, strings.HasSuffix(lines[1], " 1"), "an automatically named window stays automatic")
 }
 
+func TestBuildMarksPanesWhereAPresetStartedAnAgent(t *testing.T) {
+	// Without the mark, the next save after a restore would no longer know
+	// which agent the pane runs, and a second server loss would lose it.
+	tm := privateSocket(t)
+	startServer(t, tm, "-s", "src")
+	mustRun(t, tm, "split-window", "-t", "src")
+	mustRun(t, tm, "set-option", "-p", "-t", "src:.1", kwttmux.PaneAgentOption, "roborev")
+	snap, err := ReadSnapshot(t.Context(), tm)
+	require.NoError(t, err)
+
+	_, built := rebuild(t, Builder{Tmux: tm, Token: "tok", Home: t.TempDir()}, snap, "src", "copy")
+
+	require.Len(t, built[0].Panes, 2)
+	marks := []string{}
+	for _, pane := range built[0].Panes {
+		marks = append(marks, strings.TrimSpace(mustRun(t, tm, "display", "-p", "-t", pane.ID,
+			"#{"+kwttmux.PaneAgentOption+"}")))
+	}
+	assert.Equal(t, []string{"", "roborev"}, marks)
+}
+
 func TestFinishRestoresActiveWindowPaneAndZoom(t *testing.T) {
 	tm := privateSocket(t)
 	startServer(t, tm, "-s", "src", "-x", "100", "-y", "30")
@@ -158,6 +183,30 @@ func TestBuildFallsBackToHomeForMissingDirectories(t *testing.T) {
 	assert.False(t, built[0].Panes[1].DirMissing)
 	paths := strings.Split(strings.TrimSpace(mustRun(t, tm, "list-panes", "-t", "copy", "-F", "#{pane_current_path}")), "\n")
 	assert.Equal(t, []string{resolvedDir(home), resolvedDir(kept)}, []string{resolvedDir(paths[0]), resolvedDir(paths[1])})
+}
+
+func TestCreateSessionStartsAServerWhoseSocketDirectoryIsGone(t *testing.T) {
+	// A reboot empties /tmp, taking tmux's socket directory with it.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	tm := privateSocket(t)
+	tm.Socket.Path = filepath.Join(filepath.Dir(tm.Socket.Path), "tmux-1", "default")
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer cancel()
+		_, _ = tm.Run(ctx, "kill-server")
+	})
+
+	saved := Session{Name: "work", Path: home}
+	first := Window{Width: 80, Height: 24, Panes: []Pane{{Dir: home}}}
+	_, err := Builder{Tmux: tm, Token: "tok", Home: home}.CreateSession(t.Context(), saved, first)
+	require.NoError(t, err)
+
+	info, err := os.Stat(filepath.Dir(tm.Socket.Path))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm(), "tmux's socket directory is private")
+	assert.Equal(t, "work", strings.TrimSpace(mustRun(t, tm, "list-sessions", "-F", "#{session_name}")))
 }
 
 func TestCleanupOwnedKillsOnlySessionsWithTheToken(t *testing.T) {

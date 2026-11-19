@@ -802,11 +802,12 @@ for a kwt worktree session, and `state` (`pending`, `creating`, or
   `conversation not found`.
 - **Preset agents:** a pane where a layout preset started a configured agent
   runs that agent's configured command again.
-- **Worktree sessions** are created through `kwt open`'s path, so they keep
-  kwt's environment cleanup and workspace markers. Opening a worktree with
-  `kwt open` also restores its saved session when the checkout and session
-  name still match. A worktree whose path now holds another checkout is
-  skipped as `worktree changed`.
+- **Worktree and directory workspace sessions** are created through
+  `kwt open`'s path, so they keep kwt's environment cleanup and workspace
+  markers. Opening one with `kwt open` also restores its saved session when
+  the path and session name still match, and for a worktree, the checkout. A
+  worktree whose path now holds another checkout, or a directory that is no
+  longer registered under the same name, is skipped as `worktree changed`.
 - **Pull-request workspaces** are never saved, and no program starts in a
   pull-request checkout.
 - A session whose name is in use is skipped. Rename or kill the live session,
@@ -820,7 +821,7 @@ each pane's `status` (`none`, `waiting`, `started`, or `failed`) with its
 `note`. `partially restored` means a pane is still starting or failed to
 start. The command exits non-zero when an entry failed or an ID was not
 found. Running `restore` again after an interruption cleans up the unfinished
-session and starts over; a session whose programs already started is
+session and starts over; a session whose launches were handed off is
 reported as `already restored`.
 
 `dismiss` deletes saved entries without restoring them. Front ends run
@@ -847,6 +848,15 @@ Known limits:
   reports its own errors in the pane.
 - The dashboard and daemon open worktrees without the restore step. Use
   `kwt session restore` for those sessions.
+- Some tmux versions, such as 3.6, number panes by their place in the window.
+  A restored window whose saved pane order differed from the panes' places,
+  such as a main pane on the right, has the saved layout with renumbered
+  panes.
+- A restore stopped while it types the handoffs leaves the untyped panes
+  `waiting`, and running `restore` again reports `already restored`. Dismiss
+  the entry and resume those conversations by hand.
+- A tab or newline in a directory or window name breaks saves of that tmux
+  server.
 
 ## `kwt remove`
 

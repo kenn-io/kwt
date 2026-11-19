@@ -261,7 +261,9 @@ func (r *WorkspaceRunner) ensure(
 	if sessionExists {
 		return r.repairBootstrap(ctx, session, worktreeDir, generation)
 	}
-	if r.restore != nil && generation != "" && !r.protected {
+	// A directory workspace has no generation; restore matches it by name
+	// and path alone.
+	if r.restore != nil && !r.protected {
 		restored, err := r.restore(ctx, SkeletonRequest{
 			SocketName:    r.socketName,
 			SocketTempDir: r.socketTempDir,

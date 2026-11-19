@@ -931,7 +931,7 @@ func TestCreateFromSkeletonRemovesOnlyItsOwnSessionOnFailure(t *testing.T) {
 	assert.True(t, hasCall(m.calls, "if-shell", "-F", "-t", "=s:", "#{==:#{"+CreationTokenOption+"},tok}"))
 }
 
-func TestEnsureOffersAMissingWorktreeSessionToTheRestorer(t *testing.T) {
+func TestEnsureOffersAMissingWorkspaceSessionToTheRestorer(t *testing.T) {
 	layout := models.Layout{Arrange: "even-horizontal", Panes: []string{"codex", "vim"}}
 	cases := []struct {
 		name       string
@@ -944,7 +944,7 @@ func TestEnsureOffersAMissingWorktreeSessionToTheRestorer(t *testing.T) {
 		{"restored", false, "gen-1", true, true, false},
 		{"nothing saved", false, "gen-1", false, true, true},
 		{"session already running", true, "gen-1", true, false, false},
-		{"directory workspace", false, "", true, false, true},
+		{"directory workspace", false, "", true, true, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -967,7 +967,7 @@ func TestEnsureOffersAMissingWorktreeSessionToTheRestorer(t *testing.T) {
 			if offered != nil {
 				assert.Equal(t, "s", offered.Session)
 				assert.Equal(t, "/wt", offered.WorkspacePath)
-				assert.Equal(t, "gen-1", offered.Generation)
+				assert.Equal(t, tc.generation, offered.Generation)
 				assert.Equal(t, KWTServerSocketName, offered.SocketName)
 			}
 			assert.Equal(t, tc.built, hasCall(m.calls, "split-window"))

@@ -106,6 +106,36 @@ func TestOpeningAWorktreeRestoresItsSavedSession(t *testing.T) {
 	assert.Equal(t, StateLaunching, f.entryNamed(t, worktreeSession).State)
 }
 
+func TestOpeningAWorktreeFirstAfterTheServerIsLostRestoresIt(t *testing.T) {
+	// Right after a reboot, no save has seen the server go yet.
+	f := newWorktreeFixture(t)
+	require.NoError(t, f.open(t, worktreeGeneration, nil))
+	mustRun(t, f.tm, "split-window", "-h", "-t", "="+worktreeSession+":", "-c", f.worktree)
+	saved := f.geometry(t)
+	f.save(t)
+	mustRun(t, f.tm, "kill-server")
+
+	require.NoError(t, f.open(t, worktreeGeneration, f.restoreHook(nil)))
+
+	assert.Equal(t, saved, f.geometry(t), "the saved layout, not the blank preset")
+}
+
+func TestOpeningADirectoryWorkspaceRestoresItsSavedSession(t *testing.T) {
+	// A registered directory has kwt's workspace markers but no checkout
+	// generation.
+	f := newWorktreeFixture(t)
+	require.NoError(t, f.open(t, "", nil))
+	mustRun(t, f.tm, "split-window", "-h", "-t", "="+worktreeSession+":", "-c", f.worktree)
+	saved := f.geometry(t)
+	f.lose(t)
+
+	require.NoError(t, f.open(t, "", f.restoreHook(nil)))
+
+	assert.Equal(t, saved, f.geometry(t), "the saved layout, not the blank preset")
+	assert.Equal(t, kwttmux.WorkspacePathIdentity(f.worktree),
+		strings.TrimSpace(mustRun(t, f.tm, "show-options", "-v", "-t", "="+worktreeSession+":", "@kwt-workspace-id")))
+}
+
 func TestOpeningAChangedWorktreeLeavesItsSavedSession(t *testing.T) {
 	f := newWorktreeFixture(t)
 	f.loseTwoPanes(t)

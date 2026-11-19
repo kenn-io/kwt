@@ -27,35 +27,37 @@ type SaveResult struct {
 
 // Save records the socket's current server. When the server that produced
 // the last snapshot is gone, its sessions become restorable. A probe that
-// fails leaves every file as it was.
+// fails leaves every file as it was. The server is read under the socket's
+// lock, so saves that overlap publish in the order they read and none can
+// replace a newer view with an older one.
 func Save(ctx context.Context, deps SaveDeps) (SaveResult, error) {
 	now := time.Now
 	if deps.Now != nil {
 		now = deps.Now
 	}
-	state, _, err := deps.Tmux.Probe(ctx)
-	if err != nil {
-		return SaveResult{Server: state}, err
-	}
-	result := SaveResult{Server: state}
-	if state == ServerAbsent {
-		err := deps.Store.WithLock(ctx, deps.Tmux.Socket, func(f *Files) error {
+	protected := loadProtection(ctx, deps.Protection)
+	var result SaveResult
+	err := deps.Store.WithLock(ctx, deps.Tmux.Socket, func(f *Files) error {
+		state, _, err := deps.Tmux.Probe(ctx)
+		result.Server = state
+		if err != nil {
+			return err
+		}
+		if state == ServerAbsent {
 			if f.Live != nil {
 				f.Promote()
 				result.Promoted = true
 			}
 			return nil
-		})
-		return result, err
-	}
+		}
 
-	readAt := now().UnixMilli()
-	snap, err := ReadSnapshot(ctx, deps.Tmux)
-	if err != nil {
-		return SaveResult{Server: ServerUnknown}, err
-	}
-	loadProtection(ctx, deps.Protection).apply(&snap)
-	err = deps.Store.WithLock(ctx, deps.Tmux.Socket, func(f *Files) error {
+		readAt := now().UnixMilli()
+		snap, err := ReadSnapshot(ctx, deps.Tmux)
+		if err != nil {
+			result.Server = ServerUnknown
+			return err
+		}
+		protected.apply(&snap)
 		if f.Live != nil && f.Live.Server != snap.Server {
 			f.Promote()
 			result.Promoted = true

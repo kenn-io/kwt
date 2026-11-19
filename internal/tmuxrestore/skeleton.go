@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -76,6 +77,11 @@ func (b Builder) CreateSession(ctx context.Context, s Session, first Window) (Cr
 	// "=name:" is an exact session match; tmux does not resolve a bare
 	// "=name" for set-option.
 	args = append(args, ";", "set-option", "-t", "="+s.Name+":", kwttmux.CreationTokenOption, b.Token)
+	// A reboot empties /tmp, and tmux given a socket path does not create
+	// its directory the way it does for a socket name.
+	if err := os.MkdirAll(filepath.Dir(b.Tmux.Socket.Path), 0o700); err != nil {
+		return CreatedSession{}, fmt.Errorf("create tmux socket directory: %w", err)
+	}
 	out, err := b.Tmux.Run(ctx, args...)
 	if err != nil {
 		return CreatedSession{}, fmt.Errorf("create session %q: %w", s.Name, err)
@@ -203,6 +209,17 @@ func (b Builder) fill(ctx context.Context, windowID string, first BuiltPane, w W
 		}
 		newest = strings.TrimSpace(out)
 		built.Panes = append(built.Panes, BuiltPane{Index: pane.Index, ID: newest, DirMissing: !ok})
+	}
+	// The mark tells later saves which agent a preset started, so the pane
+	// stays restorable after the next server loss too.
+	for i, pane := range w.Panes {
+		if pane.PresetAgent == "" {
+			continue
+		}
+		if _, err := b.Tmux.Run(ctx, "set-option", "-p", "-t", built.Panes[i].ID,
+			kwttmux.PaneAgentOption, pane.PresetAgent); err != nil {
+			return built, fmt.Errorf("mark pane %d agent: %w", pane.Index, err)
+		}
 	}
 
 	if _, err := b.Tmux.Run(ctx, "resize-window", "-t", windowID,

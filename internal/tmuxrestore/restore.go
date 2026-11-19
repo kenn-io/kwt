@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -183,7 +184,16 @@ func RestoreWorkspace(ctx context.Context, deps RestoreDeps, req kwttmux.Skeleto
 	if !slices.ContainsFunc(saved, func(s Socket) bool { return s.Path == sock.Path }) {
 		return EntryReport{}, false, nil
 	}
-	return restoreWorkspace(ctx, deps.withDefaults(), sock, req, "")
+	deps = deps.withDefaults()
+	// Opening first after a reboot comes before any save has seen the
+	// server go, so save now to make its sessions restorable. A failed save
+	// leaves the files as they were, and entries saved earlier still match.
+	_, _ = Save(ctx, SaveDeps{
+		Tmux:  Tmux{Executable: deps.Executable, Socket: sock},
+		Store: deps.Store, Processes: SystemProcesses(),
+		Protection: deps.Protection, Now: deps.Now,
+	})
+	return restoreWorkspace(ctx, deps, sock, req, "")
 }
 
 func requestSocket(req kwttmux.SkeletonRequest) (Socket, error) {
@@ -551,6 +561,16 @@ func (r restorer) typeLaunches(ctx context.Context, entry *Entry) {
 				continue
 			}
 			line = fmt.Sprintf("'%s' session exec %s %d", r.deps.Kwt, entry.ID, i)
+			// The pane's shell may not have the KWT_HOME restore runs
+			// with; the handoff must find the file restore wrote.
+			if r.deps.Getenv("KWT_HOME") != "" {
+				home := filepath.Dir(r.deps.Store.Dir)
+				if !safeKwtPath(home) {
+					l.Status, l.Note = LaunchFailed, "unsafe kwt home"
+					continue
+				}
+				line = fmt.Sprintf("env KWT_HOME='%s' %s", home, line)
+			}
 		}
 		if _, err := r.tm.Run(ctx, "send-keys", "-t", l.PaneID, "-l", line,
 			";", "send-keys", "-t", l.PaneID, "Enter"); err != nil {

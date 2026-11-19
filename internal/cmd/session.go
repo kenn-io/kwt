@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/kwt/internal/credentials"
 	kwttmux "go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/tmuxrestore"
+	"go.kenn.io/kwt/pkg/models"
 	shared "go.kenn.io/kwt/worktree"
 )
 
@@ -60,8 +61,9 @@ it came from, then resume each pane's Claude Code or Codex conversation with
 the settings it was started with. Panes that ran a layout preset's agent run
 its configured command again. Other panes open a shell in their directory.
 
-Worktree sessions are created the way "kwt open" creates them; one whose
-worktree now holds a different checkout is skipped. A session whose name is
+Worktree and directory workspace sessions are created the way "kwt open"
+creates them; one whose worktree now holds a different checkout, or whose
+directory is no longer registered, is skipped. A session whose name is
 in use is skipped. Get IDs from "kwt session snapshot".`,
 	Args:    sessionTargets,
 	PreRunE: globalOnlyPreRun,
@@ -275,14 +277,29 @@ var newSavedWorktreeSessions = func(names []string, restore kwttmux.SkeletonRest
 
 // openSavedWorktreeSession opens a saved worktree session the way
 // `kwt open --start-session` does, under the same project and worktree
-// identity checks, with restore in place of the layout preset.
-func openSavedWorktreeSession(names []string) func(context.Context, tmuxrestore.Entry, kwttmux.SkeletonRestorer) error {
+// identity checks, with restore in place of the layout preset. A directory
+// workspace must still be registered under the name its session was made for.
+func openSavedWorktreeSession(names []string, workspaces []models.Workspace) func(context.Context, tmuxrestore.Entry, kwttmux.SkeletonRestorer) error {
 	return func(ctx context.Context, entry tmuxrestore.Entry, restore kwttmux.SkeletonRestorer) error {
 		path, generation := entry.Session.Path, entry.Session.WorkspaceGeneration
 		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 			return tmuxrestore.ErrWorktreeChanged
 		}
 		sessions := newSavedWorktreeSessions(names, restore)
+		if generation == "" {
+			// Only a registered directory workspace has kwt's markers
+			// without a checkout generation. It must still be registered
+			// under the name its session was made for.
+			identity := kwttmux.WorkspacePathIdentity(path)
+			if !slices.ContainsFunc(workspaces, func(w models.Workspace) bool {
+				return kwttmux.WorkspacePathIdentity(w.Path) == identity &&
+					kwttmux.DirWorkspaceSessionName(w.Name, w.Path) == entry.Session.Name
+			}) {
+				return tmuxrestore.ErrWorktreeChanged
+			}
+			_, err := sessions.EstablishWithGeneration(ctx, entry.Session.Name, path, "", kwttmux.BlankLayout())
+			return err
+		}
 		_, err := runWorktreeSessionEstablishment(ctx, path, generation, names, func(session string) error {
 			if session != entry.Session.Name {
 				return tmuxrestore.ErrWorktreeChanged
@@ -309,7 +326,7 @@ func runSessionRestore(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		deps.ClaimWait = sessionClaimWait
-		deps.Workspace = openSavedWorktreeSession(credentials.ProtectedNames(appCtx.Config))
+		deps.Workspace = openSavedWorktreeSession(credentials.ProtectedNames(appCtx.Config), appCtx.Config.Workspaces)
 		reports, restoreErr := tmuxrestore.Restore(commandContext(cmd), deps, args, sessionAll)
 		if err := printRestoreReports(cmd, reports); err != nil {
 			return err

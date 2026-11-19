@@ -146,6 +146,30 @@ func TestRestoreRebuildsTheSessionAndHandsOffLaunches(t *testing.T) {
 	assert.Equal(t, report.Live.SessionID, entry.LiveSessionID)
 }
 
+func TestRestoreHandsOffWithItsOwnKwtHome(t *testing.T) {
+	// The server's panes need not have the KWT_HOME restore runs with, and
+	// the handoff must read the restorable file restore wrote.
+	f := newRestoreFixture(t)
+	script := "#!/bin/sh\nprintf '%s %s\\n' \"$KWT_HOME\" \"$*\" >> \"$FAKE_KWT_LOG/$(printf %s \"$TMUX_PANE\" | tr -d %)\"\n"
+	require.NoError(t, os.WriteFile(f.kwt, []byte(script), 0o700))
+	startServer(t, f.tm, "-s", "work", "-c", f.dir)
+	setResume(t, f.tm, "work.0", claudeRecord("c-1", "claude"))
+	f.lose(t)
+	id := f.entryNamed(t, "work").ID
+	deps := f.deps()
+	deps.Getenv = func(name string) string {
+		if name == "KWT_HOME" {
+			return "custom"
+		}
+		return ""
+	}
+
+	f.restore(t, deps, id)
+
+	pane := strings.TrimSpace(mustRun(t, f.tm, "list-panes", "-t", "work", "-F", "#{pane_id}"))
+	assert.Equal(t, []string{filepath.Dir(f.store.Dir) + " session exec " + id + " 0"}, f.handoffs(t, pane))
+}
+
 func TestRestoreSkipsANameInUse(t *testing.T) {
 	f := newRestoreFixture(t)
 	startServer(t, f.tm, "-s", "work", "-c", f.dir)

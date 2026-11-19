@@ -65,6 +65,28 @@ func TestPromoteMakesPendingEntries(t *testing.T) {
 	assert.Equal(t, storeSocket, files.Restorable.Socket)
 }
 
+func TestPromoteThatCannotSaveEntriesKeepsTheSnapshot(t *testing.T) {
+	store := OpenStore(t.TempDir())
+	update(t, store, func(f *Files) error {
+		f.Live = liveSnapshot("10", "work")
+		return nil
+	})
+	restorable := filepath.Join(store.Dir, storeSocket.Key()+restorableSuffix)
+
+	err := store.WithLock(t.Context(), storeSocket, func(f *Files) error {
+		f.Promote()
+		// A non-empty directory where the entries go makes their write fail,
+		// as a full disk would.
+		return os.MkdirAll(filepath.Join(restorable, "blocked"), 0o700)
+	})
+	require.Error(t, err)
+	require.NoError(t, os.RemoveAll(restorable))
+
+	files := read(t, store)
+	require.NotNil(t, files.Live, "the next save can still promote the lost server's sessions")
+	assert.Equal(t, "work", files.Live.Sessions[0].Name)
+}
+
 func TestPromoteReplacesOnlyPendingEntriesWithTheSameName(t *testing.T) {
 	store := OpenStore(t.TempDir())
 	update(t, store, func(f *Files) error {

@@ -132,7 +132,9 @@ func parsePanes(server ServerID, output string) (Snapshot, error) {
 			return Snapshot{}, err
 		}
 		windowIndex, width, height := ints[0], ints[1], ints[2]
-		key := server.PID + ":" + f[6]
+		// A new server can reuse both a PID and window IDs, so the key names
+		// the whole server.
+		key := server.PID + ":" + server.StartTime + ":" + f[6]
 
 		i, ok := sessionIndex[f[0]]
 		if !ok {

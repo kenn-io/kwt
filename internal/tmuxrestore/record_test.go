@@ -110,7 +110,38 @@ func TestApplySameConversationUpdatesHintsOnly(t *testing.T) {
 	require.NotNil(t, next)
 	assert.Equal(t, "acceptEdits", next.PermissionMode)
 	assert.Equal(t, "/new.jsonl", next.TranscriptPath)
-	assert.Zero(t, identify.calls)
+	assert.Equal(t, []string{"claude"}, next.Argv, "an unidentified process keeps the recorded one")
+	assert.Equal(t, &ProcessRef{PID: 42, StartMillis: 7}, next.Process)
+}
+
+func TestApplySameConversationInANewProcessRecordsThatProcess(t *testing.T) {
+	// Codex reports no deliberate exit, so its record outlives the process;
+	// "codex resume" in the same pane then continues that conversation.
+	prev := &Record{
+		Agent:          "codex",
+		ConversationID: "x-1",
+		Process:        &ProcessRef{PID: 42, StartMillis: 7},
+		Argv:           []string{"codex", "--sandbox", "read-only"},
+		TranscriptPath: "/rollout.jsonl",
+		RecordedAt:     1,
+	}
+	identify := &identifyCounter{
+		ref:  &ProcessRef{PID: 99, StartMillis: 20},
+		argv: []string{"codex", "resume", "x-1", "--sandbox", "workspace-write"},
+	}
+
+	next, clear := Apply(prev, Event{Agent: "codex", ConversationID: "x-1", Now: recordClock}, identify.identify)
+
+	require.NotNil(t, next)
+	assert.False(t, clear)
+	assert.Equal(t, Record{
+		Agent:          "codex",
+		ConversationID: "x-1",
+		Process:        &ProcessRef{PID: 99, StartMillis: 20},
+		Argv:           []string{"codex", "resume", "x-1", "--sandbox", "workspace-write"},
+		TranscriptPath: "/rollout.jsonl",
+		RecordedAt:     recordClock.Unix(),
+	}, *next)
 }
 
 func TestApplyIgnoresCodexPermissionMode(t *testing.T) {
