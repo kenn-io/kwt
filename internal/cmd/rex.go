@@ -260,7 +260,7 @@ func rexListing(ctx context.Context, executables []string) (rexListingOutput, er
 // serverGone reports a Rex socket that is missing or refuses connections:
 // REX_SERVER names a stopped server, or the server stopped after discovery.
 func serverGone(err error) bool {
-	return errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)
+	return errors.Is(err, syscall.ENOENT) || connectionRefused(err)
 }
 
 // resetTerminalModes undoes modes that the painted screen or the program
