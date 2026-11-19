@@ -205,6 +205,25 @@ func TestControlForwardsLayoutRequestsForItsSession(t *testing.T) {
 	assert.Equal(t, "block:2", sent["anchor_id"])
 }
 
+func TestControlForwardsPaneSwaps(t *testing.T) {
+	server := layoutServer(t)
+	server.answerValue("session.swap_blocks", map[string]any{"revision": 6})
+	run := startControl(t, server, "window:1")
+	run.next()
+
+	run.send(`{"id":1,"method":"session.swap_blocks","params":{"block_id":"block:1","other_block_id":"block:2"}}`)
+
+	reply := run.next()
+	assert.Equal(t, map[string]any{"revision": float64(6)}, reply["result"], "%v", reply["error"])
+	calls := server.callsTo("session.swap_blocks")
+	require.Len(t, calls, 1)
+	var sent map[string]any
+	require.NoError(t, json.Unmarshal(calls[0], &sent))
+	assert.Equal(t, map[string]any{
+		"session_id": "session:a", "block_id": "block:1", "other_block_id": "block:2",
+	}, sent)
+}
+
 func TestControlForwardsFloatingLayerRequests(t *testing.T) {
 	for _, method := range []string{
 		"session.new_layer",

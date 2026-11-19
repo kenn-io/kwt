@@ -25,6 +25,7 @@ var controlMethods = map[string]bool{
 	"session.focus_previous_pane": true,
 	"session.zoom_block":          true,
 	"block.close":                 true,
+	"session.swap_blocks":         true,
 	"session.new_layer":           true,
 	"session.float_block":         true,
 	"session.move_block":          true,

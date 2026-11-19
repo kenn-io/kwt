@@ -704,10 +704,11 @@ the session and writes a reply with the request's `id`:
 The methods for the tiled layout are `session.new_split`,
 `session.resize_pane`, `session.focus_block`, `session.focus_direction`,
 `session.focus_next_pane`, `session.focus_previous_pane`,
-`session.zoom_block`, and `block.close`. The methods for floating layers are
-`session.new_layer`, `session.float_block`, `session.move_block`,
-`session.resize_layer`, `session.raise_layer`, `session.lower_layer`,
-`session.set_layer_state`, and `session.close_layer`. Any other method gets a
+`session.zoom_block`, `block.close`, and `session.move_block` and
+`session.swap_blocks` to rearrange panes. The methods for floating layers are
+`session.new_layer`, `session.float_block`, `session.resize_layer`,
+`session.raise_layer`, `session.lower_layer`, `session.set_layer_state`, and
+`session.close_layer`. Any other method gets a
 `method_not_allowed` error. The command writes
 `{"type":"ended"}` and exits when the session ends, and exits when its input
 closes.
