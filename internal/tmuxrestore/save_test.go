@@ -128,17 +128,36 @@ func TestSaveForgetsSessionsKilledOnAServerThatStaysUp(t *testing.T) {
 func TestSaveNeverPublishesAnOlderViewThanAnotherSave(t *testing.T) {
 	f := newSaveFixture(t)
 	startServer(t, f.tm, "-s", "work")
-	// While this save loads its protection list, the session is renamed and
-	// a second save records the rename.
-	f.prs = func(ctx context.Context) ([]ProtectedWorkspace, error) {
-		f.prs = noProtection
-		_, err := f.tm.Run(ctx, "rename-session", "-t", "work", "renamed")
-		require.NoError(t, err)
-		f.save(t)
-		return nil, nil
+	// The first save's tmux pauses once it has printed the panes, until the
+	// test lets it go.
+	gate := t.TempDir()
+	paused := filepath.Join(t.TempDir(), "tmux")
+	script := "#!/bin/sh\n'" + f.tm.Executable + "' \"$@\"; status=$?\n" +
+		"case \" $* \" in *\" list-panes \"*)\n" +
+		"  : > '" + gate + "/read'\n" +
+		"  while [ ! -e '" + gate + "/go' ]; do sleep 0.02; done;;\nesac\nexit $status\n"
+	require.NoError(t, os.WriteFile(paused, []byte(script), 0o700))
+	save := func(tm Tmux, done chan<- error) {
+		_, err := Save(t.Context(), SaveDeps{Tmux: tm, Store: f.store, Processes: f.procs,
+			Protection: noProtection, Now: func() time.Time { return f.now }})
+		done <- err
 	}
+	first, second := make(chan error, 1), make(chan error, 1)
+	go save(Tmux{Executable: paused, Socket: f.tm.Socket}, first)
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(filepath.Join(gate, "read"))
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
 
-	f.save(t)
+	// With the first save's view read, the session is renamed and a second
+	// save starts. If it could publish now, the first would then overwrite
+	// the rename with its older view.
+	mustRun(t, f.tm, "rename-session", "-t", "work", "renamed")
+	go save(f.tm, second)
+	time.Sleep(200 * time.Millisecond)
+	require.NoError(t, os.WriteFile(filepath.Join(gate, "go"), nil, 0o600))
+	require.NoError(t, <-first)
+	require.NoError(t, <-second)
 
 	files := f.files(t)
 	require.NotNil(t, files.Live)

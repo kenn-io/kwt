@@ -169,6 +169,20 @@ func TestSessionSnapshotListsSessionsFromAStoppedServer(t *testing.T) {
 	assert.False(t, entries[0].NameTaken)
 }
 
+func TestSessionSnapshotSurvivesAMissingTmuxTmpdir(t *testing.T) {
+	// TMUX_TMPDIR can name a directory the reboot removed.
+	env := newSessionEnv(t)
+	pane := env.mustTmux(t, "-L", "default", "new-session", "-d", "-s", "work", "-P", "-F", "#{pane_id}")
+	env.hook(t, "codex", pane, sessionStartPayload("x-1"))
+	env.mustTmux(t, "-L", "default", "kill-server")
+	env.tmpdir = filepath.Join(env.tmpdir, "gone")
+
+	entries := env.snapshot(t)
+
+	require.Len(t, entries, 1, "the saved server is still read")
+	assert.Equal(t, "work", entries[0].Session)
+}
+
 func TestSessionDismissAndForget(t *testing.T) {
 	env := newSessionEnv(t)
 	for _, name := range []string{"work", "ops"} {

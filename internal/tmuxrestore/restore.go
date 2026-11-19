@@ -313,6 +313,9 @@ func restoreWorkspace(ctx context.Context, deps RestoreDeps, sock Socket, req kw
 		entry := &f.Restorable.Entries[i]
 		report = EntryReport{ID: entry.ID, Session: entry.Session.Name, Socket: sock}
 		if !r.prepare(ctx, entry, &report) {
+			// A matching entry kwt could not prepare still owns the name;
+			// only a skipped one leaves it to the preset.
+			found = report.Outcome == OutcomeFailed
 			return nil
 		}
 		found = true

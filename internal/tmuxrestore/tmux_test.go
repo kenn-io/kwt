@@ -136,3 +136,15 @@ func TestProbeLeavesUnreadableSocketsUnknown(t *testing.T) {
 	assert.Equal(t, ServerUnknown, state)
 	assert.Error(t, err)
 }
+
+func TestTmuxErrorsHideSavedConversationRecords(t *testing.T) {
+	tm := privateSocket(t)
+	startServer(t, tm)
+
+	_, err := tm.Run(t.Context(), "set-option", "-p", "-t", "%999", ResumeOption, `{"args":["--secret-flag=hunter2"]}`)
+
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "hunter2")
+	assert.Contains(t, err.Error(), ResumeOption)
+	assert.Contains(t, err.Error(), "%999", "the failing pane stays named")
+}

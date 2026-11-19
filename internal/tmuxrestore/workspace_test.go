@@ -146,6 +146,29 @@ func TestOpeningAWorktreeWhoseSaveFailsKeepsItsSavedSession(t *testing.T) {
 	assert.Error(t, err, "no preset session takes the saved session's name")
 }
 
+func TestOpeningAWorktreeWhoseServerCannotBeReadKeepsItsSavedSession(t *testing.T) {
+	// The saved session is already restorable, but kwt cannot tell whether
+	// a server now runs, so it cannot restore it.
+	f := newWorktreeFixture(t)
+	f.loseTwoPanes(t)
+	broken := filepath.Join(t.TempDir(), "tmux")
+	script := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = display-message ] && exit 1; done\nexec '" + f.tm.Executable + "' \"$@\"\n"
+	require.NoError(t, os.WriteFile(broken, []byte(script), 0o700))
+	hook := func(ctx context.Context, req kwttmux.SkeletonRequest) (bool, error) {
+		deps := f.deps()
+		deps.Executable = broken
+		_, restored, err := RestoreWorkspace(ctx, deps, req)
+		return restored, err
+	}
+
+	err := f.open(t, worktreeGeneration, hook)
+
+	require.ErrorContains(t, err, "restore saved session")
+	_, err = f.tm.Run(t.Context(), "has-session", "-t", "="+worktreeSession)
+	assert.Error(t, err, "no preset session takes the saved session's name")
+	assert.Equal(t, StatePending, f.entryNamed(t, worktreeSession).State)
+}
+
 func TestOpeningADirectoryWorkspaceRestoresItsSavedSession(t *testing.T) {
 	// A registered directory has kwt's workspace markers but no checkout
 	// generation.

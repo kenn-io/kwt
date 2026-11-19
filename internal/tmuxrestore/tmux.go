@@ -41,6 +41,11 @@ func socketDir(tempDir string) (string, error) {
 		tempDir = "/tmp"
 	}
 	resolved, err := filepath.EvalSymlinks(tempDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		// A reboot can remove TMUX_TMPDIR. No server runs there, and the
+		// socket path is still needed to report that.
+		resolved, err = filepath.Abs(tempDir)
+	}
 	if err != nil {
 		return "", fmt.Errorf("resolve tmux socket directory: %w", err)
 	}
@@ -105,7 +110,13 @@ type CommandError struct {
 }
 
 func (e *CommandError) Error() string {
-	return fmt.Sprintf("tmux %s: %v: %s", strings.Join(e.Args, " "), e.Err, e.Stderr)
+	args := slices.Clone(e.Args)
+	// A conversation record holds saved launch arguments, which can carry
+	// secrets.
+	if i := slices.Index(args, ResumeOption); i >= 0 && i+1 < len(args) {
+		args[i+1] = "<record>"
+	}
+	return fmt.Sprintf("tmux %s: %v: %s", strings.Join(args, " "), e.Err, e.Stderr)
 }
 
 func (e *CommandError) Unwrap() error { return e.Err }
