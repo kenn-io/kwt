@@ -3,7 +3,9 @@ package tmuxrestore
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -131,25 +133,41 @@ func TestCheckLiveness(t *testing.T) {
 	assert.Equal(t, LivenessUnknown, CheckLiveness(t.Context(), failingProcesses{}, &ProcessRef{PID: 10, StartMillis: 100}))
 }
 
+// TestProcessHelper is the process TestSystemProcessesTracksARealProcess
+// tracks.
+func TestProcessHelper(t *testing.T) {
+	if os.Getenv("KWT_PROCESS_HELPER") == "" {
+		t.Skip("helper process")
+	}
+	time.Sleep(30 * time.Second)
+}
+
 func TestSystemProcessesTracksARealProcess(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX process tree")
 	}
-	cmd := exec.CommandContext(t.Context(), "sleep", "30")
+	// The test binary is the process, so the check does not depend on how
+	// the host packages system tools.
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestProcessHelper$")
+	cmd.Env = append(os.Environ(), "KWT_PROCESS_HELPER=1")
 	require.NoError(t, cmd.Start())
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
 	pid := int32(cmd.Process.Pid)
+	agent := filepath.Base(os.Args[0])
 
 	table := SystemProcesses()
-	// Start can return before the process table shows the new program on
-	// Linux, so wait for it to appear as sleep.
+	// Start can return before the process table shows the new program, so
+	// wait for it, reporting what the table last showed.
 	var ref *ProcessRef
 	var argv []string
-	require.Eventually(t, func() bool {
-		ref, argv = IdentifyAgent(t.Context(), table, pid, pid, "sleep")
-		return ref != nil
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		info, err := table.Lookup(t.Context(), pid)
+		require.NoError(c, err)
+		ref, argv = IdentifyAgent(t.Context(), table, pid, pid, agent)
+		require.NotNil(c, ref, "process %+v is not identified as %s", info, agent)
 	}, 5*time.Second, 10*time.Millisecond)
 	assert.Equal(t, pid, ref.PID)
-	assert.Equal(t, []string{"sleep", "30"}, argv)
+	assert.Equal(t, cmd.Args, argv)
 	assert.Equal(t, LivenessAlive, CheckLiveness(t.Context(), table, ref))
 
 	require.NoError(t, cmd.Process.Kill())
