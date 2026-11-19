@@ -163,6 +163,15 @@ func TestWorkspaceSurvivesBootstrapWithDestroyUnattached(t *testing.T) {
 				destination = "unrelated"
 			}
 			attach := func() {
+				// A previous visit can leave these markers set before the new
+				// client attaches, especially when the terminal device is reused.
+				for _, option := range []string{
+					"@user-attach-hook", "@user-attach-client",
+					"@user-switch-hook", "@user-switch-client",
+					"@installed", "@seen", "@followup-zero", "@followup",
+				} {
+					require.NoError(t, command.RunCommandContext(ctx, "set-option", "-gu", option))
+				}
 				client = command.attachSessionCmd(destination)
 				client.Env = append(client.Env, "TERM=xterm-256color")
 				var err error
