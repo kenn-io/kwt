@@ -78,3 +78,24 @@ func TestRexControlReportsAStoppedServer(t *testing.T) {
 	err = runRexControl(t.Context(), "window:01a1", nil, strings.NewReader(""), io.Discard)
 	require.ErrorIs(t, err, rex.ErrNotRunning)
 }
+
+func TestRexNewRefusesAnythingButASessionID(t *testing.T) {
+	t.Setenv("REX_SERVER", "")
+	for _, id := range []string{"window:01a1", "--help", "session:", "session:a b"} {
+		err := runRexNew(t.Context(), rex.NewWindowOptions{SessionID: id}, nil, io.Discard)
+		require.ErrorContains(t, err, "is not a Rex session ID", id)
+	}
+}
+
+func TestRexNewReportsAStoppedServer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Rex servers run on macOS, Linux, and FreeBSD")
+	}
+	dir, err := os.MkdirTemp("", "rex")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Setenv("REX_SERVER", "unix://"+filepath.Join(dir, "missing.sock"))
+
+	err = runRexNew(t.Context(), rex.NewWindowOptions{}, nil, io.Discard)
+	require.ErrorIs(t, err, rex.ErrNotRunning)
+}
