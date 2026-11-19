@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -94,9 +95,16 @@ func dial(ctx context.Context, endpoint, path, protocol string) (*websocket.Conn
 	return conn, nil
 }
 
+// setupTimeout bounds reaching the server and each opening handshake, so
+// a server that accepts a connection and then stalls cannot hang kwt. An
+// open connection has no limit.
+var setupTimeout = 10 * time.Second
+
 // Dial opens a control connection to the server at endpoint.
 func Dial(ctx context.Context, endpoint string) (*Client, error) {
-	conn, err := dial(ctx, endpoint, "/api/control", controlProtocol)
+	setup, cancel := context.WithTimeout(ctx, setupTimeout)
+	defer cancel()
+	conn, err := dial(setup, endpoint, "/api/control", controlProtocol)
 	if err != nil {
 		return nil, err
 	}
@@ -109,11 +117,11 @@ func Dial(ctx context.Context, endpoint string) (*Client, error) {
 		_ = conn.CloseNow()
 		return nil, err
 	}
-	if err := conn.Write(ctx, websocket.MessageText, hello); err != nil {
+	if err := conn.Write(setup, websocket.MessageText, hello); err != nil {
 		_ = conn.CloseNow()
 		return nil, fmt.Errorf("rex hello: %w", err)
 	}
-	_, data, err := conn.Read(ctx)
+	_, data, err := conn.Read(setup)
 	if err != nil {
 		_ = conn.CloseNow()
 		return nil, fmt.Errorf("rex hello: %w", err)

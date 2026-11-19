@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
@@ -35,6 +36,11 @@ type fakeServer struct {
 	// controls are the open control connections, which push sends events to.
 	controls map[*websocket.Conn]struct{}
 	seq      int
+	// silentData makes each data connection read the client's HELLO and
+	// never answer it.
+	silentData bool
+	// streamDelay holds the stream after WELCOME, as an idle terminal does.
+	streamDelay time.Duration
 }
 
 type fakeCall struct {
@@ -248,12 +254,20 @@ func (f *fakeServer) serveData(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Write(ctx, websocket.MessageBinary, []byte{dataReject, 0x01})
 		return
 	}
+	f.mu.Lock()
+	silent, delay := f.silentData, f.streamDelay
+	f.mu.Unlock()
+	if silent {
+		_, _, _ = conn.Read(ctx)
+		return
+	}
 	welcome := make([]byte, 32)
 	welcome[0] = dataWelcome
 	binary.LittleEndian.PutUint64(welcome[24:], f.nonce)
 	if conn.Write(ctx, websocket.MessageBinary, welcome) != nil {
 		return
 	}
+	time.Sleep(delay)
 	f.mu.Lock()
 	stream := f.stream
 	f.mu.Unlock()

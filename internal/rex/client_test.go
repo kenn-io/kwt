@@ -1,16 +1,20 @@
 package rex
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -474,4 +478,105 @@ func TestTerminalsReportsOtherFailuresReadingASession(t *testing.T) {
 
 	_, err = client.Terminals(t.Context())
 	assert.True(t, IsCode(err, "internal"), "got %v", err)
+}
+
+// shortenSetup makes connection setup give up quickly for one test.
+func shortenSetup(t *testing.T, limit time.Duration) {
+	t.Helper()
+	previous := setupTimeout
+	setupTimeout = limit
+	t.Cleanup(func() { setupTimeout = previous })
+}
+
+// silentServer accepts connections on a loopback port and answers nothing,
+// or, with upgrade, completes the WebSocket upgrade and then says nothing.
+func silentServer(t *testing.T, upgrade bool) string {
+	t.Helper()
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	if upgrade {
+		server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { //nolint:gosec // Loopback test server.
+			conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{controlProtocol}})
+			if err != nil {
+				return
+			}
+			defer func() { _ = conn.CloseNow() }()
+			_, _, _ = conn.Read(context.WithoutCancel(r.Context()))
+			_, _, _ = conn.Read(context.WithoutCancel(r.Context()))
+		})}
+		go func() { _ = server.Serve(listener) }()
+		t.Cleanup(func() { _ = server.Close() })
+	} else {
+		var held []net.Conn
+		var mu sync.Mutex
+		go func() {
+			for {
+				conn, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				mu.Lock()
+				held = append(held, conn)
+				mu.Unlock()
+			}
+		}()
+		t.Cleanup(func() {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, conn := range held {
+				_ = conn.Close()
+			}
+		})
+	}
+	return "http://" + listener.Addr().String()
+}
+
+func TestDialGivesUpOnAServerThatNeverAnswers(t *testing.T) {
+	shortenSetup(t, 200*time.Millisecond)
+	for name, upgrade := range map[string]bool{"connection": false, "hello": true} {
+		t.Run(name, func(t *testing.T) {
+			endpoint := silentServer(t, upgrade)
+			start := time.Now()
+			_, err := Dial(t.Context(), endpoint)
+			require.ErrorIs(t, err, context.DeadlineExceeded)
+			assert.Less(t, time.Since(start), 5*time.Second)
+		})
+	}
+}
+
+func TestAttachGivesUpOnATerminalStreamThatNeverOpens(t *testing.T) {
+	shortenSetup(t, 200*time.Millisecond)
+	server := newFakeNetworkServer(t)
+	server.silentData = true
+
+	_, err := Attach(t.Context(), server.endpoint, AttachOptions{
+		SessionID: "session:a", BlockID: "block:1", In: strings.NewReader(""), Out: io.Discard,
+		Size: Size{Columns: 80, Rows: 24},
+	})
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestAnOpenAttachOutlastsTheSetupLimit(t *testing.T) {
+	shortenSetup(t, 100*time.Millisecond)
+	server := newFakeNetworkServer(t)
+	server.answerValue("com.superlogical.terminal.format", map[string]string{"content": ""})
+	server.streamDelay = 400 * time.Millisecond
+	server.stream = [][]byte{
+		rexMessage(server.nonce, `{"type":"resize","cols":80,"rows":24}`),
+		[]byte("still here"),
+		rexMessage(server.nonce, `{"type":"child_exited","exit_code":0}`),
+	}
+	in, inWriter := io.Pipe()
+	t.Cleanup(func() { _ = inWriter.Close() })
+
+	var out syncBuffer
+	exit, err := Attach(t.Context(), server.endpoint, AttachOptions{
+		SessionID: "session:a", BlockID: "block:1", In: in, Out: &out, Size: Size{Columns: 80, Rows: 24},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, exit)
+	assert.Contains(t, out.String(), "still here")
 }

@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 var (
@@ -93,7 +92,7 @@ func checkEndpoint(endpoint string) error {
 }
 
 // webSocketTarget is the WebSocket URL for path on the server at endpoint
-// and the HTTP client that reaches it.
+// and the HTTP client that reaches it; nil means the default client.
 func webSocketTarget(endpoint, path string) (string, *http.Client, error) {
 	unsupported := fmt.Errorf("the Rex server endpoint %q is not unix://PATH, http://HOST[:PORT], or https://HOST[:PORT]", endpoint)
 	if rest, ok := strings.CutPrefix(endpoint, "unix://"); ok {
@@ -115,19 +114,10 @@ func webSocketTarget(endpoint, path string) (string, *http.Client, error) {
 	base := strings.TrimSuffix(parsed.Host+parsed.Path, "/")
 	switch parsed.Scheme {
 	case "http":
-		return "ws://" + base + path, networkClient, nil
+		return "ws://" + base + path, nil, nil
 	case "https":
-		return "wss://" + base + path, networkClient, nil
+		return "wss://" + base + path, nil, nil
 	default:
 		return "", nil, unsupported
 	}
 }
-
-// networkClient gives up on a server that does not answer within the time
-// the rex command allows each connection.
-var networkClient = func() *http.Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone() //nolint:forcetypeassert // Always an *http.Transport.
-	transport.DialContext = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
-	transport.TLSHandshakeTimeout = 10 * time.Second
-	return &http.Client{Transport: transport}
-}()

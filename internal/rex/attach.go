@@ -157,6 +157,8 @@ func (a *attachment) resize(ctx context.Context, size Size) error {
 }
 
 func (a *attachment) openData(ctx context.Context, endpoint string) (*websocket.Conn, uint64, error) {
+	ctx, cancel := context.WithTimeout(ctx, setupTimeout)
+	defer cancel()
 	var ticket struct {
 		Ticket string `json:"ticket"`
 	}

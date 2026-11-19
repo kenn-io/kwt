@@ -674,8 +674,9 @@ normal and list no terminals. None of these commands starts a Rex server.
 `http://HOST:PORT` or `https://HOST` for a server with a
 [network listener](https://www.superlogical.com/rex/docs/linux/remote-access),
 such as its tailnet address. Otherwise kwt asks the `rex` command on `PATH`, or
-the one inside Rex for Mac, for its server. kwt gives up on a network server
-that does not answer within 10 seconds.
+the one inside Rex for Mac, for its server. kwt gives up on a server that
+does not finish connecting within 10 seconds. Once connected, an attach or
+control connection stays open as long as the server does.
 
 `attach` finds the session that holds the block, paints the terminal's
 current screen, then streams its output and
