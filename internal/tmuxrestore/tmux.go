@@ -112,7 +112,9 @@ func (t Tmux) Run(ctx context.Context, args ...string) (string, error) {
 	if executable == "" {
 		executable = "tmux"
 	}
-	full := append([]string{"-S", t.Socket.Path}, args...)
+	// -u keeps tmux from printing each tab as "_" outside a UTF-8 locale;
+	// saves split tmux's output on tabs.
+	full := append([]string{"-u", "-S", t.Socket.Path}, args...)
 	cmd := exec.CommandContext(ctx, executable, full...)
 	cmd.Env = kwttmux.SanitizedEnviron(os.Environ())
 	var stdout, stderr bytes.Buffer

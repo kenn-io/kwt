@@ -109,6 +109,21 @@ func TestReadSnapshotFromLiveServer(t *testing.T) {
 	require.Len(t, opsRefs, 2)
 }
 
+func TestReadSnapshotWithoutAUTF8Locale(t *testing.T) {
+	// A tmux client outside a UTF-8 locale prints each tab as "_", which
+	// would merge every field of the saved line into one.
+	t.Setenv("LANG", "")
+	t.Setenv("LC_CTYPE", "")
+	t.Setenv("LC_ALL", "C")
+	tm := privateSocket(t)
+	startServer(t, tm, "-s", "work", "-n", "edit")
+
+	snap, err := ReadSnapshot(t.Context(), tm)
+	require.NoError(t, err)
+	require.Len(t, snap.Sessions, 1)
+	assert.Equal(t, "work", snap.Sessions[0].Name)
+}
+
 // resolvedDir drops macOS's /private prefix, which tmux reports for temp
 // directories under /var, so paths can be compared.
 func resolvedDir(dir string) string {

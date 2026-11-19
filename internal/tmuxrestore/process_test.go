@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -139,8 +140,14 @@ func TestSystemProcessesTracksARealProcess(t *testing.T) {
 	pid := int32(cmd.Process.Pid)
 
 	table := SystemProcesses()
-	ref, argv := IdentifyAgent(t.Context(), table, pid, pid, "sleep")
-	require.NotNil(t, ref)
+	// Start can return before the process table shows the new program on
+	// Linux, so wait for it to appear as sleep.
+	var ref *ProcessRef
+	var argv []string
+	require.Eventually(t, func() bool {
+		ref, argv = IdentifyAgent(t.Context(), table, pid, pid, "sleep")
+		return ref != nil
+	}, 5*time.Second, 10*time.Millisecond)
 	assert.Equal(t, pid, ref.PID)
 	assert.Equal(t, []string{"sleep", "30"}, argv)
 	assert.Equal(t, LivenessAlive, CheckLiveness(t.Context(), table, ref))

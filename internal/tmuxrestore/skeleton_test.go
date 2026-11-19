@@ -52,21 +52,6 @@ func rebuild(t *testing.T, b Builder, snap Snapshot, name, newName string) (Crea
 	return created, built
 }
 
-func liveGeometry(t *testing.T, tm Tmux, target string) []string {
-	t.Helper()
-	out := mustRun(t, tm, "list-panes", "-t", target, "-F",
-		"#{pane_index} #{pane_left} #{pane_top} #{pane_width} #{pane_height}")
-	return strings.Split(strings.TrimSpace(out), "\n")
-}
-
-func savedGeometry(w Window) []string {
-	lines := make([]string, len(w.Panes))
-	for i, p := range w.Panes {
-		lines[i] = fmt.Sprintf("%d %d %d %d %d", p.Index, p.Left, p.Top, p.Width, p.Height)
-	}
-	return lines
-}
-
 func TestBuildWindowRestoresLayoutsByPaneIndex(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -97,11 +82,16 @@ func TestBuildWindowRestoresLayoutsByPaneIndex(t *testing.T) {
 			_, built := rebuild(t, b, snap, "src", "copy")
 
 			assert.False(t, built[0].LayoutDiffers)
-			assert.Equal(t, savedGeometry(saved), liveGeometry(t, tm, "copy"))
 			require.Len(t, built[0].Panes, tc.splits+1)
+			// Each saved pane comes back at its saved place. tmux 3.6
+			// numbers panes by place, so a mirrored layout's numbers can
+			// differ; the pane built for saved pane i is what matters.
 			for i, pane := range built[0].Panes {
-				assert.Equal(t, i, pane.Index)
-				assert.Equal(t, fmt.Sprint(i), strings.TrimSpace(mustRun(t, tm, "display", "-p", "-t", pane.ID, "#{pane_index}")))
+				p := saved.Panes[i]
+				assert.Equal(t, p.Index, pane.Index)
+				assert.Equal(t, fmt.Sprintf("%d %d %d %d", p.Left, p.Top, p.Width, p.Height),
+					strings.TrimSpace(mustRun(t, tm, "display", "-p", "-t", pane.ID,
+						"#{pane_left} #{pane_top} #{pane_width} #{pane_height}")))
 			}
 			assert.Equal(t, tc.width+"x"+tc.height,
 				strings.TrimSpace(mustRun(t, tm, "display", "-p", "-t", "copy", "#{window_width}x#{window_height}")))

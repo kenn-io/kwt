@@ -214,7 +214,7 @@ func (b Builder) fill(ctx context.Context, windowID string, first BuiltPane, w W
 	} else if !w.Zoomed {
 		// A zoomed window's saved pane sizes are the zoomed ones, so only
 		// an unzoomed window can be checked pane by pane.
-		same, err := b.sameGeometry(ctx, windowID, w)
+		same, err := b.placePanes(ctx, windowID, built.Panes, w)
 		if err != nil {
 			return built, err
 		}
@@ -243,9 +243,14 @@ func (b Builder) fill(ctx context.Context, windowID string, first BuiltPane, w W
 	return built, nil
 }
 
-func (b Builder) sameGeometry(ctx context.Context, windowID string, w Window) (bool, error) {
+// placePanes moves each built pane to its saved pane's place and reports
+// whether the window now matches the saved layout. select-layout fills the
+// layout's places in tmux's pane order, and tmux 3.6 cannot keep a saved
+// order that differs from the places, such as a mirrored main pane.
+// Swapping keeps each pane with the directory it was started in.
+func (b Builder) placePanes(ctx context.Context, windowID string, panes []BuiltPane, w Window) (bool, error) {
 	out, err := b.Tmux.Run(ctx, "list-panes", "-t", windowID, "-F",
-		"#{pane_index} #{pane_left} #{pane_top} #{pane_width} #{pane_height}")
+		"#{pane_id} #{pane_left} #{pane_top} #{pane_width} #{pane_height}")
 	if err != nil {
 		return false, fmt.Errorf("read panes: %w", err)
 	}
@@ -253,10 +258,28 @@ func (b Builder) sameGeometry(ctx context.Context, windowID string, w Window) (b
 	if len(lines) != len(w.Panes) {
 		return false, nil
 	}
+	occupant := map[string]string{} // place -> pane ID
+	place := map[string]string{}    // pane ID -> place
+	for _, line := range lines {
+		id, rect, _ := strings.Cut(line, " ")
+		occupant[rect], place[id] = id, rect
+	}
 	for i, p := range w.Panes {
-		if lines[i] != fmt.Sprintf("%d %d %d %d %d", p.Index, p.Left, p.Top, p.Width, p.Height) {
+		want := fmt.Sprintf("%d %d %d %d", p.Left, p.Top, p.Width, p.Height)
+		other, ok := occupant[want]
+		if !ok {
 			return false, nil
 		}
+		mine := panes[i].ID
+		if other == mine {
+			continue
+		}
+		if _, err := b.Tmux.Run(ctx, "swap-pane", "-d", "-s", mine, "-t", other); err != nil {
+			return false, fmt.Errorf("place pane %d: %w", p.Index, err)
+		}
+		was := place[mine]
+		occupant[want], occupant[was] = mine, other
+		place[mine], place[other] = want, was
 	}
 	return true, nil
 }
