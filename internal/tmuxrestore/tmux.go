@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -91,6 +92,9 @@ func ServerPIDFromTMUX(value string) string {
 type Tmux struct {
 	Executable string
 	Socket     Socket
+	// StripNames are configured credential variables kept out of tmux's
+	// environment, so a server restore starts never holds them.
+	StripNames []string
 }
 
 // CommandError carries tmux's exit status and diagnostic.
@@ -116,7 +120,10 @@ func (t Tmux) Run(ctx context.Context, args ...string) (string, error) {
 	// saves split tmux's output on tabs.
 	full := append([]string{"-u", "-S", t.Socket.Path}, args...)
 	cmd := exec.CommandContext(ctx, executable, full...)
-	cmd.Env = kwttmux.SanitizedEnviron(os.Environ())
+	cmd.Env = slices.DeleteFunc(kwttmux.SanitizedEnviron(os.Environ()), func(entry string) bool {
+		name, _, _ := strings.Cut(entry, "=")
+		return slices.ContainsFunc(t.StripNames, func(s string) bool { return strings.EqualFold(s, name) })
+	})
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

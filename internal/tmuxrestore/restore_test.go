@@ -1,6 +1,7 @@
 package tmuxrestore
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -225,6 +226,35 @@ func TestRestoreRetriesAnInterruptedCreate(t *testing.T) {
 	}
 }
 
+func TestRestoreStoppedMidBuildRemovesWhatItBuilt(t *testing.T) {
+	// Interrupting kwt cancels the restore; the half-built session must
+	// still go, or a retry finds its name in use.
+	f := newRestoreFixture(t)
+	startServer(t, f.tm, "-s", "work", "-c", f.dir)
+	f.lose(t)
+	entry := f.entryNamed(t, "work")
+	startServer(t, f.tm, "-s", "keep")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	var report EntryReport
+	require.NoError(t, f.store.WithLock(t.Context(), f.tm.Socket, func(files *Files) error {
+		r := newRestorer(ctx, f.deps().withDefaults(), f.tm.Socket)
+		r.files = files
+		report = r.create(ctx, files.Entry(entry.ID), EntryReport{ID: entry.ID}, func(b Builder) (LiveEndpoint, []string, error) {
+			_, err := b.CreateSession(ctx, entry.Session, Window{Panes: []Pane{{Dir: f.dir}}})
+			require.NoError(t, err)
+			cancel()
+			return LiveEndpoint{}, nil, ctx.Err()
+		})
+		return nil
+	}))
+
+	assert.Equal(t, OutcomeFailed, report.Outcome)
+	assert.Equal(t, "keep", strings.TrimSpace(mustRun(t, f.tm, "list-sessions", "-F", "#{session_name}")))
+	assert.Equal(t, StatePending, f.entryNamed(t, "work").State)
+}
+
 func TestRestoreRetriesALaunch(t *testing.T) {
 	f := newRestoreFixture(t)
 	startServer(t, f.tm, "-s", "work", "-c", f.dir)
@@ -246,6 +276,35 @@ func TestRestoreRetriesALaunch(t *testing.T) {
 	third := f.restore(t, f.deps(), id)[0]
 	require.NotNil(t, third.Live)
 	assert.NotEqual(t, *first.Live, *third.Live, "a lost restore starts over")
+}
+
+func TestRestoreRebuildsWhatALaterServerWithTheSamePIDHolds(t *testing.T) {
+	// A server started after another loss can reuse the PID, session ID,
+	// and window ID an earlier restore recorded.
+	f := newRestoreFixture(t)
+	startServer(t, f.tm, "-s", "work", "-c", f.dir)
+	f.lose(t)
+	entry := f.entryNamed(t, "work")
+	startServer(t, f.tm, "-s", "other", "-c", f.dir)
+	ids := strings.Fields(mustRun(t, f.tm, "display", "-p", "-t", "other", "#{pid} #{session_id} #{window_id}"))
+	require.NoError(t, f.store.WithLock(t.Context(), f.tm.Socket, func(files *Files) error {
+		e := files.Entry(entry.ID)
+		e.State, e.Token = StateLaunching, "earlier"
+		e.LiveServer, e.LiveSessionID = ServerID{PID: ids[0], StartTime: "1"}, ids[1]
+		key := e.Session.Windows[0].Key
+		shared := files.Restorable.Windows[key]
+		shared.LiveServer, shared.LiveWindowID = ServerID{PID: ids[0], StartTime: "1"}, ids[2]
+		files.Restorable.Windows[key] = shared
+		return nil
+	}))
+
+	reports := f.restore(t, f.deps(), entry.ID)
+
+	require.Len(t, reports, 1)
+	assert.Equal(t, OutcomeRestored, reports[0].Outcome)
+	assert.Empty(t, reports[0].Reason)
+	windows := strings.Fields(mustRun(t, f.tm, "list-windows", "-t", "work", "-F", "#{window_id}"))
+	assert.NotContains(t, windows, ids[2], "the other session's window is not linked in")
 }
 
 func TestRestoreBuildsASharedWindowOnceAndStartsItsProgramsOnce(t *testing.T) {

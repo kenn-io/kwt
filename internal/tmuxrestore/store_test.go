@@ -283,7 +283,7 @@ func launchingEntry(f *Files, server string, launchedAt int64, statuses map[stri
 	f.Promote()
 	entry := &f.Restorable.Entries[len(f.Restorable.Entries)-1]
 	entry.State = StateLaunching
-	entry.LiveServerPID = server
+	entry.LiveServer = ServerID{PID: server, StartTime: "1"}
 	entry.LaunchedAt = launchedAt
 	for pane, status := range statuses {
 		entry.Launches = append(entry.Launches, PaneLaunch{PaneID: pane, Status: status})

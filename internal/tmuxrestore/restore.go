@@ -31,6 +31,9 @@ const outcomeWorktree = "worktree"
 
 const claimPoll = 50 * time.Millisecond
 
+// cleanupWait bounds removing a failed build, which runs after cancellation.
+const cleanupWait = 10 * time.Second
+
 // ErrWorktreeChanged reports that a saved worktree session no longer matches
 // its worktree: the path holds a different checkout, kwt now names its
 // session differently, or kwt would open it on another tmux server.
@@ -48,6 +51,9 @@ type RestoreDeps struct {
 	Home       string
 	Getenv     func(string) string
 	Protection Protection
+	// StripNames are configured credential variables kept out of a tmux
+	// server restore starts.
+	StripNames []string
 	// ClaimWait is how long Restore waits for panes to claim launches
 	// before it reports them as still waiting.
 	ClaimWait time.Duration
@@ -81,11 +87,12 @@ type PaneReport struct {
 
 // LiveEndpoint identifies the session a restore created.
 type LiveEndpoint struct {
-	Socket    Socket `json:"socket"`
-	Session   string `json:"session"`
-	SessionID string `json:"session_id"`
-	ServerPID string `json:"server_pid"`
-	Created   string `json:"created"`
+	Socket          Socket `json:"socket"`
+	Session         string `json:"session"`
+	SessionID       string `json:"session_id"`
+	ServerPID       string `json:"server_pid"`
+	ServerStartTime string `json:"server_start_time"`
+	Created         string `json:"created"`
 }
 
 // EntryReport is what a restore did with one entry.
@@ -106,7 +113,7 @@ func failed(report EntryReport, err error) EntryReport {
 }
 
 // Restore restores the entries with ids, or every entry when all is set.
-// Each socket's entries are restored under its lock, so a concurrent restore
+// Each entry is restored under its socket's lock, so a concurrent restore
 // cannot create the same session. Worktree sessions are opened through kwt
 // after the lock is released, because kwt's open path takes it again.
 // Programs start when the panes claim their launches; Restore waits up to
@@ -130,27 +137,41 @@ func Restore(ctx context.Context, deps RestoreDeps, ids []string, all bool) ([]E
 	var worktrees []worktree
 	var errs []error
 	for _, sock := range sockets {
-		r := newRestorer(ctx, deps, sock)
+		var selected []string
 		err := deps.Store.WithLock(ctx, sock, func(f *Files) error {
-			r.files = f
-			var selected []string
 			for _, entry := range f.Restorable.Entries {
 				if all || wanted[entry.ID] {
 					selected = append(selected, entry.ID)
 					delete(wanted, entry.ID)
 				}
 			}
-			for _, id := range selected {
+			return nil
+		})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("restore %s: %w", sock.Path, err))
+			continue
+		}
+		// Each session holds the lock only while it is built, so the
+		// panes of sessions built earlier can claim their launches.
+		r := newRestorer(ctx, deps, sock)
+		for _, id := range selected {
+			err := deps.Store.WithLock(ctx, sock, func(f *Files) error {
+				if f.Entry(id) == nil {
+					// Another restore finished it in between.
+					reports = append(reports, EntryReport{ID: id, Socket: sock, Outcome: OutcomeNotFound})
+					return nil
+				}
+				r.files = f
 				report := r.restore(ctx, id)
 				if report.Outcome == outcomeWorktree {
 					worktrees = append(worktrees, worktree{report: len(reports), sock: sock, entry: *f.Entry(id)})
 				}
 				reports = append(reports, report)
+				return nil
+			})
+			if err != nil {
+				errs = append(errs, fmt.Errorf("restore %s: %w", sock.Path, err))
 			}
-			return nil
-		})
-		if err != nil {
-			errs = append(errs, fmt.Errorf("restore %s: %w", sock.Path, err))
 		}
 	}
 	for _, w := range worktrees {
@@ -297,7 +318,7 @@ type restorer struct {
 func newRestorer(ctx context.Context, deps RestoreDeps, sock Socket) restorer {
 	return restorer{
 		deps:      deps,
-		tm:        Tmux{Executable: deps.Executable, Socket: sock},
+		tm:        Tmux{Executable: deps.Executable, Socket: sock, StripNames: deps.StripNames},
 		protected: loadProtection(ctx, deps.Protection),
 	}
 }
@@ -340,7 +361,7 @@ func (r restorer) prepare(ctx context.Context, entry *Entry, report *EntryReport
 	}
 	switch entry.State {
 	case StateLaunching:
-		if state == ServerRunning && server.PID == entry.LiveServerPID && r.exists(ctx, entry.LiveSessionID) {
+		if state == ServerRunning && server == entry.LiveServer && r.exists(ctx, entry.LiveSessionID) {
 			// Programs may already run here; starting them again would
 			// open each conversation twice.
 			fillLaunches(report, *entry, r.tm.Socket)
@@ -380,10 +401,16 @@ func (r restorer) create(ctx context.Context, entry *Entry, report EntryReport, 
 	b := Builder{Tmux: r.tm, Token: entry.Token, Home: r.deps.Home}
 	live, notes, err := build(b)
 	if err != nil {
-		if _, cleanupErr := b.CleanupOwned(ctx); cleanupErr != nil {
+		// Cleanup runs even when the restore was stopped. If it fails, the
+		// entry keeps its token so the next restore removes the leftover.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupWait)
+		_, cleanupErr := b.CleanupOwned(cleanupCtx)
+		cancel()
+		if cleanupErr != nil {
 			err = errors.Join(err, cleanupErr)
+		} else {
+			resetEntry(entry)
 		}
-		resetEntry(entry)
 		if commitErr := r.files.Commit(); commitErr != nil {
 			err = errors.Join(err, commitErr)
 		}
@@ -391,7 +418,8 @@ func (r restorer) create(ctx context.Context, entry *Entry, report EntryReport, 
 	}
 	report.Notes = notes
 	entry.State = StateLaunching
-	entry.LiveSessionID, entry.LiveServerPID, entry.LiveCreated = live.SessionID, live.ServerPID, live.Created
+	entry.LiveSessionID, entry.LiveCreated = live.SessionID, live.Created
+	entry.LiveServer = ServerID{PID: live.ServerPID, StartTime: live.ServerStartTime}
 	entry.LaunchedAt = r.deps.Now().UnixMilli()
 	if err := r.files.Commit(); err != nil {
 		return failed(report, err)
@@ -415,7 +443,7 @@ func (r restorer) remove(id string) {
 
 func resetEntry(e *Entry) {
 	e.State, e.Token = StatePending, ""
-	e.LiveSessionID, e.LiveServerPID, e.LiveCreated = "", "", ""
+	e.LiveSessionID, e.LiveServer, e.LiveCreated = "", ServerID{}, ""
 	e.LaunchedAt, e.Launches = 0, nil
 }
 
@@ -455,21 +483,27 @@ func (r restorer) nameTaken(ctx context.Context, name string) (bool, error) {
 // linked, not rebuilt, and its programs are left to the restore that created
 // it.
 func (r restorer) buildWindows(ctx context.Context, b Builder, entry *Entry, created CreatedSession) (LiveEndpoint, []string, error) {
-	out, err := r.tm.Run(ctx, "display-message", "-p", "-t", created.ID, "#{pid}\t#{session_created}")
+	out, err := r.tm.Run(ctx, "display-message", "-p", "-t", created.ID, "#{pid}\t#{start_time}\t#{session_created}")
 	if err != nil {
 		return LiveEndpoint{}, nil, fmt.Errorf("read restored session: %w", err)
 	}
-	pid, createdAt, _ := strings.Cut(strings.TrimSpace(out), "\t")
+	f := strings.Split(strings.TrimSpace(out), "\t")
+	if len(f) != 3 {
+		return LiveEndpoint{}, nil, fmt.Errorf("read restored session: unexpected tmux output %q", out)
+	}
+	// A PID alone can name a later server too; with the start time it
+	// names this one.
+	server := ServerID{PID: f[0], StartTime: f[1]}
 	live := LiveEndpoint{
 		Socket: r.tm.Socket, Session: entry.Session.Name, SessionID: created.ID,
-		ServerPID: pid, Created: createdAt,
+		ServerPID: server.PID, ServerStartTime: server.StartTime, Created: f[2],
 	}
 
 	windows := r.files.Restorable.Windows
 	var notes []string
 	for i, ref := range entry.Session.Windows {
 		shared := windows[ref.Key]
-		if shared.LiveServerPID == pid && r.windowExists(ctx, shared.LiveWindowID) {
+		if shared.LiveServer == server && r.windowExists(ctx, shared.LiveWindowID) {
 			// The session's first window only holds the session open until
 			// a real window takes its place.
 			if err := b.LinkWindow(ctx, created.ID, shared.LiveWindowID, ref.Index, i == 0 && created.WindowIndex == ref.Index); err != nil {
@@ -491,7 +525,7 @@ func (r restorer) buildWindows(ctx context.Context, b Builder, entry *Entry, cre
 		if err != nil {
 			return live, notes, err
 		}
-		shared.LiveWindowID, shared.LiveServerPID, shared.CreatedBy = built.ID, pid, entry.ID
+		shared.LiveWindowID, shared.LiveServer, shared.CreatedBy = built.ID, server, entry.ID
 		windows[ref.Key] = shared
 		if built.LayoutDiffers {
 			notes = append(notes, fmt.Sprintf("window %d: layout differs", ref.Index))
@@ -597,7 +631,7 @@ func fillLaunches(report *EntryReport, entry Entry, sock Socket) {
 	}
 	report.Live = &LiveEndpoint{
 		Socket: sock, Session: entry.Session.Name, SessionID: entry.LiveSessionID,
-		ServerPID: entry.LiveServerPID, Created: entry.LiveCreated,
+		ServerPID: entry.LiveServer.PID, ServerStartTime: entry.LiveServer.StartTime, Created: entry.LiveCreated,
 	}
 	setOutcome(report)
 }

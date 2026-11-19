@@ -1,10 +1,14 @@
 package tmuxrestore
 
 import (
+	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -49,6 +53,10 @@ type BuiltWindow struct {
 	LayoutDiffers bool
 }
 
+// literalDir escapes dir for tmux, which expands formats such as #(command)
+// in start directories.
+func literalDir(dir string) string { return strings.ReplaceAll(dir, "#", "##") }
+
 // resolveDir returns dir, or home with false when dir no longer exists.
 func resolveDir(dir, home string) (string, bool) {
 	if dir != "" {
@@ -70,13 +78,23 @@ func (b Builder) CreateSession(ctx context.Context, s Session, first Window) (Cr
 		paneDir, paneOK = resolveDir(first.Panes[0].Dir, b.Home)
 	}
 	args := []string{"new-session", "-d", "-P", "-F",
-		"#{session_id}\t#{window_id}\t#{window_index}\t#{pane_id}", "-s", s.Name, "-c", path}
+		"#{session_id}\t#{window_id}\t#{window_index}\t#{pane_id}", "-s", s.Name, "-c", literalDir(path)}
 	if !first.AutoRename && first.Name != "" {
 		args = append(args, "-n", first.Name)
 	}
 	// "=name:" is an exact session match; tmux does not resolve a bare
 	// "=name" for set-option.
 	args = append(args, ";", "set-option", "-t", "="+s.Name+":", kwttmux.CreationTokenOption, b.Token)
+	// The session stays unattached while it is built, so destroy-unattached
+	// waits for its first attach, as it does for kwt's workspace sessions.
+	executable, err := exec.LookPath(cmp.Or(b.Tmux.Executable, "tmux"))
+	if err == nil {
+		executable, err = filepath.Abs(executable)
+	}
+	if err != nil {
+		return CreatedSession{}, fmt.Errorf("find tmux: %w", err)
+	}
+	args = append(args, kwttmux.HoldSessionLifetime(s.Name, executable)...)
 	// A reboot empties /tmp, and tmux given a socket path does not create
 	// its directory the way it does for a socket name.
 	if err := os.MkdirAll(filepath.Dir(b.Tmux.Socket.Path), 0o700); err != nil {
@@ -101,7 +119,7 @@ func (b Builder) CreateSession(ctx context.Context, s Session, first Window) (Cr
 	if paneDir != path {
 		// The session directory is where later windows open; the first
 		// pane gets its own saved directory before anything runs in it.
-		if _, err := b.Tmux.Run(ctx, "respawn-pane", "-k", "-c", paneDir, "-t", created.PaneID); err != nil {
+		if _, err := b.Tmux.Run(ctx, "respawn-pane", "-k", "-c", literalDir(paneDir), "-t", created.PaneID); err != nil {
 			return created, fmt.Errorf("move first pane of %q: %w", s.Name, err)
 		}
 	}
@@ -139,7 +157,7 @@ func (b Builder) Adopt(ctx context.Context, paneID string, first Window) (Create
 	if ok && dir != f[3] {
 		// Respawning without a command reruns kwt's login shell in the
 		// saved directory.
-		if _, err := b.Tmux.Run(ctx, "respawn-pane", "-k", "-c", dir, "-t", paneID); err != nil {
+		if _, err := b.Tmux.Run(ctx, "respawn-pane", "-k", "-c", literalDir(dir), "-t", paneID); err != nil {
 			return created, fmt.Errorf("move first pane: %w", err)
 		}
 	}
@@ -166,7 +184,7 @@ func (b Builder) BuildWindow(ctx context.Context, sessionID string, index int, w
 		dir, ok = resolveDir(w.Panes[0].Dir, b.Home)
 	}
 	args := []string{"new-window", "-d", "-P", "-F", "#{window_id}\t#{pane_id}",
-		"-t", fmt.Sprintf("%s:%d", sessionID, index), "-c", dir}
+		"-t", fmt.Sprintf("%s:%d", sessionID, index), "-c", literalDir(dir)}
 	if !w.AutoRename && w.Name != "" {
 		args = append(args, "-n", w.Name)
 	}
@@ -203,7 +221,7 @@ func (b Builder) fill(ctx context.Context, windowID string, first BuiltPane, w W
 	for _, pane := range w.Panes[1:] {
 		dir, ok := resolveDir(pane.Dir, b.Home)
 		out, err := b.Tmux.Run(ctx, "split-window", "-d", "-P", "-F", "#{pane_id}",
-			"-c", dir, "-t", newest, ";", "select-layout", "-t", windowID, "even-vertical")
+			"-c", literalDir(dir), "-t", newest, ";", "select-layout", "-t", windowID, "even-vertical")
 		if err != nil {
 			return built, fmt.Errorf("split pane %d: %w", pane.Index, err)
 		}
@@ -228,9 +246,7 @@ func (b Builder) fill(ctx context.Context, windowID string, first BuiltPane, w W
 	}
 	if _, err := b.Tmux.Run(ctx, "select-layout", "-t", windowID, w.Layout); err != nil {
 		built.LayoutDiffers = true
-	} else if !w.Zoomed {
-		// A zoomed window's saved pane sizes are the zoomed ones, so only
-		// an unzoomed window can be checked pane by pane.
+	} else {
 		same, err := b.placePanes(ctx, windowID, built.Panes, w)
 		if err != nil {
 			return built, err
@@ -260,6 +276,54 @@ func (b Builder) fill(ctx context.Context, windowID string, first BuiltPane, w W
 	return built, nil
 }
 
+// layoutCell matches one pane's cell in a classic tmux layout,
+// WIDTHxHEIGHT,LEFT,TOP, then the pane's number. A split cell has a bracket
+// after TOP instead.
+var layoutCell = regexp.MustCompile(`(\d+)x(\d+),(\d+),(\d+),(\d+)`)
+
+// layoutNode is one cell of a layout in the JSON form newer tmux reports.
+type layoutNode struct {
+	W  int    `json:"w"`
+	H  int    `json:"h"`
+	X  int    `json:"x"`
+	Y  int    `json:"y"`
+	ID string `json:"I"`
+	// Index is listed so its "i" key, matched without case, does not
+	// land in ID.
+	Index int          `json:"i"`
+	C     []layoutNode `json:"c"`
+}
+
+// layoutPlaces maps each pane ID in layout to its place, as "left top width
+// height". tmux reports a zoomed window's layout unzoomed, so this is where
+// each pane sits once the window is unzoomed.
+func layoutPlaces(layout string) map[string]string {
+	places := map[string]string{}
+	if strings.HasPrefix(layout, "{") {
+		var doc struct {
+			L layoutNode `json:"L"`
+		}
+		if json.Unmarshal([]byte(layout), &doc) != nil {
+			return places
+		}
+		var walk func(layoutNode)
+		walk = func(n layoutNode) {
+			if n.ID != "" {
+				places[n.ID] = fmt.Sprintf("%d %d %d %d", n.X, n.Y, n.W, n.H)
+			}
+			for _, c := range n.C {
+				walk(c)
+			}
+		}
+		walk(doc.L)
+		return places
+	}
+	for _, m := range layoutCell.FindAllStringSubmatch(layout, -1) {
+		places["%"+m[5]] = m[3] + " " + m[4] + " " + m[1] + " " + m[2]
+	}
+	return places
+}
+
 // placePanes moves each built pane to its saved pane's place and reports
 // whether the window now matches the saved layout. select-layout fills the
 // layout's places in tmux's pane order, and tmux 3.6 cannot keep a saved
@@ -281,8 +345,12 @@ func (b Builder) placePanes(ctx context.Context, windowID string, panes []BuiltP
 		id, rect, _ := strings.Cut(line, " ")
 		occupant[rect], place[id] = id, rect
 	}
+	saved := layoutPlaces(w.Layout)
 	for i, p := range w.Panes {
-		want := fmt.Sprintf("%d %d %d %d", p.Left, p.Top, p.Width, p.Height)
+		want, ok := saved[p.ID]
+		if !ok {
+			want = fmt.Sprintf("%d %d %d %d", p.Left, p.Top, p.Width, p.Height)
+		}
 		other, ok := occupant[want]
 		if !ok {
 			return false, nil

@@ -90,7 +90,17 @@ func TestHookTrackerSkipsTheSaveWhenTheLockIsHeld(t *testing.T) {
 }
 
 func TestHookTrackerIgnoresPanesOutsideTmux(t *testing.T) {
-	h, _ := hookFixture(t)
+	// An empty target is tmux's current pane, so an agent outside tmux
+	// would otherwise record its conversation on whatever pane that is.
+	h, pane := hookFixture(t)
 	h.Pane = ""
+
 	h.Track(t.Context(), claudeEvent("c-1"))
+
+	h.Pane = pane
+	assert.Nil(t, paneRecord(t, h))
+	require.NoError(t, h.Store.WithLock(t.Context(), h.Tmux.Socket, func(f *Files) error {
+		assert.Nil(t, f.Live, "nothing is saved")
+		return nil
+	}))
 }

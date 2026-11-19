@@ -244,3 +244,109 @@ func TestCleanupOwnedKillsOnlySessionsWithTheToken(t *testing.T) {
 	assert.False(t, killed, "a same-named session without the token is the user's")
 	assert.Contains(t, mustRun(t, tm, "list-sessions", "-F", "#{session_name}"), "work")
 }
+
+func TestBuildTakesSavedDirectoriesLiterally(t *testing.T) {
+	// tmux expands formats in start directories; a directory a checkout
+	// creates must not run commands or change where panes open.
+	tm := privateSocket(t)
+	startServer(t, tm, "-s", "src")
+	mustRun(t, tm, "split-window", "-t", "src")
+	mustRun(t, tm, "new-window", "-t", "src")
+	snap, err := ReadSnapshot(t.Context(), tm)
+	require.NoError(t, err)
+	odd := filepath.Join(resolvedDir(t.TempDir()), "a#{session_name}#(echo b)")
+	require.NoError(t, os.Mkdir(odd, 0o700))
+	for i := range snap.Sessions {
+		snap.Sessions[i].Path = odd
+	}
+	for key, w := range snap.Windows {
+		for i := range w.Panes {
+			w.Panes[i].Dir = odd
+		}
+		snap.Windows[key] = w
+	}
+
+	created, built := rebuild(t, Builder{Tmux: tm, Token: "tok", Home: t.TempDir()}, snap, "src", "copy")
+
+	assert.False(t, created.PathMissing)
+	paths := strings.Split(strings.TrimSpace(mustRun(t, tm, "list-panes", "-s", "-t", "copy", "-F", "#{pane_current_path}")), "\n")
+	require.Len(t, paths, 3)
+	for _, path := range paths {
+		assert.Equal(t, resolvedDir(odd), resolvedDir(path))
+	}
+	for _, w := range built {
+		for _, pane := range w.Panes {
+			assert.False(t, pane.DirMissing)
+		}
+	}
+}
+
+func TestCreatedSessionOutlivesDestroyUnattached(t *testing.T) {
+	// A restore after a reboot starts the server with the user's
+	// configuration, and its sessions stay unattached while they are built.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".tmux.conf"), []byte("set -g destroy-unattached on\n"), 0o600))
+	tm := privateSocket(t)
+
+	saved := Session{Name: "work", Path: home}
+	first := Window{Width: 80, Height: 24, Panes: []Pane{{Dir: home}, {Dir: home}}}
+	b := Builder{Tmux: tm, Token: "tok", Home: home}
+	created, err := b.CreateSession(t.Context(), saved, first)
+	require.NoError(t, err)
+	_, err = b.BuildFirstWindow(t.Context(), created, created.WindowIndex, first)
+	require.NoError(t, err)
+
+	assert.Equal(t, "work", strings.TrimSpace(mustRun(t, tm, "list-sessions", "-F", "#{session_name}")))
+}
+
+func TestCreateSessionKeepsProtectedCredentialsOutOfTheServer(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	t.Setenv("CUSTOM_FLEET_TOKEN", "secret")
+	tm := privateSocket(t)
+	tm.StripNames = []string{"custom_fleet_token"}
+
+	saved := Session{Name: "work", Path: home}
+	first := Window{Width: 80, Height: 24, Panes: []Pane{{Dir: home}}}
+	_, err := Builder{Tmux: tm, Token: "tok", Home: home}.CreateSession(t.Context(), saved, first)
+	require.NoError(t, err)
+
+	out, _ := tm.Run(t.Context(), "show-environment", "-g", "CUSTOM_FLEET_TOKEN")
+	assert.NotContains(t, out, "secret")
+}
+
+func TestBuildPlacesThePanesOfAZoomedWindow(t *testing.T) {
+	// A zoomed window saves zoomed pane sizes; its places come from the
+	// saved layout, which tmux keeps unzoomed.
+	tm := privateSocket(t)
+	startServer(t, tm, "-s", "src", "-x", "120", "-y", "30")
+	for range 3 {
+		mustRun(t, tm, "split-window", "-v", "-t", "src")
+		mustRun(t, tm, "select-layout", "-t", "src", "main-vertical-mirrored")
+	}
+	places := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(mustRun(t, tm, "list-panes", "-t", "src", "-F",
+		"#{pane_id} #{pane_left} #{pane_top} #{pane_width} #{pane_height}")), "\n") {
+		id, rect, _ := strings.Cut(line, " ")
+		places[id] = rect
+	}
+	mustRun(t, tm, "resize-pane", "-Z", "-t", "src:0.0")
+	snap, err := ReadSnapshot(t.Context(), tm)
+	require.NoError(t, err)
+	saved := snap.Windows[sessionNamed(t, snap, "src").Windows[0].Key]
+	require.True(t, saved.Zoomed)
+
+	_, built := rebuild(t, Builder{Tmux: tm, Token: "tok", Home: t.TempDir()}, snap, "src", "copy")
+
+	assert.False(t, built[0].LayoutDiffers)
+	mustRun(t, tm, "resize-pane", "-Z", "-t", built[0].Panes[0].ID)
+	require.Len(t, built[0].Panes, 4)
+	for i, pane := range built[0].Panes {
+		assert.Equal(t, places[saved.Panes[i].ID],
+			strings.TrimSpace(mustRun(t, tm, "display", "-p", "-t", pane.ID,
+				"#{pane_left} #{pane_top} #{pane_width} #{pane_height}")))
+	}
+}

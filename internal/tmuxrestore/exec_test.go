@@ -1,6 +1,7 @@
 package tmuxrestore
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,6 +34,24 @@ func TestClaimHandsTheLaunchToItsPaneOnce(t *testing.T) {
 
 	_, err = Claim(t.Context(), store, storeSocket, id, 0, "%4", "30")
 	assert.ErrorContains(t, err, "already started")
+}
+
+func TestLaunchRecordsAProgramThatCannotStart(t *testing.T) {
+	store := OpenStore(t.TempDir())
+	var id string
+	update(t, store, func(f *Files) error {
+		entry := launchingEntry(f, "30", 100, nil)
+		entry.Launches = []PaneLaunch{{PaneID: "%4", Status: LaunchWaiting, Argv: []string{filepath.Join(t.TempDir(), "gone")}}}
+		id = entry.ID
+		return nil
+	})
+
+	err := Launch(t.Context(), store, storeSocket, id, 0, "%4", "30")
+
+	require.Error(t, err)
+	l := read(t, store).Restorable.Entries[0].Launches[0]
+	assert.Equal(t, LaunchFailed, l.Status, "the restore report must not say it started")
+	assert.Contains(t, l.Note, "did not start")
 }
 
 func TestClaimRejectsTheWrongPane(t *testing.T) {
@@ -71,6 +90,10 @@ func TestSafeKwtPath(t *testing.T) {
 		"/Applications/Ghosthub.app/Contents/kwt":   true,
 		"/Users/me/Library/Application Support/kwt": true,
 		"/home/me/.local/bin/kwt_1.2+x":             true,
+		"/Users/José/bin/kwt":                       true,
+		"/home/用户/bin/kwt":                          true,
+		"/opt/a\u00a0b/kwt":                         false,
+		"/opt/a\u202eb/kwt":                         false,
 		"kwt":                                       false,
 		"/opt/it's/kwt":                             false,
 		"/opt/a\\b/kwt":                             false,

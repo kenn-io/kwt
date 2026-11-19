@@ -72,6 +72,13 @@ func holdWorkspaceLifetime(session, executable string) []string {
 	}
 }
 
+// HoldSessionLifetime returns tmux commands, to follow new-session in the
+// same command, that keep destroy-unattached from removing session before its
+// first attach. executable is tmux's absolute path.
+func HoldSessionLifetime(session, executable string) []string {
+	return holdWorkspaceLifetime(session, executable)
+}
+
 // restoreWorkspaceLifetime lets any ordinary tmux client finish the handoff,
 // including a client that switches from another session. Already attached
 // clients keep their policy until another attachment runs the repaired hooks.

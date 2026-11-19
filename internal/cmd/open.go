@@ -33,14 +33,17 @@ var (
 
 	discoverOpenWorktree = discovery.DiscoverWorktree
 
-	// A missing worktree session with saved state comes back as it was
-	// saved rather than from the layout preset.
-	newOpenWorkspaceRunner = func(names []string) openWorkspaceRunner {
-		return tmux.NewWorkspaceSessions(tmux.WorkspaceSessionsOptions{
+	// With restore set, a missing worktree session with saved state comes
+	// back as it was saved rather than from the layout preset.
+	newOpenWorkspaceRunner = func(names []string, restore bool) openWorkspaceRunner {
+		options := tmux.WorkspaceSessionsOptions{
 			StripNames:       names,
 			ReportDiagnostic: tmuxDiagnosticReporter(os.Stderr),
-			Restore:          restoreSavedWorktreeSession,
-		})
+		}
+		if restore {
+			options.Restore = restoreSavedWorktreeSession
+		}
+		return tmux.NewWorkspaceSessions(options)
 	}
 )
 
@@ -500,7 +503,9 @@ func openSelectedWorktreeWithResult(
 	}
 
 	protectedNames := credentials.ProtectedNames(ctx.Config)
-	runner := newOpenWorkspaceRunner(protectedNames)
+	// A layout the user chose wins over the saved session.
+	restoreSaved := shouldLoadTargetDefault(openLayout, openSelectLayout)
+	runner := newOpenWorkspaceRunner(protectedNames, restoreSaved)
 	if openExpectedRepository != "" {
 		return openExpectedWorktree(
 			commandCtx,
@@ -702,7 +707,8 @@ func openSelectedDirectoryWorkspaceWithResult(
 	if err != nil {
 		return err
 	}
-	runner := newOpenWorkspaceRunner(credentials.ProtectedNames(ctx.Config))
+	restoreSaved := shouldLoadTargetDefault(openLayout, openSelectLayout)
+	runner := newOpenWorkspaceRunner(credentials.ProtectedNames(ctx.Config), restoreSaved)
 	var endpoint tmux.SessionEndpoint
 	if openExpectedSession != "" {
 		endpoint, err = runner.EstablishExpectedWithGeneration(

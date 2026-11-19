@@ -805,7 +805,8 @@ for a kwt worktree session, and `state` (`pending`, `creating`, or
 - **Worktree and directory workspace sessions** are created through
   `kwt open`'s path, so they keep kwt's environment cleanup and workspace
   markers. Opening one with `kwt open` also restores its saved session when
-  the path and session name still match, and for a worktree, the checkout. A
+  the path and session name still match, and for a worktree, the checkout.
+  `--layout` or `--select-layout` opens the chosen layout instead. A
   worktree whose path now holds another checkout, or a directory that is no
   longer registered under the same name, is skipped as `worktree changed`.
 - **Pull-request workspaces** are never saved, and no program starts in a
@@ -855,6 +856,9 @@ Known limits:
 - A restore stopped while it types the handoffs leaves the untyped panes
   `waiting`, and running `restore` again reports `already restored`. Dismiss
   the entry and resume those conversations by hand.
+- Panes of sessions outside workspaces start with tmux's `default-command`.
+  When that runs a program rather than a shell, the handoff is typed into
+  that program.
 - A tab or newline in a directory or window name breaks saves of that tmux
   server.
 

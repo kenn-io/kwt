@@ -13,8 +13,10 @@ type ExecTarget struct {
 }
 
 // safePath matches the kwt paths restore will type into a shell inside single
-// quotes. Every listed character is literal there in sh, bash, zsh, and fish.
-var safePath = regexp.MustCompile(`^/[A-Za-z0-9 /._+,:@=~-]+$`)
+// quotes. Every listed character is literal there in sh, bash, zsh, and fish;
+// letters, marks, and digits from any script are allowed, so a home directory
+// in the user's language works.
+var safePath = regexp.MustCompile(`^/[\p{L}\p{M}\p{N} /._+,:@=~-]+$`)
 
 func safeKwtPath(path string) bool { return safePath.MatchString(path) }
 
@@ -32,7 +34,7 @@ func Claim(ctx context.Context, store Store, sock Socket, entryID string, launch
 			return errors.New("no such launch in this restore")
 		}
 		l := &entry.Launches[launch]
-		if l.PaneID != tmuxPane || entry.LiveServerPID != serverPID {
+		if l.PaneID != tmuxPane || entry.LiveServer.PID != serverPID {
 			return errors.New("this is not the restored pane")
 		}
 		switch {
@@ -46,4 +48,26 @@ func Claim(ctx context.Context, store Store, sock Socket, entryID string, launch
 		return nil
 	})
 	return target, err
+}
+
+// Launch claims a launch and runs its program in place of this process. A
+// program that cannot start is recorded as failed, so the restore does not
+// report a conversation that never resumed. It returns only on failure.
+func Launch(ctx context.Context, store Store, sock Socket, entryID string, launch int, tmuxPane, serverPID string) error {
+	target, err := Claim(ctx, store, sock, entryID, launch, tmuxPane, serverPID)
+	if err != nil {
+		return err
+	}
+	execErr := Exec(target)
+	_ = store.WithLock(ctx, sock, func(f *Files) error {
+		entry := f.Entry(entryID)
+		if entry == nil || launch >= len(entry.Launches) {
+			return nil
+		}
+		if l := &entry.Launches[launch]; l.PaneID == tmuxPane && l.Status == LaunchStarted {
+			l.Status, l.Note = LaunchFailed, "program did not start: "+execErr.Error()
+		}
+		return nil
+	})
+	return execErr
 }

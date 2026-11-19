@@ -222,7 +222,7 @@ func runSessionSnapshot(cmd *cobra.Command, _ []string) error {
 const sessionClaimWait = 3 * time.Second
 
 // sessionRestoreDeps returns the inputs every restore shares.
-func sessionRestoreDeps(agents map[string]string) (tmuxrestore.RestoreDeps, error) {
+func sessionRestoreDeps(cfg *models.Config) (tmuxrestore.RestoreDeps, error) {
 	store, err := sessionStore()
 	if err != nil {
 		return tmuxrestore.RestoreDeps{}, err
@@ -243,7 +243,8 @@ func sessionRestoreDeps(agents map[string]string) (tmuxrestore.RestoreDeps, erro
 		Store:      store,
 		Executable: executable,
 		Kwt:        kwtPath,
-		Agents:     agents,
+		Agents:     cfg.Agents,
+		StripNames: credentials.ProtectedNames(cfg),
 		Home:       home,
 		Protection: tmuxrestore.ProvenanceProtection(prStorePath()),
 	}, nil
@@ -257,7 +258,7 @@ func restoreSavedWorktreeSession(ctx context.Context, req kwttmux.SkeletonReques
 	if err != nil {
 		return false, err
 	}
-	deps, err := sessionRestoreDeps(cfg.Agents)
+	deps, err := sessionRestoreDeps(cfg)
 	if err != nil {
 		return false, err
 	}
@@ -316,7 +317,7 @@ func openSavedWorktreeSession(names []string, workspaces []models.Workspace) fun
 
 func runSessionRestore(cmd *cobra.Command, args []string) error {
 	return ExecuteWithContext(false, func(appCtx *CommandContext) error {
-		deps, err := sessionRestoreDeps(appCtx.Config.Agents)
+		deps, err := sessionRestoreDeps(appCtx.Config)
 		if err != nil {
 			return err
 		}
@@ -452,10 +453,6 @@ func runSessionExec(cmd *cobra.Command, args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(commandContext(cmd), sessionExecLockWait)
 	defer cancel()
-	target, err := tmuxrestore.Claim(ctx, store, socket, args[0], launch,
+	return tmuxrestore.Launch(ctx, store, socket, args[0], launch,
 		os.Getenv("TMUX_PANE"), tmuxrestore.ServerPIDFromTMUX(tmuxValue))
-	if err != nil {
-		return err
-	}
-	return tmuxrestore.Exec(target)
 }

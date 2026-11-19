@@ -197,7 +197,7 @@ func TestSessionExecRunsTheClaimedLaunchOnce(t *testing.T) {
 		f.Promote()
 		entry := &f.Restorable.Entries[0]
 		id = entry.ID
-		entry.State, entry.LiveServerPID = tmuxrestore.StateLaunching, fields[1]
+		entry.State, entry.LiveServer = tmuxrestore.StateLaunching, tmuxrestore.ServerID{PID: fields[1]}
 		entry.Launches = []tmuxrestore.PaneLaunch{{
 			PaneID: pane, Status: tmuxrestore.LaunchWaiting, Dir: dir,
 			Argv: []string{"/bin/sh", "-c", "pwd -P > " + out},

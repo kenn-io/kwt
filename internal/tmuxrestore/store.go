@@ -64,7 +64,7 @@ type Entry struct {
 	State         EntryState `json:"state"`
 	Token         string     `json:"token,omitempty"`
 	LiveSessionID string     `json:"live_session_id,omitempty"`
-	LiveServerPID string     `json:"live_server_pid,omitempty"`
+	LiveServer    ServerID   `json:"live_server,omitzero"`
 	LiveCreated   string     `json:"live_created,omitempty"`
 	// LaunchedAt is when the entry entered launching, in Unix milliseconds.
 	LaunchedAt int64        `json:"launched_at,omitempty"`
@@ -74,10 +74,10 @@ type Entry struct {
 // SharedWindow is a saved window and, once a restore has created it, where
 // it lives now so other entries can link it instead of building a copy.
 type SharedWindow struct {
-	Window        Window `json:"window"`
-	LiveWindowID  string `json:"live_window_id,omitempty"`
-	LiveServerPID string `json:"live_server_pid,omitempty"`
-	CreatedBy     string `json:"created_by,omitempty"`
+	Window       Window   `json:"window"`
+	LiveWindowID string   `json:"live_window_id,omitempty"`
+	LiveServer   ServerID `json:"live_server,omitzero"`
+	CreatedBy    string   `json:"created_by,omitempty"`
 }
 
 // Restorable holds every entry saved from one socket's lost servers.
@@ -246,7 +246,7 @@ func (f *Files) Promote() {
 	live := f.Live
 	f.Live = nil
 	f.Restorable.Entries = slices.DeleteFunc(f.Restorable.Entries, func(e Entry) bool {
-		return e.State != StatePending && e.LiveServerPID == live.Server.PID
+		return e.State != StatePending && e.LiveServer == live.Server
 	})
 	for _, session := range live.Sessions {
 		f.Restorable.Entries = slices.DeleteFunc(f.Restorable.Entries, func(e Entry) bool {
@@ -280,7 +280,7 @@ func (f *Files) Settle(snap *Snapshot, readAt int64) {
 		}
 	}
 	f.Restorable.Entries = slices.DeleteFunc(f.Restorable.Entries, func(e Entry) bool {
-		if e.State != StateLaunching || e.LiveServerPID != snap.Server.PID || readAt <= e.LaunchedAt {
+		if e.State != StateLaunching || e.LiveServer != snap.Server || readAt <= e.LaunchedAt {
 			return false
 		}
 		return !slices.ContainsFunc(e.Launches, func(l PaneLaunch) bool {
@@ -302,7 +302,7 @@ func (f *Files) Forget(server ServerID, sessionID, created string) bool {
 	}
 	before := len(f.Restorable.Entries)
 	f.Restorable.Entries = slices.DeleteFunc(f.Restorable.Entries, func(e Entry) bool {
-		restored := e.LiveServerPID == server.PID && e.LiveSessionID == sessionID && e.LiveCreated == created
+		restored := e.LiveServer.PID == server.PID && e.LiveSessionID == sessionID && e.LiveCreated == created
 		return restored || e.Server.PID == server.PID && matches(e.Session)
 	})
 	removed = removed || len(f.Restorable.Entries) != before
