@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -188,7 +189,7 @@ func (r *endpointResolver) resolveAll(
 	ctx context.Context,
 	requests []WorkspaceEndpointRequest,
 ) ([]resolvedWorkspaceSession, error) {
-	results, err := r.resolveAllBestEffort(ctx, requests)
+	results, err := r.resolveEach(ctx, requests, false)
 	if err != nil {
 		return nil, err
 	}
@@ -206,10 +207,20 @@ func (r *endpointResolver) resolveAll(
 
 // resolveAllBestEffort preserves one result per inventory request. Marker
 // inspection failures degrade only that request to its intended canonical
-// endpoint; failure to enumerate the canonical server remains a batch error.
+// endpoint. When the canonical server cannot be listed, every request
+// degrades to its intended endpoint, not live, with one diagnostic; a missing
+// tmux binary is left to the caller, which treats it as no sessions.
 func (r *endpointResolver) resolveAllBestEffort(
 	ctx context.Context,
 	requests []WorkspaceEndpointRequest,
+) ([]WorkspaceSessionResolution, error) {
+	return r.resolveEach(ctx, requests, true)
+}
+
+func (r *endpointResolver) resolveEach(
+	ctx context.Context,
+	requests []WorkspaceEndpointRequest,
+	degradeUnlistedServer bool,
 ) ([]WorkspaceSessionResolution, error) {
 	if len(requests) == 0 {
 		return []WorkspaceSessionResolution{}, nil
@@ -219,7 +230,20 @@ func (r *endpointResolver) resolveAllBestEffort(
 		return nil, cancellationErr
 	}
 	if err != nil {
-		return nil, fmt.Errorf("inspect canonical tmux endpoint: %w", err)
+		if !degradeUnlistedServer || errors.Is(err, exec.ErrNotFound) {
+			return nil, fmt.Errorf("inspect canonical tmux endpoint: %w", err)
+		}
+		r.reportDiagnostic(fmt.Errorf("cannot list sessions on the kwt tmux server: %w", err))
+		results := make([]WorkspaceSessionResolution, len(requests))
+		for index := range requests {
+			results[index].Session = newResolvedWorkspaceSession(
+				requests[index].SessionName, false, false,
+			).WorkspaceSession
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return results, nil
 	}
 	// compat(kag1): default-server adoption
 	defaultNames, defaultErr := r.defaultServer.ListSessionsContext(ctx)
