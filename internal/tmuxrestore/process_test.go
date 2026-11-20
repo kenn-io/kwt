@@ -81,6 +81,17 @@ func TestIdentifyAgent(t *testing.T) {
 			argv: []string{"codex-aarch64-apple-darwin", "-s", "workspace-write"},
 		},
 		{
+			name: "npm-installed claude runs a native claude.exe",
+			table: fakeProcesses{
+				10: proc(10, 1, "bash", "-bash"),
+				20: proc(20, 10, "claude.exe", "/m/node_modules/@anthropic-ai/claude-code/bin/claude.exe", "--model", "haiku"),
+				21: proc(21, 20, "sh", "sh", "-c", "kwt"),
+			},
+			start: 21, panePID: 10, agent: "claude",
+			want: &ProcessRef{PID: 20, StartMillis: 200},
+			argv: []string{"/m/node_modules/@anthropic-ai/claude-code/bin/claude.exe", "--model", "haiku"},
+		},
+		{
 			name: "no agent below the pane",
 			table: fakeProcesses{
 				5:  proc(5, 1, "claude", "claude"),

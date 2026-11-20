@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/shirou/gopsutil/v4/process"
@@ -89,15 +90,21 @@ var agentPackages = map[string]string{
 	"codex":  "@openai/codex",
 }
 
+// agentBinary reports whether a program name is the agent's own binary,
+// such as "claude", the "claude.exe" that Claude Code's npm package runs on
+// every platform, or Codex's "codex-<platform>".
+func agentBinary(name, agent string) bool {
+	name = strings.TrimSuffix(name, ".exe")
+	return name == agent || strings.HasPrefix(name, agent+"-")
+}
+
 func isAgentProcess(info ProcInfo, agent string) bool {
 	names := []string{info.Name}
 	if len(info.Argv) > 0 {
 		names = append(names, filepath.Base(info.Argv[0]))
 	}
-	for _, name := range names {
-		if name == agent || strings.HasPrefix(name, agent+"-") {
-			return true
-		}
+	if slices.ContainsFunc(names, func(name string) bool { return agentBinary(name, agent) }) {
+		return true
 	}
 	pkg, ok := agentPackages[agent]
 	if !ok || (info.Name != "node" && info.Name != "bun") {

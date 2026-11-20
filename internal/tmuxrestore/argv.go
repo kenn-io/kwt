@@ -138,6 +138,19 @@ func BuildLaunch(rec Record, configured string) LaunchArgs {
 	}
 	groups, dropped := parseFlags(argv[prefix:], flags)
 	result.Dropped = dropped
+	head := slices.Clone(argv[:prefix])
+	if prefix == 1 && agentBinary(filepath.Base(head[0]), rec.Agent) {
+		// An installed agent records a versioned path, gone after an update,
+		// or a platform binary that is not on PATH. Start the program kwt is
+		// configured to run for the agent, or let the pane's PATH find the
+		// current install by name, as when the user started it. Only an
+		// absolute configured path is usable: no shell expands ~ or $HOME.
+		head[0] = rec.Agent
+		if fields := strings.Fields(configured); len(fields) > 0 && filepath.IsAbs(fields[0]) &&
+			agentBinary(filepath.Base(fields[0]), rec.Agent) {
+			head[0] = fields[0]
+		}
+	}
 
 	if rec.Agent == "claude" && rec.PermissionMode != "" {
 		bypass := slices.ContainsFunc(groups, func(g flagGroup) bool {
@@ -159,7 +172,7 @@ func BuildLaunch(rec Record, configured string) LaunchArgs {
 		}
 	}
 
-	result.Argv = slices.Clone(argv[:prefix])
+	result.Argv = head
 	for _, group := range groups {
 		result.Argv = append(result.Argv, group.tokens...)
 	}
