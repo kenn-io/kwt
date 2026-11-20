@@ -380,17 +380,20 @@ func (f *Files) Entry(id string) *Entry {
 
 // Sockets lists every socket that has a snapshot file.
 func (s Store) Sockets() ([]Socket, error) {
-	paths, err := filepath.Glob(filepath.Join(s.Dir, "*.json"))
-	if err != nil {
+	files, err := os.ReadDir(s.Dir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("list snapshot files: %w", err)
 	}
 	seen := map[string]bool{}
 	var sockets []Socket
-	for _, path := range paths {
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), ".json") {
+			continue
+		}
 		var header struct {
 			Socket Socket `json:"socket"`
 		}
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(filepath.Join(s.Dir, file.Name()))
 		if err != nil || json.Unmarshal(data, &header) != nil || header.Socket.Path == "" {
 			continue
 		}

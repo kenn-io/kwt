@@ -108,6 +108,17 @@ func (f *restoreFixture) handoffs(t *testing.T, paneID string) []string {
 	return strings.Split(strings.TrimSpace(string(data)), "\n")
 }
 
+// settle waits until the pane's shell has run everything typed so far.
+func (f *restoreFixture) settle(t *testing.T, paneID string) {
+	t.Helper()
+	done := filepath.Join(t.TempDir(), "done")
+	mustRun(t, f.tm, "send-keys", "-t", paneID, "touch "+done, "Enter")
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(done)
+		return err == nil
+	}, 5*time.Second, 20*time.Millisecond, "pane %s never ran what was typed", paneID)
+}
+
 func claudeRecord(conversation string, argv ...string) Record {
 	return Record{Agent: "claude", ConversationID: conversation, Argv: argv, RecordedAt: 1}
 }
@@ -417,6 +428,9 @@ func TestRestoreBuildsASharedWindowOnceAndStartsItsProgramsOnce(t *testing.T) {
 				}
 			}
 			assert.Equal(t, 1, starts, "the shared window's conversation resumes once")
+			sharedPane := strings.TrimSpace(mustRun(t, f.tm, "list-panes", "-t", "b:4", "-F", "#{pane_id}"))
+			f.settle(t, sharedPane)
+			assert.Len(t, f.handoffs(t, sharedPane), 1, "one launch is typed into the shared pane")
 			bWindows := mustRun(t, f.tm, "list-windows", "-t", "b", "-F", "#{window_index} #{window_name} #{window_id}")
 			assert.Contains(t, bWindows, "4 shared")
 			if tc.linked {

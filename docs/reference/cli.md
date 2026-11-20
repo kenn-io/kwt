@@ -817,7 +817,9 @@ for a kwt worktree session, and `state` (`pending`, `creating`, or
   worktree whose path now holds another checkout, or a directory that is no
   longer registered under the same name, is skipped as `worktree changed`.
 - **Pull-request workspaces** are never saved, and no program starts in a
-  pull-request checkout, including one moved to another path.
+  pull-request checkout, including one moved to another path. While kwt
+  cannot read its pull-request records, a save changes nothing and the last
+  good snapshot stays.
 - A session whose name is in use is skipped. Rename or kill the live session,
   or dismiss the saved one.
 - **Saved sessions that share a name** are all kept, for example a session
@@ -873,6 +875,17 @@ Known limits:
   is treated as one, so its sessions are not saved.
 - The dashboard and daemon open worktrees without the restore step. Use
   `kwt session restore` for those sessions.
+- A worktree or directory workspace session that ran on the default tmux
+  server is skipped as `worktree changed`, because kwt opens workspace
+  sessions on its own server.
+- kwt does not replay a `CLAUDE_CONFIG_DIR` or `CODEX_HOME` that was set for
+  one launch. A conversation started that way does not resume.
+- A restore that kwt was killed in the middle of leaves a half-built session.
+  If the server is then lost before `restore` runs again, that session is
+  saved as the newest one with its name. Restore the older entry by ID.
+- When an agent has not started ten seconds after a restore, for example
+  behind a slow login shell, and the server is lost again, that pane comes
+  back without its conversation.
 - Some tmux versions, such as 3.6, number panes by their place in the window.
   A restored window whose saved pane order differed from the panes' places,
   such as a main pane on the right, has the saved layout with renumbered

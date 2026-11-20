@@ -54,6 +54,13 @@ func TestSocketFromTMUX(t *testing.T) {
 	socket, ok := SocketFromTMUX("/private/tmp/tmux-501/default,123,0")
 	require.True(t, ok)
 	assert.Equal(t, "/private/tmp/tmux-501/default", socket.Path)
+	assert.Equal(t, "123", ServerPIDFromTMUX("/private/tmp/tmux-501/default,123,0"))
+
+	// A socket path can hold commas; the PID and session follow the last two.
+	socket, ok = SocketFromTMUX("/tmp/a,b/tmux-501/default,123,0")
+	require.True(t, ok)
+	assert.Equal(t, "/tmp/a,b/tmux-501/default", socket.Path)
+	assert.Equal(t, "123", ServerPIDFromTMUX("/tmp/a,b/tmux-501/default,123,0"))
 
 	_, ok = SocketFromTMUX("")
 	assert.False(t, ok)

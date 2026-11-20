@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -104,6 +105,36 @@ func TestWorkspaceSessionsCreateOnlyOnKWTServer(t *testing.T) {
 	assert.Equal(t, KWTServerSocketName, got.SocketName)
 	assert.True(t, fixture.servers.kwtServer().HasSession(fixture.session))
 	assert.False(t, fixture.servers.defaultServer().HasSession(fixture.session))
+}
+
+func TestCreateFromSkeletonOnAServerRemovesOnlyItsOwnSession(t *testing.T) {
+	fixture := newRealWorkspaceSessionsFixture(t)
+	command := fixture.servers.kwtServer()
+	runner := NewWorkspaceRunner(command, nil)
+	create := func(build func(ctx context.Context) error) error {
+		return runner.CreateFromSkeleton(fixture.ctx, fixture.session, fixture.workspace, fixture.generation, "tok",
+			func(ctx context.Context, _ string) error { return build(ctx) })
+	}
+
+	err := create(func(context.Context) error {
+		require.True(t, command.HasSession(fixture.session))
+		return errors.New("layout failed")
+	})
+
+	require.ErrorContains(t, err, "layout failed")
+	assert.False(t, command.HasSession(fixture.session), "the partial session is removed")
+
+	// Someone replaces the session while the build runs.
+	err = create(func(ctx context.Context) error {
+		target := "=" + fixture.session
+		require.NoError(t, command.RunCommandContext(ctx, "new-session", "-d", "-s", "keep-server"))
+		require.NoError(t, command.RunCommandContext(ctx, "kill-session", "-t", target))
+		require.NoError(t, command.RunCommandContext(ctx, "new-session", "-d", "-s", fixture.session))
+		return errors.New("layout failed")
+	})
+
+	require.ErrorContains(t, err, "layout failed")
+	assert.True(t, command.HasSession(fixture.session), "a replacement without the token stays")
 }
 
 func TestDirectoryWorkspaceColdStart(t *testing.T) {

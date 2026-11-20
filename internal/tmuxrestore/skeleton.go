@@ -478,7 +478,10 @@ func (b Builder) CleanupOwned(ctx context.Context) (bool, error) {
 		if b.Token == "" || token != b.Token {
 			continue
 		}
-		if _, err := b.Tmux.Run(ctx, "kill-session", "-t", id); err != nil {
+		// tmux checks the token again as it removes the session, so an ID
+		// that now names another session is left alone.
+		if _, err := b.Tmux.Run(ctx, "if-shell", "-F", "-t", id,
+			"#{==:#{"+kwttmux.CreationTokenOption+"},"+b.Token+"}", "kill-session -t '"+id+"'"); err != nil {
 			return killed, fmt.Errorf("remove restored session: %w", err)
 		}
 		killed = true

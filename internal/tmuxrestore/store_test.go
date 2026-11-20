@@ -237,7 +237,11 @@ func TestStoreSerializesUpdates(t *testing.T) {
 }
 
 func TestStoreListsSockets(t *testing.T) {
-	store := OpenStore(t.TempDir())
+	// A kwt home can have characters that mean something in a file pattern.
+	store := OpenStore(filepath.Join(t.TempDir(), "kwt[dev]"))
+	sockets, err := store.Sockets()
+	require.NoError(t, err, "nothing is saved before the first save")
+	assert.Empty(t, sockets)
 	other := Socket{Path: "/tmp/tmux-501/kwt", Name: "kwt"}
 	update(t, store, func(f *Files) error { f.Live = liveSnapshot("10", "w"); return nil })
 	require.NoError(t, store.WithLock(t.Context(), other, func(f *Files) error {
@@ -246,7 +250,7 @@ func TestStoreListsSockets(t *testing.T) {
 		f.Promote()
 		return nil
 	}))
-	sockets, err := store.Sockets()
+	sockets, err = store.Sockets()
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []Socket{storeSocket, other}, sockets)
 }

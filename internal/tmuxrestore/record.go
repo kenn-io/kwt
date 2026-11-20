@@ -55,6 +55,11 @@ func Apply(prev *Record, ev Event, identify func() (*ProcessRef, []string)) (*Re
 	if ev.ConversationID == "" {
 		return prev, false
 	}
+	if ev.IsEnd && prev != nil && (prev.ConversationID != ev.ConversationID || prev.Agent != ev.Agent) {
+		// The pane already holds another conversation, and a late end of an
+		// earlier one says nothing about it.
+		return prev, false
+	}
 	if ev.IsEnd && deliberateEnd(ev.Agent, ev.EndReason) {
 		return nil, true
 	}

@@ -111,8 +111,10 @@ func TestOpeningAWorktreeSavedTwiceRestoresTheNewerSession(t *testing.T) {
 	f.loseTwoPanes(t)
 	older := f.entryNamed(t, worktreeSession)
 	// The session is then opened without restore, as the dashboard opens it,
-	// and lost again.
+	// given a layout unlike the older save and the blank preset, and lost
+	// again.
 	require.NoError(t, f.open(t, worktreeGeneration, nil))
+	mustRun(t, f.tm, "split-window", "-v", "-t", "="+worktreeSession+":", "-c", f.worktree)
 	newer := f.geometry(t)
 	f.lose(t)
 	require.Len(t, f.entries(t), 2)

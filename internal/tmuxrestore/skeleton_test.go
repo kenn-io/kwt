@@ -245,6 +245,24 @@ func TestCleanupOwnedKillsOnlySessionsWithTheToken(t *testing.T) {
 	assert.Contains(t, mustRun(t, tm, "list-sessions", "-F", "#{session_name}"), "work")
 }
 
+func TestCleanupOwnedSparesASessionThatLostTheTokenAfterItWasListed(t *testing.T) {
+	// A server that restarts between the listing and the removal can give
+	// the listed ID to someone else's session.
+	tm := privateSocket(t)
+	startServer(t, tm, "-s", "work")
+	mustRun(t, tm, "set-option", "-t", "=work:", kwttmux.CreationTokenOption, "tok-a")
+	swapped := filepath.Join(t.TempDir(), "tmux")
+	script := "#!/bin/sh\n'" + tm.Executable + "' \"$@\"; status=$?\n" +
+		"case \" $* \" in *\" list-sessions \"*)\n" +
+		"  '" + tm.Executable + "' -S '" + tm.Socket.Path + "' set-option -t =work: " + kwttmux.CreationTokenOption + " theirs;;\nesac\nexit $status\n"
+	require.NoError(t, os.WriteFile(swapped, []byte(script), 0o700))
+
+	_, err := Builder{Tmux: Tmux{Executable: swapped, Socket: tm.Socket}, Token: "tok-a"}.CleanupOwned(t.Context())
+
+	require.NoError(t, err)
+	assert.Contains(t, mustRun(t, tm, "list-sessions", "-F", "#{session_name}"), "work")
+}
+
 func TestBuildTakesSavedDirectoriesLiterally(t *testing.T) {
 	// tmux expands formats in start directories; a directory a checkout
 	// creates must not run commands or change where panes open.

@@ -25,6 +25,10 @@ const (
 	OutcomeNotFound = "not found"
 )
 
+// ReasonAlreadyRestored is the reason on an entry whose restored session is
+// still live.
+const ReasonAlreadyRestored = "already restored"
+
 // outcomeWorktree marks a worktree entry Restore opens through kwt after it
 // releases the socket's lock. No report leaves Restore with it.
 const outcomeWorktree = "worktree"
@@ -356,7 +360,7 @@ func restoreWorkspace(ctx context.Context, deps RestoreDeps, sock Socket, req kw
 		return report, found, err
 	}
 	if found && report.Outcome == OutcomeFailed {
-		return report, true, fmt.Errorf("restore saved session %q: %s; `kwt session dismiss %s` opens it without the saved layout",
+		return report, true, fmt.Errorf("restore saved session %q: %s; to open it without the saved layout, run `kwt session dismiss %s` and open it again",
 			report.Session, report.Reason, report.ID)
 	}
 	return report, found, nil
@@ -419,7 +423,7 @@ func (r restorer) prepare(ctx context.Context, entry *Entry, report *EntryReport
 			// Programs may already run here; starting them again would
 			// open each conversation twice.
 			fillLaunches(report, *entry, r.tm.Socket)
-			report.Reason = "already restored"
+			report.Reason = ReasonAlreadyRestored
 			return false
 		}
 		resetEntry(entry)

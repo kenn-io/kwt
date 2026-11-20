@@ -2,6 +2,7 @@ package tmuxrestore
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -54,6 +55,11 @@ func Save(ctx context.Context, deps SaveDeps) (SaveResult, error) {
 			}
 			f.Release(ServerID{})
 			return nil
+		}
+		if protected.failed {
+			// A snapshot taken now would have to leave out every workspace
+			// session and conversation; the last good one is worth more.
+			return fmt.Errorf("snapshot left as it was: %w", protected.err)
 		}
 		if f.Live != nil && f.Live.Server == server {
 			if age := now().UnixMilli() - f.Live.SavedAt; age >= 0 && age < deps.MinInterval.Milliseconds() {

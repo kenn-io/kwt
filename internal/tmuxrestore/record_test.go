@@ -189,6 +189,20 @@ func TestApplyEndingRules(t *testing.T) {
 	}
 }
 
+func TestApplyIgnoresALateEndOfAnEarlierConversation(t *testing.T) {
+	// After /clear, the old conversation's end can arrive once the pane
+	// already holds the new one.
+	prev := &Record{Agent: "claude", ConversationID: "c-2", RecordedAt: 1}
+	for _, reason := range []string{"clear", "other"} {
+		ev := Event{Agent: "claude", ConversationID: "c-1", IsEnd: true, EndReason: reason, Now: recordClock}
+
+		next, clear := Apply(prev, ev, (&identifyCounter{}).identify)
+
+		assert.False(t, clear, reason)
+		assert.Equal(t, prev, next, reason)
+	}
+}
+
 func TestApplyWithoutConversationIDChangesNothing(t *testing.T) {
 	prev := &Record{Agent: "claude", ConversationID: "c-1", RecordedAt: 1}
 	next, clear := Apply(prev, Event{Agent: "claude", Now: recordClock}, nil)

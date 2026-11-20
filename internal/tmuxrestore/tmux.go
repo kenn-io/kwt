@@ -68,9 +68,24 @@ func NamedSocket(name string) (Socket, error) {
 	return SocketIn(os.Getenv("TMUX_TMPDIR"), name)
 }
 
+// splitTMUX splits a $TMUX value, "path,pid,session", into its socket path
+// and server PID. The path can hold commas, so the fields are read from the
+// right.
+func splitTMUX(value string) (path, pid string) {
+	i := strings.LastIndexByte(value, ',')
+	if i < 0 {
+		return value, ""
+	}
+	j := strings.LastIndexByte(value[:i], ',')
+	if j < 0 {
+		return value[:i], value[i+1:]
+	}
+	return value[:j], value[j+1 : i]
+}
+
 // SocketFromTMUX parses the socket path from a $TMUX value.
 func SocketFromTMUX(value string) (Socket, bool) {
-	path, _, _ := strings.Cut(value, ",")
+	path, _ := splitTMUX(value)
 	if path == "" {
 		return Socket{}, false
 	}
@@ -86,11 +101,8 @@ func SocketFromTMUX(value string) (Socket, bool) {
 
 // ServerPIDFromTMUX returns the server PID from a $TMUX value.
 func ServerPIDFromTMUX(value string) string {
-	fields := strings.Split(value, ",")
-	if len(fields) < 2 {
-		return ""
-	}
-	return fields[1]
+	_, pid := splitTMUX(value)
+	return pid
 }
 
 // Tmux runs tmux against one socket.

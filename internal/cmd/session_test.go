@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kwt/internal/tmuxrestore"
@@ -249,4 +251,26 @@ func TestSessionExecRunsTheClaimedLaunchOnce(t *testing.T) {
 
 	_, err = env.kwt(t, "", tmuxEnv, "session", "exec", id, "0")
 	assert.Error(t, err, "a launch runs once")
+}
+
+func TestRestoreReportTextSaysWhatHappenedInEachPane(t *testing.T) {
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	require.NoError(t, printRestoreReports(cmd, []tmuxrestore.EntryReport{
+		{ID: "e1", Session: "done", Outcome: tmuxrestore.OutcomeRestored, Reason: tmuxrestore.ReasonAlreadyRestored},
+		{ID: "e2", Session: "work", Outcome: tmuxrestore.OutcomePartial, Panes: []tmuxrestore.PaneReport{
+			{Window: 0, Pane: 0, Status: tmuxrestore.LaunchNone, Note: "directory missing"},
+			{Window: 0, Pane: 1, Agent: "claude", Status: tmuxrestore.LaunchNone, Note: "conversation not found"},
+			{Window: 1, Pane: 0, Agent: "codex", Status: tmuxrestore.LaunchWaiting},
+		}},
+	}))
+
+	assert.Equal(t, `done: already restored
+work: partially restored
+  window 0 pane 0: not started (directory missing)
+  window 0 pane 1: claude not started (conversation not found)
+  window 1 pane 0: codex waiting
+`, out.String())
 }

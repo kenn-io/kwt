@@ -335,6 +335,9 @@ func TestSaveProtectsAPullRequestCheckoutThatMoved(t *testing.T) {
 	mustRun(t, f.tm, "split-window", "-t", "plain", "-c", moved)
 	setResume(t, f.tm, "plain:0.0", Record{Agent: "claude", ConversationID: "c-0"})
 	setResume(t, f.tm, "plain:0.1", Record{Agent: "claude", ConversationID: "c-1"})
+	// A hook can inherit GIT_DIR from its agent. The pane's directory still
+	// decides which checkout it is in.
+	t.Setenv("GIT_DIR", filepath.Join(repo, ".git"))
 
 	f.save(t)
 
@@ -346,20 +349,35 @@ func TestSaveProtectsAPullRequestCheckoutThatMoved(t *testing.T) {
 	assert.Nil(t, panes[1].Resume, "no program restarts inside the moved checkout")
 }
 
-func TestSaveFailsClosedWhenProtectionIsUnreadable(t *testing.T) {
+func TestSaveChangesNothingWhileProtectionIsUnreadable(t *testing.T) {
+	// A pull-request import can hold the records past a hook's budget. A
+	// snapshot taken then could not tell which sessions to leave out.
 	f := newSaveFixture(t)
-	f.prs = func(context.Context) ([]ProtectedWorkspace, error) { return nil, errors.New("locked") }
 	startServer(t, f.tm, "-s", "marked")
-	_, err := f.tm.Run(t.Context(), "set-option", "-t", "marked", "@kwt-workspace-id", "abc")
-	require.NoError(t, err)
-	_, err = f.tm.Run(t.Context(), "new-session", "-d", "-s", "plain")
-	require.NoError(t, err)
-	setResume(t, f.tm, "plain", Record{Agent: "claude", ConversationID: "c-1"})
-
+	mustRun(t, f.tm, "set-option", "-t", "marked", "@kwt-workspace-id", "abc")
+	setResume(t, f.tm, "marked", Record{Agent: "claude", ConversationID: "c-1"})
 	f.save(t)
+	f.prs = func(context.Context) ([]ProtectedWorkspace, error) { return nil, errors.New("locked") }
+	unreadable := func() (SaveResult, error) {
+		return Save(t.Context(), SaveDeps{
+			Tmux: f.tm, Store: f.store, Processes: f.procs,
+			Protection: f.prs, Now: func() time.Time { return f.now },
+		})
+	}
+	mustRun(t, f.tm, "new-session", "-d", "-s", "later")
+
+	_, err := unreadable()
+
+	require.ErrorContains(t, err, "locked")
 	files := f.files(t)
-	require.Len(t, files.Live.Sessions, 1)
-	assert.Equal(t, "plain", files.Live.Sessions[0].Name)
-	pane := files.Live.Windows[files.Live.Sessions[0].Windows[0].Key].Panes[0]
-	assert.Nil(t, pane.Resume)
+	require.Len(t, files.Live.Sessions, 1, "the last good snapshot stays")
+	assert.Equal(t, "marked", files.Live.Sessions[0].Name)
+	assert.NotNil(t, files.Live.Windows[files.Live.Sessions[0].Windows[0].Key].Panes[0].Resume)
+
+	// A lost server's sessions still become restorable; they were checked
+	// when they were saved.
+	mustRun(t, f.tm, "kill-server")
+	result, err := unreadable()
+	require.NoError(t, err)
+	assert.True(t, result.Promoted)
 }

@@ -50,7 +50,9 @@ func ProvenanceProtection(storePath string) Protection {
 // pull-request workspace. A set built from a failed read protects everything
 // it cannot clear.
 type protectedSet struct {
-	failed      bool
+	failed bool
+	// err is why the read failed.
+	err         error
 	identities  map[string]bool
 	generations map[string]bool
 	roots       []string
@@ -65,7 +67,7 @@ func loadProtection(ctx context.Context, protection Protection) protectedSet {
 	}
 	workspaces, err := protection(ctx)
 	if err != nil {
-		return protectedSet{failed: true}
+		return protectedSet{failed: true, err: err}
 	}
 	set := protectedSet{identities: map[string]bool{}, generations: map[string]bool{}, dirGenerations: map[string]string{}}
 	for _, w := range workspaces {
@@ -119,7 +121,8 @@ func (p protectedSet) dir(ctx context.Context, dir string) bool {
 // dir, or "" when dir is in no checkout or the checkout has none. kwt keeps
 // the generation in the checkout's Git directory, which moves with it.
 func checkoutGeneration(ctx context.Context, dir string) string {
-	gitDir, err := git.NewWithContext(ctx, dir).RunWithContext(ctx, "rev-parse", "--absolute-git-dir")
+	// An inherited GIT_DIR would name some other checkout.
+	gitDir, err := git.NewForInventory(ctx, dir, nil).RunWithContext(ctx, "rev-parse", "--absolute-git-dir")
 	if err != nil {
 		return ""
 	}

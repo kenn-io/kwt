@@ -365,7 +365,10 @@ func printRestoreReports(cmd *cobra.Command, reports []tmuxrestore.EntryReport) 
 			name = report.ID
 		}
 		line := name + ": " + report.Outcome
-		if report.Reason != "" {
+		switch {
+		case report.Outcome == tmuxrestore.OutcomeRestored && report.Reason == tmuxrestore.ReasonAlreadyRestored:
+			line = name + ": " + report.Reason
+		case report.Reason != "":
 			line += " (" + report.Reason + ")"
 		}
 		fmt.Fprintln(out, line)
@@ -376,7 +379,11 @@ func printRestoreReports(cmd *cobra.Command, reports []tmuxrestore.EntryReport) 
 			if pane.Agent == "" && pane.Note == "" {
 				continue
 			}
-			detail := fmt.Sprintf("  window %d pane %d: %s %s", pane.Window, pane.Pane, pane.Agent, pane.Status)
+			status := pane.Status
+			if status == tmuxrestore.LaunchNone {
+				status = "not started"
+			}
+			detail := fmt.Sprintf("  window %d pane %d: %s", pane.Window, pane.Pane, strings.TrimSpace(pane.Agent+" "+status))
 			if pane.Note != "" {
 				detail += " (" + pane.Note + ")"
 			}
