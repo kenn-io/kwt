@@ -270,6 +270,35 @@ func TestSessionExecRunsTheClaimedLaunchOnce(t *testing.T) {
 	assert.Error(t, err, "a launch runs once")
 }
 
+func TestSessionExecStartsNothingWhenItsDirectoryIsGone(t *testing.T) {
+	env := newSessionEnv(t)
+	pane := env.mustTmux(t, "-L", "default", "new-session", "-d", "-s", "work", "-P", "-F", "#{pane_id}")
+	fields := strings.Fields(env.mustTmux(t, "-L", "default", "display-message", "-p", "-t", pane, "#{socket_path} #{pid}"))
+	require.Len(t, fields, 2)
+	socket := tmuxrestore.Socket{Path: fields[0], Name: "default"}
+	out := filepath.Join(t.TempDir(), "ran")
+	var id string
+	store := tmuxrestore.OpenStore(env.home)
+	require.NoError(t, store.WithLock(t.Context(), socket, func(f *tmuxrestore.Files) error {
+		f.Live = &tmuxrestore.Snapshot{Socket: socket, Server: tmuxrestore.ServerID{PID: "1"}, Sessions: []tmuxrestore.Session{{Name: "work"}}}
+		f.Promote()
+		entry := &f.Restorable.Entries[0]
+		id = entry.ID
+		entry.State, entry.LiveServer = tmuxrestore.StateLaunching, tmuxrestore.ServerID{PID: fields[1]}
+		entry.Launches = []tmuxrestore.PaneLaunch{{
+			PaneID: pane, Status: tmuxrestore.LaunchWaiting, Dir: filepath.Join(t.TempDir(), "gone"),
+			Argv: []string{"/bin/sh", "-c", "touch " + out},
+		}}
+		return nil
+	}))
+
+	_, err := env.kwt(t, "", []string{"TMUX=" + fields[0] + "," + fields[1] + ",0", "TMUX_PANE=" + pane},
+		"session", "exec", id, "0")
+
+	require.Error(t, err)
+	assert.NoFileExists(t, out, "the agent does not start in some other directory")
+}
+
 func TestRestoreReportTextSaysWhatHappenedInEachPane(t *testing.T) {
 	cmd := &cobra.Command{}
 	var out bytes.Buffer

@@ -8,13 +8,16 @@ import (
 )
 
 // Exec replaces the current process with target's program, in target's
-// directory when it still exists. It returns only on failure.
+// directory. It returns only on failure, including when the directory is
+// gone, so the program never starts somewhere else.
 func Exec(target ExecTarget) error {
 	if len(target.Argv) == 0 || target.Path == "" {
 		return os.ErrInvalid
 	}
 	if target.Dir != "" {
-		_ = os.Chdir(target.Dir)
+		if err := os.Chdir(target.Dir); err != nil {
+			return err
+		}
 	}
 	return syscall.Exec(target.Path, target.Argv, os.Environ())
 }

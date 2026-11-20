@@ -212,7 +212,11 @@ func runSessionSnapshot(cmd *cobra.Command, _ []string) error {
 		if entry.NameTaken {
 			note = " (name in use)"
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "%s  %s  %d panes%s\n", entry.ID, entry.Session, entry.Panes, note)
+		panes := "panes"
+		if entry.Panes == 1 {
+			panes = "pane"
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "%s  %s  %d %s%s\n", entry.ID, entry.Session, entry.Panes, panes, note)
 	}
 	return nil
 }
