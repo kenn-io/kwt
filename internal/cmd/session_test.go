@@ -234,6 +234,28 @@ func TestSessionDismissAndForget(t *testing.T) {
 	assert.Empty(t, env.snapshot(t))
 }
 
+func TestSessionForgetBySocketNameAfterTheServerStopped(t *testing.T) {
+	// A front end that attaches with -L knows the socket's name, not its
+	// path. Killing the server's last session stops the server, so tmux
+	// cannot report the path any more.
+	env := newSessionEnv(t)
+	pane := env.mustTmux(t, "-L", "default", "new-session", "-d", "-s", "work", "-P", "-F", "#{pane_id}")
+	env.hook(t, "claude", pane, sessionStartPayload("c-work"))
+	identity := strings.Fields(env.mustTmux(t, "-L", "default", "display-message", "-p", "-t", "work",
+		"#{session_id} #{pid} #{session_created}"))
+	require.Len(t, identity, 3)
+	env.mustTmux(t, "-L", "default", "kill-session", "-t", "work")
+
+	_, err := env.kwt(t, "", nil, "session", "forget", "--socket-name", "default",
+		"--session-id", identity[0], "--server-pid", identity[1], "--created", identity[2])
+	require.NoError(t, err)
+
+	assert.Empty(t, env.snapshot(t), "a session killed on purpose is not restorable")
+	_, err = env.kwt(t, "", nil, "session", "forget", "--socket", "/tmp/s", "--socket-name", "default",
+		"--session-id", identity[0], "--server-pid", identity[1], "--created", identity[2])
+	assert.Error(t, err, "a path and a name cannot both name the socket")
+}
+
 func TestSessionExecRunsTheClaimedLaunchOnce(t *testing.T) {
 	env := newSessionEnv(t)
 	pane := env.mustTmux(t, "-L", "default", "new-session", "-d", "-s", "work", "-P", "-F", "#{pane_id}")

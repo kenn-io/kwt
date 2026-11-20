@@ -78,7 +78,7 @@ var sessionDismissCmd = &cobra.Command{
 }
 
 var sessionForget struct {
-	socket, sessionID, serverPID, created string
+	socket, socketName, sessionID, serverPID, created string
 }
 
 var sessionForgetCmd = &cobra.Command{
@@ -113,12 +113,15 @@ func init() {
 	}
 	flags := sessionForgetCmd.Flags()
 	flags.StringVar(&sessionForget.socket, "socket", "", "tmux socket path")
+	flags.StringVar(&sessionForget.socketName, "socket-name", "", "tmux socket name, as given to tmux -L")
 	flags.StringVar(&sessionForget.sessionID, "session-id", "", "tmux session ID, such as $3")
 	flags.StringVar(&sessionForget.serverPID, "server-pid", "", "tmux server PID")
 	flags.StringVar(&sessionForget.created, "created", "", "session creation time from #{session_created}")
-	for _, name := range []string{"socket", "session-id", "server-pid", "created"} {
+	for _, name := range []string{"session-id", "server-pid", "created"} {
 		_ = sessionForgetCmd.MarkFlagRequired(name)
 	}
+	sessionForgetCmd.MarkFlagsOneRequired("socket", "socket-name")
+	sessionForgetCmd.MarkFlagsMutuallyExclusive("socket", "socket-name")
 }
 
 // sessionSkipsConfig reports session subcommands that must not wait on kwt
@@ -438,7 +441,20 @@ func runSessionForget(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	return store.WithLock(commandContext(cmd), tmuxrestore.Socket{Path: sessionForget.socket}, func(f *tmuxrestore.Files) error {
+	socket := tmuxrestore.Socket{Path: sessionForget.socket}
+	if name := sessionForget.socketName; name != "" {
+		// kwt's own server lives under /tmp whatever TMUX_TMPDIR says, as
+		// when kwt saves it.
+		if name == kwttmux.KWTServerSocketName {
+			socket, err = tmuxrestore.SocketIn("", name)
+		} else {
+			socket, err = tmuxrestore.NamedSocket(name)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return store.WithLock(commandContext(cmd), socket, func(f *tmuxrestore.Files) error {
 		f.Forget(tmuxrestore.ServerID{PID: sessionForget.serverPID}, sessionForget.sessionID, sessionForget.created)
 		return nil
 	})

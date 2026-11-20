@@ -863,7 +863,10 @@ it restorable.
 `dismiss` deletes saved entries without restoring them. Front ends run
 `forget` after they kill a session on purpose, so it is not offered for
 restore. The server PID and `#{session_created}` time keep a reused session ID
-from matching another session.
+from matching another session. `--socket-name NAME` names the socket as
+`tmux -L NAME` does, in place of `--socket PATH`, so a front end can forget a
+session after killing the server's last session, when tmux can no longer
+report the path.
 
 Saved state lives in `$KWT_HOME/tmux/` (or `~/.config/kwt/tmux/`): one live
 snapshot and one restorable file per tmux socket, written atomically with mode
