@@ -138,10 +138,16 @@ func Restore(ctx context.Context, deps RestoreDeps, ids []string, all bool) ([]E
 	var errs []error
 	for _, sock := range sockets {
 		var selected []string
+		// Saved sessions can share a name, and only one can be restored
+		// under it: the one saved last, which entries list last.
+		names := map[string]string{}
+		newest := map[string]string{}
 		err := deps.Store.WithLock(ctx, sock, func(f *Files) error {
 			for _, entry := range f.Restorable.Entries {
 				if all || wanted[entry.ID] {
 					selected = append(selected, entry.ID)
+					names[entry.ID] = entry.Session.Name
+					newest[entry.Session.Name] = entry.ID
 					delete(wanted, entry.ID)
 				}
 			}
@@ -155,6 +161,13 @@ func Restore(ctx context.Context, deps RestoreDeps, ids []string, all bool) ([]E
 		// panes of sessions built earlier can claim their launches.
 		r := newRestorer(ctx, deps, sock)
 		for _, id := range selected {
+			if newest[names[id]] != id {
+				reports = append(reports, EntryReport{
+					ID: id, Session: names[id], Socket: sock,
+					Outcome: OutcomeSkipped, Reason: "a newer saved session has this name",
+				})
+				continue
+			}
 			err := deps.Store.WithLock(ctx, sock, func(f *Files) error {
 				if f.Entry(id) == nil {
 					// Another restore finished it in between.
@@ -303,10 +316,15 @@ func restoreWorkspace(ctx context.Context, deps RestoreDeps, sock Socket, req kw
 	found := false
 	err := deps.Store.WithLock(ctx, sock, func(f *Files) error {
 		r.files = f
-		i := slices.IndexFunc(f.Restorable.Entries, func(e Entry) bool {
-			return (id == "" || e.ID == id) && e.Session.Name == req.Session &&
-				e.Session.WorkspaceIdentity == identity && e.Session.WorkspaceGeneration == req.Generation
-		})
+		// The session saved last is the one to open; entries list it last.
+		i := -1
+		for j, e := range slices.Backward(f.Restorable.Entries) {
+			if (id == "" || e.ID == id) && e.Session.Name == req.Session &&
+				e.Session.WorkspaceIdentity == identity && e.Session.WorkspaceGeneration == req.Generation {
+				i = j
+				break
+			}
+		}
 		if i < 0 {
 			return nil
 		}

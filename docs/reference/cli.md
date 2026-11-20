@@ -775,7 +775,9 @@ kwt session forget --socket PATH --session-id '$3' --server-pid PID --created TI
 
 kwt saves the default tmux server, kwt's own server, and every server it saved
 before. [Agent hooks](#kwt-agent-hook) save as agents work, and
-`snapshot` saves on demand. A session becomes restorable once the server it
+`snapshot` saves on demand. A hook saves when its pane's conversation changed
+or the last save is more than five seconds old, so an agent's tool calls do
+not each pay for a save. A session becomes restorable once the server it
 ran on is gone: a save that finds no server, or a server with a new PID or
 start time, turns the last saved state into restorable entries. A save that
 cannot reach the server changes nothing.
@@ -818,6 +820,11 @@ for a kwt worktree session, and `state` (`pending`, `creating`, or
   pull-request checkout, including one moved to another path.
 - A session whose name is in use is skipped. Rename or kill the live session,
   or dismiss the saved one.
+- **Saved sessions that share a name** are all kept, for example a session
+  saved before a reboot and a fresh one that took its name afterward.
+  `restore` and `kwt open` take the one saved last and skip the others as
+  `a newer saved session has this name`. Restore an older one by ID once the
+  name is free, or dismiss it.
 
 Each restored pane starts tmux's `default-shell` as a login shell, never
 `default-command`, so no program runs before the layout is ready. Restore
@@ -854,8 +861,16 @@ Known limits:
   a slow shutdown can drop a live one.
 - kwt replays the Claude permission mode the last hook saw. A mode change
   after that is lost.
-- kwt does not confirm that the agent found its conversation. The agent
-  reports its own errors in the pane.
+- kwt does not confirm that the agent started or found its conversation. A
+  launch that fails right after its handoff can still be reported as
+  `started`. The pane shows the error.
+- When kwt could not read an agent's arguments, it resumes with the
+  configured command split on spaces. A command that needs shell quoting or
+  an `env` wrapper does not resume.
+- A window linked into several sessions is rebuilt twice when only one of
+  them is restored and the server is lost again before the others are.
+- An ordinary checkout at a path kwt still records as a pull-request checkout
+  is treated as one, so its sessions are not saved.
 - The dashboard and daemon open worktrees without the restore step. Use
   `kwt session restore` for those sessions.
 - Some tmux versions, such as 3.6, number panes by their place in the window.

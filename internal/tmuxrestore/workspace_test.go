@@ -106,6 +106,24 @@ func TestOpeningAWorktreeRestoresItsSavedSession(t *testing.T) {
 	assert.Equal(t, StateLaunching, f.entryNamed(t, worktreeSession).State)
 }
 
+func TestOpeningAWorktreeSavedTwiceRestoresTheNewerSession(t *testing.T) {
+	f := newWorktreeFixture(t)
+	f.loseTwoPanes(t)
+	older := f.entryNamed(t, worktreeSession)
+	// The session is then opened without restore, as the dashboard opens it,
+	// and lost again.
+	require.NoError(t, f.open(t, worktreeGeneration, nil))
+	newer := f.geometry(t)
+	f.lose(t)
+	require.Len(t, f.entries(t), 2)
+
+	require.NoError(t, f.open(t, worktreeGeneration, f.restoreHook(nil)))
+
+	assert.Equal(t, newer, f.geometry(t), "the session as it was last")
+	assert.Equal(t, StatePending, f.entries(t)[0].State)
+	assert.Equal(t, older.ID, f.entries(t)[0].ID, "the older one stays saved")
+}
+
 func TestOpeningAWorktreeFirstAfterTheServerIsLostRestoresIt(t *testing.T) {
 	// Right after a reboot, no save has seen the server go yet.
 	f := newWorktreeFixture(t)

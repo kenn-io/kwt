@@ -179,6 +179,36 @@ func TestRestoreSkipsANameInUse(t *testing.T) {
 	assert.Equal(t, StatePending, f.entryNamed(t, "work").State)
 }
 
+func TestALaterSessionWithTheSameNameDoesNotReplaceASavedOne(t *testing.T) {
+	f := newRestoreFixture(t)
+	startServer(t, f.tm, "-s", "main", "-c", f.dir)
+	mustRun(t, f.tm, "new-window", "-t", "main")
+	f.lose(t)
+	older := f.entryNamed(t, "main")
+	// After the reboot a terminal starts a fresh session with the same name,
+	// and that server is lost too before anything was restored.
+	startServer(t, f.tm, "-s", "main", "-c", f.dir)
+	f.lose(t)
+
+	entries := f.entries(t)
+	require.Len(t, entries, 2)
+	assert.Equal(t, older.ID, entries[0].ID)
+	assert.Len(t, entries[0].Session.Windows, 2, "the session saved first is intact")
+
+	reports := f.restore(t, f.deps())
+
+	require.Len(t, reports, 2)
+	assert.Equal(t, OutcomeSkipped, reports[0].Outcome)
+	assert.Equal(t, "a newer saved session has this name", reports[0].Reason)
+	assert.Equal(t, OutcomeRestored, reports[1].Outcome)
+	windows := strings.Fields(mustRun(t, f.tm, "list-windows", "-t", "=main", "-F", "#{window_id}"))
+	assert.Len(t, windows, 1, "the session saved last is the one restored")
+	left := f.entries(t)
+	require.Len(t, left, 1, "the older one stays saved until restored by ID or dismissed")
+	assert.Equal(t, older.ID, left[0].ID)
+	assert.Equal(t, StatePending, left[0].State)
+}
+
 func TestRestoreRetriesAnInterruptedCreate(t *testing.T) {
 	for _, leftover := range []bool{true, false} {
 		name := "nothing left over"

@@ -186,6 +186,48 @@ func TestSaveLeavesFilesAloneWhenTheProbeFails(t *testing.T) {
 	assert.Empty(t, files.Restorable.Entries)
 }
 
+// saveWithin saves as an agent hook does when its pane's record is unchanged.
+func (f *saveFixture) saveWithin(t *testing.T, interval time.Duration) SaveResult {
+	t.Helper()
+	result, err := Save(t.Context(), SaveDeps{
+		Tmux: f.tm, Store: f.store, Processes: f.procs, Protection: f.prs,
+		Now: func() time.Time { return f.now }, MinInterval: interval,
+	})
+	require.NoError(t, err)
+	return result
+}
+
+func TestSaveWithinTheIntervalKeepsAFreshSnapshot(t *testing.T) {
+	f := newSaveFixture(t)
+	startServer(t, f.tm, "-s", "work")
+	f.save(t)
+	mustRun(t, f.tm, "rename-session", "-t", "work", "renamed")
+
+	f.now = f.now.Add(time.Second)
+	f.saveWithin(t, 5*time.Second)
+	assert.Equal(t, "work", f.files(t).Live.Sessions[0].Name, "the snapshot is a second old")
+
+	f.now = f.now.Add(5 * time.Second)
+	f.saveWithin(t, 5*time.Second)
+	assert.Equal(t, "renamed", f.files(t).Live.Sessions[0].Name)
+}
+
+func TestSaveWithinTheIntervalStillNoticesAReplacedServer(t *testing.T) {
+	f := newSaveFixture(t)
+	startServer(t, f.tm, "-s", "work")
+	f.save(t)
+	mustRun(t, f.tm, "kill-server")
+	startServer(t, f.tm, "-s", "next")
+
+	result := f.saveWithin(t, 5*time.Second)
+
+	assert.True(t, result.Promoted)
+	files := f.files(t)
+	require.Len(t, files.Restorable.Entries, 1)
+	assert.Equal(t, "work", files.Restorable.Entries[0].Session.Name)
+	assert.Equal(t, "next", files.Live.Sessions[0].Name)
+}
+
 func TestSaveDropsAnExitedAgentOnlyAfterTwoSaves(t *testing.T) {
 	f := newSaveFixture(t)
 	startServer(t, f.tm, "-s", "work")

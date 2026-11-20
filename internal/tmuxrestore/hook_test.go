@@ -66,6 +66,45 @@ func TestHookTrackerRecordsAndSaves(t *testing.T) {
 	assert.Nil(t, paneRecord(t, h))
 }
 
+func TestHookTrackerSavesAgainWhenTheRecordChangesOrTheSnapshotAges(t *testing.T) {
+	// An agent fires a hook around every tool call, so a hook that learned
+	// nothing new leaves a snapshot saved moments ago alone.
+	h, _ := hookFixture(t)
+	now := recordClock
+	h.Now = func() time.Time { return now }
+	saved := func() string {
+		var name string
+		require.NoError(t, h.Store.WithLock(t.Context(), h.Tmux.Socket, func(f *Files) error {
+			name = f.Live.Sessions[0].Name
+			return nil
+		}))
+		return name
+	}
+	track := func(conversation string) {
+		ev := claudeEvent(conversation)
+		ev.Now = now
+		h.Track(t.Context(), ev)
+	}
+	rename := func(from, to string) { mustRun(t, h.Tmux, "rename-session", "-t", from, to) }
+
+	track("c-1")
+	require.Equal(t, "work", saved())
+
+	rename("work", "second")
+	now = now.Add(time.Second)
+	track("c-1")
+	assert.Equal(t, "work", saved(), "the same conversation a second later")
+
+	now = now.Add(hookSaveInterval)
+	track("c-1")
+	assert.Equal(t, "second", saved(), "the snapshot has aged")
+
+	rename("second", "third")
+	now = now.Add(time.Second)
+	track("c-2")
+	assert.Equal(t, "third", saved(), "a new conversation is saved at once")
+}
+
 func TestHookTrackerSkipsTheSaveWhenTheLockIsHeld(t *testing.T) {
 	h, _ := hookFixture(t)
 	held := make(chan struct{})

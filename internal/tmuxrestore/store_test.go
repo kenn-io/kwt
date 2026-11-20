@@ -3,6 +3,7 @@ package tmuxrestore
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -87,7 +88,7 @@ func TestPromoteThatCannotSaveEntriesKeepsTheSnapshot(t *testing.T) {
 	assert.Equal(t, "work", files.Live.Sessions[0].Name)
 }
 
-func TestPromoteReplacesOnlyPendingEntriesWithTheSameName(t *testing.T) {
+func TestPromoteKeepsEntriesFromEarlierServersWithTheSameName(t *testing.T) {
 	store := OpenStore(t.TempDir())
 	update(t, store, func(f *Files) error {
 		f.Live = liveSnapshot("10", "work", "ops")
@@ -105,12 +106,29 @@ func TestPromoteReplacesOnlyPendingEntriesWithTheSameName(t *testing.T) {
 		names = append(names, entry.Session.Name)
 		servers = append(servers, entry.Server.PID)
 	}
-	assert.Equal(t, []string{"ops", "work", "ops"}, names)
-	assert.Equal(t, []string{"10", "20", "20"}, servers,
-		"the older pending work is replaced; the launching ops is kept")
-	assert.NotContains(t, files.Restorable.Windows, "10:@work",
-		"windows no entry references are dropped")
-	assert.Contains(t, files.Restorable.Windows, "10:@ops")
+	assert.Equal(t, []string{"work", "ops", "work", "ops"}, names)
+	assert.Equal(t, []string{"10", "10", "20", "20"}, servers)
+	assert.Contains(t, files.Restorable.Windows, "10:@work")
+	assert.Contains(t, files.Restorable.Windows, "20:@work")
+}
+
+func TestPromotingTheSameSnapshotAgainAddsNothing(t *testing.T) {
+	// A promotion whose second write failed leaves the snapshot in place,
+	// and the next save promotes it again.
+	store := OpenStore(t.TempDir())
+	update(t, store, func(f *Files) error {
+		f.Live = liveSnapshot("10", "work", "ops")
+		f.Promote()
+		return nil
+	})
+	before := read(t, store).Restorable.Entries
+	update(t, store, func(f *Files) error {
+		f.Live = liveSnapshot("10", "work", "ops")
+		f.Promote()
+		return nil
+	})
+
+	assert.Equal(t, before, read(t, store).Restorable.Entries)
 }
 
 func TestForgetRemovesAnExactSessionWherePresent(t *testing.T) {
@@ -278,8 +296,10 @@ func TestCommitWritesBeforeTheUpdateEnds(t *testing.T) {
 	assert.Equal(t, "tok", entry.Token)
 }
 
+// launchingEntry adds an entry for "work", saved from a lost server of its
+// own, that a restore onto server is starting programs for.
 func launchingEntry(f *Files, server string, launchedAt int64, statuses map[string]string) *Entry {
-	f.Live = liveSnapshot("10", "work")
+	f.Live = liveSnapshot(strconv.Itoa(10+len(f.Restorable.Entries)), "work")
 	f.Promote()
 	entry := &f.Restorable.Entries[len(f.Restorable.Entries)-1]
 	entry.State = StateLaunching
@@ -335,6 +355,9 @@ func TestPromoteReplacesALaunchingEntryRestoredOntoTheLostServer(t *testing.T) {
 	other.Session.Name = "ops"
 
 	files.Live = liveSnapshot("30", "work")
+	restored := &files.Restorable.Entries[0]
+	restored.LiveSessionID = files.Live.Sessions[0].ID
+	restored.LiveCreated = files.Live.Sessions[0].Created
 	files.Promote()
 
 	var states []string

@@ -156,9 +156,11 @@ func (p protectedSet) apply(ctx context.Context, snap *Snapshot) {
 			continue
 		}
 		for i := range window.Panes {
-			if p.dir(ctx, window.Panes[i].Dir) {
-				window.Panes[i].Resume = nil
-				window.Panes[i].PresetAgent = ""
+			// Only a pane with a program to clear is worth the lookup, which
+			// can run Git.
+			pane := &window.Panes[i]
+			if (pane.Resume != nil || pane.PresetAgent != "") && p.dir(ctx, pane.Dir) {
+				pane.Resume, pane.PresetAgent = nil, ""
 			}
 		}
 		snap.Windows[key] = window

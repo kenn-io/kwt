@@ -17,6 +17,10 @@ type SaveDeps struct {
 	Processes  ProcessTable
 	Protection Protection
 	Now        func() time.Time
+	// MinInterval, when set, makes a save leave alone a snapshot of the
+	// running server that is younger than this. A lost or replaced server is
+	// still noticed.
+	MinInterval time.Duration
 }
 
 // SaveResult reports what a save found and did.
@@ -38,7 +42,7 @@ func Save(ctx context.Context, deps SaveDeps) (SaveResult, error) {
 	protected := loadProtection(ctx, deps.Protection)
 	var result SaveResult
 	err := deps.Store.WithLock(ctx, deps.Tmux.Socket, func(f *Files) error {
-		state, _, err := deps.Tmux.Probe(ctx)
+		state, server, err := deps.Tmux.Probe(ctx)
 		result.Server = state
 		if err != nil {
 			return err
@@ -50,6 +54,11 @@ func Save(ctx context.Context, deps SaveDeps) (SaveResult, error) {
 			}
 			f.Release(ServerID{})
 			return nil
+		}
+		if f.Live != nil && f.Live.Server == server {
+			if age := now().UnixMilli() - f.Live.SavedAt; age >= 0 && age < deps.MinInterval.Milliseconds() {
+				return nil
+			}
 		}
 
 		readAt := now().UnixMilli()

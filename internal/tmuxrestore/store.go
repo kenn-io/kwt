@@ -159,7 +159,7 @@ func (s Store) WithLock(ctx context.Context, sock Socket, fn func(*Files) error)
 	}
 	// The entries are written first: a promotion that fails part way then
 	// leaves the lost server's snapshot for the next save to promote again,
-	// which replaces pending entries by name rather than adding to them.
+	// which adds nothing for sessions that are entries already.
 	files.commit = func() error {
 		var err error
 		if restorableBefore, err = writeOrRemove(base+restorableSuffix, files.Restorable,
@@ -234,10 +234,11 @@ func writeJSON(path string, value any, before []byte) ([]byte, error) {
 
 func newEntryID() string { return strings.ToLower(rand.Text()) }
 
-// Promote turns the live snapshot's sessions into pending entries and
-// clears the live snapshot. A pending entry with the same session name is
-// replaced: the newer entry is the state the user had most recently. Entries
-// being restored are kept. One restored onto the server now lost is
+// Promote turns the live snapshot's sessions into pending entries, after any
+// entries already saved, and clears the live snapshot. An entry from an
+// earlier server stays even when a new one has its session name: a fresh
+// session that took the name after a reboot must not erase the saved one.
+// Entries being restored are kept. One restored onto the server now lost is
 // superseded when that server's snapshot holds the restored session, and is
 // pending again when it does not.
 func (f *Files) Promote() {
@@ -260,9 +261,13 @@ func (f *Files) Promote() {
 		}
 	}
 	for _, session := range live.Sessions {
-		f.Restorable.Entries = slices.DeleteFunc(f.Restorable.Entries, func(e Entry) bool {
-			return e.State == StatePending && e.Session.Name == session.Name
-		})
+		// A promotion whose second write failed left this snapshot in place,
+		// and its sessions are entries already.
+		if slices.ContainsFunc(f.Restorable.Entries, func(e Entry) bool {
+			return e.Server == live.Server && e.Session.ID == session.ID && e.Session.Created == session.Created
+		}) {
+			continue
+		}
 		f.Restorable.Entries = append(f.Restorable.Entries, Entry{
 			ID:      newEntryID(),
 			Server:  live.Server,
