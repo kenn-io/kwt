@@ -418,7 +418,7 @@ func inspectWorkspaceCandidate(
 		}
 		return false, errors.New("malformed workspace identity marker")
 	}
-	if identity != workspacePathIdentity(request.WorkspacePath) {
+	if identity != WorkspacePathIdentity(request.WorkspacePath) {
 		if canonical {
 			return false, &SessionSafetyError{Reason: fmt.Sprintf(
 				"tmux session %q belongs to a different workspace identity",

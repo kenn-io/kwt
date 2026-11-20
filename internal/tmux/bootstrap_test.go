@@ -365,7 +365,7 @@ func TestBuildWorkspaceSessionBootstrapCommandRecordsPathIdentity(t *testing.T) 
 		workspacePathOption,
 		"/worktrees/topic",
 		workspaceIdentityOption,
-		workspacePathIdentity("/worktrees/topic"),
+		WorkspacePathIdentity("/worktrees/topic"),
 		workspaceGenerationOption,
 		generation,
 		"@kwt-cleanup-" + generation,

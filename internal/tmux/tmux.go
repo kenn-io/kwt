@@ -171,7 +171,7 @@ func (t *TmuxCommand) ListSessionsContext(ctx context.Context) ([]string, error)
 	if err != nil {
 		var exited exitCoder
 		if errors.As(err, &exited) && exited.ExitCode() == 1 &&
-			isExplicitlyAbsentTmuxDiagnostic(stderr) {
+			IsExplicitlyAbsentDiagnostic(stderr) {
 			return []string{}, nil
 		}
 		return nil, fmt.Errorf(
@@ -231,7 +231,7 @@ func (t *TmuxCommand) ListSessionsDetailed() ([]*SessionInfo, error) {
 	if err != nil {
 		var exited exitCoder
 		if errors.As(err, &exited) && exited.ExitCode() == 1 &&
-			isExplicitlyAbsentTmuxDiagnostic(stderr) {
+			IsExplicitlyAbsentDiagnostic(stderr) {
 			return []*SessionInfo{}, nil
 		}
 		return nil, fmt.Errorf(
@@ -309,7 +309,7 @@ func (t *TmuxCommand) KillSessionIfPresentContext(
 	}
 	var exited exitCoder
 	if errors.As(err, &exited) && exited.ExitCode() == 1 &&
-		isExplicitlyAbsentTmuxDiagnostic(stderr) {
+		IsExplicitlyAbsentDiagnostic(stderr) {
 		return nil
 	}
 	return fmt.Errorf(
@@ -432,7 +432,7 @@ func (t *TmuxCommand) HasSessionContext(
 		return false, ctxErr
 	}
 	if err != nil {
-		if isExplicitlyAbsentTmuxDiagnostic(stderr) {
+		if IsExplicitlyAbsentDiagnostic(stderr) {
 			return false, nil
 		}
 		return false, fmt.Errorf(

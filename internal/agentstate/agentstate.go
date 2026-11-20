@@ -175,7 +175,7 @@ func (r TmuxRecorder) run(ctx context.Context, args ...string) error {
 	if !strings.HasPrefix(r.pane, "%") {
 		return nil
 	}
-	tmux, err := tmuxExecutable()
+	tmux, err := TmuxExecutable()
 	if err != nil {
 		return err
 	}
@@ -188,7 +188,9 @@ func (r TmuxRecorder) run(ctx context.Context, args ...string) error {
 	return nil
 }
 
-func tmuxExecutable() (string, error) {
+// TmuxExecutable finds tmux even when an agent runs its hooks with a PATH
+// that omits the usual package-manager directories.
+func TmuxExecutable() (string, error) {
 	if path, err := exec.LookPath("tmux"); err == nil {
 		return path, nil
 	}

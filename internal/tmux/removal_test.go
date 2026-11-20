@@ -265,7 +265,7 @@ func TestRemovalRejectsDifferentNamedSessionForWorkspacePath(t *testing.T) {
 		) (string, string, error) {
 			return removalInventoryOutput(removalSessionRow{
 				SessionName:       "kwt-workspace-old-branch",
-				WorkspaceIdentity: workspacePathIdentity(workspacePath),
+				WorkspaceIdentity: WorkspacePathIdentity(workspacePath),
 			}), "", nil
 		},
 	}
@@ -293,7 +293,7 @@ func TestRemovalPreservesDelimiterInWorkspaceSessionName(t *testing.T) {
 		) (string, string, error) {
 			return removalInventoryOutput(removalSessionRow{
 				SessionName:       "kwt-wt-repo-feature|topic-deadbeef",
-				WorkspaceIdentity: workspacePathIdentity(workspacePath),
+				WorkspaceIdentity: WorkspacePathIdentity(workspacePath),
 			}), "", nil
 		},
 	}
@@ -473,7 +473,7 @@ func TestRemovalRequiresMarkersToExemptUnrelatedDirectoryWorkspaceSession(t *tes
 		workspaceIdentity string
 		wantConflict      bool
 	}{
-		{name: "marked", workspaceIdentity: workspacePathIdentity(directoryPath)},
+		{name: "marked", workspaceIdentity: WorkspacePathIdentity(directoryPath)},
 		{name: "legacy unmarked", wantConflict: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {

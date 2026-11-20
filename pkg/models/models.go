@@ -115,6 +115,10 @@ type Layout struct {
 	Name    string   `mapstructure:"name" toml:"name"`       // Preset name, e.g. "quad"
 	Arrange string   `mapstructure:"arrange" toml:"arrange"` // tmux select-layout preset
 	Panes   []string `mapstructure:"panes" toml:"panes"`     // one command per pane; "" = login shell
+	// Agents names the configured agent each resolved pane runs, or "" for
+	// panes that run a literal command or a shell. It is set when pane
+	// references are resolved, never read from configuration.
+	Agents []string `mapstructure:"-" toml:"-"`
 }
 
 // RepositorySetting defines per-repository setup commands and files to copy for worktree creation.

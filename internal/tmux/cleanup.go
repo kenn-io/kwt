@@ -61,7 +61,7 @@ func killWorkspaceSessionIfMatching(
 			)
 		}
 	} else {
-		expectedIdentity = workspacePathIdentity(request.WorkspacePath)
+		expectedIdentity = WorkspacePathIdentity(request.WorkspacePath)
 		markerOption = workspaceIdentityOption
 		mismatchReason = "belongs to a different workspace identity"
 		malformedReason = "has malformed workspace identity markers"
@@ -249,7 +249,7 @@ func (t *TmuxCommand) workspaceSessionCleanupIdentityContext(
 		}
 		var exited exitCoder
 		if errors.As(err, &exited) && exited.ExitCode() == 1 &&
-			isExplicitlyAbsentTmuxDiagnostic(stderr) {
+			IsExplicitlyAbsentDiagnostic(stderr) {
 			return workspaceCleanupIdentity{Absent: true}, nil
 		}
 		return workspaceCleanupIdentity{}, fmt.Errorf(
@@ -319,7 +319,7 @@ func classifyWorkspaceCleanupResult(
 		}
 		var exited exitCoder
 		if errors.As(err, &exited) && exited.ExitCode() == 1 &&
-			isExplicitlyAbsentTmuxDiagnostic(stderr) {
+			IsExplicitlyAbsentDiagnostic(stderr) {
 			return workspaceCleanupAbsent, nil
 		}
 		return workspaceCleanupMismatch, fmt.Errorf(

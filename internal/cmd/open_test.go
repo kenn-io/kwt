@@ -257,7 +257,7 @@ func TestOpenSelectedDirectoryWorkspaceEnsuresOrAttaches(t *testing.T) {
 			originalRunner := newOpenWorkspaceRunner
 			originalLayout := openLayout
 			originalSelectLayout := openSelectLayout
-			newOpenWorkspaceRunner = func([]string) openWorkspaceRunner {
+			newOpenWorkspaceRunner = func([]string, bool) openWorkspaceRunner {
 				return runner
 			}
 			openLayout = tmux.BlankLayoutName
@@ -303,7 +303,7 @@ func TestOpenSelectedDirectoryWorkspaceRequestsCanonicalSession(t *testing.T) {
 	runner := &recordingOpenWorkspaceRunner{}
 	originalRunner := newOpenWorkspaceRunner
 	originalLayout := openLayout
-	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	newOpenWorkspaceRunner = func([]string, bool) openWorkspaceRunner { return runner }
 	openLayout = tmux.BlankLayoutName
 	t.Cleanup(func() {
 		newOpenWorkspaceRunner = originalRunner
@@ -327,6 +327,54 @@ func TestOpenSelectedDirectoryWorkspaceRequestsCanonicalSession(t *testing.T) {
 	)
 }
 
+func TestOpenRestoresASavedSessionOnlyWhenNoLayoutIsChosen(t *testing.T) {
+	cases := []struct {
+		name         string
+		layout       string
+		selectLayout bool
+		restore      bool
+	}{
+		{name: "no layout chosen", restore: true},
+		{name: "a layout named", layout: tmux.BlankLayoutName},
+		{name: "a layout picked", selectLayout: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateCommandTestHome(t)
+			resetWorkspaceCommandDeps(t)
+			workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
+			resolveDirectorySessions = func(workspaces []models.Workspace) ([]tmux.WorkspaceSession, error) {
+				return testDirectorySessions(workspaces, ""), nil
+			}
+			var restore *bool
+			originalRunner := newOpenWorkspaceRunner
+			originalLayout, originalSelectLayout := openLayout, openSelectLayout
+			newOpenWorkspaceRunner = func(_ []string, r bool) openWorkspaceRunner {
+				restore = &r
+				return &recordingOpenWorkspaceRunner{}
+			}
+			openLayout, openSelectLayout = tc.layout, tc.selectLayout
+			t.Cleanup(func() {
+				newOpenWorkspaceRunner = originalRunner
+				openLayout, openSelectLayout = originalLayout, originalSelectLayout
+			})
+
+			err := openSelectedDirectoryWorkspace(
+				t.Context(),
+				&CommandContext{Config: &models.Config{}},
+				workspace,
+				func([]models.Layout) (models.Layout, error) { return models.Layout{}, nil },
+				true,
+				false,
+			)
+
+			require.NoError(t, err)
+			require.NotNil(t, restore)
+			assert.Equal(t, tc.restore, *restore)
+		})
+	}
+}
+
 func TestOpenAttachesToEndpointReturnedByEstablishment(t *testing.T) {
 	isolateCommandTestHome(t)
 	resetWorkspaceCommandDeps(t)
@@ -341,7 +389,7 @@ func TestOpenAttachesToEndpointReturnedByEstablishment(t *testing.T) {
 	runner := &recordingOpenWorkspaceRunner{endpoint: want}
 	originalRunner := newOpenWorkspaceRunner
 	originalLayout := openLayout
-	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	newOpenWorkspaceRunner = func([]string, bool) openWorkspaceRunner { return runner }
 	openLayout = tmux.BlankLayoutName
 	t.Cleanup(func() {
 		newOpenWorkspaceRunner = originalRunner
@@ -375,7 +423,7 @@ func TestOpenStartSessionJSONWritesEstablishedEndpointOnly(t *testing.T) {
 	runner := &recordingOpenWorkspaceRunner{endpoint: want}
 	originalRunner := newOpenWorkspaceRunner
 	originalLayout, originalJSON := openLayout, openJSON
-	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	newOpenWorkspaceRunner = func([]string, bool) openWorkspaceRunner { return runner }
 	openLayout, openJSON = tmux.BlankLayoutName, true
 	t.Cleanup(func() {
 		newOpenWorkspaceRunner = originalRunner
@@ -428,7 +476,7 @@ func TestOpenSelectedDirectoryWorkspaceUsesDirectoryLayoutDefault(t *testing.T) 
 	originalRunner := newOpenWorkspaceRunner
 	originalLayout := openLayout
 	originalSelectLayout := openSelectLayout
-	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	newOpenWorkspaceRunner = func([]string, bool) openWorkspaceRunner { return runner }
 	openLayout = ""
 	openSelectLayout = false
 	t.Cleanup(func() {
@@ -483,7 +531,7 @@ func TestRunOpenWithContextChoosesRegisteredDirectory(t *testing.T) {
 			originalSelectLayout := openSelectLayout
 			originalStartSession := openStartSession
 			originalExpectedSession := openExpectedSession
-			newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+			newOpenWorkspaceRunner = func([]string, bool) openWorkspaceRunner { return runner }
 			openLayout = tmux.BlankLayoutName
 			openSelectLayout = false
 			openStartSession = tc.startSession
@@ -547,7 +595,7 @@ func TestRunOpenWithContextRejectsSessionOnlyGuardWithoutRegisteredDirectory(t *
 			t.Cleanup(func() {
 				newOpenWorkspaceRunner, discoverOpenWorktree, openExpectedSession = originalRunner, originalDiscover, originalSession
 			})
-			newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+			newOpenWorkspaceRunner = func([]string, bool) openWorkspaceRunner { return runner }
 			projects := []models.Project{{Repository: "github.com/acme/widget", Path: repo}}
 			discoveryCalls := 0
 			var expectedPath string
@@ -631,7 +679,7 @@ func TestRunOpenWithContextRejectsExplicitEmptyExpectedFlags(t *testing.T) {
 			runner := &recordingOpenWorkspaceRunner{}
 			originalRunner, originalSession := newOpenWorkspaceRunner, openExpectedSession
 			t.Cleanup(func() { newOpenWorkspaceRunner, openExpectedSession = originalRunner, originalSession })
-			newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+			newOpenWorkspaceRunner = func([]string, bool) openWorkspaceRunner { return runner }
 			openExpectedSession = ""
 			cmd, _, _ := fleetTestCommand()
 			markCommandFlagsChanged(t, cmd, tc.flags...)
@@ -867,7 +915,7 @@ func TestOpenSelectedWorktreeStartsSessionWithoutAttaching(t *testing.T) {
 		openLayout = oldLayout
 		openSelectLayout = oldSelectLayout
 	})
-	newOpenWorkspaceRunner = func(names []string) openWorkspaceRunner {
+	newOpenWorkspaceRunner = func(names []string, _ bool) openWorkspaceRunner {
 		protectedNames = append([]string(nil), names...)
 		return runner
 	}
@@ -932,7 +980,7 @@ func TestOpenSelectedWorktreeUsesBranchObservedInsideLifecycleGuard(t *testing.T
 		openLayout = originalLayout
 		openExpectedRepository = originalExpectedRepository
 	})
-	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	newOpenWorkspaceRunner = func([]string, bool) openWorkspaceRunner { return runner }
 	openLayout = tmux.BlankLayoutName
 	openExpectedRepository = ""
 	switched := false
@@ -1007,7 +1055,7 @@ func TestDirectOpenCannotRaceGuardedRemoval(t *testing.T) {
 		openLayout = originalLayout
 		openExpectedRepository = originalExpectedRepository
 	})
-	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	newOpenWorkspaceRunner = func([]string, bool) openWorkspaceRunner { return runner }
 	openLayout = tmux.BlankLayoutName
 	openExpectedRepository = ""
 	openDone := make(chan error, 1)
@@ -1100,7 +1148,7 @@ func TestExpectedOpenRejectsReplacementBeforeSessionEnsure(t *testing.T) {
 		openExpectedGeneration = originalExpectedGeneration
 		openExpectedSession = originalExpectedSession
 	})
-	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	newOpenWorkspaceRunner = func([]string, bool) openWorkspaceRunner { return runner }
 	openLayout = tmux.BlankLayoutName
 	openExpectedRepository = "github.com/acme/widget"
 	openExpectedRegistration = fingerprint
@@ -1190,7 +1238,7 @@ func TestExpectedOpenRejectsStaleDiscoveryAfterWorktreeReplacement(t *testing.T)
 		openExpectedGeneration = originalExpectedGeneration
 		openExpectedSession = originalExpectedSession
 	})
-	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	newOpenWorkspaceRunner = func([]string, bool) openWorkspaceRunner { return runner }
 	discoverOpenWorktree = func(string, []models.Project) (*discovery.GlobalWorktreeEntry, error) {
 		return entry, nil
 	}
@@ -1244,7 +1292,7 @@ func TestOpenSelectedWorktreeAcknowledgesPersistedRemoteSource(t *testing.T) {
 		openLayout = oldLayout
 		openSelectLayout = oldSelectLayout
 	})
-	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	newOpenWorkspaceRunner = func([]string, bool) openWorkspaceRunner { return runner }
 	openLayout = tmux.BlankLayoutName
 	openSelectLayout = false
 
@@ -1293,7 +1341,7 @@ func TestOpenSelectedWorktreeStartSessionDoesNotPromptForTargetTrust(t *testing.
 		openLayout = oldLayout
 		openSelectLayout = oldSelectLayout
 	})
-	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	newOpenWorkspaceRunner = func([]string, bool) openWorkspaceRunner { return runner }
 	openLayout = ""
 	openSelectLayout = false
 
@@ -1410,7 +1458,7 @@ func setupGuardedBranchChangeOpen(t *testing.T) guardedBranchChangeOpen {
 		openExpectedGeneration = originalExpectedGeneration
 		openExpectedSession = originalExpectedSession
 	})
-	newOpenWorkspaceRunner = func([]string) openWorkspaceRunner { return runner }
+	newOpenWorkspaceRunner = func([]string, bool) openWorkspaceRunner { return runner }
 	openLayout = tmux.BlankLayoutName
 	openSelectLayout = false
 	openExpectedRepository = "github.com/acme/widget"

@@ -94,7 +94,7 @@ func classifyProtectedSessionProbe(
 		}
 		var exited exitCoder
 		if errors.As(err, &exited) && exited.ExitCode() == 1 &&
-			isExplicitlyAbsentTmuxDiagnostic(stderr) {
+			IsExplicitlyAbsentDiagnostic(stderr) {
 			return ProtectedSessionAbsent, nil
 		}
 		return ProtectedSessionIndeterminate, fmt.Errorf(
@@ -113,7 +113,9 @@ func classifyProtectedSessionProbe(
 	return ProtectedSessionLive, nil
 }
 
-func isExplicitlyAbsentTmuxDiagnostic(stderr string) bool {
+// IsExplicitlyAbsentDiagnostic reports a tmux error that proves the server or
+// session does not exist, as opposed to one that leaves its state unknown.
+func IsExplicitlyAbsentDiagnostic(stderr string) bool {
 	diagnostic := strings.TrimSpace(stderr)
 	// tmux resolves a current session before the target. That fails only on a
 	// server with no sessions, which stays up when exit-empty is off.

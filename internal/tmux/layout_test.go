@@ -48,7 +48,7 @@ func TestBuildFirstPaneRespawnCommandUsesDirectShellArgv(t *testing.T) {
 func TestBuildPaneCommandSequence(t *testing.T) {
 	paneIDs := []string{"%1", "%2", "%3", "%4"}
 	panes := []string{"codex", "claude", "roborev tui", ""}
-	got := BuildPaneCommandSequence(paneIDs, panes)
+	got := BuildPaneCommandSequence(paneIDs, panes, nil)
 
 	want := [][]string{
 		{"send-keys", "-t", "%1", "-l", "--", "codex"},
@@ -63,11 +63,24 @@ func TestBuildPaneCommandSequence(t *testing.T) {
 }
 
 func TestBuildPaneCommandSequenceSinglePane(t *testing.T) {
-	got := BuildPaneCommandSequence([]string{"%7"}, []string{"codex"})
+	got := BuildPaneCommandSequence([]string{"%7"}, []string{"codex"}, nil)
 	want := [][]string{
 		{"send-keys", "-t", "%7", "-l", "--", "codex"},
 		{"send-keys", "-t", "%7", "Enter"},
 		{"select-pane", "-t", "%7"},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestBuildPaneCommandSequenceMarksPresetAgents(t *testing.T) {
+	got := BuildPaneCommandSequence([]string{"%1", "%2"}, []string{"codex --profile kwt", "make test"}, []string{"codex", ""})
+	want := [][]string{
+		{"set-option", "-p", "-t", "%1", PaneAgentOption, "codex"},
+		{"send-keys", "-t", "%1", "-l", "--", "codex --profile kwt"},
+		{"send-keys", "-t", "%1", "Enter"},
+		{"send-keys", "-t", "%2", "-l", "--", "make test"},
+		{"send-keys", "-t", "%2", "Enter"},
+		{"select-pane", "-t", "%1"},
 	}
 	assert.Equal(t, want, got)
 }
@@ -185,6 +198,7 @@ func TestResolvePaneCommandsExpandsAgentReferences(t *testing.T) {
 		"make test",
 		"",
 	}, got.Panes)
+	assert.Equal(t, []string{"codex", "claude", "", ""}, got.Agents)
 	assert.Equal(t, []string{"agent:codex", "agent:claude", "make test", ""}, layout.Panes,
 		"must not mutate the configured layout")
 }

@@ -1,0 +1,207 @@
+package tmuxrestore
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+
+	kwttmux "go.kenn.io/kwt/internal/tmux"
+)
+
+// Socket names one tmux server by the path of its socket. Name is the -L name
+// when the socket lives in tmux's standard directory.
+type Socket struct {
+	Path string `json:"path"`
+	Name string `json:"name,omitempty"`
+}
+
+// Key names the socket's files in the snapshot directory.
+func (s Socket) Key() string {
+	sum := sha256.Sum256([]byte(s.Path))
+	return hex.EncodeToString(sum[:16])
+}
+
+func uidString() string { return strconv.Itoa(os.Getuid()) }
+
+// socketDir returns the directory tmux uses for -L sockets under tempDir, or
+// under /tmp when tempDir is empty: tempDir, then tmux-<uid>, with symlinks
+// resolved as tmux does.
+func socketDir(tempDir string) (string, error) {
+	if tempDir == "" {
+		tempDir = "/tmp"
+	}
+	resolved, err := filepath.EvalSymlinks(tempDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		// A reboot can remove TMUX_TMPDIR. No server runs there, and the
+		// socket path is still needed to report that.
+		resolved, err = filepath.Abs(tempDir)
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve tmux socket directory: %w", err)
+	}
+	return filepath.Join(resolved, "tmux-"+uidString()), nil
+}
+
+// SocketIn returns the socket tmux -L name uses with TMUX_TMPDIR set to
+// tempDir, or unset when tempDir is empty. kwt runs its own server with
+// TMUX_TMPDIR unset, so its socket is SocketIn("", "kwt").
+func SocketIn(tempDir, name string) (Socket, error) {
+	dir, err := socketDir(tempDir)
+	if err != nil {
+		return Socket{}, err
+	}
+	return Socket{Path: filepath.Join(dir, name), Name: name}, nil
+}
+
+// NamedSocket returns the socket tmux -L name uses in this environment.
+func NamedSocket(name string) (Socket, error) {
+	return SocketIn(os.Getenv("TMUX_TMPDIR"), name)
+}
+
+// splitTMUX splits a $TMUX value, "path,pid,session", into its socket path
+// and server PID. The path can hold commas, so the fields are read from the
+// right.
+func splitTMUX(value string) (path, pid string) {
+	i := strings.LastIndexByte(value, ',')
+	if i < 0 {
+		return value, ""
+	}
+	j := strings.LastIndexByte(value[:i], ',')
+	if j < 0 {
+		return value[:i], value[i+1:]
+	}
+	return value[:j], value[j+1 : i]
+}
+
+// SocketFromTMUX parses the socket path from a $TMUX value.
+func SocketFromTMUX(value string) (Socket, bool) {
+	path, _ := splitTMUX(value)
+	if path == "" {
+		return Socket{}, false
+	}
+	socket := Socket{Path: path}
+	for _, tempDir := range []string{os.Getenv("TMUX_TMPDIR"), ""} {
+		if dir, err := socketDir(tempDir); err == nil && filepath.Dir(path) == dir {
+			socket.Name = filepath.Base(path)
+			break
+		}
+	}
+	return socket, true
+}
+
+// ServerPIDFromTMUX returns the server PID from a $TMUX value.
+func ServerPIDFromTMUX(value string) string {
+	_, pid := splitTMUX(value)
+	return pid
+}
+
+// Tmux runs tmux against one socket.
+type Tmux struct {
+	Executable string
+	Socket     Socket
+	// StripNames are configured credential variables kept out of tmux's
+	// environment, so a server restore starts never holds them.
+	StripNames []string
+}
+
+// CommandError carries tmux's exit status and diagnostic.
+type CommandError struct {
+	Args   []string
+	Stderr string
+	Err    error
+}
+
+func (e *CommandError) Error() string {
+	args := slices.Clone(e.Args)
+	// A conversation record holds saved launch arguments, which can carry
+	// secrets.
+	if i := slices.Index(args, ResumeOption); i >= 0 && i+1 < len(args) {
+		args[i+1] = "<record>"
+	}
+	return fmt.Sprintf("tmux %s: %v: %s", strings.Join(args, " "), e.Err, e.Stderr)
+}
+
+func (e *CommandError) Unwrap() error { return e.Err }
+
+// Run runs one tmux command and returns its standard output.
+func (t Tmux) Run(ctx context.Context, args ...string) (string, error) {
+	executable := t.Executable
+	if executable == "" {
+		executable = "tmux"
+	}
+	if err := checkSocketOwner(t.Socket.Path); err != nil {
+		return "", err
+	}
+	// -u keeps tmux from printing each tab as "_" outside a UTF-8 locale;
+	// saves split tmux's output on tabs.
+	full := append([]string{"-u", "-S", t.Socket.Path}, args...)
+	cmd := exec.CommandContext(ctx, executable, full...)
+	cmd.Env = slices.DeleteFunc(kwttmux.SanitizedEnviron(os.Environ()), func(entry string) bool {
+		name, _, _ := strings.Cut(entry, "=")
+		return slices.ContainsFunc(t.StripNames, func(s string) bool { return strings.EqualFold(s, name) })
+	})
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return stdout.String(), &CommandError{
+			Args: args, Stderr: strings.TrimSpace(stderr.String()), Err: err,
+		}
+	}
+	return stdout.String(), nil
+}
+
+// ServerState is what a probe learned about a socket's server.
+type ServerState int
+
+const (
+	// ServerUnknown means the probe failed; nothing may be concluded.
+	ServerUnknown ServerState = iota
+	ServerRunning
+	// ServerAbsent means tmux confirmed no server is listening.
+	ServerAbsent
+)
+
+// ServerID identifies one tmux server instance.
+type ServerID struct {
+	PID       string `json:"pid"`
+	StartTime string `json:"start_time"`
+}
+
+// Probe reports whether a server is running on the socket.
+func (t Tmux) Probe(ctx context.Context) (ServerState, ServerID, error) {
+	if _, err := os.Stat(t.Socket.Path); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return ServerAbsent, ServerID{}, nil
+		}
+		return ServerUnknown, ServerID{}, fmt.Errorf("inspect tmux socket: %w", err)
+	}
+	// display-message answers even when the server has no sessions, so a
+	// server kept up by exit-empty off is not mistaken for a lost one.
+	output, err := t.Run(ctx, "display-message", "-p", "#{pid} #{start_time}")
+	if err != nil {
+		if commandErr, ok := errors.AsType[*CommandError](err); ok && ctx.Err() == nil {
+			if exitErr, ok := errors.AsType[*exec.ExitError](commandErr.Err); ok &&
+				exitErr.ExitCode() == 1 &&
+				kwttmux.IsExplicitlyAbsentDiagnostic(commandErr.Stderr) {
+				return ServerAbsent, ServerID{}, nil
+			}
+		}
+		return ServerUnknown, ServerID{}, fmt.Errorf("probe tmux server: %w", err)
+	}
+	pid, start, ok := strings.Cut(strings.TrimSpace(output), " ")
+	if !ok || pid == "" || start == "" {
+		return ServerUnknown, ServerID{}, fmt.Errorf("probe tmux server: unexpected identity %q", output)
+	}
+	return ServerRunning, ServerID{PID: pid, StartTime: start}, nil
+}

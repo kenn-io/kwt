@@ -78,7 +78,8 @@ func Execute() {
 	// An agent hook runs inside the agent's lifecycle with a short timeout.
 	// Global config initialization can wait on config.toml.lock, and a hook
 	// killed while waiting loses its state change, so the hook skips it.
-	if cmd, _, err := rootCmd.Find(os.Args[1:]); err == nil && cmd == agentHookRunCmd {
+	if cmd, _, err := rootCmd.Find(os.Args[1:]); err == nil &&
+		(cmd == agentHookRunCmd || sessionSkipsConfig(cmd)) {
 		skipConfigInit = true
 	}
 	err := rootCmd.Execute()

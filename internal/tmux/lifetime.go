@@ -10,7 +10,11 @@ import (
 
 const workspaceDestroyOption = "@kwt-destroy-unattached"
 const workspaceLifetimeReadyOption = "@kwt-lifetime-hooks-ready"
-const workspaceCreationOption = "@kwt-creating"
+
+// CreationTokenOption marks a session with the token of the kwt call that
+// created it. Cleanup after a failed create removes a session only when it
+// carries that call's token, never a same-named session someone else made.
+const CreationTokenOption = "@kwt-creating"
 
 // The hook event supplies the session, so the global entries restore only it.
 // The marker records the local policy, or inherit when it matches the global one.
@@ -66,6 +70,13 @@ func holdWorkspaceLifetime(session, executable string) []string {
 			" ; if-shell -F -t " + quoteTmuxCommandArgument(target) + " '#{==:#{destroy-unattached},#{" + workspaceDestroyOption + "}}' { set-option -t " + quoteTmuxCommandArgument(target) + " " + workspaceDestroyOption + " inherit }" +
 			" ; set-option -t " + quoteTmuxCommandArgument(target) + " destroy-unattached off ; " + workspaceLifetimeHooks(session, executable),
 	}
+}
+
+// HoldSessionLifetime returns tmux commands, to follow new-session in the
+// same command, that keep destroy-unattached from removing session before its
+// first attach. executable is tmux's absolute path.
+func HoldSessionLifetime(session, executable string) []string {
+	return holdWorkspaceLifetime(session, executable)
 }
 
 // restoreWorkspaceLifetime lets any ordinary tmux client finish the handoff,
