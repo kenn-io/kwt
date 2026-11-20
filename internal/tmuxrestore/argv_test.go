@@ -55,6 +55,13 @@ func TestBuildLaunchClaude(t *testing.T) {
 			want: "claude --dangerously-skip-permissions --resume c-1",
 		},
 		{
+			// The versioned path is gone once Claude updates; the pane's PATH
+			// finds the current install.
+			name: "an installed binary is started by name",
+			argv: "/m/installs/2.1.329/node_modules/@anthropic-ai/claude-code/bin/claude.exe --model haiku",
+			want: "claude --model haiku --resume c-1",
+		},
+		{
 			name: "node-hosted claude keeps its script",
 			argv: "node /lib/@anthropic-ai/claude-code/cli.js --model opus hello",
 			want: "node /lib/@anthropic-ai/claude-code/cli.js --model opus --resume c-1",
@@ -74,6 +81,15 @@ func TestBuildLaunchClaude(t *testing.T) {
 			assert.False(t, got.Fallback)
 		})
 	}
+}
+
+func TestBuildLaunchStartsTheConfiguredAgentProgram(t *testing.T) {
+	rec := Record{Agent: "claude", ConversationID: "c-1", Argv: []string{"/m/2.1.329/bin/claude.exe", "--model", "haiku"}}
+
+	assert.Equal(t, []string{"/opt/bin/claude", "--model", "haiku", "--resume", "c-1"},
+		BuildLaunch(rec, "/opt/bin/claude --verbose").Argv)
+	assert.Equal(t, []string{"claude", "--model", "haiku", "--resume", "c-1"},
+		BuildLaunch(rec, "env FOO=1 claude").Argv, "a wrapper command is not the agent's program")
 }
 
 func TestBuildLaunchCodex(t *testing.T) {
@@ -97,6 +113,12 @@ func TestBuildLaunchCodex(t *testing.T) {
 			name: "bypass alias kept",
 			argv: []string{"codex", "--yolo", "--profile", "work"},
 			want: []string{"codex", "--yolo", "--profile", "work", "resume", "x-1"},
+		},
+		{
+			// The platform binary behind npm's codex wrapper is not on PATH.
+			name: "native platform binary started as codex",
+			argv: []string{"/m/@openai/codex/vendor/codex-x86_64-unknown-linux-musl", "-s", "read-only"},
+			want: []string{"codex", "-s", "read-only", "resume", "x-1"},
 		},
 		{
 			name:    "unknown flag dropped",

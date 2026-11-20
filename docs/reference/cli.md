@@ -817,6 +817,9 @@ for a kwt worktree session, and `state` (`pending`, `creating`, or
 - **Conversations:** a pane that ran Claude Code or Codex resumes that
   conversation with the launch settings kwt recognized, such as the model and
   permission mode. The report names any flags it dropped, never their values.
+  The agent starts as the program configured in `[agents]`, or by name from
+  the pane's `PATH`, so an agent update between save and restore does not
+  break the resume.
   A pane whose conversation file is gone runs nothing and is reported as
   `conversation not found`.
 - **Preset agents:** a pane where a layout preset started a configured agent
