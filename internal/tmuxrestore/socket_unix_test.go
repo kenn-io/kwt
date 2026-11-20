@@ -37,3 +37,15 @@ func TestTmuxRefusesASocketAnotherAccountControls(t *testing.T) {
 	_, err = tm.Run(t.Context(), "list-sessions")
 	require.NoError(t, err)
 }
+
+func TestTmuxRefusesASymlinkedSocket(t *testing.T) {
+	// The link is ours, but what it points to can change hands.
+	tm := privateSocket(t)
+	startServer(t, tm, "-s", "work")
+	link := filepath.Join(filepath.Dir(tm.Socket.Path), "link")
+	require.NoError(t, os.Symlink(tm.Socket.Path, link))
+
+	_, err := Tmux{Executable: tm.Executable, Socket: Socket{Path: link}}.Run(t.Context(), "list-sessions")
+
+	require.ErrorContains(t, err, "symbolic link")
+}

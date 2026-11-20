@@ -219,6 +219,7 @@ func TestSessionDismissAndForget(t *testing.T) {
 	env.mustTmux(t, "-L", "default", "kill-server")
 	entries := env.snapshot(t)
 	require.Len(t, entries, 2, "a forgotten session is not restorable")
+	assert.ElementsMatch(t, []string{"work", "ops"}, []string{entries[0].Session, entries[1].Session})
 
 	_, err = env.kwt(t, "", nil, "session", "dismiss", "nope")
 	require.Error(t, err)

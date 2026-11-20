@@ -344,6 +344,7 @@ func TestRestoreRetriesALaunch(t *testing.T) {
 	assert.Equal(t, OutcomePartial, again.Outcome)
 	assert.Equal(t, "already restored", again.Reason)
 	assert.Equal(t, first.Live, again.Live)
+	f.settle(t, pane)
 	assert.Len(t, f.handoffs(t, pane), 1, "nothing is typed twice")
 
 	mustRun(t, f.tm, "kill-session", "-t", first.Live.SessionID)

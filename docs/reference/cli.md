@@ -851,8 +851,9 @@ from matching another session.
 Saved state lives in `$KWT_HOME/tmux/` (or `~/.config/kwt/tmux/`): one live
 snapshot and one restorable file per tmux socket, written atomically with mode
 `0600`, because launch arguments can contain secrets. kwt uses a tmux socket
-only when the socket belongs to your account and its directory belongs to you
-or to root, so another account's server is never saved or restored into.
+only when the socket belongs to your account, is not a symbolic link, and its
+directory belongs to you or to root, so another account's server is never
+saved or restored into.
 
 Known limits:
 
@@ -884,6 +885,8 @@ Known limits:
 - A worktree or directory workspace session that ran on the default tmux
   server is skipped as `worktree changed`, because kwt opens workspace
   sessions on its own server.
+- A workspace session whose working directory was changed with
+  `tmux attach-session -c` is also skipped as `worktree changed`.
 - kwt does not replay a `CLAUDE_CONFIG_DIR` or `CODEX_HOME` that was set for
   one launch. A conversation started that way does not resume.
 - A restore that kwt was killed in the middle of leaves a half-built session.

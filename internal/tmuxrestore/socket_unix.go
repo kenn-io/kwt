@@ -18,7 +18,7 @@ var currentUID = func() uint32 { return uint32(os.Geteuid()) }
 // itself, but not for the explicit paths kwt passes, and a server controlled
 // by someone else could read saved conversations or plant a launch to
 // replay. The directory must belong to this account or to root, and a socket
-// already there must belong to this account.
+// already there must belong to this account and not be a symbolic link.
 func checkSocketOwner(path string) error {
 	uid := currentUID()
 	owner := func(info fs.FileInfo) (uint32, bool) {
@@ -44,6 +44,10 @@ func checkSocketOwner(path string) error {
 	}
 	if err != nil {
 		return fmt.Errorf("inspect tmux socket: %w", err)
+	}
+	if socket.Mode()&fs.ModeSymlink != 0 {
+		// The link's owner says nothing about the socket behind it.
+		return fmt.Errorf("tmux socket %s is a symbolic link", path)
 	}
 	if got, ok := owner(socket); ok && got != uid {
 		return fmt.Errorf("tmux socket %s belongs to another account", path)
