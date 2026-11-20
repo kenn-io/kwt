@@ -78,8 +78,7 @@ func TestSaveFollowsTheServerLifecycle(t *testing.T) {
 	assert.Equal(t, f.now.UnixMilli(), files.Live.SavedAt, "saved_at is in Unix milliseconds")
 	assert.Empty(t, files.Restorable.Entries)
 
-	_, err := f.tm.Run(t.Context(), "kill-server")
-	require.NoError(t, err)
+	killServerAndWait(t, f.tm)
 	result = f.save(t)
 	assert.Equal(t, SaveResult{Server: ServerAbsent, Promoted: true}, result)
 	files = f.files(t)
@@ -99,8 +98,7 @@ func TestSavePromotesWhenTheServerIsReplaced(t *testing.T) {
 	f := newSaveFixture(t)
 	startServer(t, f.tm, "-s", "work")
 	f.save(t)
-	_, err := f.tm.Run(t.Context(), "kill-server")
-	require.NoError(t, err)
+	killServerAndWait(t, f.tm)
 	startServer(t, f.tm, "-s", "other")
 
 	result := f.save(t)
@@ -201,7 +199,7 @@ func TestSaveWithinTheIntervalStillNoticesAReplacedServer(t *testing.T) {
 	f := newSaveFixture(t)
 	startServer(t, f.tm, "-s", "work")
 	f.save(t)
-	mustRun(t, f.tm, "kill-server")
+	killServerAndWait(t, f.tm)
 	startServer(t, f.tm, "-s", "next")
 
 	result := f.saveWithin(t, 5*time.Second)
@@ -365,7 +363,7 @@ func TestSaveChangesNothingWhileProtectionIsUnreadable(t *testing.T) {
 
 	// A lost server's sessions still become restorable; they were checked
 	// when they were saved.
-	mustRun(t, f.tm, "kill-server")
+	killServerAndWait(t, f.tm)
 	result, err := unreadable()
 	require.NoError(t, err)
 	assert.True(t, result.Promoted)
