@@ -850,10 +850,16 @@ from matching another session.
 
 Saved state lives in `$KWT_HOME/tmux/` (or `~/.config/kwt/tmux/`): one live
 snapshot and one restorable file per tmux socket, written atomically with mode
-`0600`, because launch arguments can contain secrets.
+`0600`, because launch arguments can contain secrets. kwt uses a tmux socket
+only when the socket belongs to your account and its directory belongs to you
+or to root, so another account's server is never saved or restored into.
 
 Known limits:
 
+- Conversations are recorded only on tmux 3.0 or newer, which added pane
+  options.
+- A pane in a submodule or nested checkout inside a pull-request checkout
+  that has moved is not recognized as protected.
 - A session killed with plain tmux commands stays saved until the next save
   while its server runs. Killing the last session stops the server unless
   tmux's `exit-empty` option is off. kwt cannot tell that stop apart from a

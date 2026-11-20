@@ -891,6 +891,25 @@ func TestEnsureAndAttachKillsPartialSessionOnPaneCommandFailure(t *testing.T) {
 	assert.Empty(t, m.switchedTo, "must not switch to a killed session")
 }
 
+// tmux before 3.0 has no pane options. With an agent pane, call 4 is the
+// set-option that marks the pane for session restore.
+func TestEnsureAndAttachOpensAnAgentPaneThatTmuxCannotMark(t *testing.T) {
+	m := &mockWorkspaceTmux{hasSession: false, failRunOnCall: 4}
+	r := NewWorkspaceRunner(m, nil)
+	layout := models.Layout{
+		Arrange: "even-horizontal", Panes: []string{"codex", "vim"}, Agents: []string{"codex", ""},
+	}
+
+	err := r.EnsureAndAttach(t.Context(), "s", "/wt", layout, false)
+
+	require.NoError(t, err)
+	require.True(t, hasCall(m.calls, "set-option", "-p"), "the mark was tried")
+	assert.True(t, slices.ContainsFunc(m.calls, func(call []string) bool {
+		return call[0] == "send-keys" && slices.Contains(call, "codex")
+	}), "the agent still starts")
+	assert.False(t, m.killSessionCalled)
+}
+
 func hasCall(calls [][]string, want ...string) bool {
 	for _, call := range calls {
 		if len(call) >= len(want) && slices.Equal(call[:len(want)], want) {

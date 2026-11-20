@@ -619,7 +619,13 @@ func (r *WorkspaceRunner) create(
 				}
 			}
 			for _, args := range BuildPaneCommandSequence(paneIDs, layout.Panes, layout.Agents) {
-				if err := r.tmux.RunCommandContext(ctx, args...); err != nil {
+				err := r.tmux.RunCommandContext(ctx, args...)
+				if err != nil && args[0] == "set-option" {
+					// The mark only lets session restore start the agent
+					// again, and tmux before 3.0 has no pane options.
+					continue
+				}
+				if err != nil {
 					return wrapTmuxErr(args, err)
 				}
 			}

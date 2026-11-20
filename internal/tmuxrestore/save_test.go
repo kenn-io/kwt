@@ -284,11 +284,15 @@ func TestSaveExcludesPullRequestWorkspaces(t *testing.T) {
 	require.NoError(t, err)
 	_, err = f.tm.Run(t.Context(), "new-session", "-d", "-s", "plain", "-c", plainDir)
 	require.NoError(t, err)
-	_, err = f.tm.Run(t.Context(), "split-window", "-t", "plain", "-c", prDir)
-	require.NoError(t, err)
+	// Pane 1 holds a conversation and pane 2 only a preset agent, both
+	// inside the pull-request checkout.
+	for range 2 {
+		_, err = f.tm.Run(t.Context(), "split-window", "-d", "-t", "plain:0.0", "-c", prDir)
+		require.NoError(t, err)
+	}
 	setResume(t, f.tm, "plain:0.0", Record{Agent: "claude", ConversationID: "c-0"})
 	setResume(t, f.tm, "plain:0.1", Record{Agent: "claude", ConversationID: "c-1"})
-	_, err = f.tm.Run(t.Context(), "set-option", "-p", "-t", "plain:0.1", kwttmux.PaneAgentOption, "roborev")
+	_, err = f.tm.Run(t.Context(), "set-option", "-p", "-t", "plain:0.2", kwttmux.PaneAgentOption, "roborev")
 	require.NoError(t, err)
 
 	f.save(t)
@@ -297,10 +301,10 @@ func TestSaveExcludesPullRequestWorkspaces(t *testing.T) {
 	plain := files.Live.Sessions[0]
 	assert.Equal(t, "plain", plain.Name)
 	panes := files.Live.Windows[plain.Windows[0].Key].Panes
-	require.Len(t, panes, 2)
+	require.Len(t, panes, 3)
 	assert.NotNil(t, panes[0].Resume)
-	assert.Nil(t, panes[1].Resume, "no program restarts inside a pull-request checkout")
-	assert.Empty(t, panes[1].PresetAgent)
+	assert.Nil(t, panes[1].Resume, "no conversation resumes inside a pull-request checkout")
+	assert.Empty(t, panes[2].PresetAgent, "no preset agent starts inside a pull-request checkout")
 	assert.Len(t, files.Live.Windows, 1, "the excluded session's window is not kept")
 }
 

@@ -270,6 +270,11 @@ func (h restoreHookHandler) track(ctx context.Context, input agenthook.CommonInp
 	if h.tracker == nil || input.AgentID != "" {
 		return
 	}
+	// Restore knows how to resume only these two; a record for another
+	// agent would be replayed with the wrong arguments.
+	if h.Agent != agenthook.AgentClaude && h.Agent != agenthook.AgentCodex {
+		return
+	}
 	h.tracker.Track(ctx, tmuxrestore.Event{
 		Agent:          string(h.Agent),
 		ConversationID: input.SessionID,

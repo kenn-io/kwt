@@ -137,6 +137,22 @@ func TestAgentHookRecordsTheConversationAndSaves(t *testing.T) {
 	assert.Len(t, files, 1, "the hook saved the live snapshot")
 }
 
+func TestAgentHookRecordsOnlyAgentsRestoreCanResume(t *testing.T) {
+	// Restore knows how to resume Claude Code and Codex. A record for any
+	// other agent would be replayed with Codex's arguments.
+	env := newSessionEnv(t)
+	pane := env.mustTmux(t, "-L", "default", "new-session", "-d", "-s", "work", "-P", "-F", "#{pane_id}")
+	show := func() string {
+		return strings.TrimSpace(env.mustTmux(t, "-L", "default", "show-options", "-p", "-q", "-v", "-t", pane, tmuxrestore.ResumeOption))
+	}
+
+	env.hook(t, "gemini", pane, sessionStartPayload("g-1"))
+	assert.Empty(t, show())
+
+	env.hook(t, "codex", pane, sessionStartPayload("x-1"))
+	assert.Contains(t, show(), "x-1")
+}
+
 func TestAgentHookSavesIntoAFreshKwtHome(t *testing.T) {
 	env := newSessionEnv(t)
 	env.home = filepath.Join(env.home, "not-yet")

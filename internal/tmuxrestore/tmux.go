@@ -139,6 +139,9 @@ func (t Tmux) Run(ctx context.Context, args ...string) (string, error) {
 	if executable == "" {
 		executable = "tmux"
 	}
+	if err := checkSocketOwner(t.Socket.Path); err != nil {
+		return "", err
+	}
 	// -u keeps tmux from printing each tab as "_" outside a UTF-8 locale;
 	// saves split tmux's output on tabs.
 	full := append([]string{"-u", "-S", t.Socket.Path}, args...)

@@ -361,8 +361,9 @@ func TestCreateSessionKeepsProtectedCredentialsOutOfTheServer(t *testing.T) {
 	_, err := Builder{Tmux: tm, Token: "tok", Home: home}.CreateSession(t.Context(), saved, first)
 	require.NoError(t, err)
 
-	out, _ := tm.Run(t.Context(), "show-environment", "-g", "CUSTOM_FLEET_TOKEN")
-	assert.NotContains(t, out, "secret")
+	out := mustRun(t, tm, "show-environment", "-g")
+	assert.Contains(t, out, "HOME="+home, "the query reached the restored server")
+	assert.NotContains(t, out, "CUSTOM_FLEET_TOKEN")
 }
 
 func TestRestoredPanesOnARunningServerDoNotSeeProtectedVariables(t *testing.T) {
