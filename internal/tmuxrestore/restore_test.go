@@ -50,7 +50,7 @@ func (f *restoreFixture) save(t *testing.T) SaveResult {
 func (f *restoreFixture) lose(t *testing.T) {
 	t.Helper()
 	f.save(t)
-	mustRun(t, f.tm, "kill-server")
+	killServerAndWait(t, f.tm)
 	require.True(t, f.save(t).Promoted)
 }
 
@@ -270,7 +270,7 @@ func TestARestoredSessionSurvivesTheNextServerLoss(t *testing.T) {
 	require.Len(t, reports, 1)
 	require.Equal(t, OutcomeRestored, reports[0].Outcome)
 
-	mustRun(t, f.tm, "kill-server")
+	killServerAndWait(t, f.tm)
 	f.save(t)
 
 	assert.Equal(t, StatePending, f.entryNamed(t, "work").State)
@@ -287,7 +287,7 @@ func TestARestoredConversationSurvivesALossBeforeItsAgentStarts(t *testing.T) {
 	require.Len(t, reports, 1)
 	require.Equal(t, LaunchWaiting, reports[0].Panes[0].Status)
 
-	mustRun(t, f.tm, "kill-server")
+	killServerAndWait(t, f.tm)
 	f.save(t)
 
 	entry := f.entryNamed(t, "work")
