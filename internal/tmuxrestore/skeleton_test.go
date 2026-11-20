@@ -170,6 +170,8 @@ func TestBuildFallsBackToHomeForMissingDirectories(t *testing.T) {
 	require.NoError(t, os.Mkdir(gone, 0o700))
 	startServer(t, tm, "-s", "src", "-c", gone)
 	mustRun(t, tm, "split-window", "-t", "src", "-c", kept)
+	setResume(t, tm, "src:.0", claudeRecord("c-gone", "claude"))
+	mustRun(t, tm, "set-option", "-p", "-t", "src:.0", kwttmux.PaneAgentOption, "roborev")
 	snap, err := ReadSnapshot(t.Context(), tm)
 	require.NoError(t, err)
 	require.NoError(t, os.Remove(gone))
@@ -183,6 +185,9 @@ func TestBuildFallsBackToHomeForMissingDirectories(t *testing.T) {
 	assert.False(t, built[0].Panes[1].DirMissing)
 	paths := strings.Split(strings.TrimSpace(mustRun(t, tm, "list-panes", "-t", "copy", "-F", "#{pane_current_path}")), "\n")
 	assert.Equal(t, []string{resolvedDir(home), resolvedDir(kept)}, []string{resolvedDir(paths[0]), resolvedDir(paths[1])})
+	// A later save must not record a program to start in the home directory.
+	assert.Empty(t, strings.TrimSpace(mustRun(t, tm, "display", "-p", "-t", built[0].Panes[0].ID,
+		"#{"+ResumeOption+"}#{"+kwttmux.PaneAgentOption+"}")))
 }
 
 func TestCreateSessionStartsAServerWhoseSocketDirectoryIsGone(t *testing.T) {

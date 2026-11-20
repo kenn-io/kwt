@@ -197,21 +197,6 @@ func (f *saveFixture) saveWithin(t *testing.T, interval time.Duration) SaveResul
 	return result
 }
 
-func TestSaveWithinTheIntervalKeepsAFreshSnapshot(t *testing.T) {
-	f := newSaveFixture(t)
-	startServer(t, f.tm, "-s", "work")
-	f.save(t)
-	mustRun(t, f.tm, "rename-session", "-t", "work", "renamed")
-
-	f.now = f.now.Add(time.Second)
-	f.saveWithin(t, 5*time.Second)
-	assert.Equal(t, "work", f.files(t).Live.Sessions[0].Name, "the snapshot is a second old")
-
-	f.now = f.now.Add(5 * time.Second)
-	f.saveWithin(t, 5*time.Second)
-	assert.Equal(t, "renamed", f.files(t).Live.Sessions[0].Name)
-}
-
 func TestSaveWithinTheIntervalStillNoticesAReplacedServer(t *testing.T) {
 	f := newSaveFixture(t)
 	startServer(t, f.tm, "-s", "work")

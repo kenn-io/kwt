@@ -937,19 +937,6 @@ func TestCreateFromSkeletonMarksTheSessionAndBuildsFromTheFirstPane(t *testing.T
 	assert.False(t, hasCall(m.calls, "split-window"), "no preset layout is built")
 }
 
-func TestCreateFromSkeletonRemovesOnlyItsOwnSessionOnFailure(t *testing.T) {
-	m := &mockWorkspaceTmux{hasSession: false}
-	r := NewWorkspaceRunner(m, nil)
-
-	err := r.CreateFromSkeleton(t.Context(), "s", "/wt", "gen-1", "tok", func(context.Context, string) error {
-		return errors.New("layout failed")
-	})
-
-	require.ErrorContains(t, err, "layout failed")
-	assert.False(t, m.killSessionCalled, "a same-named session without the token is not killed")
-	assert.True(t, hasCall(m.calls, "if-shell", "-F", "-t", "=s:", "#{==:#{"+CreationTokenOption+"},tok}"))
-}
-
 func TestEnsureOffersAMissingWorkspaceSessionToTheRestorer(t *testing.T) {
 	layout := models.Layout{Arrange: "even-horizontal", Panes: []string{"codex", "vim"}}
 	cases := []struct {

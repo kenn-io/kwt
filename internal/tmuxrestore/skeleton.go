@@ -288,8 +288,13 @@ func (b Builder) fill(ctx context.Context, windowID string, first BuiltPane, w W
 	// conversation the pane holds, so the pane stays restorable after the
 	// next server loss, even one before its agent starts. A copied record
 	// still names the old process, so saves drop it as usual if no agent
-	// replaces it.
+	// replaces it. A pane whose directory is gone starts nothing, so it gets
+	// no marks: a later save would record its program in the fallback
+	// directory.
 	for i, pane := range w.Panes {
+		if built.Panes[i].DirMissing {
+			continue
+		}
 		if pane.PresetAgent != "" {
 			if _, err := b.Tmux.Run(ctx, "set-option", "-p", "-t", built.Panes[i].ID,
 				kwttmux.PaneAgentOption, pane.PresetAgent); err != nil {
