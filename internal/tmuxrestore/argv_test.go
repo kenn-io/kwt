@@ -90,6 +90,9 @@ func TestBuildLaunchStartsTheConfiguredAgentProgram(t *testing.T) {
 		BuildLaunch(rec, "/opt/bin/claude --verbose").Argv)
 	assert.Equal(t, []string{"claude", "--model", "haiku", "--resume", "c-1"},
 		BuildLaunch(rec, "env FOO=1 claude").Argv, "a wrapper command is not the agent's program")
+	// Restore runs the program without a shell, so nothing would expand ~.
+	assert.Equal(t, []string{"claude", "--model", "haiku", "--resume", "c-1"},
+		BuildLaunch(rec, "~/bin/claude").Argv, "a home-relative program is found by name instead")
 }
 
 func TestBuildLaunchCodex(t *testing.T) {
