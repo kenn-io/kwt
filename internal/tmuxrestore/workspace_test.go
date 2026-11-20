@@ -133,7 +133,7 @@ func TestOpeningAWorktreeFirstAfterTheServerIsLostRestoresIt(t *testing.T) {
 	mustRun(t, f.tm, "split-window", "-h", "-t", "="+worktreeSession+":", "-c", f.worktree)
 	saved := f.geometry(t)
 	f.save(t)
-	mustRun(t, f.tm, "kill-server")
+	killServerAndWait(t, f.tm)
 
 	require.NoError(t, f.open(t, worktreeGeneration, f.restoreHook(nil)))
 
@@ -147,7 +147,7 @@ func TestOpeningAWorktreeWhoseSaveFailsKeepsItsSavedSession(t *testing.T) {
 	require.NoError(t, f.open(t, worktreeGeneration, nil))
 	mustRun(t, f.tm, "split-window", "-h", "-t", "="+worktreeSession+":", "-c", f.worktree)
 	f.save(t)
-	mustRun(t, f.tm, "kill-server")
+	killServerAndWait(t, f.tm)
 	startServer(t, f.tm, "-s", "other")
 	broken := filepath.Join(t.TempDir(), "tmux")
 	script := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = list-panes ] && exit 1; done\nexec '" + f.tm.Executable + "' \"$@\"\n"
