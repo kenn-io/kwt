@@ -117,7 +117,7 @@ func browseProjectPath(ctx context.Context, path string) (string, error) {
 	if info, err := os.Stat(filepath.Join(path, ".bare")); err == nil && info.IsDir() {
 		main := filepath.Join(path, "main")
 		candidate := git.NewWithContext(ctx, main)
-		if container, err := candidate.GetBareContainerPath(); err == nil &&
+		if container, err := candidate.GetBareContainerPath(); err == nil && container != "" &&
 			utils.PathKey(container) == utils.PathKey(path) {
 			if checkout, err := candidate.GetRepositoryPath(); err == nil &&
 				utils.PathKey(checkout) == utils.PathKey(main) {
@@ -140,6 +140,20 @@ func browseProjectPath(ctx context.Context, path string) (string, error) {
 	primary, err := repository.GetMainRepositoryPath()
 	if err != nil {
 		return "", err
+	}
+	if utils.PathKey(primary) != utils.PathKey(checkout) {
+		// The inventory can still name a primary path after its checkout has been replaced.
+		commonDir, err := repository.GetCommonDir()
+		if err != nil {
+			return "", err
+		}
+		primaryCommonDir, err := git.NewWithContext(ctx, primary).GetCommonDir()
+		if err != nil {
+			return "", err
+		}
+		if utils.PathKey(primaryCommonDir) != utils.PathKey(commonDir) {
+			return "", fmt.Errorf("primary checkout belongs to a different repository")
+		}
 	}
 	return filepath.EvalSymlinks(primary)
 }

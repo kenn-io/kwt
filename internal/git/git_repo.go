@@ -34,20 +34,30 @@ func (g *Git) GetMainRepositoryPath() (string, error) {
 	return g.getMainRepoRoot()
 }
 
-// GetBareContainerPath returns the parent directory shared by a conventional
-// bare-container repository's worktrees. It returns an empty path for other
-// repository layouts.
-func (g *Git) GetBareContainerPath() (string, error) {
+// GetCommonDir returns the canonical Git directory shared by a repository's worktrees.
+func (g *Git) GetCommonDir() (string, error) {
 	commonDirOutput, err := g.run("rev-parse", "--git-common-dir")
 	if err != nil {
 		return "", fmt.Errorf("failed to get git common dir: %w", err)
 	}
 	commonDir := strings.TrimSpace(commonDirOutput)
+	if commonDir == "" {
+		return "", fmt.Errorf("git returned an empty common directory")
+	}
 	if !filepath.IsAbs(commonDir) {
 		commonDir = filepath.Join(g.workDir, commonDir)
 	}
-	commonDir = utils.CanonicalPath(commonDir)
+	return utils.CanonicalPath(commonDir), nil
+}
 
+// GetBareContainerPath returns the parent directory shared by a conventional
+// bare-container repository's worktrees. It returns an empty path for other
+// repository layouts.
+func (g *Git) GetBareContainerPath() (string, error) {
+	commonDir, err := g.GetCommonDir()
+	if err != nil {
+		return "", err
+	}
 	output, err := g.run("worktree", "list", "--porcelain")
 	if err != nil {
 		return "", fmt.Errorf("failed to list repository worktrees: %w", err)

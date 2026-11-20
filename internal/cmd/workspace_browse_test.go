@@ -163,6 +163,7 @@ func TestBrowseWorkspaceDoesNotMistakeNestedMainForBareAnchor(t *testing.T) {
 			}
 			if layout == "unrelated-main" {
 				run("init", filepath.Join(container, "main"))
+				t.Chdir(container)
 			}
 			if layout == "ordinary-checkout" {
 				run("init", container)
@@ -187,6 +188,7 @@ func TestBrowseWorkspaceRejectsReplacedBareCheckout(t *testing.T) {
 	root := t.TempDir()
 	bare := filepath.Join(root, "widget", ".bare")
 	main := filepath.Join(root, "widget", "main")
+	topic := filepath.Join(root, "widget", "topic")
 	run := func(args ...string) {
 		t.Helper()
 		output, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput()
@@ -198,11 +200,18 @@ func TestBrowseWorkspaceRejectsReplacedBareCheckout(t *testing.T) {
 		"commit", "--allow-empty", "-m", "Initial")
 	run("clone", "--bare", seed, bare)
 	run("--git-dir="+bare, "worktree", "add", main, "main")
+	run("-C", main, "worktree", "add", "-b", "topic", topic)
 	require.NoError(t, os.RemoveAll(main))
 	run("init", main)
 	listing, err := browseWorkspace(t.Context(), root)
 	require.NoError(t, err)
 	require.Empty(t, listing.Entries[0].ProjectPath)
+
+	children, err := browseWorkspace(t.Context(), filepath.Dir(main))
+	require.NoError(t, err)
+	require.Len(t, children.Entries, 2)
+	require.Equal(t, "topic", children.Entries[1].Name)
+	require.Empty(t, children.Entries[1].ProjectPath)
 }
 
 func TestBrowseWorkspaceReportsTruncation(t *testing.T) {
