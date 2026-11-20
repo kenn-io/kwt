@@ -4,7 +4,7 @@ Use global configuration for machine-wide worktree paths, layouts, agents,
 registered projects, directory workspaces, and lifecycle policy. A trusted
 repository can override only the settings that are safe to scope to that
 repository. Daemon replacement and SSH connection policy are always global.
-Multi-machine sync is optional and also global-only.
+Multi-machine sync and workspace backend selection are also global-only.
 
 Start with [Agent workspaces](../workflows/agent-workspaces.md) for a practical
 layout example or [Multi-machine sync](../multi-machine-sync.md) before enabling
@@ -27,6 +27,10 @@ The global file is the source of truth for worktree naming, tmux layouts, agent
 commands, repository setup rules, and the known project registry.
 
 ```toml
+[workspace]
+backend = "tmux" # or "herdr-core"; machine-wide only
+# core_socket = "/absolute/path/to/core.sock" # required for herdr-core
+
 [worktree]
 basedir = "~/.kwt/worktrees"
 auto_mkdir = true

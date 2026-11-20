@@ -75,10 +75,12 @@ func Execute() {
 		}
 		return
 	}
-	// An agent hook runs inside the agent's lifecycle with a short timeout.
+	// Agent hooks and the Core command helper must not initialize config.
+	// The helper runs before the repository shell and must not read checkout
+	// configuration; an agent hook has a short lifecycle timeout.
 	// Global config initialization can wait on config.toml.lock, and a hook
 	// killed while waiting loses its state change, so the hook skips it.
-	if cmd, _, err := rootCmd.Find(os.Args[1:]); err == nil && cmd == agentHookRunCmd {
+	if cmd, _, err := rootCmd.Find(os.Args[1:]); err == nil && (cmd == agentHookRunCmd || isHerdrRunHelper(cmd)) {
 		skipConfigInit = true
 	}
 	err := rootCmd.Execute()

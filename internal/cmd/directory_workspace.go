@@ -7,6 +7,10 @@ import (
 )
 
 type directoryWorkspaceRecord struct {
+	WorkspaceRuntime   string `json:"workspace_runtime,omitempty"`
+	WorkspaceAddress   string `json:"workspace_address,omitempty"`
+	WorkspaceCreatedMS int64  `json:"workspace_created_ms,omitempty"`
+
 	Name           string                `json:"name"`
 	Path           string                `json:"path"`
 	SessionName    string                `json:"session_name"`
@@ -26,6 +30,7 @@ func directoryWorkspaceRecordsFromSessions(
 		}
 		selected := sessions[index]
 		records = append(records, directoryWorkspaceRecord{
+			WorkspaceRuntime: selected.Endpoint.Runtime, WorkspaceAddress: selected.Endpoint.Address, WorkspaceCreatedMS: selected.Endpoint.CreatedMS,
 			Name:           workspace.Name,
 			Path:           workspace.Path,
 			SessionName:    selected.Endpoint.SessionName,

@@ -2309,7 +2309,16 @@ func (m Model) renderSelectionDetails() string {
 	if row.SessionLive {
 		workspace = "workspace live"
 	}
-	detail := fmt.Sprintf("selected %s · layout %s · %s", rowLabel(row), m.renderLayoutLabel(), workspace)
+	if row.TmuxEndpoint.Runtime == "herdr-core" {
+		workspace = ""
+		if row.TmuxEndpoint.Address != "" {
+			workspace = "Core " + row.TmuxEndpoint.Address
+		}
+	}
+	detail := fmt.Sprintf("selected %s · layout %s", rowLabel(row), m.renderLayoutLabel())
+	if workspace != "" {
+		detail += " · " + workspace
+	}
 	if fleetDetail := renderLocalFleetDetails(row); fleetDetail != "" {
 		detail += "\n" + fleetDetail
 	}

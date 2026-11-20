@@ -242,6 +242,22 @@ func TestWorkspaceRemoveReportsLiveSession(t *testing.T) {
 	assert.Contains(t, stdout.String(), "tmux -L kwt kill-session")
 }
 
+func TestWorkspaceRemoveReportsCoreEndpoint(t *testing.T) {
+	resetWorkspaceCommandDeps(t)
+	loadWorkspaceConfig = func() (*models.Config, error) {
+		return &models.Config{Workspaces: []models.Workspace{{Name: "notes", Path: "/fixture/notes"}}}, nil
+	}
+	resolveDirectorySessions = func([]models.Workspace) ([]tmux.WorkspaceSession, error) {
+		return []tmux.WorkspaceSession{{Live: true, Endpoint: tmux.SessionEndpoint{Runtime: "herdr-core", SessionName: "notes", CoreSocket: "/fixture/core socket", Address: "t91"}}}, nil
+	}
+	unregisterWorkspace = func(string) error { return nil }
+	cmd, stdout, _ := fleetTestCommand()
+	require.NoError(t, runWorkspaceRemove(cmd, []string{"notes"}))
+	assert.Contains(t, stdout.String(), "Core workspace notes is still running")
+	assert.Contains(t, stdout.String(), "HC_SOCKET='/fixture/core socket' hc kill -- 't91'")
+	assert.NotContains(t, stdout.String(), "tmux")
+}
+
 func TestWorkspaceRemovePropagatesUnknownNameError(t *testing.T) {
 	resetWorkspaceCommandDeps(t)
 	loadWorkspaceConfig = func() (*models.Config, error) { return &models.Config{}, nil }

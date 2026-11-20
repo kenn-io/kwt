@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -43,6 +46,10 @@ func ResolveProtectedSessionCommand(
 ) (*TmuxCommand, ProtectedSessionState, error) {
 	canonical := newProtectedSessionProbeCommand(socketName, protectedNames)
 	state, err := probeProtectedSessionCommand(ctx, canonical, expectedSession)
+	if errors.Is(err, exec.ErrNotFound) && ctx.Err() == nil &&
+		protectedSocketPathsAbsent(canonical.socketName, legacyTempDir) {
+		return canonical, ProtectedSessionAbsent, nil
+	}
 	if state != ProtectedSessionAbsent || err != nil || legacyTempDir == "" {
 		return canonical, state, err
 	}
@@ -54,6 +61,25 @@ func ResolveProtectedSessionCommand(
 		return canonical, state, nil
 	}
 	return legacy, state, err
+}
+
+// When tmux is unavailable, only an absent socket proves no legacy server is
+// reachable. An existing socket or an inspection error remains indeterminate.
+func protectedSocketPathsAbsent(socketName, legacyTempDir string) bool {
+	if socketName == "" || filepath.Base(socketName) != socketName {
+		return false
+	}
+	dirs := []string{"/tmp"}
+	if legacyTempDir != "" {
+		dirs = append(dirs, legacyTempDir)
+	}
+	for _, dir := range dirs {
+		path := filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()), socketName)
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+	}
+	return true
 }
 
 func probeProtectedSessionCommand(
