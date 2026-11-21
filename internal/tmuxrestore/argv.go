@@ -110,6 +110,41 @@ type flagGroup struct {
 	tokens []string
 }
 
+// agentArgsStart returns the index of the agent's first argument in a
+// non-empty argv. A runtime such as node keeps its own options and the
+// agent's script, found the way process detection finds it.
+func agentArgsStart(argv []string, agent string) int {
+	base := filepath.Base(argv[0])
+	if (base != "node" && base != "bun") || len(argv) < 2 {
+		return 1
+	}
+	if pkg, ok := agentPackages[agent]; ok {
+		if i := slices.IndexFunc(argv, func(arg string) bool { return strings.Contains(arg, pkg) }); i > 0 {
+			return i + 1
+		}
+	}
+	return 2
+}
+
+// codexSubcommand returns the first argument of a Codex command line that is
+// neither a flag nor a flag's value, such as "app-server" or "resume".
+func codexSubcommand(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			return ""
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			return arg
+		}
+		name, _, inline := strings.Cut(arg, "=")
+		if spec, ok := codexFlags[name]; ok && !inline && spec.arity != argNone {
+			i++
+		}
+	}
+	return ""
+}
+
 // BuildLaunch returns the command that resumes rec's conversation. It
 // replays only recognized settings from the recorded arguments, then adds
 // the agent's resume arguments. configured is kwt's configured command for
@@ -128,17 +163,7 @@ func BuildLaunch(rec Record, configured string) LaunchArgs {
 	if rec.Agent == "claude" {
 		flags = claudeFlags
 	}
-	// A runtime keeps its own options and the agent's script, found the way
-	// process detection finds it.
-	prefix := 1
-	if base := filepath.Base(argv[0]); (base == "node" || base == "bun") && len(argv) > 1 {
-		prefix = 2
-		if pkg, ok := agentPackages[rec.Agent]; ok {
-			if i := slices.IndexFunc(argv, func(arg string) bool { return strings.Contains(arg, pkg) }); i > 0 {
-				prefix = i + 1
-			}
-		}
-	}
+	prefix := agentArgsStart(argv, rec.Agent)
 	groups, dropped := parseFlags(argv[prefix:], flags)
 	result.Dropped = dropped
 	head := slices.Clone(argv[:prefix])

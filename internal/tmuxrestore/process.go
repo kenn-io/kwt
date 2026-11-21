@@ -100,7 +100,8 @@ func HookInPane(ctx context.Context, table ProcessTable, start, panePID int32) b
 		if err != nil {
 			return true
 		}
-		if isAgentProcess(info, "codex") && slices.Contains(info.Argv, "app-server") {
+		if isAgentProcess(info, "codex") && len(info.Argv) > 0 &&
+			codexSubcommand(info.Argv[agentArgsStart(info.Argv, "codex"):]) == "app-server" {
 			return false
 		}
 		if pid == panePID {

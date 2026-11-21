@@ -166,6 +166,26 @@ func TestHookInPane(t *testing.T) {
 			start: 30,
 		},
 		{
+			name: "hook from a server started through npm's wrapper",
+			table: fakeProcesses{
+				10: proc(10, 1, "zsh", "-zsh"),
+				20: proc(20, 1, "node", "node", "/lib/@openai/codex/bin/codex.js", "app-server"),
+				30: proc(30, 20, "kwt", "kwt", "agent-hook", "run"),
+			},
+			start: 30,
+		},
+		{
+			// A directory named app-server is an option value, not the
+			// server subcommand.
+			name: "hook below an agent working in an app-server directory",
+			table: fakeProcesses{
+				10: proc(10, 1, "zsh", "-zsh"),
+				20: proc(20, 10, "codex", "codex", "--no-daemon", "-C", "app-server", "--add-dir", "app-server"),
+				30: proc(30, 20, "kwt", "kwt", "agent-hook", "run"),
+			},
+			start: 30, want: true,
+		},
+		{
 			name:  "unreadable process table",
 			table: failingProcesses{},
 			start: 30, want: true,
