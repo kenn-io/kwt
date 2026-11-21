@@ -1057,9 +1057,17 @@ func TestOperationHubReservesDaemonWorkUntilTerminalCompletion(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	gate := NewGate(now)
 	releaseWorker := make(chan struct{})
+	workReleased := make(chan struct{})
 	hub := NewOperationHub(t.Context(), OperationHubOptions{
 		Reserve: func() (func(), error) {
-			return gate.Reserve(ReservationWork, now)
+			release, err := gate.Reserve(ReservationWork, now)
+			if err != nil {
+				return nil, err
+			}
+			return func() {
+				release()
+				close(workReleased)
+			}, nil
 		},
 	})
 	operation, _, err := hub.Start(OperationStart{
@@ -1077,6 +1085,12 @@ func TestOperationHubReservesDaemonWorkUntilTerminalCompletion(t *testing.T) {
 	}
 	close(releaseWorker)
 	_ = collectOperationEvents(t, hub, operation.ID(), 0)
+	// Closing the event stream happens before the worker releases its reservation.
+	select {
+	case <-workReleased:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not release its work reservation")
+	}
 	if active := gate.Snapshot().ActiveWork; active != 0 {
 		t.Fatalf("active work after completion = %d", active)
 	}
