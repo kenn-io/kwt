@@ -669,3 +669,17 @@ func TestEmptyClientFeaturesKeepOrdinaryAttachment(t *testing.T) {
 	command := NewTmuxCommand("tmux").attachSessionCmd("work")
 	require.Equal(t, []string{"tmux", "attach-session", "-t", "=work"}, command.Args)
 }
+
+func TestGlobalEnvironmentPreservesCommandErrors(t *testing.T) {
+	_, err := NewTmuxCommand("kwt-test-missing-tmux-executable").GlobalEnvironmentContext(t.Context())
+	require.ErrorIs(t, err, exec.ErrNotFound)
+}
+
+func TestGlobalEnvironmentPreservesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err := NewTmuxCommand("tmux").GlobalEnvironmentContext(ctx)
+
+	require.ErrorIs(t, err, context.Canceled)
+}
