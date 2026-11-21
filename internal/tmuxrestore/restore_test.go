@@ -474,6 +474,19 @@ func TestRestoreReportsAMissingConversationAndUnsafeKwtPath(t *testing.T) {
 	assert.Empty(t, f.entries(t), "no pane is left waiting")
 }
 
+func TestRestoreRunsNothingForAnAgentItCannotResume(t *testing.T) {
+	f := newRestoreFixture(t)
+	startServer(t, f.tm, "-s", "work", "-c", f.dir)
+	setResume(t, f.tm, "work.0", Record{Agent: "gemini", ConversationID: "g-1", Argv: []string{"gemini"}, RecordedAt: 1})
+	f.lose(t)
+
+	report := f.restore(t, f.deps())[0]
+
+	require.Len(t, report.Panes, 1)
+	assert.Equal(t, LaunchNone, report.Panes[0].Status)
+	assert.Equal(t, "agent cannot be resumed", report.Panes[0].Note)
+}
+
 func TestRestoreReportsUnknownIDs(t *testing.T) {
 	f := newRestoreFixture(t)
 	reports := f.restore(t, f.deps(), "nope")

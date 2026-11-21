@@ -71,11 +71,17 @@ func (a restoreAcceptance) run(t *testing.T, stdin string, extraEnv []string, ar
 	return stdout.String()
 }
 
+// startAgent records an agent conversation in pane. kwt records only a hook
+// that runs inside its pane, so the hook runs there, as an agent's would.
 func (a restoreAcceptance) startAgent(t *testing.T, socket, pane, agent, conversation string) {
 	t.Helper()
-	tmuxValue := a.mustTmux(t, "-L", socket, "display-message", "-p", "-t", pane, "#{socket_path},#{pid},0")
-	a.run(t, sessionStartPayload(conversation), []string{"TMUX=" + tmuxValue, "TMUX_PANE=" + pane},
-		"agent-hook", "run", "--agent", agent, "--source", "kwt-tmux-agent-state")
+	args := []string{"agent-hook", "run", "--agent", agent, "--source", "kwt-tmux-agent-state"}
+	tmux := func(args ...string) *exec.Cmd {
+		return a.tmux(t.Context(), append([]string{"-L", socket}, args...)...)
+	}
+	runInPane(t, tmux, pane, "TestKwtHelperProcess", []string{
+		"KWT_HOME=" + a.home, "TMUX_TMPDIR=" + a.tmpdir, "KWT_TEST_ARGS=" + strings.Join(args, "\n"),
+	}, sessionStartPayload(conversation))
 }
 
 func (a restoreAcceptance) entries(t *testing.T) []tmuxrestore.Listed {

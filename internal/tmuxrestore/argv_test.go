@@ -144,6 +144,46 @@ func TestBuildLaunchCodex(t *testing.T) {
 	}
 }
 
+func TestBuildLaunchAgy(t *testing.T) {
+	cases := []struct {
+		name    string
+		argv    []string
+		want    []string
+		dropped []string
+	}{
+		{
+			// agy's installer links agy to a versioned binary.
+			name: "settings kept and the installed binary started by name",
+			argv: []string{
+				"/m/installs/antigravity-cli/1.5.14/agy", "--model", "gemini-pro-high", "--mode", "plan",
+				"--add-dir", "/x", "--add-dir", "/y", "--sandbox", "--conversation", "old",
+			},
+			want: []string{
+				"agy", "--model", "gemini-pro-high", "--mode", "plan",
+				"--add-dir", "/x", "--add-dir", "/y", "--sandbox", "--conversation", "g-1",
+			},
+		},
+		{
+			name: "prompts and one-time actions dropped",
+			argv: []string{"agy", "--effort", "high", "-i", "fix the bug", "--continue", "--new-project"},
+			want: []string{"agy", "--effort", "high", "--conversation", "g-1"},
+		},
+		{
+			name:    "unknown flag dropped",
+			argv:    []string{"agy", "--telemetry", "--dangerously-skip-permissions"},
+			want:    []string{"agy", "--dangerously-skip-permissions", "--conversation", "g-1"},
+			dropped: []string{"--telemetry"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := BuildLaunch(Record{Agent: "agy", ConversationID: "g-1", Argv: tc.argv}, "")
+			assert.Equal(t, tc.want, got.Argv)
+			assert.Equal(t, tc.dropped, got.Dropped)
+		})
+	}
+}
+
 func TestBuildLaunchFallsBackToTheConfiguredCommand(t *testing.T) {
 	got := BuildLaunch(Record{Agent: "codex", ConversationID: "x-1"}, "codex --yolo")
 	assert.Equal(t, []string{"codex", "--yolo", "resume", "x-1"}, got.Argv)
