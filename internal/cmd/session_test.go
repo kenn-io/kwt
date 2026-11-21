@@ -141,8 +141,8 @@ func TestAgentHookRecordsTheConversationAndSaves(t *testing.T) {
 }
 
 func TestAgentHookRecordsOnlyAgentsRestoreCanResume(t *testing.T) {
-	// Restore knows how to resume Claude Code and Codex. A record for any
-	// other agent would be replayed with Codex's arguments.
+	// Restore knows how to resume Claude Code, Codex, and agy. A record for
+	// any other agent could not be replayed.
 	env := newSessionEnv(t)
 	pane := env.mustTmux(t, "-L", "default", "new-session", "-d", "-s", "work", "-P", "-F", "#{pane_id}")
 	show := func() string {
@@ -154,6 +154,14 @@ func TestAgentHookRecordsOnlyAgentsRestoreCanResume(t *testing.T) {
 
 	env.hook(t, "codex", pane, sessionStartPayload("x-1"))
 	assert.Contains(t, show(), "x-1")
+
+	env.hook(t, "agy", pane, `{"conversationId":"a-1","hookEventName":"Stop",`+
+		`"transcriptPath":"/tmp/a-1/transcript_full.jsonl","fullyIdle":true}`)
+	record, err := tmuxrestore.DecodeRecord(show())
+	require.NoError(t, err)
+	assert.Equal(t, "agy", record.Agent)
+	assert.Equal(t, "a-1", record.ConversationID)
+	assert.Equal(t, "/tmp/a-1/transcript_full.jsonl", record.TranscriptPath)
 }
 
 func TestAgentHookSavesIntoAFreshKwtHome(t *testing.T) {

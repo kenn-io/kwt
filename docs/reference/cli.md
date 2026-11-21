@@ -757,6 +757,9 @@ runs in:
 | Turn finished (`Stop`)              | `done <unix-seconds> <agent>`     |
 | Session start or end                | option removed                    |
 
+`agy` has no permission or session-end hooks, so its panes show only
+`working` and `done`, and the option stays after `agy` exits.
+
 Subagent events and Claude Code's `idle_prompt` reminder are ignored. Outside
 tmux, or when tmux is unavailable, the hook does nothing. It also does nothing
 when it runs outside the pane its tmux environment names, as Codex's shared
@@ -778,7 +781,8 @@ save and keeps the last one.
 ## `kwt session`
 
 `kwt session` brings tmux sessions back after a reboot or a tmux
-`kill-server`, with each pane's Claude Code or Codex conversation resumed in
+`kill-server`, with each pane's Claude Code, Codex, or Antigravity CLI (`agy`)
+conversation resumed in
 the pane where it ran.
 
 ```sh
@@ -816,7 +820,7 @@ for a kwt worktree session, and `state` (`pending`, `creating`, or
 - **Directories:** each pane starts in its saved directory. A pane whose
   directory is gone starts in your home directory, runs nothing, and is
   reported as `directory missing`.
-- **Conversations:** a pane that ran Claude Code or Codex resumes that
+- **Conversations:** a pane that ran Claude Code, Codex, or `agy` resumes that
   conversation with the launch settings kwt recognized, such as the model and
   permission mode. The report names any flags it dropped, never their values.
   The agent starts as the program configured in `[agents]`, or by name from
@@ -892,8 +896,9 @@ Known limits:
   its own process, which does not tell kwt the session's pane, so kwt ignores
   them rather than record another pane. Start Codex with `--no-daemon` to
   keep its hooks in its own process; kwt keeps that flag on restore.
-- Codex does not report a deliberate exit, so kwt infers one from two saves.
-  A reboot right after quitting Codex can resume the closed conversation, and
+- Codex and `agy` do not report a deliberate exit, so kwt infers one from two
+  saves. A reboot right after quitting either can resume the closed
+  conversation, and
   a slow shutdown can drop a live one.
 - kwt replays the Claude permission mode the last hook saw. A mode change
   after that is lost.

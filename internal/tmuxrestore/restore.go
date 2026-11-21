@@ -606,6 +606,10 @@ func (r restorer) plan(ctx context.Context, ref WindowRef, w Window, built Built
 			l.Note = "pull-request directory"
 		case pane.Resume != nil:
 			l.Agent = pane.Resume.Agent
+			if !Resumable(pane.Resume.Agent) {
+				l.Note = "agent cannot be resumed"
+				break
+			}
 			if FindConversation(*pane.Resume, r.deps.Home, r.deps.Getenv) == PresenceAbsent {
 				l.Note = "conversation not found"
 				break
