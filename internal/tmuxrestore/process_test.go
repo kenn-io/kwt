@@ -92,6 +92,18 @@ func TestIdentifyAgent(t *testing.T) {
 			argv: []string{"/m/node_modules/@anthropic-ai/claude-code/bin/claude.exe", "--model", "haiku"},
 		},
 		{
+			// agy is a link to the antigravity binary.
+			name: "agy started through its link",
+			table: fakeProcesses{
+				10: proc(10, 1, "zsh", "-zsh"),
+				20: proc(20, 10, "antigravity", "/m/antigravity-cli/1.5.14/agy", "--model", "gemini-pro"),
+				21: proc(21, 20, "sh", "sh", "-c", "kwt"),
+			},
+			start: 21, panePID: 10, agent: "agy",
+			want: &ProcessRef{PID: 20, StartMillis: 200},
+			argv: []string{"/m/antigravity-cli/1.5.14/agy", "--model", "gemini-pro"},
+		},
+		{
 			name: "no agent below the pane",
 			table: fakeProcesses{
 				5:  proc(5, 1, "claude", "claude"),

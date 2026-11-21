@@ -104,6 +104,54 @@ var codexFlags = map[string]flagSpec{
 	"--last":      {argNone, false},
 }
 
+// agyFlags lists the Antigravity CLI (agy) launch flags kwt understands.
+var agyFlags = map[string]flagSpec{
+	"--model":                        {argOne, true},
+	"--effort":                       {argOne, true},
+	"--mode":                         {argOne, true},
+	"--agent":                        {argOne, true},
+	"--add-dir":                      {argOne, true},
+	"--project":                      {argOne, true},
+	"--settings":                     {argOne, true},
+	"--sandbox":                      {argNone, true},
+	"--dangerously-skip-permissions": {argNone, true},
+	"--remote-agent":                 {argNone, true},
+	"--remote-control":               {argNone, false},
+	"--new-project":                  {argNone, false},
+	"--log-file":                     {argOne, false},
+	"--conversation":                 {argOne, false},
+	"-c":                             {argNone, false},
+	"--continue":                     {argNone, false},
+	"-i":                             {argOne, false},
+	"--prompt-interactive":           {argOne, false},
+	"-p":                             {argNone, false},
+	"--print":                        {argNone, false},
+	"--prompt":                       {argNone, false},
+	"--print-timeout":                {argOne, false},
+	"--input-format":                 {argOne, false},
+	"--output-format":                {argOne, false},
+	"--json-schema":                  {argOne, false},
+	"--disable-slash-commands":       {argNone, false},
+}
+
+// agentFlags and resumeArgs hold what restore knows about each agent.
+var (
+	agentFlags = map[string]map[string]flagSpec{
+		"claude": claudeFlags, "codex": codexFlags, "agy": agyFlags,
+	}
+	resumeArgs = map[string]func(id string) []string{
+		"claude": func(id string) []string { return []string{"--resume", id} },
+		"codex":  func(id string) []string { return []string{"resume", id} },
+		"agy":    func(id string) []string { return []string{"--conversation", id} },
+	}
+)
+
+// Resumable reports whether restore knows how to resume agent.
+func Resumable(agent string) bool {
+	_, ok := resumeArgs[agent]
+	return ok
+}
+
 // flagGroup is one flag with the values that belong to it.
 type flagGroup struct {
 	name   string
@@ -159,12 +207,8 @@ func BuildLaunch(rec Record, configured string) LaunchArgs {
 		}
 		result.Fallback = true
 	}
-	flags := codexFlags
-	if rec.Agent == "claude" {
-		flags = claudeFlags
-	}
 	prefix := agentArgsStart(argv, rec.Agent)
-	groups, dropped := parseFlags(argv[prefix:], flags)
+	groups, dropped := parseFlags(argv[prefix:], agentFlags[rec.Agent])
 	result.Dropped = dropped
 	head := slices.Clone(argv[:prefix])
 	if prefix == 1 && agentBinary(filepath.Base(head[0]), rec.Agent) {
@@ -204,11 +248,7 @@ func BuildLaunch(rec Record, configured string) LaunchArgs {
 	for _, group := range groups {
 		result.Argv = append(result.Argv, group.tokens...)
 	}
-	if rec.Agent == "claude" {
-		result.Argv = append(result.Argv, "--resume", rec.ConversationID)
-	} else {
-		result.Argv = append(result.Argv, "resume", rec.ConversationID)
-	}
+	result.Argv = append(result.Argv, resumeArgs[rec.Agent](rec.ConversationID)...)
 	return result
 }
 
