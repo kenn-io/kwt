@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -533,6 +534,61 @@ func TestResolverBestEffortChecksCanceledContextBeforeReturning(t *testing.T) {
 	_, err := resolver.resolveAllBestEffort(ctx, []WorkspaceEndpointRequest{request})
 
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestResolverBestEffortDegradesWhenCanonicalServerCannotBeListed(t *testing.T) {
+	first := resolverTestRequest()
+	second := WorkspaceEndpointRequest{
+		SessionName:   "kwt-wt-gadget-main-89abcdef",
+		WorkspacePath: "/work/gadget",
+	}
+	canonical, defaultServer := newResolverTestCommands(first.WorkspacePath, first.SessionName)
+	canonical.listErr = errors.New("tmux list-sessions failed: exit status 1, stderr: tmux: refused")
+	var diagnostics []error
+	resolver := newEndpointResolver(canonical, defaultServer, func(err error) {
+		diagnostics = append(diagnostics, err)
+	})
+
+	got, err := resolver.resolveAllBestEffort(
+		t.Context(), []WorkspaceEndpointRequest{first, second},
+	)
+
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	for index, request := range []WorkspaceEndpointRequest{first, second} {
+		require.NoError(t, got[index].Err)
+		assert.Equal(t, canonicalEndpoint(request.SessionName), got[index].Session.Endpoint)
+		assert.False(t, got[index].Session.Live)
+	}
+	require.Len(t, diagnostics, 1)
+	assert.ErrorIs(t, diagnostics[0], canonical.listErr)
+	assert.Empty(t, defaultServer.calls)
+}
+
+func TestResolverStrictBatchFailsWhenCanonicalServerCannotBeListed(t *testing.T) {
+	request := resolverTestRequest()
+	canonical, defaultServer := newResolverTestCommands(request.WorkspacePath, request.SessionName)
+	canonical.listErr = errors.New("tmux list-sessions failed: exit status 1")
+	resolver := newEndpointResolver(canonical, defaultServer, nil)
+
+	_, err := resolver.resolveAll(t.Context(), []WorkspaceEndpointRequest{request})
+
+	require.ErrorIs(t, err, canonical.listErr)
+}
+
+func TestResolverBestEffortLeavesMissingTmuxToCaller(t *testing.T) {
+	request := resolverTestRequest()
+	canonical, defaultServer := newResolverTestCommands(request.WorkspacePath, request.SessionName)
+	canonical.listErr = fmt.Errorf("run tmux: %w", exec.ErrNotFound)
+	var diagnostics []error
+	resolver := newEndpointResolver(canonical, defaultServer, func(err error) {
+		diagnostics = append(diagnostics, err)
+	})
+
+	_, err := resolver.resolveAllBestEffort(t.Context(), []WorkspaceEndpointRequest{request})
+
+	require.ErrorIs(t, err, exec.ErrNotFound)
+	assert.Empty(t, diagnostics)
 }
 
 func countCall(calls []string, expected string) int {
