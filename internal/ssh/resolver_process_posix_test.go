@@ -111,6 +111,8 @@ func TestRunOutputUsesInvocationWorkingDirectory(t *testing.T) {
 }
 
 func TestRunOutputBoundsOutputAndCancelsResolverProcess(t *testing.T) {
+	// Replace the shell with the sleeper so cancellation cannot race a new fork
+	// that inherits the output pipes after the process group was signaled.
 	for _, test := range []struct {
 		name   string
 		script string
@@ -118,12 +120,12 @@ func TestRunOutputBoundsOutputAndCancelsResolverProcess(t *testing.T) {
 	}{
 		{
 			name:   "stdout",
-			script: "dd if=/dev/zero bs=1048577 count=1 2>/dev/null; sleep 30",
+			script: "dd if=/dev/zero bs=1048577 count=1 2>/dev/null; exec sleep 30",
 			stream: func(stdout, _ []byte) []byte { return stdout },
 		},
 		{
 			name:   "stderr",
-			script: "dd if=/dev/zero bs=1048577 count=1 2>/dev/null | cat >&2; sleep 30",
+			script: "dd if=/dev/zero bs=1048577 count=1 2>/dev/null | cat >&2; exec sleep 30",
 			stream: func(_, stderr []byte) []byte { return stderr },
 		},
 	} {
