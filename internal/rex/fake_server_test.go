@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
@@ -20,8 +21,9 @@ import (
 // the client: it answers requests from a table and replays one terminal
 // stream to each data connection.
 type fakeServer struct {
-	t      *testing.T
-	socket string
+	t *testing.T
+	// endpoint is the server's address in REX_SERVER form.
+	endpoint string
 
 	mu      sync.Mutex
 	calls   []fakeCall
@@ -34,6 +36,11 @@ type fakeServer struct {
 	// controls are the open control connections, which push sends events to.
 	controls map[*websocket.Conn]struct{}
 	seq      int
+	// silentData makes each data connection read the client's HELLO and
+	// never answer it.
+	silentData bool
+	// streamDelay holds the stream after WELCOME, as an idle terminal does.
+	streamDelay time.Duration
 }
 
 type fakeCall struct {
@@ -43,15 +50,33 @@ type fakeCall struct {
 
 const fakeTicket = "ticket-bytes"
 
+// newFakeServer listens on a Unix socket, as a local Rex server does.
 func newFakeServer(t *testing.T) *fakeServer {
 	t.Helper()
 	// Unix socket paths are limited to about 100 bytes; t.TempDir can exceed it.
 	dir, err := os.MkdirTemp("", "rex")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "s.sock")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socket)
+	require.NoError(t, err)
+	return serveFake(t, listener, "unix://"+socket)
+}
+
+// newFakeNetworkServer listens on a loopback TCP port, as a Rex server on a
+// tailnet address does.
+func newFakeNetworkServer(t *testing.T) *fakeServer {
+	t.Helper()
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	return serveFake(t, listener, "http://"+listener.Addr().String())
+}
+
+func serveFake(t *testing.T, listener net.Listener, endpoint string) *fakeServer {
+	t.Helper()
 	f := &fakeServer{
 		t:        t,
-		socket:   filepath.Join(dir, "s.sock"),
+		endpoint: endpoint,
 		answers:  map[string]func(json.RawMessage) (any, *Error){},
 		nonce:    42,
 		written:  make(chan string, 64),
@@ -71,12 +96,10 @@ func newFakeServer(t *testing.T) *fakeServer {
 		return map[string]any{}, nil
 	})
 
-	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", f.socket)
-	require.NoError(t, err)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/control", f.serveControl)
 	mux.HandleFunc("/api/data", f.serveData)
-	server := &http.Server{Handler: mux} //nolint:gosec // Test server on a private Unix socket.
+	server := &http.Server{Handler: mux} //nolint:gosec // Test server on a private socket or loopback port.
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
 	return f
@@ -231,12 +254,20 @@ func (f *fakeServer) serveData(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Write(ctx, websocket.MessageBinary, []byte{dataReject, 0x01})
 		return
 	}
+	f.mu.Lock()
+	silent, delay := f.silentData, f.streamDelay
+	f.mu.Unlock()
+	if silent {
+		_, _, _ = conn.Read(ctx)
+		return
+	}
 	welcome := make([]byte, 32)
 	welcome[0] = dataWelcome
 	binary.LittleEndian.PutUint64(welcome[24:], f.nonce)
 	if conn.Write(ctx, websocket.MessageBinary, welcome) != nil {
 		return
 	}
+	time.Sleep(delay)
 	f.mu.Lock()
 	stream := f.stream
 	f.mu.Unlock()

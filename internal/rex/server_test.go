@@ -31,7 +31,7 @@ printf '%s' '{"endpoint":"unix:///Users/me/Library/Application%20Support/rex/ser
 	server, err := FindServer(t.Context(), []string{rex})
 	require.NoError(t, err)
 	assert.Equal(t, Server{
-		Socket:      "/Users/me/Library/Application Support/rex/server.sock",
+		Endpoint:    "unix:///Users/me/Library/Application%20Support/rex/server.sock",
 		Version:     "0.1.0-preview.14",
 		APIRevision: 12,
 	}, server)
@@ -41,10 +41,16 @@ printf '%s' '{"endpoint":"unix:///Users/me/Library/Application%20Support/rex/ser
 }
 
 func TestFindServerPrefersREX_SERVER(t *testing.T) {
-	t.Setenv("REX_SERVER", "unix:///run/user/1000/rex/server.sock")
-	server, err := FindServer(t.Context(), nil)
-	require.NoError(t, err)
-	assert.Equal(t, "/run/user/1000/rex/server.sock", server.Socket)
+	for _, endpoint := range []string{
+		"unix:///run/user/1000/rex/server.sock",
+		"http://build.example.ts.net:7297",
+		"https://rex.example.ts.net",
+	} {
+		t.Setenv("REX_SERVER", endpoint)
+		server, err := FindServer(t.Context(), nil)
+		require.NoError(t, err)
+		assert.Equal(t, Server{Endpoint: endpoint}, server)
+	}
 }
 
 func TestFindServerReportsWhyNoServerIsAvailable(t *testing.T) {
@@ -56,8 +62,9 @@ func TestFindServerReportsWhyNoServerIsAvailable(t *testing.T) {
 	_, err = FindServer(t.Context(), []string{stopped})
 	require.ErrorIs(t, err, ErrNotRunning)
 
-	t.Setenv("REX_SERVER", "tcp://example.com:7000")
-	_, err = FindServer(t.Context(), nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unix://")
+	for _, endpoint := range []string{"tcp://example.com:7000", "ssh://build.example.com", "build.example.com", "http://"} {
+		t.Setenv("REX_SERVER", endpoint)
+		_, err = FindServer(t.Context(), nil)
+		require.ErrorContains(t, err, "http://", endpoint)
+	}
 }

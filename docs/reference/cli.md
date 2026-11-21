@@ -670,9 +670,14 @@ Rex server, with its session, window, label, the title its program set, and its
 foreground program and working directory. `name` is what Rex shows for the
 terminal: the title, or else the program and directory, such as `zsh ~/src`.
 `status` is `running`, `not_installed`, or `not_running`; the last two are
-normal and list no terminals. None of these commands starts a Rex server. `REX_SERVER`
-selects a `unix://` server endpoint; otherwise kwt asks the `rex` command on
-`PATH`, or the one inside Rex for Mac, for its server.
+normal and list no terminals. None of these commands starts a Rex server.
+`REX_SERVER` selects the server: `unix://PATH` on this machine, or
+`http://HOST:PORT` or `https://HOST` for a server with a
+[network listener](https://www.superlogical.com/rex/docs/linux/remote-access),
+such as its tailnet address. Otherwise kwt asks the `rex` command on `PATH`, or
+the one inside Rex for Mac, for its server. kwt gives up on a server that
+does not finish connecting within 10 seconds. Once connected, an attach or
+control connection stays open as long as the server does.
 
 `attach` finds the session that holds the block, paints the terminal's
 current screen, then streams its output and
