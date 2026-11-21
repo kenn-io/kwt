@@ -85,6 +85,32 @@ func IdentifyAgent(
 	return nil, nil
 }
 
+// HookInPane reports whether a hook process, start, runs for the agent in the
+// pane whose first process is panePID. Codex's shared background server runs
+// every client's hooks in its own process, with the tmux environment of
+// whichever pane started it, so a hook below a Codex app server does not
+// belong to that pane. A process kwt cannot read leaves the question open,
+// and the hook counts as in the pane.
+func HookInPane(ctx context.Context, table ProcessTable, start, panePID int32) bool {
+	for pid, steps := start, 0; steps < 64; steps++ {
+		if pid <= 1 {
+			return false
+		}
+		info, err := table.Lookup(ctx, pid)
+		if err != nil {
+			return true
+		}
+		if isAgentProcess(info, "codex") && slices.Contains(info.Argv, "app-server") {
+			return false
+		}
+		if pid == panePID {
+			return true
+		}
+		pid = info.PPID
+	}
+	return true
+}
+
 var agentPackages = map[string]string{
 	"claude": "@anthropic-ai/claude-code",
 	"codex":  "@openai/codex",

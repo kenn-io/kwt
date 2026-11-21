@@ -758,9 +758,11 @@ runs in:
 | Session start or end                | option removed                    |
 
 Subagent events and Claude Code's `idle_prompt` reminder are ignored. Outside
-tmux, or when tmux is unavailable, the hook does nothing. The hook always
-exits successfully and ignores kwt configuration errors, so it never
-interrupts the agent.
+tmux, or when tmux is unavailable, the hook does nothing. It also does nothing
+when it runs outside the pane its tmux environment names, as Codex's shared
+background server runs every session's hooks with the environment of the pane
+that started the server. The hook always exits successfully and ignores kwt
+configuration errors, so it never interrupts the agent.
 
 `status --json` reports each agent's `config_path` and whether it is
 `available` (config directory exists), `installed` (any kwt hook present), and
@@ -885,6 +887,11 @@ Known limits:
   while its server runs. Killing the last session stops the server unless
   tmux's `exit-empty` option is off. kwt cannot tell that stop apart from a
   reboot, so the session becomes restorable; dismiss it.
+- A Codex session that joins Codex's shared background server is not
+  recorded and comes back as a shell. The server runs that session's hooks in
+  its own process, which does not tell kwt the session's pane, so kwt ignores
+  them rather than record another pane. Start Codex with `--no-daemon` to
+  keep its hooks in its own process; kwt keeps that flag on restore.
 - Codex does not report a deliberate exit, so kwt infers one from two saves.
   A reboot right after quitting Codex can resume the closed conversation, and
   a slow shutdown can drop a live one.

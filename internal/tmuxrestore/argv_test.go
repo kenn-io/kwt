@@ -118,6 +118,11 @@ func TestBuildLaunchCodex(t *testing.T) {
 			want: []string{"codex", "--yolo", "--profile", "work", "resume", "x-1"},
 		},
 		{
+			name: "own-process hooks kept",
+			argv: []string{"codex", "--no-daemon", "-m", "gpt-5"},
+			want: []string{"codex", "--no-daemon", "-m", "gpt-5", "resume", "x-1"},
+		},
+		{
 			// The platform binary behind npm's codex wrapper is not on PATH.
 			name: "native platform binary started as codex",
 			argv: []string{"/m/@openai/codex/vendor/codex-x86_64-unknown-linux-musl", "-s", "read-only"},

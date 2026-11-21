@@ -127,6 +127,57 @@ func TestIdentifyAgent(t *testing.T) {
 	}
 }
 
+func TestHookInPane(t *testing.T) {
+	daemon := "/codex-home/packages/app-server-daemon/bin/codex"
+	cases := []struct {
+		name  string
+		table ProcessTable
+		start int32
+		want  bool
+	}{
+		{
+			name: "hook below the agent in the pane",
+			table: fakeProcesses{
+				10: proc(10, 1, "zsh", "-zsh"),
+				20: proc(20, 10, "codex", "codex", "-m", "gpt-5"),
+				30: proc(30, 20, "kwt", "kwt", "agent-hook", "run"),
+			},
+			start: 30, want: true,
+		},
+		{
+			name: "hook from a server started outside the pane",
+			table: fakeProcesses{
+				10: proc(10, 1, "zsh", "-zsh"),
+				20: proc(20, 1, "codex", daemon, "app-server", "--managed-daemon"),
+				30: proc(30, 20, "kwt", "kwt", "agent-hook", "run"),
+			},
+			start: 30,
+		},
+		{
+			// The server stays a child of the session that started it, so
+			// another session's hook runs inside this pane's process tree.
+			name: "hook from a server the pane's agent started",
+			table: fakeProcesses{
+				10: proc(10, 1, "zsh", "-zsh"),
+				20: proc(20, 10, "codex", "codex"),
+				25: proc(25, 20, "codex", daemon, "app-server", "--managed-daemon"),
+				30: proc(30, 25, "kwt", "kwt", "agent-hook", "run"),
+			},
+			start: 30,
+		},
+		{
+			name:  "unreadable process table",
+			table: failingProcesses{},
+			start: 30, want: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, HookInPane(t.Context(), tc.table, tc.start, 10))
+		})
+	}
+}
+
 type failingProcesses struct{}
 
 func (failingProcesses) Lookup(context.Context, int32) (ProcInfo, error) {

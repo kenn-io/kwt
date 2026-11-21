@@ -93,14 +93,17 @@ func (e sessionEnv) kwt(t *testing.T, stdin string, extraEnv []string, args ...s
 	return stdout.String(), err
 }
 
+// hook runs an agent hook in pane on the default server, as an agent there
+// would.
 func (e sessionEnv) hook(t *testing.T, agent, pane, payload string) time.Duration {
 	t.Helper()
-	tmuxValue := e.mustTmux(t, "-L", "default", "display-message", "-p", "-t", pane, "#{socket_path},#{pid},0")
-	started := time.Now()
-	_, err := e.kwt(t, payload, []string{"TMUX=" + tmuxValue, "TMUX_PANE=" + pane},
-		"agent-hook", "run", "--agent", agent, "--source", "kwt-tmux-agent-state")
-	require.NoError(t, err)
-	return time.Since(started)
+	args := []string{"agent-hook", "run", "--agent", agent, "--source", "kwt-tmux-agent-state"}
+	tmux := func(args ...string) *exec.Cmd {
+		return e.tmux(t.Context(), append([]string{"-L", "default"}, args...)...)
+	}
+	return runInPane(t, tmux, pane, "TestKwtHelperProcess", []string{
+		"KWT_HOME=" + e.home, "TMUX_TMPDIR=" + e.tmpdir, "KWT_TEST_ARGS=" + strings.Join(args, "\n"),
+	}, payload)
 }
 
 func sessionStartPayload(conversation string) string {

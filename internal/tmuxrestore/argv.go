@@ -96,9 +96,12 @@ var codexFlags = map[string]flagSpec{
 	"--oss":            {argNone, true},
 	"--local-provider": {argOne, true},
 	"--no-alt-screen":  {argNone, true},
-	"-i":               {argOne, false},
-	"--image":          {argOne, false},
-	"--last":           {argNone, false},
+	// Without it, a resumed session can join Codex's shared background
+	// server, where kwt's hooks cannot record it.
+	"--no-daemon": {argNone, true},
+	"-i":          {argOne, false},
+	"--image":     {argOne, false},
+	"--last":      {argNone, false},
 }
 
 // flagGroup is one flag with the values that belong to it.
