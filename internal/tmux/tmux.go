@@ -523,23 +523,28 @@ func (t *TmuxCommand) runCommandOutputContextWithStderr(
 	return stdout.String(), stderr.String(), nil
 }
 
-// GlobalEnvironment returns the tmux server's global environment table, one
-// "NAME=VALUE" (or "-NAME") entry per line. start-server is a no-op for an
-// existing server; on a fresh named socket it lets show-environment inspect
-// the sanitized server state without interpreting platform-specific
-// connection errors. The empty server exits after the command sequence.
+// GlobalEnvironment returns the existing server's global environment table,
+// one "NAME=VALUE" (or "-NAME") entry per line. A missing server has no
+// environment. Do not start an empty server here: it exits automatically and
+// can race the caller's subsequent session creation.
 func (t *TmuxCommand) GlobalEnvironment() (string, error) {
 	return t.GlobalEnvironmentContext(context.Background())
 }
 
 func (t *TmuxCommand) GlobalEnvironmentContext(ctx context.Context) (string, error) {
-	return t.RunCommandOutputContext(
-		ctx,
-		"start-server",
-		";",
-		"show-environment",
-		"-g",
-	)
+	output, stderr, err := t.runCommandOutputContextWithStderr(ctx, "show-environment", "-g")
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", errors.Join(ctxErr, err)
+	}
+	if err != nil {
+		var exited exitCoder
+		if errors.As(err, &exited) && exited.ExitCode() == 1 &&
+			IsExplicitlyAbsentDiagnostic(stderr) {
+			return "", nil
+		}
+		return "", fmt.Errorf("tmux show-environment failed: %w, stderr: %s", err, strings.TrimSpace(stderr))
+	}
+	return output, nil
 }
 
 // SessionEnvironment returns a session's own environment table via
