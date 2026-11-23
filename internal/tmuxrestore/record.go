@@ -87,6 +87,9 @@ func Apply(prev *Record, ev Event, identify func() (*ProcessRef, []string)) (*Re
 	if ev.PermissionMode != "" && ev.Agent == "claude" {
 		next.PermissionMode = ev.PermissionMode
 	}
+	// A hook now speaks for this conversation, so later saves keep what it
+	// reports instead of reading the agent again.
+	next.Discovered = false
 	next.RecordedAt = ev.Now.Unix()
 	return &next, false
 }

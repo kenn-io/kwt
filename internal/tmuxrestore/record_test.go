@@ -114,6 +114,32 @@ func TestApplySameConversationUpdatesHintsOnly(t *testing.T) {
 	assert.Equal(t, &ProcessRef{PID: 42, StartMillis: 7}, next.Process)
 }
 
+// A restored pane starts with the record a save read from the agent. Once a
+// hook reports on that conversation, later saves must keep what the hook
+// said, such as a changed permission mode, instead of reading the agent again.
+func TestApplyMakesARestoredDiscoveredRecordTheHooks(t *testing.T) {
+	prev := &Record{
+		Agent: "claude", ConversationID: "c-1",
+		Process: &ProcessRef{PID: 42, StartMillis: 7}, Argv: []string{"claude"},
+		Discovered: true,
+	}
+	next, _ := Apply(prev, Event{
+		Agent: "claude", ConversationID: "c-1", PermissionMode: "plan", Now: recordClock,
+	}, (&identifyCounter{}).identify)
+	require.NotNil(t, next)
+	assert.False(t, next.Discovered)
+	assert.Equal(t, "plan", next.PermissionMode)
+
+	claudeDir := t.TempDir()
+	writeClaudeSession(t, claudeDir, 42, `{"pid":42,"sessionId":"c-1"}`)
+	snap := paneSnapshot(Pane{ID: "%1", PID: 10, Command: "claude", Resume: next})
+	discover(t.Context(), snap, fakeProcesses{
+		10: proc(10, 1, "zsh"),
+		42: proc(42, 10, "claude", "claude"),
+	}, claudeDir, recordClock)
+	assert.Equal(t, next, snap.Windows["w"].Panes[0].Resume)
+}
+
 func TestApplySameConversationInANewProcessRecordsThatProcess(t *testing.T) {
 	// Codex reports no deliberate exit, so its record outlives the process;
 	// "codex resume" in the same pane then continues that conversation.

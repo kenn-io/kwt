@@ -220,6 +220,25 @@ func liveResume(t *testing.T, f *saveFixture) *Record {
 
 // An agent kwt discovered that exits as the machine shuts down, before tmux
 // does, keeps its conversation for the same grace a hook record gets.
+// A conversation read earlier is dropped once a second one runs in the pane,
+// as when the person suspends one agent and starts another: kwt cannot tell
+// which one they were using.
+func TestDiscoverDropsAnEarlierConversationOnceTwoRun(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	claudeDir := t.TempDir()
+	writeClaudeSession(t, claudeDir, 30, `{"pid":30,"sessionId":"c-a"}`)
+	writeClaudeSession(t, claudeDir, 32, `{"pid":32,"sessionId":"c-b"}`)
+	snap := paneSnapshot(Pane{ID: "%1", PID: 10, Command: "claude", Resume: &Record{
+		Agent: "claude", ConversationID: "c-a", Process: &ProcessRef{PID: 30, StartMillis: 300}, Discovered: true,
+	}})
+	discover(t.Context(), snap, fakeProcesses{
+		10: proc(10, 1, "zsh"),
+		30: proc(30, 10, "claude", "claude"),
+		32: proc(32, 10, "claude", "claude"),
+	}, claudeDir, now)
+	assert.Nil(t, snap.Windows["w"].Panes[0].Resume)
+}
+
 func TestSaveKeepsADiscoveredConversationThroughTheGrace(t *testing.T) {
 	f := newSaveFixture(t)
 	panePID := startAgentPane(t, f.tm)
