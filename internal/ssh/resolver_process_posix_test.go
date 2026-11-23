@@ -20,11 +20,13 @@ import (
 
 func TestRunOutputCancellationTerminatesDescendantProcessGroup(t *testing.T) {
 	pidPath := filepath.Join(t.TempDir(), "descendant.pid")
+	// Publish the complete PID with a rename so the reader cannot see an empty file.
 	script := fmt.Sprintf(
-		`(exec >/dev/null 2>&1; sleep 30) & child=$!; printf '%%s' "$child" > %s; wait`,
-		shellQuote(pidPath),
+		`(exec >/dev/null 2>&1; sleep 30) & child=$!; printf '%%s' "$child" > %s && mv %s %s; wait`,
+		shellQuote(pidPath+".tmp"), shellQuote(pidPath+".tmp"), shellQuote(pidPath),
 	)
 	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	result := make(chan error, 1)
 	go func() {
 		_, _, _, err := runOutput(
