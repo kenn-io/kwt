@@ -86,14 +86,42 @@ func Save(ctx context.Context, deps SaveDeps) (SaveResult, error) {
 		var previous map[string]int64
 		if f.Live != nil {
 			previous = f.Live.Gone
+			if f.Live.Server == snap.Server {
+				carryDiscovered(&snap, f.Live)
+			}
 		}
-		reconcile(ctx, &snap, previous, deps.Processes, now())
 		discover(ctx, &snap, deps.Processes, deps.ClaudeDir, now())
+		reconcile(ctx, &snap, previous, deps.Processes, now())
 		snap.SavedAt = now().UnixMilli()
 		f.Live = &snap
 		return nil
 	})
 	return result, err
+}
+
+// carryDiscovered keeps the conversations earlier saves read from running
+// agents. No pane option holds them, so without this an agent that exits
+// while tmux shuts down would lose its conversation at the next save;
+// reconcile drops it only after the same grace a hook record gets.
+func carryDiscovered(snap *Snapshot, earlier *Snapshot) {
+	for key, window := range snap.Windows {
+		old, ok := earlier.Windows[key]
+		if !ok {
+			continue
+		}
+		for i := range window.Panes {
+			pane := &window.Panes[i]
+			if pane.Resume != nil {
+				continue
+			}
+			for _, was := range old.Panes {
+				if was.ID == pane.ID && was.Resume != nil && was.Resume.Discovered &&
+					was.Resume.ConversationID != pane.Closed {
+					pane.Resume = was.Resume
+				}
+			}
+		}
+	}
 }
 
 // reconcile drops conversations whose agent exited while tmux kept running.

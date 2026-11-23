@@ -53,6 +53,7 @@ func TestDiscoverReadsConversationFromRunningAgent(t *testing.T) {
 	claudeDir := t.TempDir()
 	writeClaudeSession(t, claudeDir, 30, `{"pid":30,"sessionId":"c-live","cwd":"/src"}`)
 	writeClaudeSession(t, claudeDir, 31, `{"pid":99,"sessionId":"c-other"}`)
+	writeClaudeSession(t, claudeDir, 32, `{"pid":32,"sessionId":"c-suspended"}`)
 
 	cases := []struct {
 		name  string
@@ -69,7 +70,7 @@ func TestDiscoverReadsConversationFromRunningAgent(t *testing.T) {
 			want: &Record{
 				Agent: "claude", ConversationID: "c-live",
 				Process: &ProcessRef{PID: 30, StartMillis: 300}, Argv: []string{"claude", "--model", "opus"},
-				RecordedAt: now.Unix(),
+				RecordedAt: now.Unix(), Discovered: true,
 			},
 		},
 		{
@@ -93,7 +94,15 @@ func TestDiscoverReadsConversationFromRunningAgent(t *testing.T) {
 				Agent: "codex", ConversationID: "01a1f94f-b341-7d21-ba7d-6a7055f5baae",
 				Process:        &ProcessRef{PID: 30, StartMillis: 300},
 				Argv:           []string{"/usr/lib/codex-x86_64-unknown-linux-musl", "--yolo"},
-				TranscriptPath: codexRollout, RecordedAt: now.Unix(),
+				TranscriptPath: codexRollout, RecordedAt: now.Unix(), Discovered: true,
+			},
+		},
+		{
+			name: "two agents in one shell, one suspended, leave the pane unknown",
+			table: fakeProcesses{
+				10: proc(10, 1, "zsh"),
+				30: proc(30, 10, "claude", "claude"),
+				32: proc(32, 10, "claude", "claude"),
 			},
 		},
 		{
@@ -154,12 +163,7 @@ func TestDiscoverLeavesHookRecordsAndIdlePanesAlone(t *testing.T) {
 // hook record, so a restore after the server is lost resumes it.
 func TestSaveRecordsConversationOfAgentWithoutHooks(t *testing.T) {
 	f := newSaveFixture(t)
-	startServer(t, f.tm, "-s", "work", "sleep 600")
-	out, err := f.tm.Run(t.Context(), "display-message", "-p", "-t", "work", "#{pane_pid}")
-	require.NoError(t, err)
-	panePID64, err := strconv.ParseInt(strings.TrimSpace(out), 10, 32)
-	require.NoError(t, err)
-	panePID := int32(panePID64)
+	panePID := startAgentPane(t, f.tm)
 	claudeDir := t.TempDir()
 	writeClaudeSession(t, claudeDir, 9001, `{"pid":9001,"sessionId":"c-unhooked"}`)
 	procs := fakeProcesses{
@@ -167,7 +171,7 @@ func TestSaveRecordsConversationOfAgentWithoutHooks(t *testing.T) {
 		9001:    proc(9001, panePID, "claude", "claude"),
 	}
 
-	_, err = Save(t.Context(), SaveDeps{
+	_, err := Save(t.Context(), SaveDeps{
 		Tmux: f.tm, Store: f.store, Processes: procs, Protection: f.prs,
 		ClaudeDir: claudeDir, Now: func() time.Time { return f.now },
 	})
@@ -182,4 +186,97 @@ func TestSaveRecordsConversationOfAgentWithoutHooks(t *testing.T) {
 	require.NotNil(t, resume)
 	assert.Equal(t, "claude", resume.Agent)
 	assert.Equal(t, "c-unhooked", resume.ConversationID)
+}
+
+func TestDiscoverSkipsTheConversationEndedOnPurpose(t *testing.T) {
+	claudeDir := t.TempDir()
+	writeClaudeSession(t, claudeDir, 30, `{"pid":30,"sessionId":"c-done"}`)
+	table := fakeProcesses{10: proc(10, 1, "zsh"), 30: proc(30, 10, "claude", "claude")}
+
+	snap := paneSnapshot(Pane{ID: "%1", PID: 10, Command: "claude", Closed: "c-done"})
+	discover(t.Context(), snap, table, claudeDir, time.Now())
+
+	assert.Nil(t, snap.Windows["w"].Panes[0].Resume)
+}
+
+// startAgentPane starts a session whose pane runs a long sleep, so it is
+// not at a shell prompt, and returns the pane's first process.
+func startAgentPane(t *testing.T, tm Tmux) int32 {
+	t.Helper()
+	startServer(t, tm, "-s", "work", "sleep 600")
+	out, err := tm.Run(t.Context(), "display-message", "-p", "-t", "work", "#{pane_pid}")
+	require.NoError(t, err)
+	pid, err := strconv.ParseInt(strings.TrimSpace(out), 10, 32)
+	require.NoError(t, err)
+	return int32(pid)
+}
+
+func liveResume(t *testing.T, f *saveFixture) *Record {
+	t.Helper()
+	files := f.files(t)
+	require.NotNil(t, files.Live)
+	return files.Live.Windows[files.Live.Sessions[0].Windows[0].Key].Panes[0].Resume
+}
+
+// An agent kwt discovered that exits as the machine shuts down, before tmux
+// does, keeps its conversation for the same grace a hook record gets.
+func TestSaveKeepsADiscoveredConversationThroughTheGrace(t *testing.T) {
+	f := newSaveFixture(t)
+	panePID := startAgentPane(t, f.tm)
+	claudeDir := t.TempDir()
+	writeClaudeSession(t, claudeDir, 9001, `{"pid":9001,"sessionId":"c-unhooked"}`)
+	f.procs[panePID] = proc(panePID, 1, "sleep", "sleep", "600")
+	f.procs[9001] = proc(9001, panePID, "claude", "claude")
+	save := func() {
+		_, err := Save(t.Context(), SaveDeps{
+			Tmux: f.tm, Store: f.store, Processes: f.procs, Protection: f.prs,
+			ClaudeDir: claudeDir, Now: func() time.Time { return f.now },
+		})
+		require.NoError(t, err)
+	}
+
+	save()
+	require.NotNil(t, liveResume(t, f))
+
+	delete(f.procs, 9001)
+	save()
+	require.NotNil(t, liveResume(t, f), "a save right after the agent exits keeps it")
+	assert.Equal(t, "c-unhooked", liveResume(t, f).ConversationID)
+
+	f.now = f.now.Add(goneGrace)
+	save()
+	assert.Nil(t, liveResume(t, f), "dropped once the agent has been gone for the grace")
+}
+
+// A hook that reports the person ended the conversation keeps a save from
+// recording it again from the Claude process that is still exiting.
+func TestHookEndKeepsTheExitingAgentFromBeingRediscovered(t *testing.T) {
+	tm := privateSocket(t)
+	panePID := startAgentPane(t, tm)
+	pane, err := tm.Run(t.Context(), "display-message", "-p", "-t", "work", "#{pane_id}")
+	require.NoError(t, err)
+	claudeDir := t.TempDir()
+	writeClaudeSession(t, claudeDir, 9001, `{"pid":9001,"sessionId":"c-2"}`)
+	h := HookTracker{
+		Tmux: tm, Pane: strings.TrimSpace(pane), Store: OpenStore(t.TempDir()),
+		Processes: fakeProcesses{
+			panePID: proc(panePID, 1, "sleep", "sleep", "600"),
+			9001:    proc(9001, panePID, "claude", "claude"),
+		},
+		Protection: noProtection, ClaudeDir: claudeDir,
+		Now: func() time.Time { return recordClock }, StartPID: 9001,
+	}
+
+	h.Track(t.Context(), claudeEvent("c-2"))
+	end := claudeEvent("c-2")
+	end.IsEnd, end.EndReason = true, "prompt_input_exit"
+	h.Track(t.Context(), end)
+
+	var files Files
+	require.NoError(t, h.Store.WithLock(t.Context(), tm.Socket, func(f *Files) error {
+		files = *f
+		return nil
+	}))
+	require.NotNil(t, files.Live)
+	assert.Nil(t, files.Live.Windows[files.Live.Sessions[0].Windows[0].Key].Panes[0].Resume)
 }

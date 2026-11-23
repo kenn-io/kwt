@@ -12,6 +12,11 @@ import (
 // ResumeOption is the tmux pane user option holding a pane's Record.
 const ResumeOption = "@kwt_agent_resume"
 
+// ClosedOption is the tmux pane user option naming the last conversation the
+// person ended on purpose, so a save does not record it again from the agent
+// process that is still exiting.
+const ClosedOption = "@kwt_agent_closed"
+
 // ProcessRef identifies one process. The start time keeps a reused PID from
 // being mistaken for the original process.
 type ProcessRef struct {
@@ -33,6 +38,9 @@ type Record struct {
 	// PermissionMode is the last Claude permission mode a hook reported.
 	PermissionMode string `json:"permission_mode,omitempty"`
 	RecordedAt     int64  `json:"recorded_at"`
+	// Discovered marks a record a save read from the running agent rather
+	// than one a hook wrote. It lives only in snapshots.
+	Discovered bool `json:"discovered,omitempty"`
 }
 
 // Event is one agent hook event reduced to the fields a Record uses.

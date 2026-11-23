@@ -30,6 +30,8 @@ type Pane struct {
 	// they mean nothing once the server is gone.
 	PID     int32  `json:"-"`
 	Command string `json:"-"`
+	// Closed is the conversation last ended on purpose in this pane.
+	Closed string `json:"-"`
 }
 
 // Window is one saved window. A window linked into several sessions is saved
@@ -85,7 +87,7 @@ var paneFields = []string{
 	"#{window_active}", "#{window_zoomed_flag}",
 	"#{pane_index}", "#{pane_left}", "#{pane_top}", "#{pane_width}", "#{pane_height}",
 	"#{pane_active}", "#{pane_current_path}", "#{pane_id}",
-	"#{pane_pid}", "#{pane_current_command}",
+	"#{pane_pid}", "#{pane_current_command}", "#{" + ClosedOption + "}",
 	"#{" + kwttmux.PaneAgentOption + "}", "#{" + ResumeOption + "}",
 }
 
@@ -182,13 +184,13 @@ func parsePanes(server ServerID, output string) (Snapshot, error) {
 			seenPane[paneKey] = true
 			pane := Pane{
 				Index: ints[3], Left: ints[4], Top: ints[5], Width: ints[6], Height: ints[7],
-				Active: f[20] == "1", Dir: f[21], ID: f[22], Command: f[24], PresetAgent: f[25],
+				Active: f[20] == "1", Dir: f[21], ID: f[22], Command: f[24], Closed: f[25], PresetAgent: f[26],
 			}
 			if pid, err := strconv.ParseInt(f[23], 10, 32); err == nil {
 				pane.PID = int32(pid)
 			}
-			if f[26] != "" {
-				if record, err := DecodeRecord(f[26]); err == nil {
+			if f[27] != "" {
+				if record, err := DecodeRecord(f[27]); err == nil {
 					pane.Resume = record
 				}
 			}

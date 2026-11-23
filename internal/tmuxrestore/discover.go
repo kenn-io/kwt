@@ -25,8 +25,9 @@ const discoverLimit = 256
 // discover gives a record to each pane whose agent never wrote one, as when
 // the agent started before kwt's hooks were installed. The agent itself tells
 // which conversation it runs: Claude Code writes a session file named for its
-// process, and Codex holds its conversation's rollout file open. Panes kwt
-// cannot read keep no record.
+// process, and Codex holds its conversation's rollout file open. A pane that
+// already holds a discovered record is read again, since the agent can start
+// a new conversation; one kwt cannot read now keeps the record it has.
 func discover(ctx context.Context, snap *Snapshot, table ProcessTable, claudeDir string, now time.Time) {
 	if table == nil {
 		return
@@ -35,7 +36,8 @@ func discover(ctx context.Context, snap *Snapshot, table ProcessTable, claudeDir
 	for _, window := range snap.Windows {
 		for i := range window.Panes {
 			pane := &window.Panes[i]
-			if pane.Resume == nil && pane.PID > 1 && !shells[strings.TrimPrefix(pane.Command, "-")] {
+			if (pane.Resume == nil || pane.Resume.Discovered) && pane.PID > 1 &&
+				!shells[strings.TrimPrefix(pane.Command, "-")] {
 				panes = append(panes, pane)
 			}
 		}
@@ -55,21 +57,27 @@ func discover(ctx context.Context, snap *Snapshot, table ProcessTable, claudeDir
 		slices.Sort(pids)
 	}
 	for _, pane := range panes {
-		pane.Resume = runningConversation(ctx, table, children, pane.PID, claudeDir, now)
+		if rec := runningConversation(ctx, table, children, pane, claudeDir, now); rec != nil {
+			pane.Resume = rec
+		}
 	}
 }
 
-// runningConversation searches the processes under a pane, nearest first,
-// for an agent that names its conversation.
+// runningConversation searches the processes under a pane for an agent that
+// names its conversation. Two agents naming different conversations, as when
+// one is suspended in the shell's background, leave the pane unknown: kwt
+// cannot tell which one the person was using. The conversation last ended
+// on purpose in the pane is skipped.
 func runningConversation(
 	ctx context.Context,
 	table ProcessTable,
 	children map[int32][]int32,
-	panePID int32,
+	pane *Pane,
 	claudeDir string,
 	now time.Time,
 ) *Record {
-	queue := []int32{panePID}
+	var found *Record
+	queue := []int32{pane.PID}
 	for read := 0; len(queue) > 0 && read < discoverLimit; read++ {
 		pid := queue[0]
 		queue = append(queue[1:], children[pid]...)
@@ -86,11 +94,16 @@ func runningConversation(
 			rec.Agent = "codex"
 			rec.ConversationID, rec.TranscriptPath = codexConversation(ctx, table, info)
 		}
-		if rec.ConversationID != "" {
-			return &rec
+		switch {
+		case rec.ConversationID == "" || rec.ConversationID == pane.Closed:
+		case found == nil:
+			rec.Discovered = true
+			found = &rec
+		case found.ConversationID != rec.ConversationID:
+			return nil
 		}
 	}
-	return nil
+	return found
 }
 
 // claudeConversation reads the conversation Claude Code's session file

@@ -808,8 +808,12 @@ that is not at its shell prompt. A Claude Code process names its
 conversation in `sessions/<pid>.json` under its configuration directory
 (`CLAUDE_CONFIG_DIR`, or `~/.claude`). On Linux, a Codex process holds its
 conversation's rollout file open. A Codex process with several rollout files
-open, such as its shared app server, is skipped. On macOS, kwt cannot see a
-Codex process's open files, so Codex needs its hooks there.
+open, such as its shared app server, is skipped, as is a pane with two agents
+in different conversations, such as one suspended in the shell. A
+conversation found this way survives the same 10-second grace as a hook
+record after its agent exits. One the person ended on purpose is not
+recorded again. On macOS, kwt cannot see a Codex process's open files, so
+Codex needs its hooks there.
 
 `snapshot --json` prints `{"entries": [...]}`. Each entry has an opaque `id`,
 its `socket` (`path`, and `name` for a `-L` socket), `session`, `saved_at`
