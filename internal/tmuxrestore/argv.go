@@ -96,15 +96,101 @@ var codexFlags = map[string]flagSpec{
 	"--oss":            {argNone, true},
 	"--local-provider": {argOne, true},
 	"--no-alt-screen":  {argNone, true},
-	"-i":               {argOne, false},
-	"--image":          {argOne, false},
-	"--last":           {argNone, false},
+	// Without it, a resumed session can join Codex's shared background
+	// server, where kwt's hooks cannot record it.
+	"--no-daemon": {argNone, true},
+	"-i":          {argOne, false},
+	"--image":     {argOne, false},
+	"--last":      {argNone, false},
+}
+
+// agyFlags lists the Antigravity CLI (agy) launch flags kwt understands.
+var agyFlags = map[string]flagSpec{
+	"--model":                        {argOne, true},
+	"--effort":                       {argOne, true},
+	"--mode":                         {argOne, true},
+	"--agent":                        {argOne, true},
+	"--add-dir":                      {argOne, true},
+	"--project":                      {argOne, true},
+	"--settings":                     {argOne, true},
+	"--sandbox":                      {argNone, true},
+	"--dangerously-skip-permissions": {argNone, true},
+	"--remote-agent":                 {argNone, true},
+	"--remote-control":               {argNone, false},
+	"--new-project":                  {argNone, false},
+	"--log-file":                     {argOne, false},
+	"--conversation":                 {argOne, false},
+	"-c":                             {argNone, false},
+	"--continue":                     {argNone, false},
+	"-i":                             {argOne, false},
+	"--prompt-interactive":           {argOne, false},
+	"-p":                             {argNone, false},
+	"--print":                        {argNone, false},
+	"--prompt":                       {argNone, false},
+	"--print-timeout":                {argOne, false},
+	"--input-format":                 {argOne, false},
+	"--output-format":                {argOne, false},
+	"--json-schema":                  {argOne, false},
+	"--disable-slash-commands":       {argNone, false},
+}
+
+// agentFlags and resumeArgs hold what restore knows about each agent.
+var (
+	agentFlags = map[string]map[string]flagSpec{
+		"claude": claudeFlags, "codex": codexFlags, "agy": agyFlags,
+	}
+	resumeArgs = map[string]func(id string) []string{
+		"claude": func(id string) []string { return []string{"--resume", id} },
+		"codex":  func(id string) []string { return []string{"resume", id} },
+		"agy":    func(id string) []string { return []string{"--conversation", id} },
+	}
+)
+
+// Resumable reports whether restore knows how to resume agent.
+func Resumable(agent string) bool {
+	_, ok := resumeArgs[agent]
+	return ok
 }
 
 // flagGroup is one flag with the values that belong to it.
 type flagGroup struct {
 	name   string
 	tokens []string
+}
+
+// agentArgsStart returns the index of the agent's first argument in a
+// non-empty argv. A runtime such as node keeps its own options and the
+// agent's script, found the way process detection finds it.
+func agentArgsStart(argv []string, agent string) int {
+	base := filepath.Base(argv[0])
+	if (base != "node" && base != "bun") || len(argv) < 2 {
+		return 1
+	}
+	if pkg, ok := agentPackages[agent]; ok {
+		if i := slices.IndexFunc(argv, func(arg string) bool { return strings.Contains(arg, pkg) }); i > 0 {
+			return i + 1
+		}
+	}
+	return 2
+}
+
+// codexSubcommand returns the first argument of a Codex command line that is
+// neither a flag nor a flag's value, such as "app-server" or "resume".
+func codexSubcommand(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			return ""
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			return arg
+		}
+		name, _, inline := strings.Cut(arg, "=")
+		if spec, ok := codexFlags[name]; ok && !inline && spec.arity != argNone {
+			i++
+		}
+	}
+	return ""
 }
 
 // BuildLaunch returns the command that resumes rec's conversation. It
@@ -121,23 +207,22 @@ func BuildLaunch(rec Record, configured string) LaunchArgs {
 		}
 		result.Fallback = true
 	}
-	flags := codexFlags
-	if rec.Agent == "claude" {
-		flags = claudeFlags
-	}
-	// A runtime keeps its own options and the agent's script, found the way
-	// process detection finds it.
-	prefix := 1
-	if base := filepath.Base(argv[0]); (base == "node" || base == "bun") && len(argv) > 1 {
-		prefix = 2
-		if pkg, ok := agentPackages[rec.Agent]; ok {
-			if i := slices.IndexFunc(argv, func(arg string) bool { return strings.Contains(arg, pkg) }); i > 0 {
-				prefix = i + 1
-			}
+	prefix := agentArgsStart(argv, rec.Agent)
+	groups, dropped := parseFlags(argv[prefix:], agentFlags[rec.Agent])
+	result.Dropped = dropped
+	head := slices.Clone(argv[:prefix])
+	if prefix == 1 && agentBinary(filepath.Base(head[0]), rec.Agent) {
+		// An installed agent records a versioned path, gone after an update,
+		// or a platform binary that is not on PATH. Start the program kwt is
+		// configured to run for the agent, or let the pane's PATH find the
+		// current install by name, as when the user started it. Only an
+		// absolute configured path is usable: no shell expands ~ or $HOME.
+		head[0] = rec.Agent
+		if fields := strings.Fields(configured); len(fields) > 0 && filepath.IsAbs(fields[0]) &&
+			agentBinary(filepath.Base(fields[0]), rec.Agent) {
+			head[0] = fields[0]
 		}
 	}
-	groups, dropped := parseFlags(argv[prefix:], flags)
-	result.Dropped = dropped
 
 	if rec.Agent == "claude" && rec.PermissionMode != "" {
 		bypass := slices.ContainsFunc(groups, func(g flagGroup) bool {
@@ -159,15 +244,11 @@ func BuildLaunch(rec Record, configured string) LaunchArgs {
 		}
 	}
 
-	result.Argv = slices.Clone(argv[:prefix])
+	result.Argv = head
 	for _, group := range groups {
 		result.Argv = append(result.Argv, group.tokens...)
 	}
-	if rec.Agent == "claude" {
-		result.Argv = append(result.Argv, "--resume", rec.ConversationID)
-	} else {
-		result.Argv = append(result.Argv, "resume", rec.ConversationID)
-	}
+	result.Argv = append(result.Argv, resumeArgs[rec.Agent](rec.ConversationID)...)
 	return result
 }
 

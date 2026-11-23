@@ -26,10 +26,8 @@ func TestSaveAndListReportsEntriesAcrossSockets(t *testing.T) {
 	_, errs := SaveAndList(t.Context(), deps, []Socket{a.Socket, b.Socket})
 	require.Empty(t, errs)
 
-	_, err = a.Run(t.Context(), "kill-server")
-	require.NoError(t, err)
-	_, err = b.Run(t.Context(), "kill-server")
-	require.NoError(t, err)
+	killServerAndWait(t, a)
+	killServerAndWait(t, b)
 	startServer(t, b, "-s", "work")
 
 	listed, errs := SaveAndList(t.Context(), deps, []Socket{a.Socket, b.Socket, a.Socket})

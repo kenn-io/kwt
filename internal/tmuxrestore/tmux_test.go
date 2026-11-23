@@ -50,6 +50,18 @@ func startServer(t *testing.T, tm Tmux, args ...string) {
 	require.NoError(t, err)
 }
 
+// killServerAndWait models a completed server loss. kill-server only requests
+// shutdown; another client can still reach the dying server until it exits.
+func killServerAndWait(t *testing.T, tm Tmux) {
+	t.Helper()
+	_, err := tm.Run(t.Context(), "kill-server")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		state, _, err := tm.Probe(t.Context())
+		return err == nil && state == ServerAbsent
+	}, 5*time.Second, 10*time.Millisecond, "private tmux server did not stop")
+}
+
 func TestSocketFromTMUX(t *testing.T) {
 	socket, ok := SocketFromTMUX("/private/tmp/tmux-501/default,123,0")
 	require.True(t, ok)
@@ -122,8 +134,7 @@ func TestProbe(t *testing.T) {
 	assert.NotEmpty(t, id.PID)
 	assert.NotEmpty(t, id.StartTime)
 
-	_, err = tm.Run(t.Context(), "kill-server")
-	require.NoError(t, err)
+	killServerAndWait(t, tm)
 	state, _, err = tm.Probe(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, ServerAbsent, state, "a stale socket file after kill-server")

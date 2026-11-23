@@ -55,6 +55,13 @@ func TestBuildLaunchClaude(t *testing.T) {
 			want: "claude --dangerously-skip-permissions --resume c-1",
 		},
 		{
+			// The versioned path is gone once Claude updates; the pane's PATH
+			// finds the current install.
+			name: "an installed binary is started by name",
+			argv: "/m/installs/2.1.329/node_modules/@anthropic-ai/claude-code/bin/claude.exe --model haiku",
+			want: "claude --model haiku --resume c-1",
+		},
+		{
 			name: "node-hosted claude keeps its script",
 			argv: "node /lib/@anthropic-ai/claude-code/cli.js --model opus hello",
 			want: "node /lib/@anthropic-ai/claude-code/cli.js --model opus --resume c-1",
@@ -74,6 +81,18 @@ func TestBuildLaunchClaude(t *testing.T) {
 			assert.False(t, got.Fallback)
 		})
 	}
+}
+
+func TestBuildLaunchStartsTheConfiguredAgentProgram(t *testing.T) {
+	rec := Record{Agent: "claude", ConversationID: "c-1", Argv: []string{"/m/2.1.329/bin/claude.exe", "--model", "haiku"}}
+
+	assert.Equal(t, []string{"/opt/bin/claude", "--model", "haiku", "--resume", "c-1"},
+		BuildLaunch(rec, "/opt/bin/claude --verbose").Argv)
+	assert.Equal(t, []string{"claude", "--model", "haiku", "--resume", "c-1"},
+		BuildLaunch(rec, "env FOO=1 claude").Argv, "a wrapper command is not the agent's program")
+	// Restore runs the program without a shell, so nothing would expand ~.
+	assert.Equal(t, []string{"claude", "--model", "haiku", "--resume", "c-1"},
+		BuildLaunch(rec, "~/bin/claude").Argv, "a home-relative program is found by name instead")
 }
 
 func TestBuildLaunchCodex(t *testing.T) {
@@ -99,6 +118,17 @@ func TestBuildLaunchCodex(t *testing.T) {
 			want: []string{"codex", "--yolo", "--profile", "work", "resume", "x-1"},
 		},
 		{
+			name: "own-process hooks kept",
+			argv: []string{"codex", "--no-daemon", "-m", "gpt-5"},
+			want: []string{"codex", "--no-daemon", "-m", "gpt-5", "resume", "x-1"},
+		},
+		{
+			// The platform binary behind npm's codex wrapper is not on PATH.
+			name: "native platform binary started as codex",
+			argv: []string{"/m/@openai/codex/vendor/codex-x86_64-unknown-linux-musl", "-s", "read-only"},
+			want: []string{"codex", "-s", "read-only", "resume", "x-1"},
+		},
+		{
 			name:    "unknown flag dropped",
 			argv:    []string{"codex", "--telemetry", "-s", "read-only"},
 			want:    []string{"codex", "-s", "read-only", "resume", "x-1"},
@@ -108,6 +138,46 @@ func TestBuildLaunchCodex(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := BuildLaunch(Record{Agent: "codex", ConversationID: "x-1", Argv: tc.argv}, "codex")
+			assert.Equal(t, tc.want, got.Argv)
+			assert.Equal(t, tc.dropped, got.Dropped)
+		})
+	}
+}
+
+func TestBuildLaunchAgy(t *testing.T) {
+	cases := []struct {
+		name    string
+		argv    []string
+		want    []string
+		dropped []string
+	}{
+		{
+			// agy's installer links agy to a versioned binary.
+			name: "settings kept and the installed binary started by name",
+			argv: []string{
+				"/m/installs/antigravity-cli/1.5.14/agy", "--model", "gemini-pro-high", "--mode", "plan",
+				"--add-dir", "/x", "--add-dir", "/y", "--sandbox", "--conversation", "old",
+			},
+			want: []string{
+				"agy", "--model", "gemini-pro-high", "--mode", "plan",
+				"--add-dir", "/x", "--add-dir", "/y", "--sandbox", "--conversation", "g-1",
+			},
+		},
+		{
+			name: "prompts and one-time actions dropped",
+			argv: []string{"agy", "--effort", "high", "-i", "fix the bug", "--continue", "--new-project"},
+			want: []string{"agy", "--effort", "high", "--conversation", "g-1"},
+		},
+		{
+			name:    "unknown flag dropped",
+			argv:    []string{"agy", "--telemetry", "--dangerously-skip-permissions"},
+			want:    []string{"agy", "--dangerously-skip-permissions", "--conversation", "g-1"},
+			dropped: []string{"--telemetry"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := BuildLaunch(Record{Agent: "agy", ConversationID: "g-1", Argv: tc.argv}, "")
 			assert.Equal(t, tc.want, got.Argv)
 			assert.Equal(t, tc.dropped, got.Dropped)
 		})

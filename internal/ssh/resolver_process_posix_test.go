@@ -20,11 +20,13 @@ import (
 
 func TestRunOutputCancellationTerminatesDescendantProcessGroup(t *testing.T) {
 	pidPath := filepath.Join(t.TempDir(), "descendant.pid")
+	// Publish the complete PID with a rename so the reader cannot see an empty file.
 	script := fmt.Sprintf(
-		`(exec >/dev/null 2>&1; sleep 30) & child=$!; printf '%%s' "$child" > %s; wait`,
-		shellQuote(pidPath),
+		`(exec >/dev/null 2>&1; sleep 30) & child=$!; printf '%%s' "$child" > %s && mv %s %s; wait`,
+		shellQuote(pidPath+".tmp"), shellQuote(pidPath+".tmp"), shellQuote(pidPath),
 	)
 	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	result := make(chan error, 1)
 	go func() {
 		_, _, _, err := runOutput(
@@ -111,6 +113,8 @@ func TestRunOutputUsesInvocationWorkingDirectory(t *testing.T) {
 }
 
 func TestRunOutputBoundsOutputAndCancelsResolverProcess(t *testing.T) {
+	// Replace the shell with the sleeper so cancellation cannot race a new fork
+	// that inherits the output pipes after the process group was signaled.
 	for _, test := range []struct {
 		name   string
 		script string
@@ -118,12 +122,12 @@ func TestRunOutputBoundsOutputAndCancelsResolverProcess(t *testing.T) {
 	}{
 		{
 			name:   "stdout",
-			script: "dd if=/dev/zero bs=1048577 count=1 2>/dev/null; sleep 30",
+			script: "dd if=/dev/zero bs=1048577 count=1 2>/dev/null; exec sleep 30",
 			stream: func(stdout, _ []byte) []byte { return stdout },
 		},
 		{
 			name:   "stderr",
-			script: "dd if=/dev/zero bs=1048577 count=1 2>/dev/null | cat >&2; sleep 30",
+			script: "dd if=/dev/zero bs=1048577 count=1 2>/dev/null | cat >&2; exec sleep 30",
 			stream: func(_, stderr []byte) []byte { return stderr },
 		},
 	} {

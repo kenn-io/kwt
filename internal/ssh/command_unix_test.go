@@ -290,9 +290,10 @@ func TestSSHInteractiveClientProcessHelper(t *testing.T) {
 	}
 	if mode == "cancel-parent" {
 		pidPath := os.Getenv(interactiveClientProcessResult) + ".descendant"
+		// Publish the complete PID before file existence triggers cancellation.
 		script := fmt.Sprintf(
-			`sleep 30 & child=$!; printf '%%s' "$child" > %s; wait`,
-			shellQuote(pidPath),
+			`sleep 30 & child=$!; printf '%%s' "$child" > %s && mv %s %s; wait`,
+			shellQuote(pidPath+".tmp"), shellQuote(pidPath+".tmp"), shellQuote(pidPath),
 		)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()

@@ -50,7 +50,7 @@ func (f *restoreFixture) save(t *testing.T) SaveResult {
 func (f *restoreFixture) lose(t *testing.T) {
 	t.Helper()
 	f.save(t)
-	mustRun(t, f.tm, "kill-server")
+	killServerAndWait(t, f.tm)
 	require.True(t, f.save(t).Promoted)
 }
 
@@ -270,7 +270,7 @@ func TestARestoredSessionSurvivesTheNextServerLoss(t *testing.T) {
 	require.Len(t, reports, 1)
 	require.Equal(t, OutcomeRestored, reports[0].Outcome)
 
-	mustRun(t, f.tm, "kill-server")
+	killServerAndWait(t, f.tm)
 	f.save(t)
 
 	assert.Equal(t, StatePending, f.entryNamed(t, "work").State)
@@ -287,7 +287,7 @@ func TestARestoredConversationSurvivesALossBeforeItsAgentStarts(t *testing.T) {
 	require.Len(t, reports, 1)
 	require.Equal(t, LaunchWaiting, reports[0].Panes[0].Status)
 
-	mustRun(t, f.tm, "kill-server")
+	killServerAndWait(t, f.tm)
 	f.save(t)
 
 	entry := f.entryNamed(t, "work")
@@ -472,6 +472,19 @@ func TestRestoreReportsAMissingConversationAndUnsafeKwtPath(t *testing.T) {
 	assert.Equal(t, "unsafe kwt path", report.Panes[1].Note)
 	assert.Equal(t, OutcomePartial, report.Outcome)
 	assert.Empty(t, f.entries(t), "no pane is left waiting")
+}
+
+func TestRestoreRunsNothingForAnAgentItCannotResume(t *testing.T) {
+	f := newRestoreFixture(t)
+	startServer(t, f.tm, "-s", "work", "-c", f.dir)
+	setResume(t, f.tm, "work.0", Record{Agent: "gemini", ConversationID: "g-1", Argv: []string{"gemini"}, RecordedAt: 1})
+	f.lose(t)
+
+	report := f.restore(t, f.deps())[0]
+
+	require.Len(t, report.Panes, 1)
+	assert.Equal(t, LaunchNone, report.Panes[0].Status)
+	assert.Equal(t, "agent cannot be resumed", report.Panes[0].Note)
 }
 
 func TestRestoreReportsUnknownIDs(t *testing.T) {

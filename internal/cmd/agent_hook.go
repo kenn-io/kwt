@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -217,6 +218,9 @@ func runAgentHookRun(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return nil
 	}
+	if !hookInPane(cmd.Context()) {
+		return nil
+	}
 	_ = agenthook.Handle(
 		cmd.Context(),
 		agent,
@@ -228,6 +232,34 @@ func runAgentHookRun(cmd *cobra.Command, _ []string) error {
 		},
 	)
 	return nil
+}
+
+// hookInPane reports whether this hook runs for the agent in the pane that
+// $TMUX_PANE names. A hook that runs elsewhere, such as in Codex's shared
+// background server, would write another session's state onto that pane.
+// Outside tmux it reports true; the hook then does nothing anyway.
+func hookInPane(ctx context.Context) bool {
+	pane := strings.TrimSpace(os.Getenv("TMUX_PANE"))
+	socket, ok := tmuxrestore.SocketFromTMUX(os.Getenv("TMUX"))
+	if !ok || !strings.HasPrefix(pane, "%") {
+		return true
+	}
+	executable, err := agentstate.TmuxExecutable()
+	if err != nil {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	tm := tmuxrestore.Tmux{Executable: executable, Socket: socket}
+	output, err := tm.Run(ctx, "display-message", "-p", "-t", pane, "#{pane_pid}")
+	if err != nil {
+		return false
+	}
+	panePID, err := strconv.ParseInt(strings.TrimSpace(output), 10, 32)
+	if err != nil {
+		return false
+	}
+	return tmuxrestore.HookInPane(ctx, tmuxrestore.SystemProcesses(), int32(os.Getpid()), int32(panePID))
 }
 
 // hookBudget leaves a margin inside the two-second timeout kwt installs for
@@ -270,9 +302,9 @@ func (h restoreHookHandler) track(ctx context.Context, input agenthook.CommonInp
 	if h.tracker == nil || input.AgentID != "" {
 		return
 	}
-	// Restore knows how to resume only these two; a record for another
-	// agent would be replayed with the wrong arguments.
-	if h.Agent != agenthook.AgentClaude && h.Agent != agenthook.AgentCodex {
+	// A record for an agent restore cannot resume would be replayed with
+	// the wrong arguments.
+	if !tmuxrestore.Resumable(string(h.Agent)) {
 		return
 	}
 	h.tracker.Track(ctx, tmuxrestore.Event{

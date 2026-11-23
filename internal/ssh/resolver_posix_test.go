@@ -384,8 +384,9 @@ func TestResolverPOSIXPreservesDeadlineCause(t *testing.T) {
 
 func TestResolverPOSIXReportsBoundedOutputAsStableFailure(t *testing.T) {
 	executable := filepath.Join(t.TempDir(), "ssh")
+	// Keep the sleeper in the shell's process so it cannot fork past cancellation.
 	require.NoError(t, os.WriteFile(executable, []byte(
-		"#!/bin/sh\ndd if=/dev/zero bs=1048577 count=1 2>/dev/null\nsleep 30\n",
+		"#!/bin/sh\ndd if=/dev/zero bs=1048577 count=1 2>/dev/null\nexec sleep 30\n",
 	), 0o700))
 	resolver := NewResolver(ResolverOptions{
 		Executable: executable,

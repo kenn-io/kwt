@@ -775,10 +775,15 @@ runs in:
 | Turn finished (`Stop`)              | `done <unix-seconds> <agent>`     |
 | Session start or end                | option removed                    |
 
+`agy` has no permission or session-end hooks, so its panes show only
+`working` and `done`, and the option stays after `agy` exits.
+
 Subagent events and Claude Code's `idle_prompt` reminder are ignored. Outside
-tmux, or when tmux is unavailable, the hook does nothing. The hook always
-exits successfully and ignores kwt configuration errors, so it never
-interrupts the agent.
+tmux, or when tmux is unavailable, the hook does nothing. It also does nothing
+when it runs outside the pane its tmux environment names, as Codex's shared
+background server runs every session's hooks with the environment of the pane
+that started the server. The hook always exits successfully and ignores kwt
+configuration errors, so it never interrupts the agent.
 
 `status --json` reports each agent's `config_path` and whether it is
 `available` (config directory exists), `installed` (any kwt hook present), and
@@ -794,7 +799,8 @@ save and keeps the last one.
 ## `kwt session`
 
 `kwt session` brings tmux sessions back after a reboot or a tmux
-`kill-server`, with each pane's Claude Code or Codex conversation resumed in
+`kill-server`, with each pane's Claude Code, Codex, or Antigravity CLI (`agy`)
+conversation resumed in
 the pane where it ran.
 
 ```sh
@@ -832,9 +838,12 @@ for a kwt worktree session, and `state` (`pending`, `creating`, or
 - **Directories:** each pane starts in its saved directory. A pane whose
   directory is gone starts in your home directory, runs nothing, and is
   reported as `directory missing`.
-- **Conversations:** a pane that ran Claude Code or Codex resumes that
+- **Conversations:** a pane that ran Claude Code, Codex, or `agy` resumes that
   conversation with the launch settings kwt recognized, such as the model and
   permission mode. The report names any flags it dropped, never their values.
+  The agent starts as the program configured in `[agents]`, or by name from
+  the pane's `PATH`, so an agent update between save and restore does not
+  break the resume.
   A pane whose conversation file is gone runs nothing and is reported as
   `conversation not found`.
 - **Preset agents:** a pane where a layout preset started a configured agent
@@ -878,7 +887,10 @@ it restorable.
 `dismiss` deletes saved entries without restoring them. Front ends run
 `forget` after they kill a session on purpose, so it is not offered for
 restore. The server PID and `#{session_created}` time keep a reused session ID
-from matching another session.
+from matching another session. `--socket-name NAME` names the socket as
+`tmux -L NAME` does, in place of `--socket PATH`, so a front end can forget a
+session after killing the server's last session, when tmux can no longer
+report the path.
 
 Saved state lives in `$KWT_HOME/tmux/` (or `~/.config/kwt/tmux/`): one live
 snapshot and one restorable file per tmux socket, written atomically with mode
@@ -897,8 +909,14 @@ Known limits:
   while its server runs. Killing the last session stops the server unless
   tmux's `exit-empty` option is off. kwt cannot tell that stop apart from a
   reboot, so the session becomes restorable; dismiss it.
-- Codex does not report a deliberate exit, so kwt infers one from two saves.
-  A reboot right after quitting Codex can resume the closed conversation, and
+- A Codex session that joins Codex's shared background server is not
+  recorded and comes back as a shell. The server runs that session's hooks in
+  its own process, which does not tell kwt the session's pane, so kwt ignores
+  them rather than record another pane. Start Codex with `--no-daemon` to
+  keep its hooks in its own process; kwt keeps that flag on restore.
+- Codex and `agy` do not report a deliberate exit, so kwt infers one from two
+  saves. A reboot right after quitting either can resume the closed
+  conversation, and
   a slow shutdown can drop a live one.
 - kwt replays the Claude permission mode the last hook saw. A mode change
   after that is lost.

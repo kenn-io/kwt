@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/shirou/gopsutil/v4/process"
@@ -84,9 +85,44 @@ func IdentifyAgent(
 	return nil, nil
 }
 
+// HookInPane reports whether a hook process, start, runs for the agent in the
+// pane whose first process is panePID. Codex's shared background server runs
+// every client's hooks in its own process, with the tmux environment of
+// whichever pane started it, so a hook below a Codex app server does not
+// belong to that pane. A process kwt cannot read leaves the question open,
+// and the hook counts as in the pane.
+func HookInPane(ctx context.Context, table ProcessTable, start, panePID int32) bool {
+	for pid, steps := start, 0; steps < 64; steps++ {
+		if pid <= 1 {
+			return false
+		}
+		info, err := table.Lookup(ctx, pid)
+		if err != nil {
+			return true
+		}
+		if isAgentProcess(info, "codex") && len(info.Argv) > 0 &&
+			codexSubcommand(info.Argv[agentArgsStart(info.Argv, "codex"):]) == "app-server" {
+			return false
+		}
+		if pid == panePID {
+			return true
+		}
+		pid = info.PPID
+	}
+	return true
+}
+
 var agentPackages = map[string]string{
 	"claude": "@anthropic-ai/claude-code",
 	"codex":  "@openai/codex",
+}
+
+// agentBinary reports whether a program name is the agent's own binary,
+// such as "claude", the "claude.exe" that Claude Code's npm package runs on
+// every platform, or Codex's "codex-<platform>".
+func agentBinary(name, agent string) bool {
+	name = strings.TrimSuffix(name, ".exe")
+	return name == agent || strings.HasPrefix(name, agent+"-")
 }
 
 func isAgentProcess(info ProcInfo, agent string) bool {
@@ -94,10 +130,8 @@ func isAgentProcess(info ProcInfo, agent string) bool {
 	if len(info.Argv) > 0 {
 		names = append(names, filepath.Base(info.Argv[0]))
 	}
-	for _, name := range names {
-		if name == agent || strings.HasPrefix(name, agent+"-") {
-			return true
-		}
+	if slices.ContainsFunc(names, func(name string) bool { return agentBinary(name, agent) }) {
+		return true
 	}
 	pkg, ok := agentPackages[agent]
 	if !ok || (info.Name != "node" && info.Name != "bun") {

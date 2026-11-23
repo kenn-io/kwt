@@ -93,14 +93,17 @@ func (e sessionEnv) kwt(t *testing.T, stdin string, extraEnv []string, args ...s
 	return stdout.String(), err
 }
 
+// hook runs an agent hook in pane on the default server, as an agent there
+// would.
 func (e sessionEnv) hook(t *testing.T, agent, pane, payload string) time.Duration {
 	t.Helper()
-	tmuxValue := e.mustTmux(t, "-L", "default", "display-message", "-p", "-t", pane, "#{socket_path},#{pid},0")
-	started := time.Now()
-	_, err := e.kwt(t, payload, []string{"TMUX=" + tmuxValue, "TMUX_PANE=" + pane},
-		"agent-hook", "run", "--agent", agent, "--source", "kwt-tmux-agent-state")
-	require.NoError(t, err)
-	return time.Since(started)
+	args := []string{"agent-hook", "run", "--agent", agent, "--source", "kwt-tmux-agent-state"}
+	tmux := func(args ...string) *exec.Cmd {
+		return e.tmux(t.Context(), append([]string{"-L", "default"}, args...)...)
+	}
+	return runInPane(t, tmux, pane, "TestKwtHelperProcess", []string{
+		"KWT_HOME=" + e.home, "TMUX_TMPDIR=" + e.tmpdir, "KWT_TEST_ARGS=" + strings.Join(args, "\n"),
+	}, payload)
 }
 
 func sessionStartPayload(conversation string) string {
@@ -138,8 +141,8 @@ func TestAgentHookRecordsTheConversationAndSaves(t *testing.T) {
 }
 
 func TestAgentHookRecordsOnlyAgentsRestoreCanResume(t *testing.T) {
-	// Restore knows how to resume Claude Code and Codex. A record for any
-	// other agent would be replayed with Codex's arguments.
+	// Restore knows how to resume Claude Code, Codex, and agy. A record for
+	// any other agent could not be replayed.
 	env := newSessionEnv(t)
 	pane := env.mustTmux(t, "-L", "default", "new-session", "-d", "-s", "work", "-P", "-F", "#{pane_id}")
 	show := func() string {
@@ -151,6 +154,14 @@ func TestAgentHookRecordsOnlyAgentsRestoreCanResume(t *testing.T) {
 
 	env.hook(t, "codex", pane, sessionStartPayload("x-1"))
 	assert.Contains(t, show(), "x-1")
+
+	env.hook(t, "agy", pane, `{"conversationId":"a-1","hookEventName":"Stop",`+
+		`"transcriptPath":"/tmp/a-1/transcript_full.jsonl","fullyIdle":true}`)
+	record, err := tmuxrestore.DecodeRecord(show())
+	require.NoError(t, err)
+	assert.Equal(t, "agy", record.Agent)
+	assert.Equal(t, "a-1", record.ConversationID)
+	assert.Equal(t, "/tmp/a-1/transcript_full.jsonl", record.TranscriptPath)
 }
 
 func TestAgentHookSavesIntoAFreshKwtHome(t *testing.T) {
@@ -232,6 +243,28 @@ func TestSessionDismissAndForget(t *testing.T) {
 	_, err = env.kwt(t, "", nil, "session", "dismiss", "--all")
 	require.NoError(t, err)
 	assert.Empty(t, env.snapshot(t))
+}
+
+func TestSessionForgetBySocketNameAfterTheServerStopped(t *testing.T) {
+	// A front end that attaches with -L knows the socket's name, not its
+	// path. Killing the server's last session stops the server, so tmux
+	// cannot report the path any more.
+	env := newSessionEnv(t)
+	pane := env.mustTmux(t, "-L", "default", "new-session", "-d", "-s", "work", "-P", "-F", "#{pane_id}")
+	env.hook(t, "claude", pane, sessionStartPayload("c-work"))
+	identity := strings.Fields(env.mustTmux(t, "-L", "default", "display-message", "-p", "-t", "work",
+		"#{session_id} #{pid} #{session_created}"))
+	require.Len(t, identity, 3)
+	env.mustTmux(t, "-L", "default", "kill-session", "-t", "work")
+
+	_, err := env.kwt(t, "", nil, "session", "forget", "--socket-name", "default",
+		"--session-id", identity[0], "--server-pid", identity[1], "--created", identity[2])
+	require.NoError(t, err)
+
+	assert.Empty(t, env.snapshot(t), "a session killed on purpose is not restorable")
+	_, err = env.kwt(t, "", nil, "session", "forget", "--socket", "/tmp/s", "--socket-name", "default",
+		"--session-id", identity[0], "--server-pid", identity[1], "--created", identity[2])
+	assert.Error(t, err, "a path and a name cannot both name the socket")
 }
 
 func TestSessionExecRunsTheClaimedLaunchOnce(t *testing.T) {

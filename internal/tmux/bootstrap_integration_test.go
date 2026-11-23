@@ -11,10 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/kwt/pkg/models"
 )
 
-func TestGlobalEnvironmentReadsFreshNamedServer(t *testing.T) {
+func TestGlobalEnvironmentDoesNotStartMissingServer(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not found in PATH")
 	}
@@ -33,6 +35,13 @@ func TestGlobalEnvironmentReadsFreshNamedServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read fresh server environment: %v", err)
 	}
+	if globalEnvironment != "" {
+		t.Fatal("missing server unexpectedly returned an environment")
+	}
+	// A session created immediately after the query must start its own server.
+	require.NoError(t, command.NewSessionWithCommandContext(t.Context(), "workspace", t.TempDir(), "sleep 2147483647"))
+	globalEnvironment, err = command.GlobalEnvironmentContext(t.Context())
+	require.NoError(t, err)
 	if !strings.Contains(
 		globalEnvironment,
 		"KWT_FRESH_SERVER_CANARY=visible",
