@@ -193,10 +193,45 @@ func TestDiscoverSkipsTheConversationEndedOnPurpose(t *testing.T) {
 	writeClaudeSession(t, claudeDir, 30, `{"pid":30,"sessionId":"c-done"}`)
 	table := fakeProcesses{10: proc(10, 1, "zsh"), 30: proc(30, 10, "claude", "claude")}
 
-	snap := paneSnapshot(Pane{ID: "%1", PID: 10, Command: "claude", Closed: "c-done"})
+	for _, closed := range []string{"c-done", closedMarker("c-done", &ProcessRef{PID: 30, StartMillis: 300})} {
+		snap := paneSnapshot(Pane{ID: "%1", PID: 10, Command: "claude", Closed: closed})
+		discover(t.Context(), snap, table, claudeDir, time.Now())
+		assert.Nil(t, snap.Windows["w"].Panes[0].Resume, closed)
+	}
+}
+
+// A conversation ended on purpose and later resumed by hand in a new process
+// is recorded again.
+func TestDiscoverFindsAnEndedConversationResumedInANewProcess(t *testing.T) {
+	claudeDir := t.TempDir()
+	writeClaudeSession(t, claudeDir, 40, `{"pid":40,"sessionId":"c-done"}`)
+	table := fakeProcesses{10: proc(10, 1, "zsh"), 40: proc(40, 10, "claude", "claude", "--resume", "c-done")}
+
+	snap := paneSnapshot(Pane{
+		ID: "%1", PID: 10, Command: "claude",
+		Closed: closedMarker("c-done", &ProcessRef{PID: 30, StartMillis: 300}),
+	})
 	discover(t.Context(), snap, table, claudeDir, time.Now())
 
-	assert.Nil(t, snap.Windows["w"].Panes[0].Resume)
+	resume := snap.Windows["w"].Panes[0].Resume
+	require.NotNil(t, resume)
+	assert.Equal(t, "c-done", resume.ConversationID)
+}
+
+// A restored pane keeps the record it was restored with in its pane option.
+// When the person later runs another agent there without hooks and it exits,
+// the save carries that newer conversation, not the restored one.
+func TestCarryPrefersTheLatestDiscoveredConversation(t *testing.T) {
+	restored := &Record{Agent: "claude", ConversationID: "c-a", Discovered: true}
+	later := &Record{Agent: "claude", ConversationID: "c-b", Discovered: true}
+	snap := paneSnapshot(Pane{ID: "%1", Resume: restored})
+	carryDiscovered(snap, paneSnapshot(Pane{ID: "%1", Resume: later}))
+	assert.Equal(t, later, snap.Windows["w"].Panes[0].Resume)
+
+	hooked := &Record{Agent: "claude", ConversationID: "c-a"}
+	snap = paneSnapshot(Pane{ID: "%1", Resume: hooked})
+	carryDiscovered(snap, paneSnapshot(Pane{ID: "%1", Resume: later}))
+	assert.Equal(t, hooked, snap.Windows["w"].Panes[0].Resume, "a hook record stands")
 }
 
 // startAgentPane starts a session whose pane runs a long sleep, so it is
@@ -218,8 +253,6 @@ func liveResume(t *testing.T, f *saveFixture) *Record {
 	return files.Live.Windows[files.Live.Sessions[0].Windows[0].Key].Panes[0].Resume
 }
 
-// An agent kwt discovered that exits as the machine shuts down, before tmux
-// does, keeps its conversation for the same grace a hook record gets.
 // A conversation read earlier is dropped once a second one runs in the pane,
 // as when the person suspends one agent and starts another: kwt cannot tell
 // which one they were using.
@@ -239,6 +272,8 @@ func TestDiscoverDropsAnEarlierConversationOnceTwoRun(t *testing.T) {
 	assert.Nil(t, snap.Windows["w"].Panes[0].Resume)
 }
 
+// An agent kwt discovered that exits as the machine shuts down, before tmux
+// does, keeps its conversation for the same grace a hook record gets.
 func TestSaveKeepsADiscoveredConversationThroughTheGrace(t *testing.T) {
 	f := newSaveFixture(t)
 	panePID := startAgentPane(t, f.tm)
@@ -291,11 +326,29 @@ func TestHookEndKeepsTheExitingAgentFromBeingRediscovered(t *testing.T) {
 	end.IsEnd, end.EndReason = true, "prompt_input_exit"
 	h.Track(t.Context(), end)
 
-	var files Files
-	require.NoError(t, h.Store.WithLock(t.Context(), tm.Socket, func(f *Files) error {
-		files = *f
-		return nil
-	}))
-	require.NotNil(t, files.Live)
-	assert.Nil(t, files.Live.Windows[files.Live.Sessions[0].Windows[0].Key].Panes[0].Resume)
+	live := func() *Record {
+		var files Files
+		require.NoError(t, h.Store.WithLock(t.Context(), tm.Socket, func(f *Files) error {
+			files = *f
+			return nil
+		}))
+		require.NotNil(t, files.Live)
+		return files.Live.Windows[files.Live.Sessions[0].Windows[0].Key].Panes[0].Resume
+	}
+	assert.Nil(t, live())
+
+	// The person resumes the same conversation by hand, in a new process
+	// whose hooks are gone.
+	writeClaudeSession(t, claudeDir, 9002, `{"pid":9002,"sessionId":"c-2"}`)
+	_, err = Save(t.Context(), SaveDeps{
+		Tmux: tm, Store: h.Store, Protection: noProtection, ClaudeDir: claudeDir,
+		Processes: fakeProcesses{
+			panePID: proc(panePID, 1, "sleep", "sleep", "600"),
+			9002:    proc(9002, panePID, "claude", "claude", "--resume", "c-2"),
+		},
+		Now: func() time.Time { return recordClock.Add(time.Minute) },
+	})
+	require.NoError(t, err)
+	require.NotNil(t, live())
+	assert.Equal(t, "c-2", live().ConversationID)
 }

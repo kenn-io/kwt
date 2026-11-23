@@ -102,7 +102,9 @@ func Save(ctx context.Context, deps SaveDeps) (SaveResult, error) {
 // carryDiscovered keeps the conversations earlier saves read from running
 // agents. No pane option holds them, so without this an agent that exits
 // while tmux shuts down would lose its conversation at the next save;
-// reconcile drops it only after the same grace a hook record gets.
+// reconcile drops it only after the same grace a hook record gets. A
+// discovered record in a pane option was written at restore and never
+// changes, so the earlier save's record, read later, replaces it.
 func carryDiscovered(snap *Snapshot, earlier *Snapshot) {
 	for key, window := range snap.Windows {
 		old, ok := earlier.Windows[key]
@@ -111,12 +113,12 @@ func carryDiscovered(snap *Snapshot, earlier *Snapshot) {
 		}
 		for i := range window.Panes {
 			pane := &window.Panes[i]
-			if pane.Resume != nil {
+			if pane.Resume != nil && !pane.Resume.Discovered {
 				continue
 			}
 			for _, was := range old.Panes {
 				if was.ID == pane.ID && was.Resume != nil && was.Resume.Discovered &&
-					was.Resume.ConversationID != pane.Closed {
+					!pane.endedOnPurpose(was.Resume) {
 					pane.Resume = was.Resume
 				}
 			}

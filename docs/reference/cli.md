@@ -814,7 +814,8 @@ neither and drops the one recorded earlier. Once a hook reports on a
 conversation found this way, kwt keeps what the hook reports. A
 conversation found this way survives the same 10-second grace as a hook
 record after its agent exits. One the person ended on purpose is not
-recorded again. On macOS, kwt cannot see a Codex process's open files, so
+recorded again from the process that ended it; a later process that resumes
+it is. On macOS, kwt cannot see a Codex process's open files, so
 Codex needs its hooks there.
 
 `snapshot --json` prints `{"entries": [...]}`. Each entry has an opaque `id`,

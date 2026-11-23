@@ -30,8 +30,16 @@ type Pane struct {
 	// they mean nothing once the server is gone.
 	PID     int32  `json:"-"`
 	Command string `json:"-"`
-	// Closed is the conversation last ended on purpose in this pane.
+	// Closed marks the conversation last ended on purpose in this pane; see
+	// closedMarker.
 	Closed string `json:"-"`
+}
+
+// endedOnPurpose reports whether rec is the conversation last ended on
+// purpose in the pane, in the process that ended it.
+func (p Pane) endedOnPurpose(rec *Record) bool {
+	return p.Closed != "" &&
+		(p.Closed == rec.ConversationID || p.Closed == closedMarker(rec.ConversationID, rec.Process))
 }
 
 // Window is one saved window. A window linked into several sessions is saved

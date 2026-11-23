@@ -102,7 +102,8 @@ func (h HookTracker) updateRecord(ctx context.Context, ev Event) (bool, error) {
 	}
 	next, clear := Apply(prev, ev, identify)
 	if clear {
-		if _, err := h.Tmux.Run(ctx, "set-option", "-p", "-t", h.Pane, ClosedOption, ev.ConversationID); err != nil {
+		ref, _ := identify()
+		if _, err := h.Tmux.Run(ctx, "set-option", "-p", "-t", h.Pane, ClosedOption, closedMarker(ev.ConversationID, ref)); err != nil {
 			return false, err
 		}
 		_, err = h.Tmux.Run(ctx, "set-option", "-p", "-u", "-t", h.Pane, ResumeOption)

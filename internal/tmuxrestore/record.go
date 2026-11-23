@@ -13,9 +13,19 @@ import (
 const ResumeOption = "@kwt_agent_resume"
 
 // ClosedOption is the tmux pane user option naming the last conversation the
-// person ended on purpose, so a save does not record it again from the agent
-// process that is still exiting.
+// person ended on purpose, and the process that ran it, so a save does not
+// record it again from that process while it exits.
 const ClosedOption = "@kwt_agent_closed"
+
+// closedMarker is the ClosedOption value for a conversation ended in the
+// process ref. A later process that resumes the conversation does not match
+// it. Without a process, it names only the conversation.
+func closedMarker(conversationID string, ref *ProcessRef) string {
+	if ref == nil {
+		return conversationID
+	}
+	return fmt.Sprintf("%s@%d.%d", conversationID, ref.PID, ref.StartMillis)
+}
 
 // ProcessRef identifies one process. The start time keeps a reused PID from
 // being mistaken for the original process.

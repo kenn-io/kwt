@@ -69,7 +69,8 @@ func discover(ctx context.Context, snap *Snapshot, table ProcessTable, claudeDir
 // names its conversation. Two agents naming different conversations, as when
 // one is suspended in the shell's background, leave the pane unknown: kwt
 // cannot tell which one the person was using; ambiguous reports that case.
-// The conversation last ended on purpose in the pane is skipped.
+// The conversation last ended on purpose in the pane is skipped while the
+// process that ended it exits.
 func runningConversation(
 	ctx context.Context,
 	table ProcessTable,
@@ -96,7 +97,7 @@ func runningConversation(
 			rec.ConversationID, rec.TranscriptPath = codexConversation(ctx, table, info)
 		}
 		switch {
-		case rec.ConversationID == "" || rec.ConversationID == pane.Closed:
+		case rec.ConversationID == "" || pane.endedOnPurpose(&rec):
 		case found == nil:
 			rec.Discovered = true
 			found = &rec
