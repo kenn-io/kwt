@@ -24,6 +24,18 @@ func (f fakeProcesses) Lookup(_ context.Context, pid int32) (ProcInfo, error) {
 	return info, nil
 }
 
+func (f fakeProcesses) Parents(context.Context) (map[int32]int32, error) {
+	parents := make(map[int32]int32, len(f))
+	for pid, info := range f {
+		parents[pid] = info.PPID
+	}
+	return parents, nil
+}
+
+func (fakeProcesses) OpenFiles(context.Context, int32) ([]string, error) {
+	return nil, errors.New("open files unknown")
+}
+
 func proc(pid, ppid int32, name string, argv ...string) ProcInfo {
 	return ProcInfo{PID: pid, PPID: ppid, Name: name, Argv: argv, StartMillis: int64(pid) * 10}
 }
@@ -211,6 +223,14 @@ func TestHookInPane(t *testing.T) {
 }
 
 type failingProcesses struct{}
+
+func (failingProcesses) Parents(context.Context) (map[int32]int32, error) {
+	return nil, errors.New("permission denied")
+}
+
+func (failingProcesses) OpenFiles(context.Context, int32) ([]string, error) {
+	return nil, errors.New("permission denied")
+}
 
 func (failingProcesses) Lookup(context.Context, int32) (ProcInfo, error) {
 	return ProcInfo{}, errors.New("permission denied")

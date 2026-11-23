@@ -26,6 +26,7 @@ type ListDeps struct {
 	Store      Store
 	Processes  ProcessTable
 	Protection Protection
+	ClaudeDir  string
 	Now        func() time.Time
 }
 
@@ -43,7 +44,7 @@ func SaveAndList(ctx context.Context, deps ListDeps, sockets []Socket) ([]Listed
 		tm := Tmux{Executable: deps.Executable, Socket: socket}
 		result, err := Save(ctx, SaveDeps{
 			Tmux: tm, Store: deps.Store, Processes: deps.Processes,
-			Protection: deps.Protection, Now: deps.Now,
+			Protection: deps.Protection, ClaudeDir: deps.ClaudeDir, Now: deps.Now,
 		})
 		if err != nil {
 			errs = append(errs, fmt.Errorf("save %s: %w", socket.Path, err))

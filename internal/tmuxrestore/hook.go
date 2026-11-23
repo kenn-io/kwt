@@ -27,6 +27,7 @@ type HookTracker struct {
 	Store      Store
 	Processes  ProcessTable
 	Protection Protection
+	ClaudeDir  string
 	Now        func() time.Time
 	// Deadline is when the hook must be done. Zero means no limit.
 	Deadline time.Time
@@ -65,7 +66,7 @@ func (h HookTracker) Track(ctx context.Context, ev Event) {
 	}
 	_, _ = Save(ctx, SaveDeps{
 		Tmux: h.Tmux, Store: h.Store, Processes: h.Processes,
-		Protection: protection, Now: h.Now, MinInterval: interval,
+		Protection: protection, ClaudeDir: h.ClaudeDir, Now: h.Now, MinInterval: interval,
 	})
 }
 

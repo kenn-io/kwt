@@ -25,6 +25,11 @@ type Pane struct {
 	Dir         string  `json:"dir"`
 	Resume      *Record `json:"resume,omitempty"`
 	PresetAgent string  `json:"preset_agent,omitempty"`
+	// PID and Command are the pane's first process and the program in its
+	// foreground. A save uses them to find an agent that has no record, and
+	// they mean nothing once the server is gone.
+	PID     int32  `json:"-"`
+	Command string `json:"-"`
 }
 
 // Window is one saved window. A window linked into several sessions is saved
@@ -80,6 +85,7 @@ var paneFields = []string{
 	"#{window_active}", "#{window_zoomed_flag}",
 	"#{pane_index}", "#{pane_left}", "#{pane_top}", "#{pane_width}", "#{pane_height}",
 	"#{pane_active}", "#{pane_current_path}", "#{pane_id}",
+	"#{pane_pid}", "#{pane_current_command}",
 	"#{" + kwttmux.PaneAgentOption + "}", "#{" + ResumeOption + "}",
 }
 
@@ -176,10 +182,13 @@ func parsePanes(server ServerID, output string) (Snapshot, error) {
 			seenPane[paneKey] = true
 			pane := Pane{
 				Index: ints[3], Left: ints[4], Top: ints[5], Width: ints[6], Height: ints[7],
-				Active: f[20] == "1", Dir: f[21], ID: f[22], PresetAgent: f[23],
+				Active: f[20] == "1", Dir: f[21], ID: f[22], Command: f[24], PresetAgent: f[25],
 			}
-			if f[24] != "" {
-				if record, err := DecodeRecord(f[24]); err == nil {
+			if pid, err := strconv.ParseInt(f[23], 10, 32); err == nil {
+				pane.PID = int32(pid)
+			}
+			if f[26] != "" {
+				if record, err := DecodeRecord(f[26]); err == nil {
 					pane.Resume = record
 				}
 			}

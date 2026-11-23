@@ -17,7 +17,10 @@ type SaveDeps struct {
 	Store      Store
 	Processes  ProcessTable
 	Protection Protection
-	Now        func() time.Time
+	// ClaudeDir is Claude Code's directory, where a save reads which
+	// conversation a Claude process without a record runs. Empty skips that.
+	ClaudeDir string
+	Now       func() time.Time
 	// MinInterval, when set, makes a save leave alone a snapshot of the
 	// running server that is younger than this. A lost or replaced server is
 	// still noticed.
@@ -85,6 +88,7 @@ func Save(ctx context.Context, deps SaveDeps) (SaveResult, error) {
 			previous = f.Live.Gone
 		}
 		reconcile(ctx, &snap, previous, deps.Processes, now())
+		discover(ctx, &snap, deps.Processes, deps.ClaudeDir, now())
 		snap.SavedAt = now().UnixMilli()
 		f.Live = &snap
 		return nil

@@ -1,0 +1,145 @@
+package tmuxrestore
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// shells are foreground programs that show a pane is at its prompt, with no
+// agent running.
+var shells = map[string]bool{
+	"bash": true, "zsh": true, "sh": true, "dash": true, "fish": true,
+	"ksh": true, "tcsh": true, "csh": true, "nu": true,
+}
+
+// discoverLimit bounds how many processes a save reads in one pane.
+const discoverLimit = 256
+
+// discover gives a record to each pane whose agent never wrote one, as when
+// the agent started before kwt's hooks were installed. The agent itself tells
+// which conversation it runs: Claude Code writes a session file named for its
+// process, and Codex holds its conversation's rollout file open. Panes kwt
+// cannot read keep no record.
+func discover(ctx context.Context, snap *Snapshot, table ProcessTable, claudeDir string, now time.Time) {
+	if table == nil {
+		return
+	}
+	var panes []*Pane
+	for _, window := range snap.Windows {
+		for i := range window.Panes {
+			pane := &window.Panes[i]
+			if pane.Resume == nil && pane.PID > 1 && !shells[strings.TrimPrefix(pane.Command, "-")] {
+				panes = append(panes, pane)
+			}
+		}
+	}
+	if len(panes) == 0 {
+		return
+	}
+	parents, err := table.Parents(ctx)
+	if err != nil {
+		return
+	}
+	children := map[int32][]int32{}
+	for pid, ppid := range parents {
+		children[ppid] = append(children[ppid], pid)
+	}
+	for _, pids := range children {
+		slices.Sort(pids)
+	}
+	for _, pane := range panes {
+		pane.Resume = runningConversation(ctx, table, children, pane.PID, claudeDir, now)
+	}
+}
+
+// runningConversation searches the processes under a pane, nearest first,
+// for an agent that names its conversation.
+func runningConversation(
+	ctx context.Context,
+	table ProcessTable,
+	children map[int32][]int32,
+	panePID int32,
+	claudeDir string,
+	now time.Time,
+) *Record {
+	queue := []int32{panePID}
+	for read := 0; len(queue) > 0 && read < discoverLimit; read++ {
+		pid := queue[0]
+		queue = append(queue[1:], children[pid]...)
+		info, err := table.Lookup(ctx, pid)
+		if err != nil {
+			continue
+		}
+		rec := Record{Process: &ProcessRef{PID: pid, StartMillis: info.StartMillis}, Argv: info.Argv, RecordedAt: now.Unix()}
+		switch {
+		case claudeDir != "" && isAgentProcess(info, "claude"):
+			rec.Agent = "claude"
+			rec.ConversationID = claudeConversation(claudeDir, pid)
+		case isAgentProcess(info, "codex"):
+			rec.Agent = "codex"
+			rec.ConversationID, rec.TranscriptPath = codexConversation(ctx, table, info)
+		}
+		if rec.ConversationID != "" {
+			return &rec
+		}
+	}
+	return nil
+}
+
+// claudeConversation reads the conversation Claude Code's session file
+// records for its process.
+func claudeConversation(claudeDir string, pid int32) string {
+	data, err := os.ReadFile(filepath.Join(claudeDir, "sessions", strconv.Itoa(int(pid))+".json"))
+	if err != nil {
+		return ""
+	}
+	var session struct {
+		PID       int32  `json:"pid"`
+		SessionID string `json:"sessionId"`
+	}
+	if json.Unmarshal(data, &session) != nil || session.PID != pid {
+		return ""
+	}
+	return session.SessionID
+}
+
+var rolloutName = regexp.MustCompile(`^rollout-.+-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$`)
+
+// codexConversation reads which conversation a Codex process writes. A
+// process writing several, such as Codex's shared app server, names none.
+func codexConversation(ctx context.Context, table ProcessTable, info ProcInfo) (string, string) {
+	if len(info.Argv) > 0 && codexSubcommand(info.Argv[agentArgsStart(info.Argv, "codex"):]) == "app-server" {
+		return "", ""
+	}
+	files, err := table.OpenFiles(ctx, info.PID)
+	if err != nil {
+		return "", ""
+	}
+	var id, path string
+	for _, file := range files {
+		m := rolloutName.FindStringSubmatch(filepath.Base(file))
+		if m == nil {
+			continue
+		}
+		if id != "" && id != m[1] {
+			return "", ""
+		}
+		id, path = m[1], file
+	}
+	return id, path
+}
+
+// ClaudeDir is where Claude Code keeps its settings and conversations.
+func ClaudeDir(home string, getenv func(string) string) string {
+	if dir := getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		return dir
+	}
+	return filepath.Join(home, ".claude")
+}
