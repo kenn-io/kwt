@@ -228,6 +228,10 @@ func TestCarryPrefersTheLatestDiscoveredConversation(t *testing.T) {
 	carryDiscovered(snap, paneSnapshot(Pane{ID: "%1", Resume: later}))
 	assert.Equal(t, later, snap.Windows["w"].Panes[0].Resume)
 
+	moved := &Snapshot{Windows: map[string]Window{"other": {Key: "other", Panes: []Pane{{ID: "%1"}}}}}
+	carryDiscovered(moved, paneSnapshot(Pane{ID: "%1", Resume: later}))
+	assert.Equal(t, later, moved.Windows["other"].Panes[0].Resume, "a pane moved to another window keeps it")
+
 	hooked := &Record{Agent: "claude", ConversationID: "c-a"}
 	snap = paneSnapshot(Pane{ID: "%1", Resume: hooked})
 	carryDiscovered(snap, paneSnapshot(Pane{ID: "%1", Resume: later}))

@@ -106,23 +106,27 @@ func Save(ctx context.Context, deps SaveDeps) (SaveResult, error) {
 // discovered record in a pane option was written at restore and never
 // changes, so the earlier save's record, read later, replaces it.
 func carryDiscovered(snap *Snapshot, earlier *Snapshot) {
-	for key, window := range snap.Windows {
-		old, ok := earlier.Windows[key]
-		if !ok {
-			continue
+	// Pane IDs are unique on a server, so a pane moved to another window,
+	// as by break-pane or join-pane, keeps its conversation.
+	discovered := map[string]*Record{}
+	for _, window := range earlier.Windows {
+		for _, was := range window.Panes {
+			if was.Resume != nil && was.Resume.Discovered {
+				discovered[was.ID] = was.Resume
+			}
 		}
+	}
+	for key, window := range snap.Windows {
 		for i := range window.Panes {
 			pane := &window.Panes[i]
 			if pane.Resume != nil && !pane.Resume.Discovered {
 				continue
 			}
-			for _, was := range old.Panes {
-				if was.ID == pane.ID && was.Resume != nil && was.Resume.Discovered &&
-					!pane.endedOnPurpose(was.Resume) {
-					pane.Resume = was.Resume
-				}
+			if was := discovered[pane.ID]; was != nil && !pane.endedOnPurpose(was) {
+				pane.Resume = was
 			}
 		}
+		snap.Windows[key] = window
 	}
 }
 
