@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -75,14 +76,46 @@ func programPath(name, dir string) (string, error) {
 
 func notStarted(err error) string { return "program did not start: " + err.Error() }
 
+// AdoptRecord makes pid the process in the pane's conversation record.
+// Restore copies the record with the process from before the server was
+// lost, so saves would drop the conversation as ended once its grace passed.
+// The handoff calls this with its own PID just before it becomes the agent:
+// exec keeps the PID and start time, so the record then names the running
+// agent. Claude Code reports its new process in a hook as it starts, but
+// Codex and agy run no hook until the person sends a message.
+func AdoptRecord(ctx context.Context, tm Tmux, processes ProcessTable, pane string, pid int32) error {
+	value, err := tm.Run(ctx, "show-options", "-p", "-v", "-t", pane, ResumeOption)
+	if err != nil {
+		return err
+	}
+	record, err := DecodeRecord(strings.TrimSuffix(value, "\n"))
+	if err != nil {
+		return err
+	}
+	info, err := processes.Lookup(ctx, pid)
+	if err != nil {
+		return err
+	}
+	record.Process = &ProcessRef{PID: pid, StartMillis: info.StartMillis}
+	encoded, err := record.Encode()
+	if err != nil {
+		return err
+	}
+	_, err = tm.Run(ctx, "set-option", "-p", "-t", pane, ResumeOption, encoded)
+	return err
+}
+
 // Launch claims a launch and runs its program in place of this process. A
 // program that cannot start is recorded as failed, so the restore does not
 // report a conversation that never resumed. It returns only on failure.
-func Launch(ctx context.Context, store Store, sock Socket, entryID string, launch int, tmuxPane, serverPID string) error {
+func Launch(ctx context.Context, store Store, sock Socket, tm Tmux, processes ProcessTable, entryID string, launch int, tmuxPane, serverPID string) error {
 	target, err := Claim(ctx, store, sock, entryID, launch, tmuxPane, serverPID)
 	if err != nil {
 		return err
 	}
+	// A missed update leaves the old process in the record; the agent's
+	// first hook then records the new one.
+	_ = AdoptRecord(ctx, tm, processes, tmuxPane, int32(os.Getpid()))
 	execErr := Exec(target)
 	_ = store.WithLock(ctx, sock, func(f *Files) error {
 		entry := f.Entry(entryID)

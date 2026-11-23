@@ -287,8 +287,8 @@ func (b Builder) fill(ctx context.Context, windowID string, first BuiltPane, w W
 	// The marks tell later saves which agent a preset started and which
 	// conversation the pane holds, so the pane stays restorable after the
 	// next server loss, even one before its agent starts. A copied record
-	// still names the old process, so saves drop it as usual if no agent
-	// replaces it. A pane whose directory is gone starts nothing, so it gets
+	// still names the old process until the handoff starts the agent and
+	// names its own, so saves drop it as usual if no agent replaces it. A pane whose directory is gone starts nothing, so it gets
 	// no marks: a later save would record its program in the fallback
 	// directory.
 	for i, pane := range w.Panes {
