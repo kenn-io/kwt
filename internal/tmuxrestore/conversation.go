@@ -31,13 +31,9 @@ func FindConversation(rec Record, home string, getenv func(string) string) Prese
 	}
 	switch rec.Agent {
 	case "claude":
-		root := getenv("CLAUDE_CONFIG_DIR")
-		if root == "" {
-			root = filepath.Join(home, ".claude")
-		}
 		return searchByName(rec.ConversationID, func(name string) bool {
 			return name == rec.ConversationID+".jsonl"
-		}, filepath.Join(root, "projects"))
+		}, filepath.Join(ClaudeDir(home, getenv), "projects"))
 	case "codex":
 		root := getenv("CODEX_HOME")
 		if root == "" {

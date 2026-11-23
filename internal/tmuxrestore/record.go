@@ -12,6 +12,21 @@ import (
 // ResumeOption is the tmux pane user option holding a pane's Record.
 const ResumeOption = "@kwt_agent_resume"
 
+// ClosedOption is the tmux pane user option naming the last conversation the
+// person ended on purpose, and the process that ran it, so a save does not
+// record it again from that process while it exits.
+const ClosedOption = "@kwt_agent_closed"
+
+// closedMarker is the ClosedOption value for a conversation ended in the
+// process ref. A later process that resumes the conversation does not match
+// it. Without a process, it names only the conversation.
+func closedMarker(conversationID string, ref *ProcessRef) string {
+	if ref == nil {
+		return conversationID
+	}
+	return fmt.Sprintf("%s@%d.%d", conversationID, ref.PID, ref.StartMillis)
+}
+
 // ProcessRef identifies one process. The start time keeps a reused PID from
 // being mistaken for the original process.
 type ProcessRef struct {
@@ -33,6 +48,9 @@ type Record struct {
 	// PermissionMode is the last Claude permission mode a hook reported.
 	PermissionMode string `json:"permission_mode,omitempty"`
 	RecordedAt     int64  `json:"recorded_at"`
+	// Discovered marks a record a save read from the running agent rather
+	// than one a hook wrote. It lives only in snapshots.
+	Discovered bool `json:"discovered,omitempty"`
 }
 
 // Event is one agent hook event reduced to the fields a Record uses.
@@ -79,6 +97,9 @@ func Apply(prev *Record, ev Event, identify func() (*ProcessRef, []string)) (*Re
 	if ev.PermissionMode != "" && ev.Agent == "claude" {
 		next.PermissionMode = ev.PermissionMode
 	}
+	// A hook now speaks for this conversation, so later saves keep what it
+	// reports instead of reading the agent again.
+	next.Discovered = false
 	next.RecordedAt = ev.Now.Unix()
 	return &next, false
 }

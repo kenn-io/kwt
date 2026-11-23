@@ -168,6 +168,16 @@ func sessionSockets(store tmuxrestore.Store) ([]tmuxrestore.Socket, error) {
 	return append([]tmuxrestore.Socket{defaultSocket, kwtSocket}, saved...), nil
 }
 
+// claudeDir is Claude Code's directory, or empty when the home directory is
+// unknown.
+func claudeDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return tmuxrestore.ClaudeDir(home, os.Getenv)
+}
+
 // saveSessions saves every known socket and returns what can be restored.
 func saveSessions(cmd *cobra.Command, store tmuxrestore.Store, executable string) ([]tmuxrestore.Listed, error) {
 	sockets, err := sessionSockets(store)
@@ -179,6 +189,7 @@ func saveSessions(cmd *cobra.Command, store tmuxrestore.Store, executable string
 		Store:      store,
 		Processes:  tmuxrestore.SystemProcesses(),
 		Protection: tmuxrestore.ProvenanceProtection(prStorePath()),
+		ClaudeDir:  claudeDir(),
 	}, sockets)
 	for _, err := range errs {
 		fmt.Fprintln(cmd.ErrOrStderr(), "warning:", err)

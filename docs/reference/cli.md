@@ -802,6 +802,22 @@ ran on is gone: a save that finds no server, or a server with a new PID or
 start time, turns the last saved state into restorable entries. A save that
 cannot reach the server changes nothing.
 
+A save also records agents that have no hook record, such as one started
+before its hooks were installed. kwt looks among the processes of each pane
+that is not at its shell prompt. A Claude Code process names its
+conversation in `sessions/<pid>.json` under its configuration directory
+(`CLAUDE_CONFIG_DIR`, or `~/.claude`). On Linux, a Codex process holds its
+conversation's rollout file open. A Codex process with several rollout files
+open, such as its shared app server, is skipped. A pane with two agents in
+different conversations, such as one suspended in the shell, records
+neither and drops the one recorded earlier. Once a hook reports on a
+conversation found this way, kwt keeps what the hook reports. A
+conversation found this way survives the same 10-second grace as a hook
+record after its agent exits. One the person ended on purpose is not
+recorded again from the process that ended it; a later process that resumes
+it is. On macOS, kwt cannot see a Codex process's open files, so
+Codex needs its hooks there.
+
 `snapshot --json` prints `{"entries": [...]}`. Each entry has an opaque `id`,
 its `socket` (`path`, and `name` for a `-L` socket), `session`, `saved_at`
 (Unix milliseconds), `windows` and `panes` counts, the `agents` it will

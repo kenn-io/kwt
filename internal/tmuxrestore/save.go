@@ -17,7 +17,10 @@ type SaveDeps struct {
 	Store      Store
 	Processes  ProcessTable
 	Protection Protection
-	Now        func() time.Time
+	// ClaudeDir is Claude Code's directory, where a save reads which
+	// conversation a Claude process without a record runs. Empty skips that.
+	ClaudeDir string
+	Now       func() time.Time
 	// MinInterval, when set, makes a save leave alone a snapshot of the
 	// running server that is younger than this. A lost or replaced server is
 	// still noticed.
@@ -83,13 +86,48 @@ func Save(ctx context.Context, deps SaveDeps) (SaveResult, error) {
 		var previous map[string]int64
 		if f.Live != nil {
 			previous = f.Live.Gone
+			if f.Live.Server == snap.Server {
+				carryDiscovered(&snap, f.Live)
+			}
 		}
+		discover(ctx, &snap, deps.Processes, deps.ClaudeDir, now())
 		reconcile(ctx, &snap, previous, deps.Processes, now())
 		snap.SavedAt = now().UnixMilli()
 		f.Live = &snap
 		return nil
 	})
 	return result, err
+}
+
+// carryDiscovered keeps the conversations earlier saves read from running
+// agents. No pane option holds them, so without this an agent that exits
+// while tmux shuts down would lose its conversation at the next save;
+// reconcile drops it only after the same grace a hook record gets. A
+// discovered record in a pane option was written at restore and never
+// changes, so the earlier save's record, read later, replaces it.
+func carryDiscovered(snap *Snapshot, earlier *Snapshot) {
+	// Pane IDs are unique on a server, so a pane moved to another window,
+	// as by break-pane or join-pane, keeps its conversation.
+	discovered := map[string]*Record{}
+	for _, window := range earlier.Windows {
+		for _, was := range window.Panes {
+			if was.Resume != nil && was.Resume.Discovered {
+				discovered[was.ID] = was.Resume
+			}
+		}
+	}
+	for key, window := range snap.Windows {
+		for i := range window.Panes {
+			pane := &window.Panes[i]
+			if pane.Resume != nil && !pane.Resume.Discovered {
+				continue
+			}
+			if was := discovered[pane.ID]; was != nil && !pane.endedOnPurpose(was) {
+				pane.Resume = was
+			}
+		}
+		snap.Windows[key] = window
+	}
 }
 
 // reconcile drops conversations whose agent exited while tmux kept running.

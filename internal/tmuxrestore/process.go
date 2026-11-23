@@ -23,9 +23,13 @@ type ProcInfo struct {
 	StartMillis int64
 }
 
-// ProcessTable looks up processes by PID.
+// ProcessTable reads the host's processes.
 type ProcessTable interface {
 	Lookup(ctx context.Context, pid int32) (ProcInfo, error)
+	// Parents maps every running process to its parent.
+	Parents(ctx context.Context) (map[int32]int32, error)
+	// OpenFiles lists the files a process holds open.
+	OpenFiles(ctx context.Context, pid int32) ([]string, error)
 }
 
 // SystemProcesses reads the host's process table.
@@ -54,6 +58,38 @@ func (systemProcesses) Lookup(ctx context.Context, pid int32) (ProcInfo, error) 
 	// record then falls back to the configured agent command.
 	argv, _ := p.CmdlineSliceWithContext(ctx)
 	return ProcInfo{PID: pid, PPID: ppid, Name: name, Argv: argv, StartMillis: start}, nil
+}
+
+func (systemProcesses) Parents(ctx context.Context) (map[int32]int32, error) {
+	procs, err := process.ProcessesWithContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list processes: %w", err)
+	}
+	parents := make(map[int32]int32, len(procs))
+	for _, p := range procs {
+		// A process can exit during the scan.
+		if ppid, err := p.PpidWithContext(ctx); err == nil {
+			parents[p.Pid] = ppid
+		}
+	}
+	return parents, nil
+}
+
+func (systemProcesses) OpenFiles(ctx context.Context, pid int32) ([]string, error) {
+	p, err := process.NewProcessWithContext(ctx, pid)
+	if err != nil {
+		return nil, fmt.Errorf("look up process %d: %w", pid, err)
+	}
+	// macOS cannot list another process's files, so this fails there.
+	files, err := p.OpenFilesWithContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read process %d open files: %w", pid, err)
+	}
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = f.Path
+	}
+	return paths, nil
 }
 
 // IdentifyAgent walks up from start to find the agent process. The agent must

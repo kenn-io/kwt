@@ -217,7 +217,7 @@ func (d RestoreDeps) saveDeps(sock Socket) SaveDeps {
 	return SaveDeps{
 		Tmux:  Tmux{Executable: d.Executable, Socket: sock, StripNames: d.StripNames},
 		Store: d.Store, Processes: SystemProcesses(),
-		Protection: d.Protection, Now: d.Now,
+		Protection: d.Protection, ClaudeDir: ClaudeDir(d.Home, d.Getenv), Now: d.Now,
 	}
 }
 

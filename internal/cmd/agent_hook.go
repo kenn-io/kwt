@@ -287,6 +287,7 @@ func newHookTracker(deadline time.Time) *tmuxrestore.HookTracker {
 		Store:      tmuxrestore.OpenStore(home),
 		Processes:  tmuxrestore.SystemProcesses(),
 		Protection: tmuxrestore.ProvenanceProtection(prStorePath()),
+		ClaudeDir:  claudeDir(),
 		Deadline:   deadline,
 	}
 }
