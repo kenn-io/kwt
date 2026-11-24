@@ -41,6 +41,7 @@ type Size struct {
 
 // AttachOptions selects the terminal and the local terminal that shows it.
 type AttachOptions struct {
+	// SessionID is the terminal's session. Empty looks it up from BlockID.
 	SessionID string
 	BlockID   string
 	In        io.Reader
@@ -147,12 +148,20 @@ func (a *attachment) resize(ctx context.Context, size Size) error {
 		map[string]int{"columns": size.Columns, "rows": size.Rows}, nil)
 }
 
-// open joins the terminal's session, sizes the terminal, and opens its
-// stream, giving up after setupTimeout so a server that stops answering
-// cannot hang the attach before the terminal shows.
+// open finds the terminal's session when it is not known, joins it, sizes
+// the terminal, and opens its stream, giving up after setupTimeout so a
+// server that stops answering cannot hang the attach before the terminal
+// shows.
 func (a *attachment) open(ctx context.Context, endpoint string, size Size) (*websocket.Conn, uint64, error) {
 	ctx, cancel := context.WithTimeout(ctx, setupTimeout)
 	defer cancel()
+	if a.session == "" {
+		terminal, err := a.client.Terminal(ctx, a.block)
+		if err != nil {
+			return nil, 0, err
+		}
+		a.session = terminal.SessionID
+	}
 	err := a.client.Call(ctx, "session.attach", map[string]string{"session_id": a.session}, nil)
 	if err != nil && !IsCode(err, "conflict") {
 		return nil, 0, err

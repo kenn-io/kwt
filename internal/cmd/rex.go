@@ -92,16 +92,7 @@ itself when that program exits.`,
 		if err != nil {
 			return err
 		}
-		client, err := rex.Dial(ctx, server.Endpoint)
-		if err != nil {
-			return err
-		}
-		terminal, err := client.Terminal(ctx, args[0])
-		_ = client.Close()
-		if err != nil {
-			return err
-		}
-		return runRexAttach(ctx, server.Endpoint, terminal.SessionID, terminal.BlockID)
+		return runRexAttach(ctx, server.Endpoint, args[0])
 	}),
 }
 
@@ -273,7 +264,7 @@ const resetTerminalModes = "\x1b[?1047l\x1b7\x1b[r\x1b8\x1b[?25h" +
 	"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l" +
 	"\x1b[?1004l\x1b[?2004l\x1b[=0u\x1b[>4;0m\x1b[?1l\x1b>\x1b[0m"
 
-func runRexAttach(ctx context.Context, endpoint, sessionID, blockID string) error {
+func runRexAttach(ctx context.Context, endpoint, blockID string) error {
 	stdin := int(os.Stdin.Fd()) //nolint:gosec // File descriptors fit in int.
 	if !term.IsTerminal(stdin) {
 		return errors.New("kwt rex attach needs a terminal")
@@ -294,12 +285,11 @@ func runRexAttach(ctx context.Context, endpoint, sessionID, blockID string) erro
 	sizes, stop := watchTerminalSize(ctx, stdin)
 	defer stop()
 	_, err = rex.Attach(ctx, endpoint, rex.AttachOptions{
-		SessionID: sessionID,
-		BlockID:   blockID,
-		In:        os.Stdin,
-		Out:       os.Stdout,
-		Size:      rex.Size{Columns: columns, Rows: rows},
-		Sizes:     sizes,
+		BlockID: blockID,
+		In:      os.Stdin,
+		Out:     os.Stdout,
+		Size:    rex.Size{Columns: columns, Rows: rows},
+		Sizes:   sizes,
 	})
 	if err != nil {
 		// Leave the error on its own line below the terminal's contents.

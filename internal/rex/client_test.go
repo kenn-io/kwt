@@ -219,6 +219,29 @@ func TestAttachReachesAServerAtANetworkAddress(t *testing.T) {
 	assert.Contains(t, out.String(), "over the network")
 }
 
+func TestAttachFindsTheTerminalsSession(t *testing.T) {
+	server := newFakeNetworkServer(t)
+	server.answerValue("session.list", map[string]any{"sessions": []any{
+		map[string]any{"session_id": "session:b", "label": "work"},
+	}})
+	server.answerValue("session.attach", view("session:b", "work",
+		window("window:1", "", "", block("block:7", terminalCreator, "shell"))))
+	server.answerValue("com.superlogical.terminal.title", map[string]string{"title": "vim"})
+	server.answerValue("com.superlogical.terminal.format", map[string]string{"content": ""})
+	server.stream = [][]byte{rexMessage(server.nonce, `{"type":"child_exited","exit_code":0}`)}
+	in, inWriter := io.Pipe()
+	t.Cleanup(func() { _ = inWriter.Close() })
+
+	_, err := Attach(t.Context(), server.endpoint, AttachOptions{
+		BlockID: "block:7", In: in, Out: io.Discard, Size: Size{Columns: 80, Rows: 24},
+	})
+
+	require.NoError(t, err)
+	connects := server.callsTo("data.connect")
+	require.Len(t, connects, 1)
+	assert.Contains(t, string(connects[0]), `"session_id":"session:b"`)
+}
+
 func TestAttachTypesInputAndFollowsResizes(t *testing.T) {
 	server := newFakeServer(t)
 	server.answerValue("com.superlogical.terminal.format", map[string]string{"content": ""})
@@ -569,6 +592,21 @@ func TestAttachGivesUpOnAServerThatStopsAnswering(t *testing.T) {
 	_, err := Attach(t.Context(), server.endpoint, AttachOptions{
 		SessionID: "session:a", BlockID: "block:1", In: strings.NewReader(""), Out: io.Discard,
 		Size: Size{Columns: 80, Rows: 24},
+	})
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestAttachGivesUpOnAServerThatNeverListsItsSessions(t *testing.T) {
+	shortenSetup(t, 200*time.Millisecond)
+	server := newFakeNetworkServer(t)
+	server.answer("session.list", func(json.RawMessage) (any, *Error) {
+		<-t.Context().Done()
+		return nil, nil
+	})
+
+	_, err := Attach(t.Context(), server.endpoint, AttachOptions{
+		BlockID: "block:1", In: strings.NewReader(""), Out: io.Discard, Size: Size{Columns: 80, Rows: 24},
 	})
 
 	require.ErrorIs(t, err, context.DeadlineExceeded)
