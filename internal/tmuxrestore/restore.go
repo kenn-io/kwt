@@ -610,11 +610,16 @@ func (r restorer) plan(ctx context.Context, ref WindowRef, w Window, built Built
 				l.Note = "agent cannot be resumed"
 				break
 			}
-			if FindConversation(*pane.Resume, r.deps.Home, r.deps.Getenv) == PresenceAbsent {
+			presence, path := FindConversation(*pane.Resume, r.deps.Home, r.deps.Getenv)
+			if presence == PresenceAbsent {
 				l.Note = "conversation not found"
 				break
 			}
-			args := BuildLaunch(*pane.Resume, r.deps.Agents[pane.Resume.Agent])
+			var turn Turn
+			if pane.Resume.Agent == "codex" {
+				turn = CodexTurn(path)
+			}
+			args := BuildLaunch(*pane.Resume, r.deps.Agents[pane.Resume.Agent], turn)
 			l.Status, l.Argv, l.Dropped = LaunchWaiting, args.Argv, args.Dropped
 			if args.Fallback {
 				l.Note = "launch settings not recorded; configured command used"

@@ -196,8 +196,9 @@ func codexSubcommand(args []string) string {
 // BuildLaunch returns the command that resumes rec's conversation. It
 // replays only recognized settings from the recorded arguments, then adds
 // the agent's resume arguments. configured is kwt's configured command for
-// the agent, used when no arguments were recorded.
-func BuildLaunch(rec Record, configured string) LaunchArgs {
+// the agent, used when no arguments were recorded. A Codex turn's model and
+// effort replace the launch's, since the person may have changed them since.
+func BuildLaunch(rec Record, configured string, turn Turn) LaunchArgs {
 	argv := rec.Argv
 	var result LaunchArgs
 	if len(argv) == 0 {
@@ -244,12 +245,47 @@ func BuildLaunch(rec Record, configured string) LaunchArgs {
 		}
 	}
 
+	if rec.Agent == "codex" {
+		groups = applyCodexTurn(groups, turn)
+	}
+
 	result.Argv = head
 	for _, group := range groups {
 		result.Argv = append(result.Argv, group.tokens...)
 	}
 	result.Argv = append(result.Argv, resumeArgs[rec.Agent](rec.ConversationID)...)
 	return result
+}
+
+// applyCodexTurn replaces the launch's model and reasoning effort with the
+// ones the conversation last used.
+func applyCodexTurn(groups []flagGroup, turn Turn) []flagGroup {
+	if turn.Model != "" {
+		groups = slices.DeleteFunc(groups, func(g flagGroup) bool {
+			return g.name == "-m" || g.name == "--model"
+		})
+		groups = append(groups, flagGroup{name: "-m", tokens: []string{"-m", turn.Model}})
+	}
+	if turn.Effort != "" {
+		groups = slices.DeleteFunc(groups, func(g flagGroup) bool {
+			return (g.name == "-c" || g.name == "--config") && configKey(g.tokens) == "model_reasoning_effort"
+		})
+		groups = append(groups, flagGroup{
+			name: "-c", tokens: []string{"-c", "model_reasoning_effort=" + turn.Effort},
+		})
+	}
+	return groups
+}
+
+// configKey returns the key a Codex -c override sets, given as
+// "-c key=value" or "-c=key=value".
+func configKey(tokens []string) string {
+	value := tokens[len(tokens)-1]
+	if len(tokens) == 1 {
+		_, value, _ = strings.Cut(value, "=")
+	}
+	key, _, _ := strings.Cut(value, "=")
+	return strings.TrimSpace(key)
 }
 
 // parseFlags keeps recognized settings and drops everything else. A

@@ -17,17 +17,22 @@ func touch(t *testing.T, path string) {
 
 func noEnv(string) string { return "" }
 
+func presence(rec Record, home string, getenv func(string) string) Presence {
+	p, _ := FindConversation(rec, home, getenv)
+	return p
+}
+
 func TestFindClaudeConversation(t *testing.T) {
 	home := t.TempDir()
 	rec := Record{Agent: "claude", ConversationID: "c-1", TranscriptPath: filepath.Join(home, "gone.jsonl")}
 
-	assert.Equal(t, PresenceUnknown, FindConversation(rec, home, noEnv), "no projects directory to search")
+	assert.Equal(t, PresenceUnknown, presence(rec, home, noEnv), "no projects directory to search")
 
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".claude", "projects", "p"), 0o700))
-	assert.Equal(t, PresenceAbsent, FindConversation(rec, home, noEnv))
+	assert.Equal(t, PresenceAbsent, presence(rec, home, noEnv))
 
 	touch(t, filepath.Join(home, ".claude", "projects", "other", "c-1.jsonl"))
-	assert.Equal(t, PresenceFound, FindConversation(rec, home, noEnv), "found by ID after the hinted path moved")
+	assert.Equal(t, PresenceFound, presence(rec, home, noEnv), "found by ID after the hinted path moved")
 
 	configDir := t.TempDir()
 	touch(t, filepath.Join(configDir, "projects", "p", "c-2.jsonl"))
@@ -37,25 +42,25 @@ func TestFindClaudeConversation(t *testing.T) {
 		}
 		return ""
 	}
-	assert.Equal(t, PresenceFound, FindConversation(Record{Agent: "claude", ConversationID: "c-2"}, home, env))
+	assert.Equal(t, PresenceFound, presence(Record{Agent: "claude", ConversationID: "c-2"}, home, env))
 
 	hinted := filepath.Join(t.TempDir(), "elsewhere.jsonl")
 	touch(t, hinted)
-	assert.Equal(t, PresenceFound, FindConversation(Record{Agent: "claude", ConversationID: "c-9", TranscriptPath: hinted}, home, noEnv))
+	assert.Equal(t, PresenceFound, presence(Record{Agent: "claude", ConversationID: "c-9", TranscriptPath: hinted}, home, noEnv))
 }
 
 func TestFindCodexConversation(t *testing.T) {
 	home := t.TempDir()
 	rec := Record{Agent: "codex", ConversationID: "0199-abc", TranscriptPath: filepath.Join(home, "rollout.jsonl")}
 
-	assert.Equal(t, PresenceUnknown, FindConversation(rec, home, noEnv))
+	assert.Equal(t, PresenceUnknown, presence(rec, home, noEnv))
 
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".codex", "sessions"), 0o700))
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".codex", "archived_sessions"), 0o700))
-	assert.Equal(t, PresenceAbsent, FindConversation(rec, home, noEnv))
+	assert.Equal(t, PresenceAbsent, presence(rec, home, noEnv))
 
 	touch(t, filepath.Join(home, ".codex", "sessions", "2026", "11", "18", "rollout-2026-11-18T01-02-03-0199-abc.jsonl.zst"))
-	assert.Equal(t, PresenceFound, FindConversation(rec, home, noEnv), "a compressed rollout still resumes")
+	assert.Equal(t, PresenceFound, presence(rec, home, noEnv), "a compressed rollout still resumes")
 }
 
 func TestFindConversationBehindSymlinks(t *testing.T) {
@@ -66,11 +71,11 @@ func TestFindConversationBehindSymlinks(t *testing.T) {
 	require.NoError(t, os.Symlink(real, filepath.Join(home, ".claude", "projects")))
 	rec := Record{Agent: "claude", ConversationID: "c-1"}
 
-	assert.Equal(t, PresenceFound, FindConversation(rec, home, noEnv), "a linked transcript directory is searched")
+	assert.Equal(t, PresenceFound, presence(rec, home, noEnv), "a linked transcript directory is searched")
 
 	other := t.TempDir()
 	touch(t, filepath.Join(other, "c-2.jsonl"))
 	require.NoError(t, os.Symlink(other, filepath.Join(real, "linked")))
-	assert.NotEqual(t, PresenceAbsent, FindConversation(Record{Agent: "claude", ConversationID: "c-2"}, home, noEnv),
+	assert.NotEqual(t, PresenceAbsent, presence(Record{Agent: "claude", ConversationID: "c-2"}, home, noEnv),
 		"a link kwt does not follow leaves the search unfinished")
 }
