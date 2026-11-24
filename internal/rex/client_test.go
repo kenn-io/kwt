@@ -558,6 +558,22 @@ func TestAttachGivesUpOnATerminalStreamThatNeverOpens(t *testing.T) {
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
+func TestAttachGivesUpOnAServerThatStopsAnswering(t *testing.T) {
+	shortenSetup(t, 200*time.Millisecond)
+	server := newFakeNetworkServer(t)
+	server.answer("session.attach", func(json.RawMessage) (any, *Error) {
+		<-t.Context().Done()
+		return nil, nil
+	})
+
+	_, err := Attach(t.Context(), server.endpoint, AttachOptions{
+		SessionID: "session:a", BlockID: "block:1", In: strings.NewReader(""), Out: io.Discard,
+		Size: Size{Columns: 80, Rows: 24},
+	})
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
 func TestAnOpenAttachOutlastsTheSetupLimit(t *testing.T) {
 	shortenSetup(t, 100*time.Millisecond)
 	server := newFakeNetworkServer(t)

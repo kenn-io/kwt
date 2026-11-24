@@ -66,16 +66,7 @@ func Attach(ctx context.Context, endpoint string, opts AttachOptions) (*int, err
 	defer client.Close()
 
 	a := &attachment{client: client, session: opts.SessionID, block: opts.BlockID}
-	err = client.Call(ctx, "session.attach", map[string]string{"session_id": a.session}, nil)
-	if err != nil && !IsCode(err, "conflict") {
-		return nil, err
-	}
-	// Take the block and set its size first, so the snapshot and the first
-	// paint already have this terminal's size.
-	if err := a.resize(ctx, opts.Size); err != nil {
-		return nil, err
-	}
-	data, nonce, err := a.openData(ctx, endpoint)
+	data, nonce, err := a.open(ctx, endpoint, opts.Size)
 	if err != nil {
 		return nil, err
 	}
@@ -156,9 +147,25 @@ func (a *attachment) resize(ctx context.Context, size Size) error {
 		map[string]int{"columns": size.Columns, "rows": size.Rows}, nil)
 }
 
-func (a *attachment) openData(ctx context.Context, endpoint string) (*websocket.Conn, uint64, error) {
+// open joins the terminal's session, sizes the terminal, and opens its
+// stream, giving up after setupTimeout so a server that stops answering
+// cannot hang the attach before the terminal shows.
+func (a *attachment) open(ctx context.Context, endpoint string, size Size) (*websocket.Conn, uint64, error) {
 	ctx, cancel := context.WithTimeout(ctx, setupTimeout)
 	defer cancel()
+	err := a.client.Call(ctx, "session.attach", map[string]string{"session_id": a.session}, nil)
+	if err != nil && !IsCode(err, "conflict") {
+		return nil, 0, err
+	}
+	// Take the block and set its size first, so the snapshot and the first
+	// paint already have this terminal's size.
+	if err := a.resize(ctx, size); err != nil {
+		return nil, 0, err
+	}
+	return a.openData(ctx, endpoint)
+}
+
+func (a *attachment) openData(ctx context.Context, endpoint string) (*websocket.Conn, uint64, error) {
 	var ticket struct {
 		Ticket string `json:"ticket"`
 	}

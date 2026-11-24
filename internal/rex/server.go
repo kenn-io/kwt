@@ -92,7 +92,7 @@ func checkEndpoint(endpoint string) error {
 }
 
 // webSocketTarget is the WebSocket URL for path on the server at endpoint
-// and the HTTP client that reaches it; nil means the default client.
+// and the HTTP client that reaches it.
 func webSocketTarget(endpoint, path string) (string, *http.Client, error) {
 	unsupported := fmt.Errorf("the Rex server endpoint %q is not unix://PATH, http://HOST[:PORT], or https://HOST[:PORT]", endpoint)
 	if rest, ok := strings.CutPrefix(endpoint, "unix://"); ok {
@@ -112,11 +112,16 @@ func webSocketTarget(endpoint, path string) (string, *http.Client, error) {
 		return "", nil, unsupported
 	}
 	base := strings.TrimSuffix(parsed.Host+parsed.Path, "/")
+	// Rex listens on a tailnet address, which a proxy named in the
+	// environment usually cannot reach, so connect to it directly.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	direct := &http.Client{Transport: transport}
 	switch parsed.Scheme {
 	case "http":
-		return "ws://" + base + path, nil, nil
+		return "ws://" + base + path, direct, nil
 	case "https":
-		return "wss://" + base + path, nil, nil
+		return "wss://" + base + path, direct, nil
 	default:
 		return "", nil, unsupported
 	}

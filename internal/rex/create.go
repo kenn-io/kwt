@@ -3,6 +3,8 @@ package rex
 import (
 	"context"
 	"errors"
+	"fmt"
+	"path"
 	"path/filepath"
 )
 
@@ -18,7 +20,8 @@ type NewWindowOptions struct {
 	// set. Empty lets Rex choose.
 	Label string
 	// Cwd is the shell's working directory, relative to this process's
-	// directory unless absolute. Empty lets Rex choose.
+	// directory unless absolute. A server reached at a network address
+	// needs an absolute path on its own machine. Empty lets Rex choose.
 	Cwd string
 }
 
@@ -32,11 +35,19 @@ type Created struct {
 // options name one. A window added to a session becomes its active window.
 func NewWindow(ctx context.Context, client *Client, options NewWindowOptions) (Created, error) {
 	block := map[string]any{"flavor": shellFlavor}
-	if options.Cwd != "" {
-		// The server has its own working directory.
-		cwd, err := filepath.Abs(options.Cwd)
-		if err != nil {
-			return Created{}, err
+	if cwd := options.Cwd; cwd != "" {
+		switch {
+		case client.network && !path.IsAbs(cwd):
+			// Rex servers run on macOS and Linux, and this machine's
+			// directory means nothing on another one.
+			return Created{}, fmt.Errorf("the directory %q must be an absolute path on the Rex server's machine", cwd)
+		case !client.network:
+			// The server has its own working directory.
+			abs, err := filepath.Abs(cwd)
+			if err != nil {
+				return Created{}, err
+			}
+			cwd = abs
 		}
 		block["options"] = map[string]any{"cwd": cwd}
 	}

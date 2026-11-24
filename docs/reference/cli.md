@@ -729,7 +729,9 @@ window IDs, so a front end can show it with `control`:
 Without `--session`, the window starts a new session, and `--label` names the
 session; Rex chooses a name otherwise. With `--session`, the window joins that
 session as its active window, and `--label` names the window. `--cwd` starts
-the shell in that directory instead of Rex's default.
+the shell in that directory instead of Rex's default. A relative `--cwd` is
+resolved from kwt's directory; for a Rex server at a network address, `--cwd`
+must be an absolute path on the server's machine and is sent as given.
 
 ## `kwt agent-hook`
 

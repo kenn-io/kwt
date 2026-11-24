@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -69,6 +70,9 @@ type Client struct {
 	wait   map[string]chan response
 	closed chan struct{}
 	events chan Event
+	// network reports a server reached at a network address, which may run
+	// on another machine with other paths.
+	network bool
 }
 
 type response struct {
@@ -139,10 +143,11 @@ func Dial(ctx context.Context, endpoint string) (*Client, error) {
 		return nil, fmt.Errorf("unexpected first message from Rex: %.200s", data)
 	}
 	c := &Client{
-		conn:   conn,
-		wait:   map[string]chan response{},
-		closed: make(chan struct{}),
-		events: make(chan Event, eventBuffer),
+		conn:    conn,
+		wait:    map[string]chan response{},
+		closed:  make(chan struct{}),
+		events:  make(chan Event, eventBuffer),
+		network: !strings.HasPrefix(endpoint, "unix://"),
 	}
 	// The read loop outlives Dial's context; Close ends it.
 	go c.read(context.WithoutCancel(ctx))

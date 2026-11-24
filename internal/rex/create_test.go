@@ -68,6 +68,33 @@ func TestNewWindowStartsARelativeDirectoryFromHere(t *testing.T) {
 	}, sentPayload(t, server, "session.create"))
 }
 
+// A server at a network address may run on another machine, so kwt sends its
+// directory as given instead of resolving it here, where Windows would add a
+// drive letter.
+func TestNewWindowSendsANetworkServerItsOwnDirectory(t *testing.T) {
+	server := newFakeNetworkServer(t)
+	server.answerValue("session.create", map[string]any{
+		"session_id":      "session:new",
+		"initial_windows": []map[string]any{{"window_id": "window:new", "revision": 1}},
+	})
+	client, err := Dial(t.Context(), server.endpoint)
+	require.NoError(t, err)
+	defer client.Close()
+
+	_, err = NewWindow(t.Context(), client, NewWindowOptions{Cwd: "/srv/project"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{
+		"initial_windows": []any{map[string]any{"layout": map[string]any{"block": map[string]any{
+			"flavor":  "com.superlogical.terminal.shell",
+			"options": map[string]any{"cwd": "/srv/project"},
+		}}}},
+	}, sentPayload(t, server, "session.create"))
+
+	_, err = NewWindow(t.Context(), client, NewWindowOptions{Cwd: "src"})
+	require.ErrorContains(t, err, "absolute path")
+	assert.Len(t, server.callsTo("session.create"), 1, "a relative directory is not sent")
+}
+
 func TestNewWindowLetsRexNameTheSessionAndChooseTheDirectory(t *testing.T) {
 	server := newFakeServer(t)
 	server.answerValue("session.create", map[string]any{
