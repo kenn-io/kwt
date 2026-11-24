@@ -1,13 +1,15 @@
 package cmd
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -71,29 +73,16 @@ func browseWorkspaceWithProbe(ctx context.Context, path string, probe func(conte
 		return result, fmt.Errorf("open folder: %w", err)
 	}
 	defer directory.Close()
-	// Bound filesystem enumeration as well as Git probes per expansion.
-	entries, err := directory.ReadDir(1001)
-	if cancellation := ctx.Err(); cancellation != nil {
-		return result, cancellation
+	folders, truncated, err := readBrowseFolders(ctx, directory)
+	if err != nil {
+		return result, err
 	}
-	if err != nil && err != io.EOF {
-		return result, fmt.Errorf("read folder: %w", err)
-	}
-	if len(entries) > 1000 {
-		result.Truncated = true
-		entries = entries[:1000]
-	}
-	for _, entry := range entries {
-		if err := ctx.Err(); err != nil {
-			return result, err
-		}
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		folder := workspaceFolder{Name: entry.Name(), Path: filepath.Join(root, entry.Name())}
+	result.Truncated = truncated
+	for _, name := range folders {
+		folder := workspaceFolder{Name: name, Path: filepath.Join(root, name)}
 		// Only probe likely roots; Git's upward search would otherwise label
 		// every ordinary subdirectory of a checkout as a project.
-		for _, marker := range []string{".git", ".bare", filepath.Join("main", ".git")} {
+		for _, marker := range []string{".git", ".bare"} {
 			if _, err := os.Lstat(filepath.Join(folder.Path, marker)); err == nil {
 				if projectPath, err := probe(ctx, folder.Path); err == nil {
 					folder.ProjectPath = projectPath
@@ -106,8 +95,45 @@ func browseWorkspaceWithProbe(ctx context.Context, path string, probe func(conte
 		}
 		result.Entries = append(result.Entries, folder)
 	}
-	sort.Slice(result.Entries, func(i, j int) bool { return result.Entries[i].Name < result.Entries[j].Name })
+	slices.SortFunc(result.Entries, func(a, b workspaceFolder) int {
+		return cmp.Or(strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)), strings.Compare(a.Name, b.Name))
+	})
 	return result, ctx.Err()
+}
+
+const (
+	browseFolderLimit = 1000
+	browseEntryLimit  = 10000
+)
+
+// readBrowseFolders returns up to browseFolderLimit visible child folders,
+// inspecting at most browseEntryLimit entries so files cannot exhaust the
+// folder budget and huge folders still stay bounded.
+func readBrowseFolders(ctx context.Context, directory *os.File) ([]string, bool, error) {
+	var folders []string
+	inspected := 0
+	for {
+		batch, err := directory.ReadDir(256)
+		if cancellation := ctx.Err(); cancellation != nil {
+			return nil, false, cancellation
+		}
+		for _, entry := range batch {
+			listable := entry.IsDir() && !strings.HasPrefix(entry.Name(), ".")
+			if inspected == browseEntryLimit || (listable && len(folders) == browseFolderLimit) {
+				return folders, true, nil
+			}
+			inspected++
+			if listable {
+				folders = append(folders, entry.Name())
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			return folders, false, nil
+		}
+		if err != nil {
+			return nil, false, fmt.Errorf("read folder: %w", err)
+		}
+	}
 }
 
 func browseProjectPath(ctx context.Context, path string) (string, error) {
@@ -132,7 +158,13 @@ func browseProjectPath(ctx context.Context, path string) (string, error) {
 	}
 	checkout, err := repository.GetRepositoryPath()
 	if err != nil {
-		return "", err
+		// A bare repository named .git has no work tree; kwt registers it by
+		// its parent folder, where its linked worktrees also resolve.
+		commonDir, commonErr := repository.GetCommonDir()
+		if commonErr != nil || utils.PathKey(commonDir) != utils.PathKey(filepath.Join(path, ".git")) {
+			return "", err
+		}
+		checkout = path
 	}
 	if utils.PathKey(checkout) != utils.PathKey(path) {
 		return "", fmt.Errorf("folder is not a checkout root")

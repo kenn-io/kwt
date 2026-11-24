@@ -16,17 +16,72 @@ import (
 
 func TestBrowseWorkspaceOnlyListsVisibleImmediateDirectories(t *testing.T) {
 	root := t.TempDir()
-	for _, name := range []string{"notes/deeper", "project", ".hidden"} {
+	for _, name := range []string{"notes/deeper", "project", "Zeta", ".hidden"} {
 		require.NoError(t, os.MkdirAll(filepath.Join(root, name), 0700))
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(root, "file"), nil, 0600))
 	require.NoError(t, os.Symlink(root, filepath.Join(root, "loop")))
 	listing, err := browseWorkspace(t.Context(), root)
 	require.NoError(t, err)
-	require.Len(t, listing.Entries, 2)
-	require.Equal(t, "notes", listing.Entries[0].Name)
-	require.Equal(t, "project", listing.Entries[1].Name)
+	names := make([]string, 0, len(listing.Entries))
+	for _, entry := range listing.Entries {
+		names = append(names, entry.Name)
+	}
+	require.Equal(t, []string{"notes", "project", "Zeta"}, names, "folders sort without regard to case")
 	require.Empty(t, listing.Entries[0].ProjectPath)
+}
+
+func TestBrowseWorkspaceRecognizesBareGitDirectoryContainer(t *testing.T) {
+	root := t.TempDir()
+	container := filepath.Join(root, "widget")
+	topic := filepath.Join(container, "topic")
+	run := func(args ...string) {
+		t.Helper()
+		output, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput()
+		require.NoError(t, err, string(output))
+	}
+	seed := t.TempDir()
+	run("init", "--initial-branch=main", seed)
+	run("-C", seed, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
+		"commit", "--allow-empty", "-m", "Initial")
+	run("clone", "--bare", seed, filepath.Join(container, ".git"))
+	run("--git-dir="+filepath.Join(container, ".git"), "worktree", "add", "-b", "topic", topic)
+	canonical, err := filepath.EvalSymlinks(container)
+	require.NoError(t, err)
+
+	listing, err := browseWorkspace(t.Context(), root)
+	require.NoError(t, err)
+	require.Len(t, listing.Entries, 1)
+	require.Equal(t, canonical, listing.Entries[0].ProjectPath)
+
+	children, err := browseWorkspace(t.Context(), container)
+	require.NoError(t, err)
+	require.Len(t, children.Entries, 1)
+	require.Equal(t, canonical, children.Entries[0].ProjectPath)
+}
+
+func TestBrowseWorkspaceLimitCountsFoldersNotFiles(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(root, "photos"), 0700))
+	for i := range 1001 {
+		require.NoError(t, os.WriteFile(filepath.Join(root, fmt.Sprintf("file-%04d", i)), nil, 0600))
+	}
+	listing, err := browseWorkspace(t.Context(), root)
+	require.NoError(t, err)
+	require.False(t, listing.Truncated)
+	require.Len(t, listing.Entries, 1)
+	require.Equal(t, "photos", listing.Entries[0].Name)
+}
+
+func TestBrowseWorkspaceBoundsInspectedEntries(t *testing.T) {
+	root := t.TempDir()
+	for i := range 10001 {
+		require.NoError(t, os.WriteFile(filepath.Join(root, fmt.Sprintf("file-%05d", i)), nil, 0600))
+	}
+	listing, err := browseWorkspace(t.Context(), root)
+	require.NoError(t, err)
+	require.True(t, listing.Truncated)
+	require.Empty(t, listing.Entries)
 }
 
 func TestBrowseWorkspaceRecognizesCheckoutWithoutRegistering(t *testing.T) {
@@ -205,6 +260,7 @@ func TestBrowseWorkspaceRejectsReplacedBareCheckout(t *testing.T) {
 	run("init", main)
 	listing, err := browseWorkspace(t.Context(), root)
 	require.NoError(t, err)
+	require.Len(t, listing.Entries, 1)
 	require.Empty(t, listing.Entries[0].ProjectPath)
 
 	children, err := browseWorkspace(t.Context(), filepath.Dir(main))

@@ -471,23 +471,19 @@ new topology on a shared host.
 
 ## `kwt workspace`
 
-`workspace browse <absolute-path>` returns a JSON listing of visible immediate
-child directories without registering them. Each entry has `name`, `path`, and
-an optional `project_path` identifying its primary Git checkout. Normal checkouts,
-linked worktrees, and `.bare` containers with a `main` worktree are recognized.
-Consumers can offer explicit `projects add <project_path>` or `workspace add
-<path>` actions.
+`workspace browse <absolute-path>` prints a JSON listing of the folder's
+visible immediate child folders without registering anything. The response has
+the resolved `path`, an `entries` array of `name`, `path`, and an optional
+`project_path`, and a `truncated` flag. `project_path` is the folder to pass
+to `projects add`: the primary checkout of a normal checkout or linked
+worktree, the `main` worktree of a `.bare` container, or the folder itself
+when it holds a bare repository named `.git`. Any entry's `path` can be passed
+to `workspace add`.
 
-Browsing omits hidden and symlink entries, does not recurse, and inspects at most
-1,000 filesystem entries per request. The response includes the resolved `path`,
-an `entries` array, and `truncated: true` when that limit is reached. Missing or
-unreadable folders fail rather than returning an empty listing.
-Browsing skips global configuration initialization and migration. It does not
-create settings or acquire the settings lock. Non-directory paths are rejected,
-and cancellation fails the request rather than publishing a partial success.
-Bare-container recognition checks the live `main` checkout against the
-container's worktree inventory; a stale record cannot identify a replacement
-checkout as part of the container.
+Browsing skips hidden entries and symlinks and does not recurse. It lists at
+most 1,000 folders and inspects at most 10,000 entries, setting `truncated`
+when either limit stops it. Missing, unreadable, or non-directory paths fail,
+and browsing never creates or changes kwt settings.
 
 `workspace add [path]` registers a plain directory. The `workspace remove`
 command accepts its name and unregisters it without deleting the directory or
