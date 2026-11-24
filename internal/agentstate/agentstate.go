@@ -220,14 +220,17 @@ type Status struct {
 
 // Install writes kwt's hooks into each agent's user config. With no agents,
 // it targets every supported agent whose config directory already exists.
-func Install(executable string, agents []agenthook.Agent) ([]agenthook.Result, error) {
+// Claude Code and Codex hooks that run another kwt that still exists stay as
+// they are, so an update that moves kwt does not make Codex ask for trust
+// again; exact moves them to executable.
+func Install(executable string, exact bool, agents []agenthook.Agent) ([]agenthook.Result, error) {
 	targets, err := installTargets(agents)
 	if err != nil {
 		return nil, err
 	}
 	results := make([]agenthook.Result, 0, len(targets))
 	for _, agent := range targets {
-		result, err := agenthook.Install(agent, installOptions(agent, executable))
+		result, err := agenthook.Install(agent, installOptions(agent, executable, exact))
 		if err != nil {
 			return results, err
 		}
@@ -255,8 +258,9 @@ func Uninstall(agents []agenthook.Agent) ([]agenthook.Result, error) {
 	return results, nil
 }
 
-// Statuses reports every supported agent's installation for executable.
-func Statuses(executable string) ([]Status, error) {
+// Statuses reports every supported agent's installation for executable. With
+// exact, hooks that run another kwt are not current.
+func Statuses(executable string, exact bool) ([]Status, error) {
 	statuses := []Status{}
 	for _, profile := range agenthook.Profiles() {
 		path, err := agenthook.ConfigPath(profile.Agent)
@@ -276,7 +280,7 @@ func Statuses(executable string) ([]Status, error) {
 			}
 			status.Installed = removal.Changed
 			if status.Installed {
-				install, err := agenthook.PlanInstall(profile.Agent, installOptions(profile.Agent, executable))
+				install, err := agenthook.PlanInstall(profile.Agent, installOptions(profile.Agent, executable, exact))
 				if err != nil {
 					return nil, err
 				}
@@ -288,7 +292,7 @@ func Statuses(executable string) ([]Status, error) {
 	return statuses, nil
 }
 
-func installOptions(agent agenthook.Agent, executable string) agenthook.InstallOptions {
+func installOptions(agent agenthook.Agent, executable string, exact bool) agenthook.InstallOptions {
 	profile, _ := agenthook.LookupProfile(agent)
 	hooks := make([]agenthook.Hook, 0, len(profile.SupportedEvents))
 	for _, event := range profile.SupportedEvents {
@@ -300,8 +304,9 @@ func installOptions(agent agenthook.Agent, executable string) agenthook.InstallO
 			[]string{"agent-hook", "run", "--agent", string(agent)},
 			strings.Fields(Marker)...,
 		),
-		Marker: Marker,
-		Hooks:  hooks,
+		Marker:       Marker,
+		Hooks:        hooks,
+		ReplaceMoved: exact,
 	}
 }
 

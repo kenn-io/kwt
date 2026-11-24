@@ -772,6 +772,13 @@ configuration errors, so it never interrupts the agent.
 `current` (hooks match this kwt executable and event set). Pass
 `--executable` to install or compare a different kwt path.
 
+A plain `install` leaves Claude Code and Codex hooks that run another kwt
+alone while that kwt still exists, so updating an app that ships its own kwt
+does not make Codex ask you to trust the hooks again. With `--executable`,
+`install` moves those hooks to the named kwt, and `status` reports them as not
+current until it does. Codex then asks once in `/hooks` to trust the new
+commands.
+
 The same hooks keep [saved tmux sessions](#kwt-session) current. After writing
 `@kwt_agent`, a hook records the pane's conversation and launch settings in
 the pane option `@kwt_agent_resume`, then saves the pane's tmux server with

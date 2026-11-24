@@ -88,7 +88,7 @@ func init() {
 		command.Flags().StringSliceVar(&agentHookAgents, "agent", nil, "Agent to update (repeatable)")
 	}
 	for _, command := range []*cobra.Command{agentHookInstallCmd, agentHookStatusCmd} {
-		command.Flags().StringVar(&agentHookExecutable, "executable", "", "kwt path written into hooks (default: this executable)")
+		command.Flags().StringVar(&agentHookExecutable, "executable", "", "kwt path written into hooks, replacing hooks that run another kwt (default: this executable)")
 	}
 	for _, command := range []*cobra.Command{agentHookInstallCmd, agentHookUninstallCmd, agentHookStatusCmd} {
 		command.Flags().BoolVar(&agentHookJSON, "json", false, "Output as JSON")
@@ -102,16 +102,16 @@ func runAgentHookInstall(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	executable, err := hookExecutable()
+	executable, exact, err := hookExecutable()
 	if err != nil {
 		return err
 	}
-	results, err := agentstate.Install(executable, agents)
+	results, err := agentstate.Install(executable, exact, agents)
 	if err != nil {
 		return err
 	}
 	if agentHookJSON {
-		return writeAgentHookStatuses(cmd, executable)
+		return writeAgentHookStatuses(cmd, executable, exact)
 	}
 	if len(results) == 0 {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), "No supported agent config directories found.")
@@ -149,11 +149,11 @@ func runAgentHookUninstall(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if agentHookJSON {
-		executable, err := hookExecutable()
+		executable, exact, err := hookExecutable()
 		if err != nil {
 			return err
 		}
-		return writeAgentHookStatuses(cmd, executable)
+		return writeAgentHookStatuses(cmd, executable, exact)
 	}
 	for _, result := range results {
 		profile, _ := agenthook.LookupProfile(result.Agent)
@@ -167,14 +167,14 @@ func runAgentHookUninstall(cmd *cobra.Command, _ []string) error {
 }
 
 func runAgentHookStatus(cmd *cobra.Command, _ []string) error {
-	executable, err := hookExecutable()
+	executable, exact, err := hookExecutable()
 	if err != nil {
 		return err
 	}
 	if agentHookJSON {
-		return writeAgentHookStatuses(cmd, executable)
+		return writeAgentHookStatuses(cmd, executable, exact)
 	}
-	statuses, err := agentstate.Statuses(executable)
+	statuses, err := agentstate.Statuses(executable, exact)
 	if err != nil {
 		return err
 	}
@@ -195,8 +195,8 @@ func runAgentHookStatus(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-func writeAgentHookStatuses(cmd *cobra.Command, executable string) error {
-	statuses, err := agentstate.Statuses(executable)
+func writeAgentHookStatuses(cmd *cobra.Command, executable string, exact bool) error {
+	statuses, err := agentstate.Statuses(executable, exact)
 	if err != nil {
 		return err
 	}
@@ -402,13 +402,15 @@ func parseHookAgents(names []string) ([]agenthook.Agent, error) {
 	return agents, nil
 }
 
-func hookExecutable() (string, error) {
+// hookExecutable returns the kwt hooks should run, and whether the person
+// named it. A named kwt replaces hooks that run another one.
+func hookExecutable() (string, bool, error) {
 	if path := strings.TrimSpace(agentHookExecutable); path != "" {
-		return path, nil
+		return path, true, nil
 	}
 	path, err := os.Executable()
 	if err != nil {
-		return "", fmt.Errorf("resolve kwt executable: %w", err)
+		return "", false, fmt.Errorf("resolve kwt executable: %w", err)
 	}
-	return path, nil
+	return path, false, nil
 }
