@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // ExecTarget is the program a restored pane runs in place of its handoff.
@@ -83,7 +84,7 @@ func notStarted(err error) string { return "program did not start: " + err.Error
 // exec keeps the PID and start time, so the record then names the running
 // agent. Claude Code reports its new process in a hook as it starts, but
 // Codex and agy run no hook until the person sends a message.
-func AdoptRecord(ctx context.Context, tm Tmux, processes ProcessTable, pane string, pid int32) error {
+func AdoptRecord(ctx context.Context, tm Tmux, processes ProcessTable, pane string, pid int32, now time.Time) error {
 	value, err := tm.Run(ctx, "show-options", "-p", "-v", "-t", pane, ResumeOption)
 	if err != nil {
 		return err
@@ -97,6 +98,7 @@ func AdoptRecord(ctx context.Context, tm Tmux, processes ProcessTable, pane stri
 		return err
 	}
 	record.Process = &ProcessRef{PID: pid, StartMillis: info.StartMillis}
+	record.RecordedAt = now.Unix()
 	encoded, err := record.Encode()
 	if err != nil {
 		return err
@@ -115,7 +117,7 @@ func Launch(ctx context.Context, store Store, sock Socket, tm Tmux, processes Pr
 	}
 	// A missed update leaves the old process in the record; the agent's
 	// first hook then records the new one.
-	_ = AdoptRecord(ctx, tm, processes, tmuxPane, int32(os.Getpid()))
+	_ = AdoptRecord(ctx, tm, processes, tmuxPane, int32(os.Getpid()), time.Now())
 	execErr := Exec(target)
 	_ = store.WithLock(ctx, sock, func(f *Files) error {
 		entry := f.Entry(entryID)

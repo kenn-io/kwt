@@ -128,7 +128,7 @@ func TestAnAdoptedRecordOutlivesTheGrace(t *testing.T) {
 	}
 	setResume(t, f.tm, pane, restored)
 
-	require.NoError(t, AdoptRecord(t.Context(), f.tm, f.procs, pane, 9002))
+	require.NoError(t, AdoptRecord(t.Context(), f.tm, f.procs, pane, 9002, f.now))
 	f.save(t)
 	f.now = f.now.Add(goneGrace)
 	f.save(t)
@@ -137,4 +137,31 @@ func TestAnAdoptedRecordOutlivesTheGrace(t *testing.T) {
 	require.NotNil(t, got, "the resumed conversation is still saved")
 	assert.Equal(t, &ProcessRef{PID: 9002, StartMillis: 90020}, got.Process)
 	assert.Equal(t, restored.Argv, got.Argv)
+}
+
+// A save between the restore and the handoff keeps the discovered record with
+// the old process. Codex does not name its conversation until it writes to
+// it, so later saves cannot read it again; they must keep the adopted process
+// rather than the earlier save's copy.
+func TestAnAdoptedDiscoveredRecordOutlivesAnEarlierSave(t *testing.T) {
+	f := newSaveFixture(t)
+	panePID := startAgentPane(t, f.tm)
+	f.procs[panePID] = proc(panePID, 1, "sleep", "sleep", "600")
+	pane := strings.TrimSpace(mustRun(t, f.tm, "display-message", "-p", "-t", "work", "#{pane_id}"))
+	restored := Record{
+		Agent: "codex", ConversationID: "c-1", Argv: []string{"codex", "resume", "c-1"},
+		Process: &ProcessRef{PID: 4242, StartMillis: 1}, RecordedAt: 1, Discovered: true,
+	}
+	setResume(t, f.tm, pane, restored)
+	f.save(t)
+
+	f.procs[9002] = proc(9002, panePID, "codex", "codex", "resume", "c-1")
+	require.NoError(t, AdoptRecord(t.Context(), f.tm, f.procs, pane, 9002, f.now))
+	f.save(t)
+	f.now = f.now.Add(goneGrace)
+	f.save(t)
+
+	got := liveResume(t, f)
+	require.NotNil(t, got, "the resumed conversation is still saved")
+	assert.Equal(t, &ProcessRef{PID: 9002, StartMillis: 90020}, got.Process)
 }
