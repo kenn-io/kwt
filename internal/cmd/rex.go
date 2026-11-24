@@ -92,16 +92,7 @@ itself when that program exits.`,
 		if err != nil {
 			return err
 		}
-		client, err := rex.Dial(ctx, server.Socket)
-		if err != nil {
-			return err
-		}
-		terminal, err := client.Terminal(ctx, args[0])
-		_ = client.Close()
-		if err != nil {
-			return err
-		}
-		return runRexAttach(ctx, server.Socket, terminal.SessionID, terminal.BlockID)
+		return runRexAttach(ctx, server.Endpoint, args[0])
 	}),
 }
 
@@ -178,7 +169,7 @@ func dialRexServer(ctx context.Context, executables []string) (*rex.Client, erro
 	if err != nil {
 		return nil, err
 	}
-	client, err := rex.Dial(ctx, server.Socket)
+	client, err := rex.Dial(ctx, server.Endpoint)
 	if serverGone(err) {
 		return nil, fmt.Errorf("%w: %w", rex.ErrNotRunning, err)
 	}
@@ -238,7 +229,7 @@ func rexListing(ctx context.Context, executables []string) (rexListingOutput, er
 	case err != nil:
 		return listing, err
 	}
-	client, err := rex.Dial(ctx, server.Socket)
+	client, err := rex.Dial(ctx, server.Endpoint)
 	if serverGone(err) {
 		listing.Status = rexNotRunning
 		return listing, nil
@@ -260,7 +251,7 @@ func rexListing(ctx context.Context, executables []string) (rexListingOutput, er
 // serverGone reports a Rex socket that is missing or refuses connections:
 // REX_SERVER names a stopped server, or the server stopped after discovery.
 func serverGone(err error) bool {
-	return errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)
+	return errors.Is(err, syscall.ENOENT) || connectionRefused(err)
 }
 
 // resetTerminalModes undoes modes that the painted screen or the program
@@ -273,7 +264,7 @@ const resetTerminalModes = "\x1b[?1047l\x1b7\x1b[r\x1b8\x1b[?25h" +
 	"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l" +
 	"\x1b[?1004l\x1b[?2004l\x1b[=0u\x1b[>4;0m\x1b[?1l\x1b>\x1b[0m"
 
-func runRexAttach(ctx context.Context, socket, sessionID, blockID string) error {
+func runRexAttach(ctx context.Context, endpoint, blockID string) error {
 	stdin := int(os.Stdin.Fd()) //nolint:gosec // File descriptors fit in int.
 	if !term.IsTerminal(stdin) {
 		return errors.New("kwt rex attach needs a terminal")
@@ -293,13 +284,12 @@ func runRexAttach(ctx context.Context, socket, sessionID, blockID string) error 
 
 	sizes, stop := watchTerminalSize(ctx, stdin)
 	defer stop()
-	_, err = rex.Attach(ctx, socket, rex.AttachOptions{
-		SessionID: sessionID,
-		BlockID:   blockID,
-		In:        os.Stdin,
-		Out:       os.Stdout,
-		Size:      rex.Size{Columns: columns, Rows: rows},
-		Sizes:     sizes,
+	_, err = rex.Attach(ctx, endpoint, rex.AttachOptions{
+		BlockID: blockID,
+		In:      os.Stdin,
+		Out:     os.Stdout,
+		Size:    rex.Size{Columns: columns, Rows: rows},
+		Sizes:   sizes,
 	})
 	if err != nil {
 		// Leave the error on its own line below the terminal's contents.

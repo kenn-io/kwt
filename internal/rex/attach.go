@@ -41,6 +41,7 @@ type Size struct {
 
 // AttachOptions selects the terminal and the local terminal that shows it.
 type AttachOptions struct {
+	// SessionID is the terminal's session. Empty looks it up from BlockID.
 	SessionID string
 	BlockID   string
 	In        io.Reader
@@ -55,30 +56,28 @@ type AttachOptions struct {
 // returns the program's exit status when the program ends, or nil when the
 // attach ends first: opts.In closed or ctx was canceled. Detaching never
 // stops the program.
-func Attach(ctx context.Context, socket string, opts AttachOptions) (*int, error) {
+func Attach(ctx context.Context, endpoint string, opts AttachOptions) (*int, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	client, err := Dial(ctx, socket)
+	// One limit covers everything before the terminal shows, so a server
+	// that stalls at any step cannot hold up a fallback such as SSH. The
+	// connections it opens outlive it.
+	setup, cancelSetup := context.WithTimeout(ctx, setupTimeout)
+	defer cancelSetup()
+	client, err := Dial(setup, endpoint)
 	if err != nil {
+		return nil, err
+	}
+
+	a := &attachment{client: client, session: opts.SessionID, block: opts.BlockID}
+	data, nonce, err := a.open(setup, endpoint, opts.Size)
+	if err != nil {
+		client.drop()
 		return nil, err
 	}
 	defer client.Close()
-
-	a := &attachment{client: client, session: opts.SessionID, block: opts.BlockID}
-	err = client.Call(ctx, "session.attach", map[string]string{"session_id": a.session}, nil)
-	if err != nil && !IsCode(err, "conflict") {
-		return nil, err
-	}
-	// Take the block and set its size first, so the snapshot and the first
-	// paint already have this terminal's size.
-	if err := a.resize(ctx, opts.Size); err != nil {
-		return nil, err
-	}
-	data, nonce, err := a.openData(ctx, socket)
-	if err != nil {
-		return nil, err
-	}
+	cancelSetup()
 	defer func() { _ = data.CloseNow() }()
 
 	type result struct {
@@ -156,7 +155,29 @@ func (a *attachment) resize(ctx context.Context, size Size) error {
 		map[string]int{"columns": size.Columns, "rows": size.Rows}, nil)
 }
 
-func (a *attachment) openData(ctx context.Context, socket string) (*websocket.Conn, uint64, error) {
+// open finds the terminal's session when it is not known, joins it, sizes
+// the terminal, and opens its stream.
+func (a *attachment) open(ctx context.Context, endpoint string, size Size) (*websocket.Conn, uint64, error) {
+	if a.session == "" {
+		terminal, err := a.client.Terminal(ctx, a.block)
+		if err != nil {
+			return nil, 0, err
+		}
+		a.session = terminal.SessionID
+	}
+	err := a.client.Call(ctx, "session.attach", map[string]string{"session_id": a.session}, nil)
+	if err != nil && !IsCode(err, "conflict") {
+		return nil, 0, err
+	}
+	// Take the block and set its size first, so the snapshot and the first
+	// paint already have this terminal's size.
+	if err := a.resize(ctx, size); err != nil {
+		return nil, 0, err
+	}
+	return a.openData(ctx, endpoint)
+}
+
+func (a *attachment) openData(ctx context.Context, endpoint string) (*websocket.Conn, uint64, error) {
 	var ticket struct {
 		Ticket string `json:"ticket"`
 	}
@@ -171,7 +192,7 @@ func (a *attachment) openData(ctx context.Context, socket string) (*websocket.Co
 	if err != nil {
 		return nil, 0, fmt.Errorf("rex sent an unreadable data ticket: %w", err)
 	}
-	conn, err := dial(ctx, socket, "/api/data", dataProtocol)
+	conn, err := dial(ctx, endpoint, "/api/data", dataProtocol)
 	if err != nil {
 		return nil, 0, err
 	}

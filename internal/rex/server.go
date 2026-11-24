@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -20,9 +22,11 @@ var (
 	ErrNotRunning = errors.New("the Rex server is not running")
 )
 
-// Server is a running Rex server reached through its Unix socket.
+// Server is a running Rex server.
 type Server struct {
-	Socket      string `json:"socket"`
+	// Endpoint is where the server answers: unix://PATH on this machine, or
+	// http:// or https:// with a host, such as a server's tailnet address.
+	Endpoint    string `json:"endpoint"`
 	Version     string `json:"version,omitempty"`
 	APIRevision int    `json:"api_revision,omitempty"`
 }
@@ -41,13 +45,15 @@ func Executables() []string {
 	return found
 }
 
-// FindServer locates the account's running Rex server. REX_SERVER, a
-// unix:// endpoint, takes precedence. Otherwise the first rex command found
+// FindServer locates the account's running Rex server. REX_SERVER, an
+// endpoint as Server describes it, takes precedence. Otherwise the first rex command found
 // in executables reports its server. A missing server is never started.
 func FindServer(ctx context.Context, executables []string) (Server, error) {
 	if endpoint := os.Getenv("REX_SERVER"); endpoint != "" {
-		socket, err := unixSocket(endpoint)
-		return Server{Socket: socket}, err
+		if err := checkEndpoint(endpoint); err != nil {
+			return Server{}, err
+		}
+		return Server{Endpoint: endpoint}, nil
 	}
 	for _, rex := range executables {
 		info, err := os.Stat(rex)
@@ -72,23 +78,51 @@ func FindServer(ctx context.Context, executables []string) (Server, error) {
 		if err := json.Unmarshal(stdout.Bytes(), &who); err != nil {
 			return Server{}, fmt.Errorf("rex whoami printed unreadable JSON: %w", err)
 		}
-		socket, err := unixSocket(who.Endpoint)
-		if err != nil {
+		if err := checkEndpoint(who.Endpoint); err != nil {
 			return Server{}, err
 		}
-		return Server{Socket: socket, Version: who.Version, APIRevision: who.APIRevision}, nil
+		return Server{Endpoint: who.Endpoint, Version: who.Version, APIRevision: who.APIRevision}, nil
 	}
 	return Server{}, ErrNotInstalled
 }
 
-func unixSocket(endpoint string) (string, error) {
-	rest, ok := strings.CutPrefix(endpoint, "unix://")
-	if !ok {
-		return "", fmt.Errorf("only local Rex servers (unix://) are supported, not %q", endpoint)
+func checkEndpoint(endpoint string) error {
+	_, _, err := webSocketTarget(endpoint, "")
+	return err
+}
+
+// webSocketTarget is the WebSocket URL for path on the server at endpoint
+// and the HTTP client that reaches it.
+func webSocketTarget(endpoint, path string) (string, *http.Client, error) {
+	unsupported := fmt.Errorf("the Rex server endpoint %q is not unix://PATH, http://HOST[:PORT], or https://HOST[:PORT]", endpoint)
+	if rest, ok := strings.CutPrefix(endpoint, "unix://"); ok {
+		socket, err := url.PathUnescape(rest)
+		if err != nil || socket == "" {
+			return "", nil, unsupported
+		}
+		transport := &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+			},
+		}
+		return "ws://rex" + path, &http.Client{Transport: transport}, nil
 	}
-	path, err := url.PathUnescape(rest)
-	if err != nil {
-		return "", fmt.Errorf("unreadable Rex endpoint %q: %w", endpoint, err)
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Host == "" {
+		return "", nil, unsupported
 	}
-	return path, nil
+	base := strings.TrimSuffix(parsed.Host+parsed.Path, "/")
+	// Rex listens on a tailnet address, which a proxy named in the
+	// environment usually cannot reach, so connect to it directly.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	direct := &http.Client{Transport: transport}
+	switch parsed.Scheme {
+	case "http":
+		return "ws://" + base + path, direct, nil
+	case "https":
+		return "wss://" + base + path, direct, nil
+	default:
+		return "", nil, unsupported
+	}
 }

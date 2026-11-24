@@ -25,7 +25,7 @@ type controlRun struct {
 
 func startControl(t *testing.T, server *fakeServer, windowID string) *controlRun {
 	t.Helper()
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 	inReader, inWriter := io.Pipe()

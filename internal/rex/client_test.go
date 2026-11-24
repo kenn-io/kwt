@@ -1,16 +1,20 @@
 package rex
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,7 +24,7 @@ func TestCallReturnsRexErrors(t *testing.T) {
 	server.answer("session.attach", func(json.RawMessage) (any, *Error) {
 		return nil, &Error{Code: "session_not_found", Message: "no such session"}
 	})
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -87,7 +91,7 @@ func TestTerminalsListsTerminalBlocksInEverySession(t *testing.T) {
 		}, nil
 	})
 
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 	terminals, err := client.Terminals(t.Context())
@@ -117,7 +121,7 @@ func TestTerminalFindsTheSessionThatHoldsABlock(t *testing.T) {
 	}})
 	server.answerValue("session.attach", view("session:a", "work",
 		window("window:1", "editor", "", block("block:1", terminalCreator, "shell"))))
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -165,7 +169,7 @@ func TestAttachPaintsTheScreenThenStreamsOutputUntilTheProgramExits(t *testing.T
 	// Input that stays open, as a terminal's does.
 	in, inWriter := io.Pipe()
 	t.Cleanup(func() { _ = inWriter.Close() })
-	exit, err := Attach(t.Context(), server.socket, AttachOptions{
+	exit, err := Attach(t.Context(), server.endpoint, AttachOptions{
 		SessionID: "session:a",
 		BlockID:   "block:1",
 		In:        in,
@@ -192,6 +196,52 @@ func TestAttachPaintsTheScreenThenStreamsOutputUntilTheProgramExits(t *testing.T
 	assert.JSONEq(t, `{"session_id":"session:a","block_id":"block:1","args":{"columns":100,"rows":30}}`, string(resize[0]))
 }
 
+func TestAttachReachesAServerAtANetworkAddress(t *testing.T) {
+	server := newFakeNetworkServer(t)
+	server.answerValue("com.superlogical.terminal.format", map[string]string{"content": "PAINTED"})
+	server.stream = [][]byte{
+		[]byte("GHOSTSNP-binary"),
+		rexMessage(server.nonce, `{"type":"resize","cols":80,"rows":24}`),
+		[]byte("over the network"),
+		rexMessage(server.nonce, `{"type":"child_exited","exit_code":0}`),
+	}
+	in, inWriter := io.Pipe()
+	t.Cleanup(func() { _ = inWriter.Close() })
+
+	var out syncBuffer
+	exit, err := Attach(t.Context(), server.endpoint, AttachOptions{
+		SessionID: "session:a", BlockID: "block:1", In: in, Out: &out, Size: Size{Columns: 80, Rows: 24},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, exit)
+	assert.Contains(t, out.String(), "PAINTED")
+	assert.Contains(t, out.String(), "over the network")
+}
+
+func TestAttachFindsTheTerminalsSession(t *testing.T) {
+	server := newFakeNetworkServer(t)
+	server.answerValue("session.list", map[string]any{"sessions": []any{
+		map[string]any{"session_id": "session:b", "label": "work"},
+	}})
+	server.answerValue("session.attach", view("session:b", "work",
+		window("window:1", "", "", block("block:7", terminalCreator, "shell"))))
+	server.answerValue("com.superlogical.terminal.title", map[string]string{"title": "vim"})
+	server.answerValue("com.superlogical.terminal.format", map[string]string{"content": ""})
+	server.stream = [][]byte{rexMessage(server.nonce, `{"type":"child_exited","exit_code":0}`)}
+	in, inWriter := io.Pipe()
+	t.Cleanup(func() { _ = inWriter.Close() })
+
+	_, err := Attach(t.Context(), server.endpoint, AttachOptions{
+		BlockID: "block:7", In: in, Out: io.Discard, Size: Size{Columns: 80, Rows: 24},
+	})
+
+	require.NoError(t, err)
+	connects := server.callsTo("data.connect")
+	require.Len(t, connects, 1)
+	assert.Contains(t, string(connects[0]), `"session_id":"session:b"`)
+}
+
 func TestAttachTypesInputAndFollowsResizes(t *testing.T) {
 	server := newFakeServer(t)
 	server.answerValue("com.superlogical.terminal.format", map[string]string{"content": ""})
@@ -201,7 +251,7 @@ func TestAttachTypesInputAndFollowsResizes(t *testing.T) {
 	sizes := make(chan Size, 1)
 	done := make(chan error, 1)
 	go func() {
-		_, err := Attach(t.Context(), server.socket, AttachOptions{
+		_, err := Attach(t.Context(), server.endpoint, AttachOptions{
 			SessionID: "session:a",
 			BlockID:   "block:1",
 			In:        inReader,
@@ -245,7 +295,7 @@ func TestAttachTypesInputAndFollowsResizes(t *testing.T) {
 func TestAttachReportsARejectedStream(t *testing.T) {
 	server := newFakeServer(t)
 	server.answerValue("data.connect", map[string]string{"ticket": "d3Jvbmc"})
-	_, err := Attach(t.Context(), server.socket, AttachOptions{
+	_, err := Attach(t.Context(), server.endpoint, AttachOptions{
 		SessionID: "session:a", BlockID: "block:1",
 		In: strings.NewReader(""), Out: io.Discard, Size: Size{Columns: 80, Rows: 24},
 	})
@@ -290,7 +340,7 @@ func TestTerminalsNameBlocksByLabelWithoutProcessDetails(t *testing.T) {
 		return nil, &Error{Code: "method_not_found", Message: "method not found"}
 	})
 
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 	terminals, err := client.Terminals(t.Context())
@@ -306,7 +356,7 @@ func TestAttachKeepsACharacterSplitAcrossReadsWhole(t *testing.T) {
 	inReader, inWriter := io.Pipe()
 	done := make(chan error, 1)
 	go func() {
-		_, err := Attach(t.Context(), server.socket, AttachOptions{
+		_, err := Attach(t.Context(), server.endpoint, AttachOptions{
 			SessionID: "session:a", BlockID: "block:1",
 			In: inReader, Out: io.Discard, Size: Size{Columns: 80, Rows: 24},
 		})
@@ -363,7 +413,7 @@ func TestAttachFinishesOutputBeforeReturning(t *testing.T) {
 	inReader, inWriter := io.Pipe()
 	done := make(chan error, 1)
 	go func() {
-		_, err := Attach(t.Context(), server.socket, AttachOptions{
+		_, err := Attach(t.Context(), server.endpoint, AttachOptions{
 			SessionID: "session:a", BlockID: "block:1",
 			In: inReader, Out: out, Size: Size{Columns: 80, Rows: 24},
 		})
@@ -419,7 +469,7 @@ func TestTerminalsLeavesOutASessionThatEndsWhileItIsRead(t *testing.T) {
 		}
 		return map[string]any{}, nil
 	})
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -445,10 +495,163 @@ func TestTerminalsReportsOtherFailuresReadingASession(t *testing.T) {
 	server.answer("com.superlogical.terminal.title", func(json.RawMessage) (any, *Error) {
 		return nil, &Error{Code: "internal", Message: "boom"}
 	})
-	client, err := Dial(t.Context(), server.socket)
+	client, err := Dial(t.Context(), server.endpoint)
 	require.NoError(t, err)
 	defer client.Close()
 
 	_, err = client.Terminals(t.Context())
 	assert.True(t, IsCode(err, "internal"), "got %v", err)
+}
+
+// shortenSetup makes connection setup give up quickly for one test.
+func shortenSetup(t *testing.T, limit time.Duration) {
+	t.Helper()
+	previous := setupTimeout
+	setupTimeout = limit
+	t.Cleanup(func() { setupTimeout = previous })
+}
+
+// silentServer accepts connections on a loopback port and answers nothing,
+// or, with upgrade, completes the WebSocket upgrade and then says nothing.
+func silentServer(t *testing.T, upgrade bool) string {
+	t.Helper()
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	if upgrade {
+		server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { //nolint:gosec // Loopback test server.
+			conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{controlProtocol}})
+			if err != nil {
+				return
+			}
+			defer func() { _ = conn.CloseNow() }()
+			_, _, _ = conn.Read(context.WithoutCancel(r.Context()))
+			_, _, _ = conn.Read(context.WithoutCancel(r.Context()))
+		})}
+		go func() { _ = server.Serve(listener) }()
+		t.Cleanup(func() { _ = server.Close() })
+	} else {
+		var held []net.Conn
+		var mu sync.Mutex
+		go func() {
+			for {
+				conn, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				mu.Lock()
+				held = append(held, conn)
+				mu.Unlock()
+			}
+		}()
+		t.Cleanup(func() {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, conn := range held {
+				_ = conn.Close()
+			}
+		})
+	}
+	return "http://" + listener.Addr().String()
+}
+
+func TestDialGivesUpOnAServerThatNeverAnswers(t *testing.T) {
+	shortenSetup(t, 200*time.Millisecond)
+	for name, upgrade := range map[string]bool{"connection": false, "hello": true} {
+		t.Run(name, func(t *testing.T) {
+			endpoint := silentServer(t, upgrade)
+			start := time.Now()
+			_, err := Dial(t.Context(), endpoint)
+			require.ErrorIs(t, err, context.DeadlineExceeded)
+			assert.Less(t, time.Since(start), 5*time.Second)
+		})
+	}
+}
+
+func TestAttachGivesUpOnATerminalStreamThatNeverOpens(t *testing.T) {
+	shortenSetup(t, 200*time.Millisecond)
+	server := newFakeNetworkServer(t)
+	server.silentData = true
+
+	_, err := Attach(t.Context(), server.endpoint, AttachOptions{
+		SessionID: "session:a", BlockID: "block:1", In: strings.NewReader(""), Out: io.Discard,
+		Size: Size{Columns: 80, Rows: 24},
+	})
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestAttachGivesUpOnAServerThatStopsAnswering(t *testing.T) {
+	shortenSetup(t, 200*time.Millisecond)
+	server := newFakeNetworkServer(t)
+	server.answer("session.attach", func(json.RawMessage) (any, *Error) {
+		<-t.Context().Done()
+		return nil, nil
+	})
+
+	_, err := Attach(t.Context(), server.endpoint, AttachOptions{
+		SessionID: "session:a", BlockID: "block:1", In: strings.NewReader(""), Out: io.Discard,
+		Size: Size{Columns: 80, Rows: 24},
+	})
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestAttachGivesUpOnAServerThatNeverListsItsSessions(t *testing.T) {
+	shortenSetup(t, 200*time.Millisecond)
+	server := newFakeNetworkServer(t)
+	server.answer("session.list", func(json.RawMessage) (any, *Error) {
+		<-t.Context().Done()
+		return nil, nil
+	})
+
+	_, err := Attach(t.Context(), server.endpoint, AttachOptions{
+		BlockID: "block:1", In: strings.NewReader(""), Out: io.Discard, Size: Size{Columns: 80, Rows: 24},
+	})
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+// The setup limit runs from the start of the attach, not again after the
+// server's slow welcome.
+func TestAttachSetupHasOneLimit(t *testing.T) {
+	const limit = time.Second
+	shortenSetup(t, limit)
+	server := newFakeNetworkServer(t)
+	server.welcomeDelay = limit * 8 / 10
+	server.answer("session.list", func(json.RawMessage) (any, *Error) {
+		<-t.Context().Done()
+		return nil, nil
+	})
+
+	start := time.Now()
+	_, err := Attach(t.Context(), server.endpoint, AttachOptions{
+		BlockID: "block:1", In: strings.NewReader(""), Out: io.Discard, Size: Size{Columns: 80, Rows: 24},
+	})
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Less(t, time.Since(start), limit*3/2)
+}
+
+func TestAnOpenAttachOutlastsTheSetupLimit(t *testing.T) {
+	shortenSetup(t, 100*time.Millisecond)
+	server := newFakeNetworkServer(t)
+	server.answerValue("com.superlogical.terminal.format", map[string]string{"content": ""})
+	server.streamDelay = 400 * time.Millisecond
+	server.stream = [][]byte{
+		rexMessage(server.nonce, `{"type":"resize","cols":80,"rows":24}`),
+		[]byte("still here"),
+		rexMessage(server.nonce, `{"type":"child_exited","exit_code":0}`),
+	}
+	in, inWriter := io.Pipe()
+	t.Cleanup(func() { _ = inWriter.Close() })
+
+	var out syncBuffer
+	exit, err := Attach(t.Context(), server.endpoint, AttachOptions{
+		SessionID: "session:a", BlockID: "block:1", In: in, Out: &out, Size: Size{Columns: 80, Rows: 24},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, exit)
+	assert.Contains(t, out.String(), "still here")
 }
