@@ -65,7 +65,7 @@ func runDaemonCommand(
 ) ([]byte, []byte, error) {
 	t.Helper()
 	// registerDaemonCleanup stops the daemon after t.Context is canceled.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 30*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, binary, args...)
 	command.Env = append(os.Environ(), "KWT_HOME="+home)

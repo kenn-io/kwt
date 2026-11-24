@@ -28,29 +28,6 @@ jobs:
             packages: ./...
           - os: macos-latest
             packages: ./...
-          - os: windows-latest
-            packages: >-
-              ./internal/cmd
-              ./worktree
-              ./internal/worktree
-              ./internal/git
-              ./internal/discovery
-              ./internal/status
-              ./internal/tmux
-              ./cmd/kwt
-              ./internal/command
-              ./internal/duration
-              ./internal/filesystem
-              ./internal/finder
-              ./internal/registry
-              ./internal/shell
-              ./internal/table
-              ./internal/template
-              ./internal/tui
-              ./internal/ui
-              ./internal/url
-              ./internal/utils
-              ./pkg/models
 
     steps:
       - name: Checkout
@@ -64,25 +41,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Exclude test paths from Windows Defender
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          if (-not (Get-Command Add-MpPreference -ErrorAction SilentlyContinue)) {
-            exit 0
-          }
-          $paths = @(
-            $env:GITHUB_WORKSPACE,
-            $env:RUNNER_TEMP,
-            $env:TEMP,
-            $env:TMP,
-            (& go env GOCACHE),
-            (& go env GOMODCACHE)
-          ) | Where-Object { $_ } | Select-Object -Unique
-          Add-MpPreference -ExclusionPath $paths -ExclusionProcess @('git.exe', 'go.exe') -ErrorAction SilentlyContinue
-
       - name: Test
-        if: runner.os != 'Windows'
         shell: bash
         env:
           TEST_PACKAGES: ${{ matrix.packages }}
@@ -146,15 +105,96 @@ jobs:
               --packages "$TEST_PACKAGES" \
               -- -count=1
 
+      - name: Upload test results
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-${{ matrix.os }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Build
+        run: go build ./cmd/kwt
+
+      - name: Cross-build Windows ARM64
+        if: runner.os == 'Linux'
+        run: GOOS=windows GOARCH=arm64 go build -o /tmp/kwt-windows-arm64.exe ./cmd/kwt
+
+  test-windows:
+    name: Go (windows-latest, ${{ matrix.shard }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: cmd
+            run_bootstrap: false
+            build: false
+            packages: ./internal/cmd
+          - shard: packages
+            run_bootstrap: true
+            build: true
+            packages: >-
+              ./worktree
+              ./internal/worktree
+              ./internal/git
+              ./internal/discovery
+              ./internal/status
+              ./internal/tmux
+              ./cmd/kwt
+              ./internal/command
+              ./internal/duration
+              ./internal/filesystem
+              ./internal/finder
+              ./internal/registry
+              ./internal/shell
+              ./internal/table
+              ./internal/template
+              ./internal/tui
+              ./internal/ui
+              ./internal/url
+              ./internal/utils
+              ./pkg/models
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Exclude test paths from Windows Defender
+        shell: pwsh
+        run: |
+          if (-not (Get-Command Add-MpPreference -ErrorAction SilentlyContinue)) {
+            exit 0
+          }
+          $paths = @(
+            $env:GITHUB_WORKSPACE,
+            $env:RUNNER_TEMP,
+            $env:TEMP,
+            $env:TMP,
+            (& go env GOCACHE),
+            (& go env GOMODCACHE)
+          ) | Where-Object { $_ } | Select-Object -Unique
+          Add-MpPreference -ExclusionPath $paths -ExclusionProcess @('git.exe', 'go.exe') -ErrorAction SilentlyContinue
+
       - name: Test
-        if: runner.os == 'Windows'
         shell: pwsh
         env:
           TEST_PACKAGES: ${{ matrix.packages }}
-          TEST_SUITE: ${{ matrix.os }}
+          TEST_SUITE: windows-latest-${{ matrix.shard }}
+          TEST_BOOTSTRAP: ${{ matrix.run_bootstrap }}
         run: |
           $testPackages = $env:TEST_PACKAGES
           $suite = $env:TEST_SUITE
+          $runBootstrap = $env:TEST_BOOTSTRAP -eq 'true'
           $results = Join-Path (Get-Location) 'gotestsum'
           $kwtTestHome = Join-Path $env:RUNNER_TEMP 'kwt-test-home'
           $gitConfig = Join-Path $env:RUNNER_TEMP 'kwt-test-gitconfig'
@@ -190,24 +230,26 @@ jobs:
           $env:GIT_CONFIG_NOSYSTEM = '1'
           $env:GIT_TERMINAL_PROMPT = '0'
 
-          # The bootstrap module stays dependency-free, so its tests run the
-          # root module's gotestsum build from inside the bootstrap module.
           # Pass -count=1 so go test skips test-result caching: packages that
           # spawn git thousands of times write huge testlog.txt files whose
           # computeTestInputsID EvalSymlinks loop otherwise costs >10m on Windows.
-          $gotestsum = & go tool -n gotestsum
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Push-Location tools/testbootstrap
-          & $gotestsum `
-            --format pkgname-and-test-fails --format-icons text `
-            --jsonfile (Join-Path $results "$suite-bootstrap.json") `
-            --rerun-fails=2 `
-            --rerun-fails-report (Join-Path $results "$suite-bootstrap-reruns.txt") `
-            --packages ./... `
-            -- -count=1
-          $bootstrapExit = $LASTEXITCODE
-          Pop-Location
-          if ($bootstrapExit -ne 0) { exit $bootstrapExit }
+          if ($runBootstrap) {
+            # The bootstrap module stays dependency-free, so its tests run the
+            # root module's gotestsum build from inside the bootstrap module.
+            $gotestsum = & go tool -n gotestsum
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Push-Location tools/testbootstrap
+            & $gotestsum `
+              --format pkgname-and-test-fails --format-icons text `
+              --jsonfile (Join-Path $results "$suite-bootstrap.json") `
+              --rerun-fails=2 `
+              --rerun-fails-report (Join-Path $results "$suite-bootstrap-reruns.txt") `
+              --packages ./... `
+              -- -count=1
+            $bootstrapExit = $LASTEXITCODE
+            Pop-Location
+            if ($bootstrapExit -ne 0) { exit $bootstrapExit }
+          }
           $env:KWT_HOME = $kwtTestHome
           & go -C tools/testbootstrap run . -- gotestsum `
             --format pkgname-and-test-fails --format-icons text `
@@ -222,17 +264,30 @@ jobs:
         if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: gotestsum-${{ matrix.os }}-attempt-${{ github.run_attempt }}
+          name: gotestsum-windows-latest-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: gotestsum/*.json
           retention-days: 14
           if-no-files-found: ignore
 
       - name: Build
+        if: matrix.build
         run: go build ./cmd/kwt
 
-      - name: Cross-build Windows ARM64
-        if: runner.os == 'Linux'
-        run: GOOS=windows GOARCH=arm64 go build -o /tmp/kwt-windows-arm64.exe ./cmd/kwt
+  windows:
+    name: Go (windows-latest)
+    needs: [test-windows]
+    if: "!cancelled()"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Windows shards
+        env:
+          WINDOWS_RESULT: ${{ needs.test-windows.result }}
+        run: |
+          if [ "$WINDOWS_RESULT" != "success" ]; then
+            echo "Windows test shards finished with status: $WINDOWS_RESULT" >&2
+            exit 1
+          fi
 
   lint:
     name: Lint

@@ -25,7 +25,7 @@ func runInventoryCommand(
 ) ([]byte, []byte, error) {
 	t.Helper()
 	installInventoryTmuxFixture(t)
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, binary, args...)
 	command.Dir = directory
