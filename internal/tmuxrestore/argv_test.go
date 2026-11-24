@@ -75,7 +75,7 @@ func TestBuildLaunchClaude(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := Record{Agent: "claude", ConversationID: "c-1", Argv: strings.Fields(tc.argv), PermissionMode: tc.mode}
-			got := BuildLaunch(rec, "claude")
+			got := BuildLaunch(rec, "claude", Turn{})
 			assert.Equal(t, tc.want, strings.Join(got.Argv, " "))
 			assert.Equal(t, tc.dropped, got.Dropped)
 			assert.False(t, got.Fallback)
@@ -87,12 +87,12 @@ func TestBuildLaunchStartsTheConfiguredAgentProgram(t *testing.T) {
 	rec := Record{Agent: "claude", ConversationID: "c-1", Argv: []string{"/m/2.1.329/bin/claude.exe", "--model", "haiku"}}
 
 	assert.Equal(t, []string{"/opt/bin/claude", "--model", "haiku", "--resume", "c-1"},
-		BuildLaunch(rec, "/opt/bin/claude --verbose").Argv)
+		BuildLaunch(rec, "/opt/bin/claude --verbose", Turn{}).Argv)
 	assert.Equal(t, []string{"claude", "--model", "haiku", "--resume", "c-1"},
-		BuildLaunch(rec, "env FOO=1 claude").Argv, "a wrapper command is not the agent's program")
+		BuildLaunch(rec, "env FOO=1 claude", Turn{}).Argv, "a wrapper command is not the agent's program")
 	// Restore runs the program without a shell, so nothing would expand ~.
 	assert.Equal(t, []string{"claude", "--model", "haiku", "--resume", "c-1"},
-		BuildLaunch(rec, "~/bin/claude").Argv, "a home-relative program is found by name instead")
+		BuildLaunch(rec, "~/bin/claude", Turn{}).Argv, "a home-relative program is found by name instead")
 }
 
 func TestBuildLaunchCodex(t *testing.T) {
@@ -137,7 +137,7 @@ func TestBuildLaunchCodex(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := BuildLaunch(Record{Agent: "codex", ConversationID: "x-1", Argv: tc.argv}, "codex")
+			got := BuildLaunch(Record{Agent: "codex", ConversationID: "x-1", Argv: tc.argv}, "codex", Turn{})
 			assert.Equal(t, tc.want, got.Argv)
 			assert.Equal(t, tc.dropped, got.Dropped)
 		})
@@ -177,7 +177,7 @@ func TestBuildLaunchAgy(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := BuildLaunch(Record{Agent: "agy", ConversationID: "g-1", Argv: tc.argv}, "")
+			got := BuildLaunch(Record{Agent: "agy", ConversationID: "g-1", Argv: tc.argv}, "", Turn{})
 			assert.Equal(t, tc.want, got.Argv)
 			assert.Equal(t, tc.dropped, got.Dropped)
 		})
@@ -185,11 +185,60 @@ func TestBuildLaunchAgy(t *testing.T) {
 }
 
 func TestBuildLaunchFallsBackToTheConfiguredCommand(t *testing.T) {
-	got := BuildLaunch(Record{Agent: "codex", ConversationID: "x-1"}, "codex --yolo")
+	got := BuildLaunch(Record{Agent: "codex", ConversationID: "x-1"}, "codex --yolo", Turn{})
 	assert.Equal(t, []string{"codex", "--yolo", "resume", "x-1"}, got.Argv)
 	assert.True(t, got.Fallback)
 
-	got = BuildLaunch(Record{Agent: "claude", ConversationID: "c-1", PermissionMode: "plan"}, "")
+	got = BuildLaunch(Record{Agent: "claude", ConversationID: "c-1", PermissionMode: "plan"}, "", Turn{})
 	assert.Equal(t, []string{"claude", "--permission-mode", "plan", "--resume", "c-1"}, got.Argv)
 	assert.True(t, got.Fallback)
+}
+
+func TestBuildLaunchCodexUsesTheLatestTurn(t *testing.T) {
+	turn := Turn{Model: "gpt-b", Effort: "low"}
+	cases := []struct {
+		name string
+		argv []string
+		turn Turn
+		want []string
+	}{
+		{
+			name: "launch model and effort replaced",
+			argv: []string{"codex", "-m", "gpt-a", "-c", "model_reasoning_effort=xhigh", "-c", "a=b", "--yolo"},
+			turn: turn,
+			want: []string{"codex", "-c", "a=b", "--yolo", "-m", "gpt-b", "-c", "model_reasoning_effort=low", "resume", "x-1"},
+		},
+		{
+			name: "long and inline spellings replaced",
+			argv: []string{"codex", "--model=gpt-a", "--config", "model_reasoning_effort = high", "-c=model_reasoning_effort=high"},
+			turn: turn,
+			want: []string{"codex", "-m", "gpt-b", "-c", "model_reasoning_effort=low", "resume", "x-1"},
+		},
+		{
+			name: "settings added to a launch without them",
+			argv: []string{"codex", "--yolo"},
+			turn: turn,
+			want: []string{"codex", "--yolo", "-m", "gpt-b", "-c", "model_reasoning_effort=low", "resume", "x-1"},
+		},
+		{
+			name: "effort kept when the turn names none",
+			argv: []string{"codex", "-m", "gpt-a", "-c", "model_reasoning_effort=xhigh"},
+			turn: Turn{Model: "gpt-b"},
+			want: []string{"codex", "-c", "model_reasoning_effort=xhigh", "-m", "gpt-b", "resume", "x-1"},
+		},
+		{
+			name: "launch kept when the turn is unknown",
+			argv: []string{"codex", "-m", "gpt-a"},
+			want: []string{"codex", "-m", "gpt-a", "resume", "x-1"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := BuildLaunch(Record{Agent: "codex", ConversationID: "x-1", Argv: tc.argv}, "codex", tc.turn)
+			assert.Equal(t, tc.want, got.Argv)
+		})
+	}
+
+	claude := BuildLaunch(Record{Agent: "claude", ConversationID: "c-1", Argv: []string{"claude", "--model", "opus"}}, "claude", turn)
+	assert.Equal(t, []string{"claude", "--model", "opus", "--resume", "c-1"}, claude.Argv, "only Codex reports its turns")
 }

@@ -175,3 +175,28 @@ func TestColdRestoreOfTwoSameNamedSessions(t *testing.T) {
 	require.Len(t, remaining, 1, "the other socket's session is still restorable")
 	assert.Equal(t, "other", remaining[0].Socket.Name)
 }
+
+// A person can change Codex's model and effort mid-conversation; the restored
+// conversation keeps the ones its last turn used, not the launch's.
+func TestColdRestoreResumesCodexWithItsLatestModel(t *testing.T) {
+	a := newRestoreAcceptance(t)
+	rollout := filepath.Join(os.Getenv("HOME"), ".codex", "sessions", "2026", "11", "24", "rollout-2026-11-24T09-00-00-x-1.jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(rollout), 0o700))
+	require.NoError(t, os.WriteFile(rollout, []byte(
+		`{"type":"turn_context","payload":{"model":"gpt-a","effort":"xhigh"}}`+"\n"+
+			`{"type":"turn_context","payload":{"model":"gpt-b","effort":"low"}}`+"\n"+
+			`{"type":"event_msg","payload":{"type":"agent_message","message":"done"}}`+"\n"), 0o600))
+
+	pane := a.mustTmux(t, "-L", "default", "new-session", "-d", "-s", "work", "-c", t.TempDir(), "-P", "-F", "#{pane_id}")
+	a.startAgent(t, "default", pane, "codex", "x-1")
+	a.mustTmux(t, "-L", "default", "kill-server")
+
+	entries := a.entries(t)
+	require.Len(t, entries, 1)
+	a.run(t, "", nil, "session", "restore", entries[0].ID, "--json")
+
+	restored := strings.TrimSpace(a.mustTmux(t, "-L", "default", "list-panes", "-t", "work", "-F", "#{pane_id}"))
+	started := a.agentLog(t, restored)
+	assert.Equal(t, "codex", started["name"])
+	assert.True(t, strings.HasSuffix(started["args"], "-m gpt-b -c model_reasoning_effort=low resume x-1"), started["args"])
+}

@@ -852,7 +852,10 @@ for a kwt worktree session, and `state` (`pending`, `creating`, or
   reported as `directory missing`.
 - **Conversations:** a pane that ran Claude Code, Codex, or `agy` resumes that
   conversation with the launch settings kwt recognized, such as the model and
-  permission mode. The report names any flags it dropped, never their values.
+  permission mode. A Codex conversation resumes with the model and reasoning
+  effort its last turn used, as recorded in its rollout file, so a `/model`
+  change after launch is kept. The report names any flags it dropped, never
+  their values.
   The agent starts as the program configured in `[agents]`, or by name from
   the pane's `PATH`, so an agent update between save and restore does not
   break the resume.
@@ -931,7 +934,10 @@ Known limits:
   conversation, and
   a slow shutdown can drop a live one.
 - kwt replays the Claude permission mode the last hook saw. A mode change
-  after that is lost.
+  after that is lost. A Claude Code `/model` change is also lost: Claude
+  resumes with its launch model.
+- A Codex `/model` change made after the last turn started is lost, as is
+  any change in a compressed rollout file.
 - kwt does not confirm that the agent started or found its conversation. A
   launch that fails right after its handoff can still be reported as
   `started`. The pane shows the error.
