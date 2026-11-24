@@ -5,7 +5,7 @@ go 1.27.4
 require (
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.1.1
-	charm.land/lipgloss/v2 v2.0.6
+	charm.land/lipgloss/v2 v2.1.1
 	github.com/Microsoft/go-winio v0.6.4
 	github.com/bmatcuk/doublestar/v4 v4.10.4
 	github.com/cenkalti/backoff/v7 v7.0.3
@@ -23,8 +23,8 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
-	go.kenn.io/kit v0.58.2-0.20261121214445-336136456834
-	golang.org/x/mod v0.42.0
+	go.kenn.io/kit v0.58.2-0.20261124011425-32da07108cf1
+	golang.org/x/mod v0.43.0
 	golang.org/x/sync v0.25.0
 	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.48.0

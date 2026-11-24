@@ -83,7 +83,7 @@ func TestInstallTargetsAgentsPresentOnHost(t *testing.T) {
 	home := isolateAgentConfig(t)
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".claude"), 0o700))
 
-	results, err := Install("/opt/kwt/bin/kwt", nil)
+	results, err := Install("/opt/kwt/bin/kwt", false, nil)
 	require.NoError(t, err)
 
 	require.Len(t, results, 1)
@@ -92,7 +92,7 @@ func TestInstallTargetsAgentsPresentOnHost(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(settings), "/opt/kwt/bin/kwt agent-hook run --agent claude "+Marker)
 
-	statuses, err := Statuses("/opt/kwt/bin/kwt")
+	statuses, err := Statuses("/opt/kwt/bin/kwt", false)
 	require.NoError(t, err)
 	claude := findStatus(t, statuses, agenthook.AgentClaude)
 	assert.True(t, claude.Available)
@@ -102,7 +102,7 @@ func TestInstallTargetsAgentsPresentOnHost(t *testing.T) {
 	assert.False(t, codex.Available)
 	assert.False(t, codex.Installed)
 
-	moved, err := Statuses("/opt/kwt-next/bin/kwt")
+	moved, err := Statuses("/opt/kwt-next/bin/kwt", false)
 	require.NoError(t, err)
 	claude = findStatus(t, moved, agenthook.AgentClaude)
 	assert.True(t, claude.Installed)
@@ -111,15 +111,47 @@ func TestInstallTargetsAgentsPresentOnHost(t *testing.T) {
 	removed, err := Uninstall(nil)
 	require.NoError(t, err)
 	require.Len(t, removed, 1)
-	statuses, err = Statuses("/opt/kwt/bin/kwt")
+	statuses, err = Statuses("/opt/kwt/bin/kwt", false)
 	require.NoError(t, err)
 	assert.False(t, findStatus(t, statuses, agenthook.AgentClaude).Installed)
+}
+
+// A plain install keeps Codex hooks that run another kwt that still exists, so
+// an app update that moves its kwt does not make Codex ask for trust again.
+// An install that names the kwt to run moves them.
+func TestExactInstallMovesHooksOffAnotherKwt(t *testing.T) {
+	home := isolateAgentConfig(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".codex"), 0o700))
+	pinned, err := os.Executable()
+	require.NoError(t, err)
+	stable := filepath.Join(t.TempDir(), "kwt")
+	codex := []agenthook.Agent{agenthook.AgentCodex}
+	_, err = Install(pinned, false, codex)
+	require.NoError(t, err)
+
+	kept, err := Install(stable, false, codex)
+	require.NoError(t, err)
+	assert.False(t, kept[0].Changed)
+	statuses, err := Statuses(stable, true)
+	require.NoError(t, err)
+	assert.False(t, findStatus(t, statuses, agenthook.AgentCodex).Current, "the hooks still run the other kwt")
+
+	moved, err := Install(stable, true, codex)
+	require.NoError(t, err)
+	assert.True(t, moved[0].Changed)
+	hooks, err := os.ReadFile(filepath.Join(home, ".codex", "hooks.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(hooks), stable)
+	assert.NotContains(t, string(hooks), pinned)
+	statuses, err = Statuses(stable, true)
+	require.NoError(t, err)
+	assert.True(t, findStatus(t, statuses, agenthook.AgentCodex).Current)
 }
 
 func TestInstallRejectsNamedAgentWithoutConfigDirectory(t *testing.T) {
 	isolateAgentConfig(t)
 
-	_, err := Install("/opt/kwt/bin/kwt", []agenthook.Agent{agenthook.AgentCodex})
+	_, err := Install("/opt/kwt/bin/kwt", false, []agenthook.Agent{agenthook.AgentCodex})
 
 	require.ErrorContains(t, err, "Codex")
 }
