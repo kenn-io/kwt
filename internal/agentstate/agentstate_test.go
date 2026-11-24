@@ -2,6 +2,7 @@ package agentstate
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -139,13 +140,39 @@ func TestExactInstallMovesHooksOffAnotherKwt(t *testing.T) {
 	moved, err := Install(stable, true, codex)
 	require.NoError(t, err)
 	assert.True(t, moved[0].Changed)
-	hooks, err := os.ReadFile(filepath.Join(home, ".codex", "hooks.json"))
-	require.NoError(t, err)
-	assert.Contains(t, string(hooks), stable)
-	assert.NotContains(t, string(hooks), pinned)
+	commands := codexHookCommands(t, filepath.Join(home, ".codex", "hooks.json"))
+	require.NotEmpty(t, commands)
+	for _, command := range commands {
+		assert.Contains(t, command, stable)
+		assert.NotContains(t, command, pinned)
+	}
 	statuses, err = Statuses(stable, true)
 	require.NoError(t, err)
 	assert.True(t, findStatus(t, statuses, agenthook.AgentCodex).Current)
+}
+
+// codexHookCommands reads every hook command from a Codex hooks file.
+func codexHookCommands(t *testing.T, path string) []string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var config struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	require.NoError(t, json.Unmarshal(data, &config))
+	var commands []string
+	for _, groups := range config.Hooks {
+		for _, group := range groups {
+			for _, hook := range group.Hooks {
+				commands = append(commands, hook.Command)
+			}
+		}
+	}
+	return commands
 }
 
 func TestInstallRejectsNamedAgentWithoutConfigDirectory(t *testing.T) {
