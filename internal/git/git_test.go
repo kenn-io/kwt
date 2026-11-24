@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -353,6 +354,39 @@ func TestInventoryEnvironmentRemovesGitRoutingAndCredentials(t *testing.T) {
 	}, got)
 }
 
+var (
+	gitTestRepoTemplateMu  sync.Mutex
+	gitTestRepoTemplateDir string
+)
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if gitTestRepoTemplateDir != "" {
+		_ = os.RemoveAll(gitTestRepoTemplateDir)
+	}
+	os.Exit(code)
+}
+
+func ensureGitTestRepoTemplate(t *testing.T) string {
+	t.Helper()
+	gitTestRepoTemplateMu.Lock()
+	defer gitTestRepoTemplateMu.Unlock()
+	if gitTestRepoTemplateDir != "" {
+		return gitTestRepoTemplateDir
+	}
+	dir, err := os.MkdirTemp("", "kwt-internal-git-template-")
+	require.NoError(t, err)
+	repo := &TestRepository{Path: dir, t: t}
+	require.NoError(t, repo.run("init", "-b", "main"))
+	require.NoError(t, repo.run("config", "user.name", "Test User"))
+	require.NoError(t, repo.run("config", "user.email", "test@example.com"))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Test Repository\n"), 0o644))
+	require.NoError(t, repo.run("add", "."))
+	require.NoError(t, repo.run("commit", "-m", "Initial commit"))
+	gitTestRepoTemplateDir = dir
+	return dir
+}
+
 // TestRepository creates a test git repository
 type TestRepository struct {
 	Path string
@@ -372,31 +406,7 @@ func NewTestRepository(t *testing.T) *TestRepository {
 	t.Setenv("GIT_COMMITTER_NAME", "Test User")
 	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.com")
 
-	// Initialize repository with main as default branch
-	if err := repo.run("init", "-b", "main"); err != nil {
-		t.Fatalf("Failed to init repository: %v", err)
-	}
-
-	// Configure git user for commits
-	if err := repo.run("config", "user.name", "Test User"); err != nil {
-		t.Fatalf("Failed to set user.name: %v", err)
-	}
-	if err := repo.run("config", "user.email", "test@example.com"); err != nil {
-		t.Fatalf("Failed to set user.email: %v", err)
-	}
-
-	// Create initial commit
-	testFile := filepath.Join(tmpDir, "README.md")
-	if err := os.WriteFile(testFile, []byte("# Test Repository\n"), 0644); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-	if err := repo.run("add", "."); err != nil {
-		t.Fatalf("Failed to add files: %v", err)
-	}
-	if err := repo.run("commit", "-m", "Initial commit"); err != nil {
-		t.Fatalf("Failed to create initial commit: %v", err)
-	}
-
+	require.NoError(t, os.CopyFS(tmpDir, os.DirFS(ensureGitTestRepoTemplate(t))))
 	return repo
 }
 

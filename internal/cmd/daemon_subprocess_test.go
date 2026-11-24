@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -44,31 +43,7 @@ type daemonTestBuild struct {
 
 func buildDaemonTestBinary(t *testing.T, build daemonTestBuild) string {
 	t.Helper()
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.NoError(t, err)
-	suffix := ""
-	if runtime.GOOS == "windows" {
-		suffix = ".exe"
-	}
-	dir := t.TempDir()
-	path := filepath.Join(dir, build.Name+suffix)
-	command := exec.CommandContext(
-		t.Context(),
-		"go",
-		"build",
-		"-buildvcs=false",
-		"-ldflags",
-		"-X go.kenn.io/kwt/internal/cmd.version="+build.Version+
-			" -X go.kenn.io/kwt/internal/cmd.commit="+build.Revision+
-			" -X go.kenn.io/kwt/internal/cmd.revisionTime="+build.RevisionTime,
-		"-o",
-		path,
-		"./cmd/kwt",
-	)
-	command.Dir = root
-	output, err := command.CombinedOutput()
-	require.NoError(t, err, string(output))
-	return path
+	return cachedDaemonTestBinary(t, build)
 }
 
 func newDaemonTestHome(t *testing.T, body string) string {
@@ -154,10 +129,7 @@ func registerDaemonCleanup(t *testing.T, binary, home string) {
 }
 
 func TestProjectsRemoveMissingExpectedRepositoryReturnsJSON(t *testing.T) {
-	binary := buildDaemonTestBinary(t, daemonTestBuild{
-		Name: "kwt-project-remove-validation", Version: "v1.5.0",
-		Revision: strings.Repeat("e", 40),
-	})
+	binary, _ := buildDaemonTestBinaries(t)
 	home := newDaemonTestHome(t, validDaemonConfig)
 
 	stdout, stderr, err := runDaemonCommand(
@@ -174,10 +146,7 @@ func TestProjectsRemoveMissingExpectedRepositoryReturnsJSON(t *testing.T) {
 }
 
 func TestDaemonSubprocessGuardedProjectRemoval(t *testing.T) {
-	binary := buildDaemonTestBinary(t, daemonTestBuild{
-		Name: "kwt-guarded-project", Version: "v1.5.0",
-		Revision: strings.Repeat("e", 40),
-	})
+	binary, _ := buildDaemonTestBinaries(t)
 	credentialCanary := "guarded-project-secret"
 	exactPath := filepath.Join(t.TempDir(), "missing ")
 	home := newDaemonTestHome(t, validDaemonConfig+fmt.Sprintf(`

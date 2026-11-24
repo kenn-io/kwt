@@ -3736,13 +3736,7 @@ func newShortTUITestRoot(t *testing.T) string {
 func newTUITestRepoAt(t *testing.T, repoPath string) string {
 	t.Helper()
 
-	runTUITestGit(t, "", "init", "-b", "main", repoPath)
-	runTUITestGit(t, repoPath, "config", "user.name", "Test User")
-	runTUITestGit(t, repoPath, "config", "user.email", "test@example.com")
-
-	require.NoError(t, os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("# Test Repository\n"), 0644))
-	runTUITestGit(t, repoPath, "add", ".")
-	runTUITestGit(t, repoPath, "commit", "-m", "Initial commit")
+	copyTUITestRepoTemplate(t, repoPath)
 	return repoPath
 }
 

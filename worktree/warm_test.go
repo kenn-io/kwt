@@ -24,6 +24,7 @@ func warmRequest(t *testing.T) worktree.WarmRequest {
 }
 
 func TestWarmPreparationAndClaimLockOrder(t *testing.T) {
+	t.Parallel()
 	root, _ := fixture(t)
 	req := warmRequest(t)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "file"), []byte("prepared\n"), 0o600))
@@ -93,6 +94,7 @@ func TestWarmPreparationAndClaimLockOrder(t *testing.T) {
 }
 
 func TestWarmClaimUsesLatestRevisionAndPreservesChangedSpare(t *testing.T) {
+	t.Parallel()
 	root, _ := fixture(t)
 	repo := openHookless(t, root, kwtPolicy())
 	req := warmRequest(t)
@@ -117,6 +119,7 @@ func TestWarmClaimUsesLatestRevisionAndPreservesChangedSpare(t *testing.T) {
 }
 
 func TestWarmResumesInterruptedBareRegistration(t *testing.T) {
+	t.Parallel()
 	root, _ := fixture(t)
 	bare := filepath.Join(t.TempDir(), "bare.git")
 	git(t, root, "clone", "--bare", root, bare)
@@ -137,6 +140,7 @@ func TestWarmResumesInterruptedBareRegistration(t *testing.T) {
 }
 
 func TestWarmCanceledRegistrationCompletesBeforeReleasingRepository(t *testing.T) {
+	t.Parallel()
 	root, _ := fixture(t)
 	req := warmRequest(t)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -164,12 +168,14 @@ func TestWarmCanceledRegistrationCompletesBeforeReleasingRepository(t *testing.T
 }
 
 func TestWarmClaimReportsCheckoutRetainedAfterCleanupFailure(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		mode          managed.CheckoutMode
 		failedCommand string
 	}{{managed.CheckoutDetached, "remove"}, {managed.CheckoutNewBranch, "remove"}, {managed.CheckoutNewBranch, "list"}} {
 		mode := tc.mode
 		t.Run(fmt.Sprintf("mode=%d/failure=%s", mode, tc.failedCommand), func(t *testing.T) {
+			t.Parallel()
 			require := require.New(t)
 			root, _ := fixture(t)
 			req := warmRequest(t)
@@ -212,6 +218,7 @@ func TestWarmClaimReportsCheckoutRetainedAfterCleanupFailure(t *testing.T) {
 }
 
 func TestWarmExistingBranchKeepsAttachmentSemantics(t *testing.T) {
+	t.Parallel()
 	root, _ := fixture(t)
 	repo := openHookless(t, root, kwtPolicy())
 	req := warmRequest(t)
@@ -243,6 +250,7 @@ func TestWarmExistingBranchKeepsAttachmentSemantics(t *testing.T) {
 }
 
 func TestWarmClaimCreatesAndRollsBackNewBranch(t *testing.T) {
+	t.Parallel()
 	root, _ := fixture(t)
 	repo := openHookless(t, root, kwtPolicy())
 	req := warmRequest(t)
@@ -264,13 +272,15 @@ func TestWarmClaimCreatesAndRollsBackNewBranch(t *testing.T) {
 	_, err = result.Rollback(t.Context(), managed.RollbackUnchanged)
 	require.NoError(t, err)
 	require.NoDirExists(t, result.Path)
-	_, err = gitcmd.New().Output(t.Context(), root, "rev-parse", "--verify", "refs/heads/new-topic")
+	_, err = testGitRunner().Output(t.Context(), root, "rev-parse", "--verify", "refs/heads/new-topic")
 	require.Error(t, err)
 }
 
 func TestWarmNewBranchClaimCleansUpCanceledCheckout(t *testing.T) {
+	t.Parallel()
 	for _, afterCheckout := range []bool{false, true} {
 		t.Run(fmt.Sprintf("after-checkout=%t", afterCheckout), func(t *testing.T) {
+			t.Parallel()
 			require := require.New(t)
 			root, _ := fixture(t)
 			req := warmRequest(t)
@@ -302,7 +312,7 @@ func TestWarmNewBranchClaimCleansUpCanceledCheckout(t *testing.T) {
 			require.Empty(result.OwnedBranch)
 			require.NoDirExists(req.Path)
 			require.NoDirExists(claim.Create.Git.Path)
-			_, err = gitcmd.New().Output(t.Context(), root, "rev-parse", "--verify", "refs/heads/new-topic")
+			_, err = testGitRunner().Output(t.Context(), root, "rev-parse", "--verify", "refs/heads/new-topic")
 			require.Error(err)
 			repo = openHookless(t, root, kwtPolicy())
 			require.NoError(repo.PrepareWarm(t.Context(), req))
@@ -316,6 +326,7 @@ func TestWarmNewBranchClaimCleansUpCanceledCheckout(t *testing.T) {
 }
 
 func TestWarmNewBranchClaimPreservesUnknownMoveOutcome(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	root, _ := fixture(t)
 	req := warmRequest(t)
@@ -344,8 +355,10 @@ func TestWarmNewBranchClaimPreservesUnknownMoveOutcome(t *testing.T) {
 }
 
 func TestWarmPreparationPreservesMissingNonSpareRegistration(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"attached", "unmarked", "assigned", "foreign-lock"} {
 		t.Run(state, func(t *testing.T) {
+			t.Parallel()
 			root, _ := fixture(t)
 			repo := openHookless(t, root, kwtPolicy())
 			req := warmRequest(t)
@@ -376,6 +389,7 @@ func TestWarmPreparationPreservesMissingNonSpareRegistration(t *testing.T) {
 }
 
 func TestWarmPreparationRebuildsMissingSpare(t *testing.T) {
+	t.Parallel()
 	root, _ := fixture(t)
 	repo := openHookless(t, root, kwtPolicy())
 	req := warmRequest(t)
@@ -389,8 +403,10 @@ func TestWarmPreparationRebuildsMissingSpare(t *testing.T) {
 }
 
 func TestWarmPreparationKeepsSpareLockedDuringReset(t *testing.T) {
+	t.Parallel()
 	for _, resumed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("resumed=%t", resumed), func(t *testing.T) {
+			t.Parallel()
 			root, _ := fixture(t)
 			require.NoError(t, os.WriteFile(filepath.Join(root, "file"), []byte("base\n"), 0o600))
 			git(t, root, "add", "file")
@@ -431,6 +447,7 @@ func TestWarmPreparationKeepsSpareLockedDuringReset(t *testing.T) {
 }
 
 func TestWarmResumeLeavesForeignLockedSpareUntouched(t *testing.T) {
+	t.Parallel()
 	root, _ := fixture(t)
 	repo := openHookless(t, root, kwtPolicy())
 	req := warmRequest(t)
@@ -456,8 +473,10 @@ func TestWarmResumeLeavesForeignLockedSpareUntouched(t *testing.T) {
 // the spare keeps it. A claim must not pay for rewriting it, but any config it
 // cannot read with certainty still goes through Git.
 func TestWarmClaimReusesPreparedBareOverride(t *testing.T) {
+	t.Parallel()
 	for _, layout := range []string{"prepared", "commented", "inline-header"} {
 		t.Run(layout, func(t *testing.T) {
+			t.Parallel()
 			root, _ := fixture(t)
 			bare := filepath.Join(t.TempDir(), "bare.git")
 			git(t, root, "clone", "--bare", root, bare)
@@ -501,6 +520,7 @@ func TestWarmClaimReusesPreparedBareOverride(t *testing.T) {
 
 // The fast path may skip Git only when it reads core.bare exactly as Git would.
 func TestBareOverrideSetAcceptsOnlyPlainGitLayout(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		content string
 		want    bool
@@ -518,6 +538,7 @@ func TestBareOverrideSetAcceptsOnlyPlainGitLayout(t *testing.T) {
 		"empty":               {"", false},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			file := filepath.Join(t.TempDir(), "config.worktree")
 			require.NoError(t, os.WriteFile(file, []byte(tc.content), 0o600))
 			require.Equal(t, tc.want, worktree.BareOverrideSet(file))
@@ -529,7 +550,7 @@ func TestBareOverrideSetAcceptsOnlyPlainGitLayout(t *testing.T) {
 // hooklessRunner disables native hooks, as applications that claim warm
 // spares do; a claim cannot let hooks re-enter while it holds the lock.
 func hooklessRunner() gitcmd.Runner {
-	return gitcmd.New().WithConfig("core.hooksPath", os.DevNull)
+	return testGitRunner().WithConfig("core.hooksPath", os.DevNull)
 }
 
 func openHookless(t *testing.T, root string, policy worktree.LockPolicy) *worktree.Repository {
@@ -545,8 +566,10 @@ func openHookless(t *testing.T, root string, policy worktree.LockPolicy) *worktr
 // hook that lists worktrees would wait on that lock forever, so a claim that
 // could run hooks declines and leaves creation to the reservation protocol.
 func TestWarmClaimDeclinesWhenCheckoutHooksMayRun(t *testing.T) {
+	t.Parallel()
 	for _, hooks := range []bool{true, false} {
 		t.Run(fmt.Sprintf("hooks=%t", hooks), func(t *testing.T) {
+			t.Parallel()
 			root, _ := fixture(t)
 			req := warmRequest(t)
 			require.NoError(t, openHookless(t, root, kwtPolicy()).PrepareWarm(t.Context(), req))
@@ -573,8 +596,10 @@ func TestWarmClaimDeclinesWhenCheckoutHooksMayRun(t *testing.T) {
 // Preparation unlocks a spare before publishing it, so a lock on a ready spare
 // belongs to someone else. A claim must decline before checkout mutates it.
 func TestWarmClaimDeclinesLockedReadySpare(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []managed.CheckoutMode{managed.CheckoutDetached, managed.CheckoutExistingBranch, managed.CheckoutNewBranch} {
 		t.Run(fmt.Sprintf("mode=%d", mode), func(t *testing.T) {
+			t.Parallel()
 			root, _ := fixture(t)
 			git(t, root, "branch", "existing")
 			git(t, root, "-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "--allow-empty", "-m", "newer")

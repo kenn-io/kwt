@@ -30,8 +30,10 @@ func removalFixture(t *testing.T) (string, *worktree.Repository, worktree.Remova
 }
 
 func TestRemovalRevalidatesConditionsInsideClaim(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"generation", "head", "backlink", "branch", "repository", "upstream repository", "upstream branch", "staged", "ignored"} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			root, repo, req := removalFixture(t)
 			git(t, root, "remote", "add", "origin", "https://example.com/team/project.git")
 			git(t, root, "remote", "add", "source", "https://example.com/team/source.git")
@@ -93,6 +95,7 @@ func TestRemovalRevalidatesConditionsInsideClaim(t *testing.T) {
 }
 
 func TestRemovalClaimAndBranchOwnership(t *testing.T) {
+	t.Parallel()
 	root, repo, req := removalFixture(t)
 	req.DeleteObservedBranch = true
 	var escaped func() (worktree.RemovalResult, error)
@@ -114,11 +117,12 @@ func TestRemovalClaimAndBranchOwnership(t *testing.T) {
 	require.Equal(t, []string{"topic"}, result.BranchesRemoved)
 	_, expiredErr := escaped()
 	require.Error(t, expiredErr)
-	_, err = gitcmd.New().Output(t.Context(), root, "show-ref", "--verify", "refs/heads/topic")
+	_, err = testGitRunner().Output(t.Context(), root, "show-ref", "--verify", "refs/heads/topic")
 	require.Error(t, err)
 }
 
 func TestRemovalConditionsWithoutGeneration(t *testing.T) {
+	t.Parallel()
 	root, path := fixture(t)
 	repo := open(t, root, kwtPolicy())
 	req := worktree.RemovalRequest{Path: path, Conditions: &worktree.RemovalConditions{Branch: "other"}}
@@ -137,6 +141,7 @@ func TestRemovalConditionsWithoutGeneration(t *testing.T) {
 }
 
 func TestRemovalDoesNothingWhenClaimWasReplaced(t *testing.T) {
+	t.Parallel()
 	_, repo, req := removalFixture(t)
 	req.Claim = func(_ context.Context, _ func() error, _ func() (worktree.RemovalResult, error)) (bool, error) {
 		return false, nil
@@ -149,6 +154,7 @@ func TestRemovalDoesNothingWhenClaimWasReplaced(t *testing.T) {
 }
 
 func TestExactRemovalPreservesRecordedSymlink(t *testing.T) {
+	t.Parallel()
 	root, path := fixture(t)
 	repo := open(t, root, kwtPolicy())
 	alias := filepath.Join(t.TempDir(), "recorded")
@@ -173,6 +179,7 @@ func TestExactRemovalPreservesRecordedSymlink(t *testing.T) {
 }
 
 func TestForceRemovalRetainsIdentityGuard(t *testing.T) {
+	t.Parallel()
 	_, repo, req := removalFixture(t)
 	req.Force = true
 	req.Conditions = nil
@@ -184,15 +191,17 @@ func TestForceRemovalRetainsIdentityGuard(t *testing.T) {
 }
 
 func TestRemovalReportsPartialEffectsWithoutDeletingBranches(t *testing.T) {
+	t.Parallel()
 	for _, variant := range []string{"checkout remnant", "branch failure"} {
 		t.Run(variant, func(t *testing.T) {
+			t.Parallel()
 			root, path := fixture(t)
 			registration := git(t, path, "rev-parse", "--absolute-git-dir")
 			expectedOID := git(t, path, "rev-parse", "HEAD")
 			c, err := worktree.NewCoordinator(kwtPolicy())
 			require.NoError(t, err)
 			boundaryFailure := errors.New("fixture removal failure")
-			repo, err := c.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: gitcmd.New(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
+			repo, err := c.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: testGitRunner(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
 				if variant == "branch failure" && len(args) > 1 && args[0] == "branch" && (args[1] == "-d" || args[1] == "-D") {
 					return nil, boundaryFailure
 				}
@@ -229,8 +238,10 @@ func TestRemovalReportsPartialEffectsWithoutDeletingBranches(t *testing.T) {
 }
 
 func TestMaintenanceRepairsBeforePruningAndRejectsUnreviewedChanges(t *testing.T) {
+	t.Parallel()
 	for _, unexpected := range []bool{false, true} {
 		t.Run(map[bool]string{true: "unexpected", false: "reviewed"}[unexpected], func(t *testing.T) {
+			t.Parallel()
 			root, live := fixture(t)
 			missing := filepath.Join(t.TempDir(), "missing")
 			git(t, root, "worktree", "add", "-b", "missing", missing)
@@ -264,6 +275,7 @@ func TestMaintenanceRepairsBeforePruningAndRejectsUnreviewedChanges(t *testing.T
 }
 
 func TestMaintenanceRejectsActiveCreation(t *testing.T) {
+	t.Parallel()
 	root, _ := fixture(t)
 	repo := open(t, root, kwtPolicy())
 	lock := flock.New(filepath.Join(root, ".git", "kwt-worktree-create.lock"))
@@ -275,12 +287,13 @@ func TestMaintenanceRejectsActiveCreation(t *testing.T) {
 }
 
 func TestRemovalReportsEffectsAfterCancellation(t *testing.T) {
+	t.Parallel()
 	root, path := fixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	c, err := worktree.NewCoordinator(kwtPolicy())
 	require.NoError(t, err)
-	repo, err := c.Open(ctx, worktree.RepositoryOptions{Path: root, Runner: gitcmd.New(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
+	repo, err := c.Open(ctx, worktree.RepositoryOptions{Path: root, Runner: testGitRunner(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
 		out, err := r.Output(ctx, dir, args...)
 		if len(args) > 1 && args[0] == "worktree" && args[1] == "remove" && err == nil {
 			cancel()
@@ -298,6 +311,7 @@ func TestRemovalReportsEffectsAfterCancellation(t *testing.T) {
 }
 
 func TestRemovalOfMissingCheckoutKeepsOtherRegistrations(t *testing.T) {
+	t.Parallel()
 	root, repo, req := removalFixture(t)
 	other := filepath.Join(t.TempDir(), "other")
 	git(t, root, "worktree", "add", "-b", "other", other)
@@ -313,6 +327,7 @@ func TestRemovalOfMissingCheckoutKeepsOtherRegistrations(t *testing.T) {
 }
 
 func TestExactRemovalRejectsForeignReplacementAndSubdirectory(t *testing.T) {
+	t.Parallel()
 	root, path := fixture(t)
 	repo := open(t, root, kwtPolicy())
 	subdir := filepath.Join(path, "subdir")
@@ -329,8 +344,10 @@ func TestExactRemovalRejectsForeignReplacementAndSubdirectory(t *testing.T) {
 }
 
 func TestRemoveMissingArtifactsStillDeletesRequestedBranches(t *testing.T) {
+	t.Parallel()
 	for _, expected := range []string{"current", "moved"} {
 		t.Run(expected, func(t *testing.T) {
+			t.Parallel()
 			root, _ := fixture(t)
 			git(t, root, "branch", "leftover")
 			oid := git(t, root, "rev-parse", "leftover")
@@ -350,7 +367,7 @@ func TestRemoveMissingArtifactsStillDeletesRequestedBranches(t *testing.T) {
 				require.Equal(t, []string{"leftover"}, result.BranchesRemoved)
 				require.Empty(t, result.BranchesRemaining)
 				require.Empty(t, result.Remaining.Branch)
-				_, err = gitcmd.New().Output(t.Context(), root, "rev-parse", "--verify", "refs/heads/leftover")
+				_, err = testGitRunner().Output(t.Context(), root, "rev-parse", "--verify", "refs/heads/leftover")
 				require.Error(t, err)
 				return
 			}
@@ -366,6 +383,7 @@ func TestRemoveMissingArtifactsStillDeletesRequestedBranches(t *testing.T) {
 // branch from a working directory that removal just deleted. Removal must run
 // outside the target even when the repository was opened from that checkout.
 func TestRemoveRunsOutsideTheCheckoutItOpenedFrom(t *testing.T) {
+	t.Parallel()
 	root, path := fixture(t)
 	head := git(t, root, "rev-parse", "refs/heads/topic")
 	repo := open(t, path, kwtPolicy())
@@ -379,7 +397,7 @@ func TestRemoveRunsOutsideTheCheckoutItOpenedFrom(t *testing.T) {
 	require.True(t, result.CheckoutRemoved)
 	require.Equal(t, []string{"topic"}, result.BranchesRemoved)
 	require.NoDirExists(t, path)
-	_, err = gitcmd.New().Output(t.Context(), root, "rev-parse", "--verify", "refs/heads/topic")
+	_, err = testGitRunner().Output(t.Context(), root, "rev-parse", "--verify", "refs/heads/topic")
 	require.Error(t, err)
 }
 
@@ -387,8 +405,10 @@ func TestRemoveRunsOutsideTheCheckoutItOpenedFrom(t *testing.T) {
 // generation that no longer exists; callers treat that as a refreshable
 // conflict, not an internal failure.
 func TestFencedRemovalOfVanishedWorktreeReportsGenerationChange(t *testing.T) {
+	t.Parallel()
 	for _, fence := range []string{"identity", "generation"} {
 		t.Run(fence, func(t *testing.T) {
+			t.Parallel()
 			root, path := fixture(t)
 			repo := open(t, root, kwtPolicy())
 			identity := worktree.IdentityPolicy{FileName: "kwt-generation", Generate: true}
@@ -413,6 +433,7 @@ func TestFencedRemovalOfVanishedWorktreeReportsGenerationChange(t *testing.T) {
 }
 
 func TestRemovalLockedWorktreeReportsReasonAndRecovery(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, reason, basename string
 		force                  bool
@@ -424,6 +445,7 @@ func TestRemovalLockedWorktreeReportsReasonAndRecovery(t *testing.T) {
 		{name: "literal single quotes", reason: "'x'", basename: "locked"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root, original := fixture(t)
 			path := filepath.Join(filepath.Dir(original), tc.basename)
 			git(t, root, "worktree", "move", original, path)

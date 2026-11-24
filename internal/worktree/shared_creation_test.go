@@ -23,6 +23,7 @@ func TestManagerCreationReturnsSharedAcquisition(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	runner := gitcmd.New().WithConfig("user.name", "Example").WithConfig("user.email", "example@example.com")
+	runner.DisableSafeDirectoryForward = true
 	for _, args := range [][]string{{"init", "-b", "main"}, {"commit", "--allow-empty", "-m", "initial"}} {
 		_, err = runner.Output(t.Context(), root, args...)
 		require.NoError(t, err)

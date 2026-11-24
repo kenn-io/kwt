@@ -26,13 +26,11 @@ type restoreAcceptance struct {
 func newRestoreAcceptance(t *testing.T) restoreAcceptance {
 	t.Helper()
 	env := newSessionEnv(t)
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.NoError(t, err)
-	a := restoreAcceptance{sessionEnv: env, kwtPath: filepath.Join(t.TempDir(), "kwt"), logs: t.TempDir()}
-	build := exec.CommandContext(t.Context(), "go", "build", "-o", a.kwtPath, "./cmd/kwt")
-	build.Dir = root
-	output, err := build.CombinedOutput()
-	require.NoError(t, err, string(output))
+	a := restoreAcceptance{
+		sessionEnv: env,
+		kwtPath:    buildDaemonTestBinary(t, daemonTestBuild{Name: "kwt"}),
+		logs:       t.TempDir(),
+	}
 
 	// Agents are configured by absolute path: a login shell's PATH setup
 	// could otherwise find a real claude or codex first.

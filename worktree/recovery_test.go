@@ -17,8 +17,10 @@ import (
 )
 
 func TestRecoveryRetainsIndexHeadAndRegistrationAcrossFailure(t *testing.T) {
+	t.Parallel()
 	for _, detached := range []bool{false, true} {
 		t.Run(fmt.Sprintf("detached=%t", detached), func(t *testing.T) {
+			t.Parallel()
 			root, path := fixture(t)
 			repo := open(t, root, kwtPolicy())
 			if detached {
@@ -68,6 +70,7 @@ func TestRecoveryRetainsIndexHeadAndRegistrationAcrossFailure(t *testing.T) {
 }
 
 func TestAdoptExistingNeverCreatesOrCleans(t *testing.T) {
+	t.Parallel()
 	root, path := fixture(t)
 	repo := open(t, root, kwtPolicy())
 	require.NoError(t, os.WriteFile(filepath.Join(path, "notes"), []byte("unfinished"), 0o600))
@@ -106,8 +109,10 @@ func TestAdoptExistingNeverCreatesOrCleans(t *testing.T) {
 }
 
 func TestSyncBaseSkipsCheckedOutAndBacksUpManagedTip(t *testing.T) {
+	t.Parallel()
 	for _, managed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("managed=%t", managed), func(t *testing.T) {
+			t.Parallel()
 			root, path := fixture(t)
 			repo := open(t, root, kwtPolicy())
 			oldTip := git(t, path, "rev-parse", "HEAD")
@@ -138,13 +143,14 @@ func TestSyncBaseSkipsCheckedOutAndBacksUpManagedTip(t *testing.T) {
 }
 
 func TestRecoveryFailurePreservesReplacementDirectory(t *testing.T) {
+	t.Parallel()
 	root, path := fixture(t)
 	metadata := git(t, path, "rev-parse", "--absolute-git-dir")
 	require.NoError(t, os.RemoveAll(path))
 	coordinator, err := worktree.NewCoordinator(kwtPolicy())
 	require.NoError(t, err)
 	failure := errors.New("reconstruction interrupted")
-	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: gitcmd.New(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
+	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: testGitRunner(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
 		out, err := r.Output(ctx, dir, args...)
 		if err == nil && len(args) > 0 && args[0] == "checkout-index" {
 			if err = os.Rename(path, path+"-saved"); err != nil {
@@ -170,12 +176,14 @@ func TestRecoveryFailurePreservesReplacementDirectory(t *testing.T) {
 }
 
 func TestRecoveryReturnsCapturedIdentity(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []worktree.RecoveryMode{worktree.AdoptExistingOnly, worktree.ReconstructRegistered} {
 		for _, identity := range []worktree.IdentityPolicy{
 			{FileName: "kwt-generation", Generate: true},
 			{FileName: "workspace-id", Value: "workspace-a"},
 		} {
 			t.Run(fmt.Sprintf("mode=%d/%s", mode, identity.FileName), func(t *testing.T) {
+				t.Parallel()
 				root, path := fixture(t)
 				repo := open(t, root, kwtPolicy())
 				if mode == worktree.ReconstructRegistered {
@@ -195,6 +203,7 @@ func TestRecoveryReturnsCapturedIdentity(t *testing.T) {
 // Native Git can update the base branch while kwt holds only its own lock. The
 // sync must not overwrite a tip it did not read.
 func TestSyncBaseRefusesBranchMovedByAnotherWriter(t *testing.T) {
+	t.Parallel()
 	root, path := fixture(t)
 	git(t, path, "checkout", "--detach")
 	git(t, root, "-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "--allow-empty", "-m", "remote update")
@@ -204,7 +213,7 @@ func TestSyncBaseRefusesBranchMovedByAnotherWriter(t *testing.T) {
 	moved := false
 	coordinator, err := worktree.NewCoordinator(kwtPolicy())
 	require.NoError(t, err)
-	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: gitcmd.New(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
+	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: testGitRunner(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
 		writesTopic := len(args) > 1 && ((args[0] == "branch" && args[1] == "--force") || (args[0] == "update-ref" && slices.Contains(args, "refs/heads/topic")))
 		if writesTopic && !moved {
 			moved = true
@@ -227,6 +236,7 @@ func TestSyncBaseRefusesBranchMovedByAnotherWriter(t *testing.T) {
 // The checked-out check runs immediately before the write, so a checkout that
 // lands while the old tip is backed up still stops the sync.
 func TestSyncBaseSkipsBranchCheckedOutDuringBackup(t *testing.T) {
+	t.Parallel()
 	root, path := fixture(t)
 	git(t, path, "checkout", "--detach")
 	git(t, root, "-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "--allow-empty", "-m", "rewritten base")
@@ -236,7 +246,7 @@ func TestSyncBaseSkipsBranchCheckedOutDuringBackup(t *testing.T) {
 	checkedOut := false
 	coordinator, err := worktree.NewCoordinator(kwtPolicy())
 	require.NoError(t, err)
-	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: gitcmd.New(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
+	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: testGitRunner(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
 		out, runErr := r.Output(ctx, dir, args...)
 		if !checkedOut && len(args) > 1 && args[0] == "update-ref" && strings.HasPrefix(args[1], "refs/kenn-forge/base-backups/") {
 			checkedOut = true
@@ -277,6 +287,7 @@ func TestRecoveryThroughRelativeRepositoryPath(t *testing.T) {
 // A base branch cannot be created while a branch already occupies its ref
 // namespace; sync must skip it without touching the occupying branch.
 func TestSyncBaseSkipsOccupiedRefNamespace(t *testing.T) {
+	t.Parallel()
 	root, _ := fixture(t)
 	mainTip := git(t, root, "rev-parse", "refs/heads/main")
 	git(t, root, "checkout", "--detach")
@@ -288,7 +299,7 @@ func TestSyncBaseSkipsOccupiedRefNamespace(t *testing.T) {
 		return s.SyncBase(t.Context(), worktree.BaseSyncRequest{Branch: "main", SourceRef: mainTip, Managed: true, BackupPrefix: "refs/kenn-forge/base-backups/"})
 	}))
 
-	_, err := gitcmd.New().Output(t.Context(), root, "rev-parse", "--verify", "--quiet", "refs/heads/main")
+	_, err := testGitRunner().Output(t.Context(), root, "rev-parse", "--verify", "--quiet", "refs/heads/main")
 	require.Error(t, err)
 	require.Equal(t, mainTip, git(t, root, "rev-parse", "refs/heads/main/topic"))
 }
@@ -296,6 +307,7 @@ func TestSyncBaseSkipsOccupiedRefNamespace(t *testing.T) {
 // Deciding whether the base is checked out needs only Git's branch list. An
 // unrelated worktree whose files cannot be read must not stop the sync.
 func TestSyncBaseIgnoresUnreadableUnrelatedWorktree(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX permissions make the checkout unreadable")
 	}
