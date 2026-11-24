@@ -489,8 +489,12 @@ func runSessionExec(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Without tmux's path, the record keeps naming the old process until
+	// the agent's first hook; the launch itself still goes ahead.
+	executable, _ := agentstate.TmuxExecutable()
 	ctx, cancel := context.WithTimeout(commandContext(cmd), sessionExecLockWait)
 	defer cancel()
-	return tmuxrestore.Launch(ctx, store, socket, args[0], launch,
+	tm := tmuxrestore.Tmux{Executable: executable, Socket: socket}
+	return tmuxrestore.Launch(ctx, store, socket, tm, tmuxrestore.SystemProcesses(), args[0], launch,
 		os.Getenv("TMUX_PANE"), tmuxrestore.ServerPIDFromTMUX(tmuxValue))
 }
