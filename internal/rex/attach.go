@@ -60,17 +60,24 @@ func Attach(ctx context.Context, endpoint string, opts AttachOptions) (*int, err
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	client, err := Dial(ctx, endpoint)
+	// One limit covers everything before the terminal shows, so a server
+	// that stalls at any step cannot hold up a fallback such as SSH. The
+	// connections it opens outlive it.
+	setup, cancelSetup := context.WithTimeout(ctx, setupTimeout)
+	defer cancelSetup()
+	client, err := Dial(setup, endpoint)
 	if err != nil {
+		return nil, err
+	}
+
+	a := &attachment{client: client, session: opts.SessionID, block: opts.BlockID}
+	data, nonce, err := a.open(setup, endpoint, opts.Size)
+	if err != nil {
+		client.drop()
 		return nil, err
 	}
 	defer client.Close()
-
-	a := &attachment{client: client, session: opts.SessionID, block: opts.BlockID}
-	data, nonce, err := a.open(ctx, endpoint, opts.Size)
-	if err != nil {
-		return nil, err
-	}
+	cancelSetup()
 	defer func() { _ = data.CloseNow() }()
 
 	type result struct {
@@ -149,12 +156,8 @@ func (a *attachment) resize(ctx context.Context, size Size) error {
 }
 
 // open finds the terminal's session when it is not known, joins it, sizes
-// the terminal, and opens its stream, giving up after setupTimeout so a
-// server that stops answering cannot hang the attach before the terminal
-// shows.
+// the terminal, and opens its stream.
 func (a *attachment) open(ctx context.Context, endpoint string, size Size) (*websocket.Conn, uint64, error) {
-	ctx, cancel := context.WithTimeout(ctx, setupTimeout)
-	defer cancel()
 	if a.session == "" {
 		terminal, err := a.client.Terminal(ctx, a.block)
 		if err != nil {

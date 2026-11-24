@@ -41,6 +41,9 @@ type fakeServer struct {
 	silentData bool
 	// streamDelay holds the stream after WELCOME, as an idle terminal does.
 	streamDelay time.Duration
+	// welcomeDelay holds the control connection's welcome, as a slow
+	// server does.
+	welcomeDelay time.Duration
 }
 
 type fakeCall struct {
@@ -195,6 +198,10 @@ func (f *fakeServer) serveControl(w http.ResponseWriter, r *http.Request) {
 	if _, data, err := conn.Read(ctx); err != nil || json.Unmarshal(data, &hello) != nil || hello.Type != "hello" {
 		return
 	}
+	f.mu.Lock()
+	delay := f.welcomeDelay
+	f.mu.Unlock()
+	time.Sleep(delay)
 	welcome, _ := json.Marshal(map[string]any{"type": "welcome", "protocol": controlProtocol})
 	if conn.Write(ctx, websocket.MessageText, welcome) != nil {
 		return

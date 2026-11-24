@@ -612,6 +612,27 @@ func TestAttachGivesUpOnAServerThatNeverListsItsSessions(t *testing.T) {
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
+// The setup limit runs from the start of the attach, not again after the
+// server's slow welcome.
+func TestAttachSetupHasOneLimit(t *testing.T) {
+	const limit = time.Second
+	shortenSetup(t, limit)
+	server := newFakeNetworkServer(t)
+	server.welcomeDelay = limit * 8 / 10
+	server.answer("session.list", func(json.RawMessage) (any, *Error) {
+		<-t.Context().Done()
+		return nil, nil
+	})
+
+	start := time.Now()
+	_, err := Attach(t.Context(), server.endpoint, AttachOptions{
+		BlockID: "block:1", In: strings.NewReader(""), Out: io.Discard, Size: Size{Columns: 80, Rows: 24},
+	})
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Less(t, time.Since(start), limit*3/2)
+}
+
 func TestAnOpenAttachOutlastsTheSetupLimit(t *testing.T) {
 	shortenSetup(t, 100*time.Millisecond)
 	server := newFakeNetworkServer(t)

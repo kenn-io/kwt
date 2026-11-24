@@ -322,6 +322,13 @@ func (c *Client) Close() error {
 	return err
 }
 
+// drop ends the connection without the closing handshake, which a server
+// that stopped answering would hold up for seconds.
+func (c *Client) drop() {
+	_ = c.conn.CloseNow()
+	<-c.closed
+}
+
 // IsCode reports whether err is a Rex error with code.
 func IsCode(err error, code string) bool {
 	var rexErr *Error
