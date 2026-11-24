@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,11 +21,45 @@ import (
 	"go.kenn.io/kwt/worktree"
 )
 
+var (
+	fixtureTemplateMu  sync.Mutex
+	fixtureTemplateDir string
+)
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if fixtureTemplateDir != "" {
+		_ = os.RemoveAll(fixtureTemplateDir)
+	}
+	os.Exit(code)
+}
+
+func testGitRunner() gitcmd.Runner {
+	runner := gitcmd.New()
+	runner.DisableSafeDirectoryForward = true
+	return runner
+}
+
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	output, err := gitcmd.New().Output(t.Context(), dir, args...)
+	output, err := testGitRunner().Output(t.Context(), dir, args...)
 	require.NoError(t, err)
 	return strings.TrimSpace(string(output))
+}
+
+func ensureFixtureTemplate(t *testing.T) string {
+	t.Helper()
+	fixtureTemplateMu.Lock()
+	defer fixtureTemplateMu.Unlock()
+	if fixtureTemplateDir != "" {
+		return fixtureTemplateDir
+	}
+	dir, err := os.MkdirTemp("", "kwt-worktree-template-")
+	require.NoError(t, err)
+	git(t, dir, "init", "-b", "main")
+	git(t, dir, "-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "--allow-empty", "-m", "initial")
+	fixtureTemplateDir = dir
+	return dir
 }
 
 // fixture returns long-form paths because Git reports them that way. Windows
@@ -32,8 +67,7 @@ func git(t *testing.T, dir string, args ...string) string {
 func fixture(t *testing.T) (string, string) {
 	t.Helper()
 	root := resolvedTempDir(t)
-	git(t, root, "init", "-b", "main")
-	git(t, root, "-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "--allow-empty", "-m", "initial")
+	require.NoError(t, os.CopyFS(root, os.DirFS(ensureFixtureTemplate(t))))
 	path := filepath.Join(resolvedTempDir(t), "topic")
 	git(t, root, "worktree", "add", "-b", "topic", path)
 	return root, path
@@ -50,7 +84,7 @@ func open(t *testing.T, root string, policy worktree.LockPolicy) *worktree.Repos
 	t.Helper()
 	coordinator, err := worktree.NewCoordinator(policy)
 	require.NoError(t, err)
-	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: gitcmd.New()})
+	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: testGitRunner()})
 	require.NoError(t, err)
 	return repo
 }
@@ -63,6 +97,7 @@ func kwtPolicy() worktree.LockPolicy {
 }
 
 func TestRepositoryScopeDoesNotReacquireForIdentityOrList(t *testing.T) {
+	t.Parallel()
 	root, path := fixture(t)
 	repo := open(t, root, kwtPolicy())
 	identity := worktree.IdentityPolicy{FileName: "kwt-generation", Generate: true}
@@ -93,7 +128,7 @@ func TestRepositoryScopeDoesNotReacquireForIdentityOrList(t *testing.T) {
 	}))
 	_, err := escaped.RunGit(t.Context(), path, "config", "--local", "scope.expired", "true")
 	require.Error(t, err)
-	output, err := gitcmd.New().Output(t.Context(), path, "config", "--get", "scope.expired")
+	output, err := testGitRunner().Output(t.Context(), path, "config", "--get", "scope.expired")
 	require.Error(t, err)
 	require.Empty(t, output)
 	require.NoError(t, os.WriteFile(filepath.Join(path, "ordinary-change"), []byte("content"), 0o600))
@@ -107,6 +142,7 @@ func TestRepositoryScopeDoesNotReacquireForIdentityOrList(t *testing.T) {
 }
 
 func TestInventoryAndExplicitIdentityPreserveRegistration(t *testing.T) {
+	t.Parallel()
 	root, path := fixture(t)
 	repo := open(t, root, kwtPolicy())
 	registration := git(t, path, "rev-parse", "--absolute-git-dir")
@@ -145,6 +181,7 @@ func TestInventoryAndExplicitIdentityPreserveRegistration(t *testing.T) {
 }
 
 func TestInventoryHonorsActiveAndStaleCreationReservations(t *testing.T) {
+	t.Parallel()
 	root, path := fixture(t)
 	repo := open(t, root, kwtPolicy())
 	registration := git(t, path, "rev-parse", "--absolute-git-dir")
@@ -178,8 +215,10 @@ func TestInventoryHonorsActiveAndStaleCreationReservations(t *testing.T) {
 }
 
 func TestExistingLockHoldersExcludeRepositoryScopes(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"kwt", "external base", "bare alias", "nonbare symlink"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			root, _ := fixture(t)
 			policy := kwtPolicy()
 			lockPath := filepath.Join(root, ".git", "kwt-worktree.lock")
@@ -248,6 +287,7 @@ func TestLegacyLockHolderProcess(t *testing.T) {
 }
 
 func TestInventoryOpenedAtCommonGitDirectoryFindsPrimaryCheckout(t *testing.T) {
+	t.Parallel()
 	root, path := fixture(t)
 	repo := open(t, filepath.Join(root, ".git"), kwtPolicy())
 	inventory, err := repo.Inspect(t.Context())
@@ -284,13 +324,14 @@ func TestOpenRejectsGitWithoutAbsolutePathFormat(t *testing.T) {
 	t.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH"))
 	coordinator, err := worktree.NewCoordinator(worktree.LockPolicy{FileName: ".kenn-forge-worktree.lock", NonBareRoot: t.TempDir()})
 	require.NoError(t, err)
-	_, err = coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: gitcmd.New()})
+	_, err = coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: testGitRunner()})
 	require.ErrorContains(t, err, "Git 2.31")
 }
 
 // Generation fields describe kwt's marker. Initializing another application's
 // marker must not replace them, while initializing kwt's marker refreshes them.
 func TestListReportsKwtGenerationOnlyForItsMarker(t *testing.T) {
+	t.Parallel()
 	root, path := fixture(t)
 	repo := open(t, root, kwtPolicy())
 	kwt, err := repo.List(t.Context(), worktree.IdentityPolicy{FileName: "kwt-generation", Generate: true})

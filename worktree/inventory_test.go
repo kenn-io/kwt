@@ -13,6 +13,7 @@ import (
 )
 
 func TestIdentityUsesRegisteredBacklinkAfterCheckoutDamage(t *testing.T) {
+	t.Parallel()
 	root, path := fixture(t)
 	repo := open(t, root, kwtPolicy())
 	identity := worktree.IdentityPolicy{FileName: "kwt-generation", Generate: true}
@@ -36,6 +37,7 @@ func TestIdentityUsesRegisteredBacklinkAfterCheckoutDamage(t *testing.T) {
 }
 
 func TestIdentityDoesNotAdoptAnotherRepositoryAtRecordedPath(t *testing.T) {
+	t.Parallel()
 	root, path := fixture(t)
 	other, _ := fixture(t)
 	repo := open(t, root, kwtPolicy())
@@ -52,8 +54,10 @@ func TestIdentityDoesNotAdoptAnotherRepositoryAtRecordedPath(t *testing.T) {
 }
 
 func TestIdentityRejectsAmbiguousOrIncompleteRegistration(t *testing.T) {
+	t.Parallel()
 	for _, variant := range []string{"duplicate", "malformed backlink"} {
 		t.Run(variant, func(t *testing.T) {
+			t.Parallel()
 			root, path := fixture(t)
 			repo := open(t, root, kwtPolicy())
 			broken := filepath.Join(root, ".git", "worktrees", "broken")
@@ -75,8 +79,10 @@ func TestIdentityRejectsAmbiguousOrIncompleteRegistration(t *testing.T) {
 // registration a crash left without its backlink, are leftovers Git itself
 // prunes. They must not block identity for every other worktree.
 func TestIdentityIgnoresAdministrativeLeftovers(t *testing.T) {
+	t.Parallel()
 	for _, variant := range []string{"stray file", "missing backlink", "empty backlink"} {
 		t.Run(variant, func(t *testing.T) {
+			t.Parallel()
 			root, path := fixture(t)
 			repo := open(t, root, kwtPolicy())
 			leftover := filepath.Join(root, ".git", "worktrees", "leftover")
@@ -101,6 +107,7 @@ func TestIdentityIgnoresAdministrativeLeftovers(t *testing.T) {
 }
 
 func TestGenerationRecoversPartialFileButReportsWriteFailure(t *testing.T) {
+	t.Parallel()
 	root, path := fixture(t)
 	repo := open(t, root, kwtPolicy())
 	registration := git(t, path, "rev-parse", "--absolute-git-dir")
@@ -122,8 +129,10 @@ func TestGenerationRecoversPartialFileButReportsWriteFailure(t *testing.T) {
 }
 
 func TestInventoryResolvesSeparateGitDirectoryAndBareContainer(t *testing.T) {
+	t.Parallel()
 	for _, separate := range []bool{true, false} {
 		t.Run(map[bool]string{true: "separate", false: "bare container"}[separate], func(t *testing.T) {
+			t.Parallel()
 			root, _ := fixture(t)
 			container := t.TempDir()
 			main := filepath.Join(container, "main")
@@ -150,11 +159,12 @@ func TestInventoryResolvesSeparateGitDirectoryAndBareContainer(t *testing.T) {
 }
 
 func TestScopeCancellationAndExecutionPolicy(t *testing.T) {
+	t.Parallel()
 	root, path := fixture(t)
 	other, _ := fixture(t)
 	coordinator, err := worktree.NewCoordinator(kwtPolicy())
 	require.NoError(t, err)
-	runner := gitcmd.New().WithConfig("example.value", "caller-value")
+	runner := testGitRunner().WithConfig("example.value", "caller-value")
 	var scopedRead bool
 	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{
 		Path: root, Runner: runner,
@@ -178,6 +188,6 @@ func TestScopeCancellationAndExecutionPolicy(t *testing.T) {
 		return nil
 	}))
 	require.True(t, scopedRead, "scoped Git commands must run through the caller's RunGit")
-	_, err = gitcmd.New().Output(t.Context(), other, "config", "--get", "example.written")
+	_, err = testGitRunner().Output(t.Context(), other, "config", "--get", "example.written")
 	require.Error(t, err)
 }

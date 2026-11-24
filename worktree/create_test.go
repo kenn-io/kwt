@@ -20,8 +20,10 @@ import (
 )
 
 func TestCreateCandidateOrderAndPartialFailure(t *testing.T) {
+	t.Parallel()
 	for _, variant := range []string{"numbered", "ancestor", "detached", "attach"} {
 		t.Run(variant, func(t *testing.T) {
+			t.Parallel()
 			root, _ := fixture(t)
 			repo := open(t, root, kwtPolicy())
 			candidates := []worktree.CheckoutCandidate{
@@ -41,7 +43,7 @@ func TestCreateCandidateOrderAndPartialFailure(t *testing.T) {
 				for n := 2; n < 1000; n++ {
 					fmt.Fprintf(&commands, "create refs/heads/kenn-forge/pr-7-%d HEAD\n", n)
 				}
-				_, _, err := gitcmd.New().Run(t.Context(), root, strings.NewReader(commands.String()), "update-ref", "--stdin")
+				_, _, err := testGitRunner().Run(t.Context(), root, strings.NewReader(commands.String()), "update-ref", "--stdin")
 				require.NoError(t, err)
 				want = ""
 			case "attach":
@@ -79,12 +81,13 @@ func TestCreateCandidateOrderAndPartialFailure(t *testing.T) {
 }
 
 func TestRequiredIdentityFailureKeepsCheckout(t *testing.T) {
+	t.Parallel()
 	root, _ := fixture(t)
 	coordinator, err := worktree.NewCoordinator(kwtPolicy())
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "created")
 	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{
-		Path: root, Runner: gitcmd.New(),
+		Path: root, Runner: testGitRunner(),
 		RunGit: func(ctx context.Context, runner gitcmd.Runner, dir string, args ...string) ([]byte, error) {
 			out, err := runner.Output(ctx, dir, args...)
 			if len(args) > 1 && args[0] == "worktree" && args[1] == "add" && err == nil {
@@ -114,6 +117,7 @@ func TestRequiredIdentityFailureKeepsCheckout(t *testing.T) {
 }
 
 func TestScopedImportFinalizesGenerationWithoutRelocking(t *testing.T) {
+	t.Parallel()
 	origin, _ := fixture(t)
 	clone := filepath.Join(t.TempDir(), "clone")
 	git(t, origin, "clone", origin, clone)
@@ -143,6 +147,7 @@ func TestScopedImportFinalizesGenerationWithoutRelocking(t *testing.T) {
 }
 
 func TestRollbackRejectsActiveCreationReservation(t *testing.T) {
+	t.Parallel()
 	root, _ := fixture(t)
 	repo := open(t, root, kwtPolicy())
 	created, err := repo.Create(t.Context(), worktree.CreateRequest{Git: managed.CreateWorktreeOptions{Path: filepath.Join(t.TempDir(), "created"), Branch: "created", Mode: managed.CheckoutNewBranch}})
@@ -165,6 +170,7 @@ func TestRollbackRejectsActiveCreationReservation(t *testing.T) {
 }
 
 func TestBranchNameSelectionDoesNotCreateRef(t *testing.T) {
+	t.Parallel()
 	root, _ := fixture(t)
 	git(t, root, "branch", "feature")
 	git(t, root, "branch", "feature-a123/topic")
@@ -178,15 +184,17 @@ func TestBranchNameSelectionDoesNotCreateRef(t *testing.T) {
 }
 
 func TestHookCanListWhileCreationIsReserved(t *testing.T) {
+	t.Parallel()
 	for _, outputLimit := range []bool{false, true} {
 		t.Run(strconv.FormatBool(outputLimit), func(t *testing.T) {
+			t.Parallel()
 			root, _ := fixture(t)
 			path := filepath.Join(t.TempDir(), "created")
 			hooks := t.TempDir()
 			report := filepath.Join(t.TempDir(), "listed")
 			require.NoError(t, os.WriteFile(filepath.Join(hooks, "post-checkout"), []byte("#!/bin/sh\n\"$KWT_HOOK_TEST_BINARY\" -test.run='^TestCreationListHookProcess$'\n"), 0o700))
 			git(t, root, "config", "core.hooksPath", hooks)
-			runner := gitcmd.New()
+			runner := testGitRunner()
 			runner.Env = append(runner.Env, "KWT_HOOK_TEST_BINARY="+filepath.ToSlash(os.Args[0]), "KWT_HOOK_TEST_ROOT="+root, "KWT_HOOK_TEST_PATH="+path, "KWT_HOOK_TEST_REPORT="+report, "KWT_HOOK_TEST_LIMIT="+strconv.FormatBool(outputLimit))
 			if outputLimit {
 				runner.StderrLimit = 4096
@@ -238,10 +246,12 @@ func TestCreationListHookProcess(t *testing.T) {
 }
 
 func TestDeferredCheckoutAndOutputLimitCanBeRolledBack(t *testing.T) {
+	t.Parallel()
 	for _, variant := range []string{"bare deferred", "output limit"} {
 		t.Run(variant, func(t *testing.T) {
+			t.Parallel()
 			root, _ := fixture(t)
-			runner := gitcmd.New()
+			runner := testGitRunner()
 			if variant == "bare deferred" {
 				bare := filepath.Join(t.TempDir(), "repository.git")
 				git(t, root, "clone", "--bare", root, bare)
@@ -276,13 +286,14 @@ func TestDeferredCheckoutAndOutputLimitCanBeRolledBack(t *testing.T) {
 			_, err = created.Rollback(t.Context(), managed.RollbackUnchanged)
 			require.NoError(t, err)
 			require.NoDirExists(t, req.Git.Path)
-			_, err = gitcmd.New().Output(t.Context(), root, "show-ref", "--verify", "refs/heads/created")
+			_, err = testGitRunner().Output(t.Context(), root, "show-ref", "--verify", "refs/heads/created")
 			require.Error(t, err)
 		})
 	}
 }
 
 func TestScopedTrackingUsesRepositoryExecutionAndPreservesExistingUpstream(t *testing.T) {
+	t.Parallel()
 	origin, _ := fixture(t)
 	clone := filepath.Join(t.TempDir(), "clone")
 	git(t, origin, "clone", origin, clone)
@@ -295,7 +306,7 @@ func TestScopedTrackingUsesRepositoryExecutionAndPreservesExistingUpstream(t *te
 	recording := false
 	coordinator, err := worktree.NewCoordinator(kwtPolicy())
 	require.NoError(t, err)
-	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: clone, Runner: gitcmd.New().WithConfig(policyKey, "repository"), RunGit: func(ctx context.Context, runner gitcmd.Runner, dir string, args ...string) ([]byte, error) {
+	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: clone, Runner: testGitRunner().WithConfig(policyKey, "repository"), RunGit: func(ctx context.Context, runner gitcmd.Runner, dir string, args ...string) ([]byte, error) {
 		if recording && slices.Contains(args, "branch.available.merge") {
 			if slices.ContainsFunc(runner.Config, func(entry gitcmd.Config) bool { return entry.Key == policyKey }) {
 				tracking++
@@ -325,6 +336,7 @@ func TestScopedTrackingUsesRepositoryExecutionAndPreservesExistingUpstream(t *te
 }
 
 func TestCreateRejectsNestedExecutionAndCrossRepositoryOptions(t *testing.T) {
+	t.Parallel()
 	root, _ := fixture(t)
 	other, _ := fixture(t)
 	repo := open(t, root, kwtPolicy())
@@ -344,6 +356,7 @@ func TestCreateRejectsNestedExecutionAndCrossRepositoryOptions(t *testing.T) {
 }
 
 func TestTrustedCreateInBareRepositoryWithWorktreeConfig(t *testing.T) {
+	t.Parallel()
 	root, _ := fixture(t)
 	bare := filepath.Join(t.TempDir(), "bare.git")
 	git(t, root, "clone", "--bare", root, bare)
@@ -357,6 +370,7 @@ func TestTrustedCreateInBareRepositoryWithWorktreeConfig(t *testing.T) {
 }
 
 func TestCreationReportsIdentityFromItsHeldScope(t *testing.T) {
+	t.Parallel()
 	root, _ := fixture(t)
 	repo := open(t, root, kwtPolicy())
 	req := worktree.CreateRequest{Git: managed.CreateWorktreeOptions{Path: filepath.Join(t.TempDir(), "workspace"), Branch: "created", Mode: managed.CheckoutNewBranch}, Identity: worktree.IdentityPolicy{FileName: "kwt-generation", Generate: true}}
@@ -372,11 +386,12 @@ func TestCreationReportsIdentityFromItsHeldScope(t *testing.T) {
 }
 
 func TestIsolatedCheckoutFailureCanRollbackBeforeIdentityFinalization(t *testing.T) {
+	t.Parallel()
 	root, _ := fixture(t)
 	coordinator, err := worktree.NewCoordinator(kwtPolicy())
 	require.NoError(t, err)
 	failure := errors.New("materialization failed")
-	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: gitcmd.New(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
+	repo, err := coordinator.Open(t.Context(), worktree.RepositoryOptions{Path: root, Runner: testGitRunner(), RunGit: func(ctx context.Context, r gitcmd.Runner, dir string, args ...string) ([]byte, error) {
 		out, err := r.Output(ctx, dir, args...)
 		if err == nil && slices.Contains(args, "reset") {
 			return out, failure
@@ -400,6 +415,7 @@ func TestIsolatedCheckoutFailureCanRollbackBeforeIdentityFinalization(t *testing
 // another caller holds, for example across a long fetch. Creation re-checks
 // the name under its own scope.
 func TestBranchNameReadsDoNotWaitForTheRepositoryLock(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	root, _ := fixture(t)
 	git(t, root, "branch", "feature")

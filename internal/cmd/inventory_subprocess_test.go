@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +25,7 @@ func runInventoryCommand(
 ) ([]byte, []byte, error) {
 	t.Helper()
 	installInventoryTmuxFixture(t)
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, binary, args...)
 	command.Dir = directory
@@ -46,36 +45,14 @@ func installInventoryTmuxFixture(t *testing.T) {
 	if os.Getenv("KWT_TEST_TMUX_FIXTURE_DIR") != "" {
 		return
 	}
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.NoError(t, err)
-	directory := t.TempDir()
-	name := "tmux"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-	path := filepath.Join(directory, name)
-	command := exec.CommandContext(t.Context(), "go", "build", "-o", path, "./internal/cmd/testdata/tmuxfixture")
-	command.Dir = root
-	output, err := command.CombinedOutput()
-	require.NoError(t, err, string(output))
+	directory := filepath.Dir(cachedTestToolBinary(t, "./internal/cmd/testdata/tmuxfixture", "tmux"))
 	t.Setenv("KWT_TEST_TMUX_FIXTURE_DIR", directory)
 	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func buildDaemonFixture(t *testing.T) string {
 	t.Helper()
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.NoError(t, err)
-	suffix := ""
-	if runtime.GOOS == "windows" {
-		suffix = ".exe"
-	}
-	path := filepath.Join(t.TempDir(), "daemonfixture"+suffix)
-	command := exec.CommandContext(t.Context(), "go", "build", "-o", path, "./internal/cmd/testdata/daemonfixture")
-	command.Dir = root
-	output, err := command.CombinedOutput()
-	require.NoError(t, err, string(output))
-	return path
+	return cachedTestToolBinary(t, "./internal/cmd/testdata/daemonfixture", "daemonfixture")
 }
 
 func startDaemonFixture(t *testing.T, fixture, home, mode string) {

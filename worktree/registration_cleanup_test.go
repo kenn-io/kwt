@@ -10,14 +10,15 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	gitcmd "go.kenn.io/kit/git/cmd"
 	managed "go.kenn.io/kit/git/managed"
 	"go.kenn.io/kwt/worktree"
 )
 
 func TestPruneRegistrationPreservesLiveAndForeignCheckouts(t *testing.T) {
+	t.Parallel()
 	for _, replacement := range []string{"live", "missing", "foreign", "symlink"} {
 		t.Run(replacement, func(t *testing.T) {
+			t.Parallel()
 			root, path := fixture(t)
 			repo := open(t, root, kwtPolicy())
 			admin := git(t, path, "rev-parse", "--absolute-git-dir")
@@ -74,8 +75,10 @@ func TestPruneRegistrationPreservesLiveAndForeignCheckouts(t *testing.T) {
 }
 
 func TestObserveRegistrationDoesNotTakeLockOrWriteIdentity(t *testing.T) {
+	t.Parallel()
 	for _, replacement := range []string{"live", "missing", "foreign", "symlink", "invalid-head"} {
 		t.Run(replacement, func(t *testing.T) {
+			t.Parallel()
 			require := require.New(t)
 			root, path := fixture(t)
 			repo := open(t, root, kwtPolicy())
@@ -119,8 +122,10 @@ func TestObserveRegistrationDoesNotTakeLockOrWriteIdentity(t *testing.T) {
 }
 
 func TestQuarantinePreservesCheckoutRootsAndOrphanContents(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"directory", "file", "broken-link", "live", "live-link", "nested", "bare"} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			require := require.New(t)
 			root, live := fixture(t)
 			path := filepath.Join(t.TempDir(), "orphan")
@@ -147,7 +152,7 @@ func TestQuarantinePreservesCheckoutRootsAndOrphanContents(t *testing.T) {
 				require.NoError(os.WriteFile(filepath.Join(path, "notes"), []byte("keep"), 0o600))
 			}
 			destination := filepath.Join(t.TempDir(), "recovered")
-			moved, err := worktree.Quarantine(t.Context(), worktree.QuarantineOptions{Path: path, Destination: destination, Runner: gitcmd.New()})
+			moved, err := worktree.Quarantine(t.Context(), worktree.QuarantineOptions{Path: path, Destination: destination, Runner: testGitRunner()})
 			require.NoError(err)
 			preserve := kind == "live" || kind == "live-link"
 			require.Equal(!preserve, moved)
@@ -180,6 +185,7 @@ func TestQuarantinePreservesCheckoutRootsAndOrphanContents(t *testing.T) {
 }
 
 func TestBranchCleanupAndAvailabilityUseHeldScope(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	root, _ := fixture(t)
 	repo := open(t, root, kwtPolicy())
@@ -205,6 +211,7 @@ func TestBranchCleanupAndAvailabilityUseHeldScope(t *testing.T) {
 // cannot use it as a work tree, such as a bare repository's checkout without
 // its per-worktree core.bare override.
 func TestPruneRegistrationPreservesLinkedCheckoutGitCannotUse(t *testing.T) {
+	t.Parallel()
 	root, _ := fixture(t)
 	bare := filepath.Join(t.TempDir(), "bare.git")
 	git(t, root, "clone", "--bare", root, bare)
@@ -227,8 +234,10 @@ func TestPruneRegistrationPreservesLinkedCheckoutGitCannotUse(t *testing.T) {
 }
 
 func TestReadWorktreeBacklinkFollowsDotGitClaim(t *testing.T) {
+	t.Parallel()
 	for _, layout := range []string{"linked", "relative", "primary", "missing"} {
 		t.Run(layout, func(t *testing.T) {
+			t.Parallel()
 			root, path := fixture(t)
 			admin := git(t, path, "rev-parse", "--absolute-git-dir")
 			want := filepath.FromSlash(admin)
@@ -256,6 +265,7 @@ func TestReadWorktreeBacklinkFollowsDotGitClaim(t *testing.T) {
 // already gone, such as a missing directory or a gitfile left empty by an
 // interrupted git worktree add. Any other Git failure must stay an error.
 func TestIsCheckoutAbsentClassifiesGitErrors(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		err  error
 		want bool
@@ -269,13 +279,14 @@ func TestIsCheckoutAbsentClassifiesGitErrors(t *testing.T) {
 		"nil":                        {nil, false},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			require.Equal(t, tc.want, worktree.IsCheckoutAbsent(tc.err))
 		})
 	}
 
 	_, path := fixture(t)
 	require.NoError(t, os.WriteFile(filepath.Join(path, ".git"), nil, 0o600))
-	_, err := gitcmd.New().Output(t.Context(), path, "rev-parse", "--git-dir")
+	_, err := testGitRunner().Output(t.Context(), path, "rev-parse", "--git-dir")
 	require.Error(t, err)
 	require.True(t, worktree.IsCheckoutAbsent(err), "a real empty gitfile error: %v", err)
 }
