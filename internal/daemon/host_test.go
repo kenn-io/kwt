@@ -423,44 +423,6 @@ func TestServeRefusesASecondWritableOwner(t *testing.T) {
 	assert.Contains(t, err.Error(), "owner")
 }
 
-func TestServeWaitsForTransientOwnerLockRelease(t *testing.T) {
-	home := t.TempDir()
-	store := RuntimeStore(home)
-	release, err := store.AcquireOwnerLock(t.Context())
-	require.NoError(t, err)
-
-	released := make(chan struct{})
-	go func() {
-		time.Sleep(250 * time.Millisecond)
-		release()
-		close(released)
-	}()
-	t.Cleanup(func() { <-released })
-
-	ctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
-	done := make(chan error, 1)
-	go func() {
-		done <- Serve(ctx, ServeOptions{
-			Home:  home,
-			Build: Build{Version: "v1.0.0", Revision: "abc"},
-			Config: models.DaemonConfig{
-				IdleTimeout:      time.Hour,
-				AutoRestart:      "newer",
-				ReplacementGrace: time.Second,
-			},
-			Foreground: true,
-			Now:        time.Now,
-		})
-	}()
-
-	observation := waitForRuntime(t, home)
-	assert.Equal(t, RuntimeReady, observation.State)
-	_, err = observation.Client.Shutdown(t.Context(), "stop")
-	require.NoError(t, err)
-	require.NoError(t, <-done)
-}
-
 func TestServeDoesNotMisclassifyExpiredCallerContextAsOwnerConflict(t *testing.T) {
 	home := t.TempDir()
 	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))

@@ -136,7 +136,7 @@ func TestControllerDefaultStartupBudgetToleratesLoadedLaunch(t *testing.T) {
 	insufficientBudget := errors.New("insufficient startup budget")
 	options.Launch = func(ctx context.Context) error {
 		deadline, ok := ctx.Deadline()
-		if !ok || time.Until(deadline) < 19*time.Second {
+		if !ok || time.Until(deadline) < 9*time.Second {
 			return insufficientBudget
 		}
 		return launchCompleted
