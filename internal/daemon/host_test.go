@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 )
 
 type closingSSHResolver struct {
@@ -420,6 +421,21 @@ func TestServeRefusesASecondWritableOwner(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "owner")
+}
+
+func TestServeDoesNotMisclassifyExpiredCallerContextAsOwnerConflict(t *testing.T) {
+	home := t.TempDir()
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	err := Serve(ctx, ServeOptions{
+		Home:       home,
+		Build:      Build{Version: "v1"},
+		Config:     models.DaemonConfig{ReplacementGrace: time.Second},
+		Foreground: true,
+	})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.False(t, service.IsCode(err, service.Conflict))
 }
 
 func TestBackgroundServeStopsAfterIdleButForegroundServeDoesNot(t *testing.T) {

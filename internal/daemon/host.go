@@ -105,7 +105,7 @@ func Serve(ctx context.Context, opts ServeOptions) error {
 	releaseOwner, err := store.AcquireOwnerLock(ownerCtx)
 	cancelOwner()
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 			return service.NewError(
 				service.Conflict,
 				"another kwt daemon owner is active",
