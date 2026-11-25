@@ -96,6 +96,7 @@ func Save(ctx context.Context, deps SaveDeps) (SaveResult, error) {
 			previous = f.Live.Gone
 			if f.Live.Server == snap.Server {
 				carryDiscovered(&snap, f.Live)
+				carryActivity(&snap, f.Live)
 			}
 		}
 		discover(ctx, &snap, deps.Processes, deps.ClaudeDir, now())
@@ -172,6 +173,43 @@ func reconcile(ctx context.Context, snap *Snapshot, previous map[string]int64, t
 	if len(snap.Gone) == 0 {
 		snap.Gone = nil
 	}
+}
+
+// carryActivity keeps the activity an earlier save read for a pane whose
+// agent's end hook has since cleared it. A shutdown can end an agent before
+// it stops tmux, and any save in between, such as another pane's hook, would
+// otherwise forget the turn the shutdown cut short. Only the same
+// conversation in the same process keeps it: a deliberate end drops the
+// record, and a new conversation or process starts over.
+func carryActivity(snap *Snapshot, earlier *Snapshot) {
+	was := map[string]Pane{}
+	for _, window := range earlier.Windows {
+		for _, pane := range window.Panes {
+			if pane.Activity != nil && pane.Resume != nil {
+				was[pane.ID] = pane
+			}
+		}
+	}
+	for key, window := range snap.Windows {
+		for i := range window.Panes {
+			pane := &window.Panes[i]
+			prev, ok := was[pane.ID]
+			if !ok || pane.Activity != nil || !sameAgentProcess(pane.Resume, prev.Resume) {
+				continue
+			}
+			pane.Activity = prev.Activity
+		}
+		snap.Windows[key] = window
+	}
+}
+
+// sameAgentProcess reports whether both records name the same conversation
+// in the same agent process.
+func sameAgentProcess(a, b *Record) bool {
+	if a == nil || b == nil || a.Process == nil || b.Process == nil {
+		return false
+	}
+	return a.Agent == b.Agent && a.ConversationID == b.ConversationID && *a.Process == *b.Process
 }
 
 // activityOf returns the activity the snapshot saved for the pane, or nil.

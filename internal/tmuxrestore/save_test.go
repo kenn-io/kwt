@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/kwt/internal/agentstate"
 	kwttmux "go.kenn.io/kwt/internal/tmux"
 )
 
@@ -243,6 +244,46 @@ func TestSaveDropsAnExitedAgentOnlyAfterTwoSaves(t *testing.T) {
 	f.now = f.now.Add(time.Minute)
 	f.save(t)
 	assert.Nil(t, resumeOf(), "stays dropped while the pane still holds the record")
+}
+
+func TestSaveKeepsActivityAnEndHookClearedWhileTheSameAgentOwnsThePane(t *testing.T) {
+	// A shutdown can end Claude Code before tmux stops, and its end hook
+	// clears the pane's activity. A save in between must keep the turn the
+	// shutdown cut short.
+	f := newSaveFixture(t)
+	startServer(t, f.tm, "-s", "work")
+	claude := func(pid int32) Record {
+		f.procs[pid] = ProcInfo{PID: pid, PPID: 1, Name: "claude", StartMillis: 1}
+		return Record{Agent: "claude", ConversationID: "c-1", Process: &ProcessRef{PID: pid, StartMillis: 1}}
+	}
+	activity := func(value string) {
+		args := []string{"set-option", "-p", "-t", "work", agentstate.Option, value}
+		if value == "" {
+			args = []string{"set-option", "-p", "-u", "-t", "work", agentstate.Option}
+		}
+		mustRun(t, f.tm, args...)
+	}
+	saved := func() *Activity {
+		f.save(t)
+		files := f.files(t)
+		return files.Live.Windows[files.Live.Sessions[0].Windows[0].Key].Panes[0].Activity
+	}
+	working := &Activity{State: "working", Agent: "claude"}
+
+	setResume(t, f.tm, "work", claude(4242))
+	activity("working 1 claude")
+	assert.Equal(t, working, saved())
+	activity("")
+	assert.Equal(t, working, saved(), "the agent's end cleared only the live indicator")
+
+	setResume(t, f.tm, "work", claude(4343))
+	assert.Nil(t, saved(), "a new agent process starts over")
+
+	activity("working 2 claude")
+	assert.Equal(t, working, saved())
+	activity("")
+	mustRun(t, f.tm, "set-option", "-p", "-u", "-t", "work", ResumeOption)
+	assert.Nil(t, saved(), "a deliberate end drops the record and its activity")
 }
 
 func TestSaveKeepsRecordsWithUnknownProcesses(t *testing.T) {

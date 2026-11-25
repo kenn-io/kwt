@@ -887,10 +887,11 @@ for a kwt worktree session, and `state` (`pending`, `creating`, or
   counts as interrupted when its rollout records the turn's start and neither
   its completion nor its abort, unless its hook last recorded it waiting for
   your approval or answer. A Claude Code turn counts when its hook last
-  recorded `working`. Hooks save each change of activity at once. Agents that
-  finished, were waiting on you, or that kwt cannot read resume without the
-  message, as does `agy`. Without `--continue`, no conversation gets the
-  message.
+  recorded `working`. Hooks save each change of activity at once, and an
+  agent that a shutdown ends before tmux stops keeps its saved activity.
+  Agents that finished, were waiting on you, or that kwt cannot read resume
+  without the message, as does `agy`. Without `--continue`, no conversation
+  gets the message.
 - **Preset agents:** a pane where a layout preset started a configured agent
   runs that agent's configured command again.
 - **Worktree and directory workspace sessions** are created through
