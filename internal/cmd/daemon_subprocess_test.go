@@ -410,3 +410,19 @@ func TestDaemonSubprocessForegroundServeRefusesExistingOwner(t *testing.T) {
 	after := daemonStatus(t, oldBinary, home)
 	assert.Equal(t, before.PID, after.PID)
 }
+
+func TestDaemonSubprocessStartFailsPromptlyWhenDaemonExitsBeforeReady(t *testing.T) {
+	oldBinary, _ := buildDaemonTestBinaries(t)
+	home := newDaemonTestHome(t, validDaemonConfig)
+	// Blocking daemon.log with a directory forces the detached daemon child to
+	// fail during startup before writing a runtime record.
+	require.NoError(t, os.Mkdir(filepath.Join(home, "daemon.log"), 0o700))
+
+	started := time.Now()
+	_, stderr, err := runDaemonCommand(t, oldBinary, home, "daemon", "start")
+	elapsed := time.Since(started)
+
+	require.Error(t, err)
+	assert.Contains(t, string(stderr), "exited before becoming ready")
+	assert.Less(t, elapsed, 8*time.Second, "stderr=%s", stderr)
+}

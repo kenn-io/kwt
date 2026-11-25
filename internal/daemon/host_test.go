@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/pkg/models"
+	"go.kenn.io/kwt/service"
 )
 
 type closingSSHResolver struct {
@@ -420,6 +421,59 @@ func TestServeRefusesASecondWritableOwner(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "owner")
+}
+
+func TestServeWaitsForTransientOwnerLockRelease(t *testing.T) {
+	home := t.TempDir()
+	store := RuntimeStore(home)
+	release, err := store.AcquireOwnerLock(t.Context())
+	require.NoError(t, err)
+
+	released := make(chan struct{})
+	go func() {
+		time.Sleep(250 * time.Millisecond)
+		release()
+		close(released)
+	}()
+	t.Cleanup(func() { <-released })
+
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, ServeOptions{
+			Home:  home,
+			Build: Build{Version: "v1.0.0", Revision: "abc"},
+			Config: models.DaemonConfig{
+				IdleTimeout:      time.Hour,
+				AutoRestart:      "newer",
+				ReplacementGrace: time.Second,
+			},
+			Foreground: true,
+			Now:        time.Now,
+		})
+	}()
+
+	observation := waitForRuntime(t, home)
+	assert.Equal(t, RuntimeReady, observation.State)
+	_, err = observation.Client.Shutdown(t.Context(), "stop")
+	require.NoError(t, err)
+	require.NoError(t, <-done)
+}
+
+func TestServeDoesNotMisclassifyExpiredCallerContextAsOwnerConflict(t *testing.T) {
+	home := t.TempDir()
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	err := Serve(ctx, ServeOptions{
+		Home:       home,
+		Build:      Build{Version: "v1"},
+		Config:     models.DaemonConfig{ReplacementGrace: time.Second},
+		Foreground: true,
+	})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.False(t, service.IsCode(err, service.Conflict))
 }
 
 func TestBackgroundServeStopsAfterIdleButForegroundServeDoesNot(t *testing.T) {

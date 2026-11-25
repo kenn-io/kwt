@@ -136,7 +136,7 @@ func TestControllerDefaultStartupBudgetToleratesLoadedLaunch(t *testing.T) {
 	insufficientBudget := errors.New("insufficient startup budget")
 	options.Launch = func(ctx context.Context) error {
 		deadline, ok := ctx.Deadline()
-		if !ok || time.Until(deadline) < 9*time.Second {
+		if !ok || time.Until(deadline) < 19*time.Second {
 			return insufficientBudget
 		}
 		return launchCompleted
@@ -146,6 +146,28 @@ func TestControllerDefaultStartupBudgetToleratesLoadedLaunch(t *testing.T) {
 
 	assert.ErrorIs(t, err, launchCompleted)
 	assert.NotErrorIs(t, err, insufficientBudget)
+}
+
+func TestControllerWaitUntilReadyPreservesLastObservationErrorOnTimeout(t *testing.T) {
+	options := testControllerOptions(t)
+	options.StartTimeout = 30 * time.Millisecond
+	options.PollInterval = 5 * time.Millisecond
+	probeErr := errors.New("probe refused")
+	calls := 0
+	options.Inspect = func(context.Context) (Observation, error) {
+		calls++
+		if calls == 1 {
+			return Observation{State: RuntimeAbsent}, nil
+		}
+		return Observation{State: RuntimeUnresponsive, Err: probeErr}, nil
+	}
+	options.Launch = func(context.Context) error { return nil }
+
+	_, err := NewController(options).Start(t.Context())
+	require.Error(t, err)
+	assert.True(t, service.IsCode(err, service.DaemonStartFailed))
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.ErrorIs(t, err, probeErr)
 }
 
 func TestControllerLaunchFailsWhenDaemonReportsFailed(t *testing.T) {

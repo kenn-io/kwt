@@ -53,7 +53,7 @@ func NewController(options ControllerOptions) *Controller {
 		options.PollInterval = 50 * time.Millisecond
 	}
 	if options.StartTimeout <= 0 {
-		options.StartTimeout = 10 * time.Second
+		options.StartTimeout = 20 * time.Second
 	}
 	if options.CleanupAllowance <= 0 {
 		options.CleanupAllowance = 5 * time.Second
@@ -63,9 +63,6 @@ func NewController(options ControllerOptions) *Controller {
 		controller.options.Inspect = func(ctx context.Context) (Observation, error) {
 			return Inspect(ctx, RuntimeStore(controller.options.Home), controller.options.Home)
 		}
-	}
-	if controller.options.Launch == nil {
-		controller.options.Launch = controller.launchDetached
 	}
 	if controller.options.RequestShutdown == nil {
 		controller.options.RequestShutdown = requestShutdown
@@ -215,45 +212,108 @@ func (c *Controller) startLocked(ctx context.Context) (Observation, error) {
 func (c *Controller) launchAndWait(ctx context.Context) (Observation, error) {
 	startupCtx, cancel := context.WithTimeout(ctx, c.options.StartTimeout)
 	defer cancel()
-	if err := c.options.Launch(startupCtx); err != nil {
+	var childExited <-chan error
+	var launchErr error
+	if c.options.Launch != nil {
+		launchErr = c.options.Launch(startupCtx)
+	} else {
+		exited := make(chan error, 1)
+		childExited = exited
+		launchErr = c.launchDetached(startupCtx, exited)
+	}
+	if launchErr != nil {
 		return Observation{}, service.NewError(
 			service.DaemonStartFailed,
 			"kwt daemon failed to start",
 			true,
 			nil,
-			err,
+			launchErr,
 		)
 	}
-	return c.waitUntilReady(startupCtx)
+	return c.waitUntilReady(startupCtx, childExited)
 }
 
 func (c *Controller) waitForReady(ctx context.Context) (Observation, error) {
 	startupCtx, cancel := context.WithTimeout(ctx, c.options.StartTimeout)
 	defer cancel()
-	return c.waitUntilReady(startupCtx)
+	return c.waitUntilReady(startupCtx, nil)
 }
 
-func (c *Controller) waitUntilReady(ctx context.Context) (Observation, error) {
+func (c *Controller) waitUntilReady(
+	ctx context.Context,
+	childExited <-chan error,
+) (Observation, error) {
+	var lastObservation Observation
 	for {
 		observation, err := c.options.Inspect(ctx)
 		if err != nil {
 			return Observation{}, err
 		}
+		lastObservation = observation
 		switch observation.State {
 		case RuntimeReady:
 			return observation, nil
 		case RuntimeFailed:
 			return Observation{}, c.failedError(observation)
 		}
-		if err := c.waitPoll(ctx); err != nil {
+		exitErr, exited, pollErr := c.waitPollOrExit(ctx, childExited)
+		if exited {
+			return c.handleChildExit(ctx, exitErr)
+		}
+		if pollErr != nil {
 			return Observation{}, service.NewError(
 				service.DaemonStartFailed,
 				"kwt daemon did not become ready",
 				true,
 				nil,
-				err,
+				errors.Join(pollErr, lastObservation.Err),
 			)
 		}
+	}
+}
+
+func (c *Controller) handleChildExit(
+	ctx context.Context,
+	exitErr error,
+) (Observation, error) {
+	if ctx.Err() == nil {
+		observation, err := c.options.Inspect(ctx)
+		if err == nil {
+			switch observation.State {
+			case RuntimeReady:
+				return observation, nil
+			case RuntimeFailed:
+				return Observation{}, c.failedError(observation)
+			}
+		}
+	}
+	return Observation{}, service.NewError(
+		service.DaemonStartFailed,
+		"kwt daemon exited before becoming ready",
+		true,
+		nil,
+		exitErr,
+	)
+}
+
+func (c *Controller) waitPollOrExit(
+	ctx context.Context,
+	childExited <-chan error,
+) (exitErr error, exited bool, pollErr error) {
+	select {
+	case exitErr = <-childExited:
+		return exitErr, true, nil
+	default:
+	}
+	timer := time.NewTimer(c.options.PollInterval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return nil, false, ctx.Err()
+	case exitErr = <-childExited:
+		return exitErr, true, nil
+	case <-timer.C:
+		return nil, false, nil
 	}
 }
 
@@ -376,7 +436,7 @@ func daemonBuildOrderUnknownError() error {
 	)
 }
 
-func (c *Controller) launchDetached(ctx context.Context) error {
+func (c *Controller) launchDetached(ctx context.Context, exited chan<- error) error {
 	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if err != nil {
 		return err
@@ -392,6 +452,9 @@ func (c *Controller) launchDetached(ctx context.Context) error {
 		Stdout:          devNull,
 		Stderr:          devNull,
 		RefuseEphemeral: !c.options.AllowEphemeral,
+		Exited: func(err error) {
+			exited <- err
+		},
 	})
 }
 

@@ -25,6 +25,10 @@ const (
 	httpIdleTimeout       = 30 * time.Second
 	httpMaxHeaderBytes    = 16 << 10
 	forcedDrainCleanup    = 5 * time.Second
+	// AcquireOwnerLock prepares the runtime directory before attempting the
+	// file lock, so give it enough budget to outlast Windows ACL and scheduling
+	// delays without blocking indefinitely when another owner holds the lock.
+	ownerLockTimeout = 2 * time.Second
 )
 
 type ServeOptions struct {
@@ -101,11 +105,11 @@ func Serve(ctx context.Context, opts ServeOptions) error {
 	}
 
 	store := RuntimeStore(opts.Home)
-	ownerCtx, cancelOwner := context.WithTimeout(ctx, 100*time.Millisecond)
+	ownerCtx, cancelOwner := context.WithTimeout(ctx, ownerLockTimeout)
 	releaseOwner, err := store.AcquireOwnerLock(ownerCtx)
 	cancelOwner()
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 			return service.NewError(
 				service.Conflict,
 				"another kwt daemon owner is active",
