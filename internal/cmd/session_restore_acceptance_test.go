@@ -211,23 +211,28 @@ func writeCodexRollout(t *testing.T, id string, lines ...string) {
 
 // Restore with --continue tells only the agents the restart cut short to go
 // on: an unfinished Codex turn and a Claude Code pane its hooks left working.
+// A Codex turn waiting for the person's approval stays as it was.
 func TestColdRestoreContinuesInterruptedTurns(t *testing.T) {
 	a := newRestoreAcceptance(t)
 	started := `{"type":"event_msg","payload":{"type":"task_started"}}`
 	context := `{"type":"turn_context","payload":{"model":"gpt-b","effort":"low"}}`
 	writeCodexRollout(t, "x-1", started, context)
 	writeCodexRollout(t, "x-2", started, context, `{"type":"event_msg","payload":{"type":"task_complete"}}`)
+	writeCodexRollout(t, "x-3", started, context)
 
 	a.mustTmux(t, "-L", "default", "new-session", "-d", "-s", "work", "-c", t.TempDir(), "-x", "150", "-y", "30")
-	a.mustTmux(t, "-L", "default", "split-window", "-h", "-t", "work", "-c", t.TempDir())
-	a.mustTmux(t, "-L", "default", "split-window", "-h", "-t", "work", "-c", t.TempDir())
-	a.mustTmux(t, "-L", "default", "select-layout", "-t", "work", "even-horizontal")
+	for range 3 {
+		a.mustTmux(t, "-L", "default", "split-window", "-h", "-t", "work", "-c", t.TempDir())
+		a.mustTmux(t, "-L", "default", "select-layout", "-t", "work", "even-horizontal")
+	}
 	panes := strings.Fields(a.mustTmux(t, "-L", "default", "list-panes", "-t", "work", "-F", "#{pane_id}"))
-	require.Len(t, panes, 3)
+	require.Len(t, panes, 4)
 	a.startAgent(t, "default", panes[0], "codex", "x-1")
 	a.startAgent(t, "default", panes[1], "codex", "x-2")
 	a.startAgent(t, "default", panes[2], "claude", "c-1")
+	a.startAgent(t, "default", panes[3], "codex", "x-3")
 	a.mustTmux(t, "-L", "default", "set-option", "-p", "-t", panes[2], "@kwt_agent", "working 1795000000 claude")
+	a.mustTmux(t, "-L", "default", "set-option", "-p", "-t", panes[3], "@kwt_agent", "approval 1795000000 codex")
 	a.entries(t)
 	a.mustTmux(t, "-L", "default", "kill-server")
 
@@ -245,12 +250,13 @@ func TestColdRestoreContinuesInterruptedTurns(t *testing.T) {
 	for _, pane := range restored.Entries[0].Panes {
 		continued[pane.Pane] = pane.Continued
 	}
-	assert.Equal(t, map[int]bool{0: true, 1: false, 2: true}, continued, output)
+	assert.Equal(t, map[int]bool{0: true, 1: false, 2: true, 3: false}, continued, output)
 
 	live := strings.Fields(a.mustTmux(t, "-L", "default", "list-panes", "-t", "work", "-F", "#{pane_id}"))
-	require.Len(t, live, 3)
+	require.Len(t, live, 4)
 	args := func(pane string) string { return a.agentLog(t, pane)["args"] }
 	assert.True(t, strings.HasSuffix(args(live[0]), "resume x-1 "+tmuxrestore.ContinuePrompt), args(live[0]))
 	assert.True(t, strings.HasSuffix(args(live[1]), "resume x-2"), "a finished turn is not continued: %s", args(live[1]))
 	assert.True(t, strings.HasSuffix(args(live[2]), "--resume c-1 "+tmuxrestore.ContinuePrompt), args(live[2]))
+	assert.True(t, strings.HasSuffix(args(live[3]), "resume x-3"), "a turn waiting on the person is not continued: %s", args(live[3]))
 }

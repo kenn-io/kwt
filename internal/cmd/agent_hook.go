@@ -299,7 +299,7 @@ type restoreHookHandler struct {
 	tracker *tmuxrestore.HookTracker
 }
 
-func (h restoreHookHandler) track(ctx context.Context, input agenthook.CommonInput, end, boundary bool, reason string) {
+func (h restoreHookHandler) track(ctx context.Context, input agenthook.CommonInput, end bool, reason string) {
 	if h.tracker == nil || input.AgentID != "" {
 		return
 	}
@@ -315,7 +315,6 @@ func (h restoreHookHandler) track(ctx context.Context, input agenthook.CommonInp
 		PermissionMode: string(input.PermissionMode),
 		IsEnd:          end,
 		EndReason:      reason,
-		Boundary:       boundary,
 	})
 }
 
@@ -323,7 +322,7 @@ func (h restoreHookHandler) SessionStart(
 	ctx context.Context, input agenthook.SessionStartInput,
 ) (agenthook.SessionStartOutput, error) {
 	output, err := h.Handler.SessionStart(ctx, input)
-	h.track(ctx, input.CommonInput, false, false, "")
+	h.track(ctx, input.CommonInput, false, "")
 	return output, err
 }
 
@@ -331,7 +330,7 @@ func (h restoreHookHandler) UserPromptSubmit(
 	ctx context.Context, input agenthook.UserPromptSubmitInput,
 ) (agenthook.UserPromptSubmitOutput, error) {
 	output, err := h.Handler.UserPromptSubmit(ctx, input)
-	h.track(ctx, input.CommonInput, false, true, "")
+	h.track(ctx, input.CommonInput, false, "")
 	return output, err
 }
 
@@ -339,7 +338,7 @@ func (h restoreHookHandler) PreToolUse(
 	ctx context.Context, input agenthook.PreToolUseInput,
 ) (agenthook.PreToolUseOutput, error) {
 	output, err := h.Handler.PreToolUse(ctx, input)
-	h.track(ctx, input.CommonInput, false, false, "")
+	h.track(ctx, input.CommonInput, false, "")
 	return output, err
 }
 
@@ -347,7 +346,7 @@ func (h restoreHookHandler) PostToolUse(
 	ctx context.Context, input agenthook.PostToolUseInput,
 ) (agenthook.PostToolUseOutput, error) {
 	output, err := h.Handler.PostToolUse(ctx, input)
-	h.track(ctx, input.CommonInput, false, false, "")
+	h.track(ctx, input.CommonInput, false, "")
 	return output, err
 }
 
@@ -355,7 +354,7 @@ func (h restoreHookHandler) PostToolUseFailure(
 	ctx context.Context, input agenthook.PostToolUseFailureInput,
 ) (agenthook.PostToolUseFailureOutput, error) {
 	output, err := h.Handler.PostToolUseFailure(ctx, input)
-	h.track(ctx, input.CommonInput, false, false, "")
+	h.track(ctx, input.CommonInput, false, "")
 	return output, err
 }
 
@@ -363,7 +362,7 @@ func (h restoreHookHandler) PermissionRequest(
 	ctx context.Context, input agenthook.PermissionRequestInput,
 ) (agenthook.PermissionRequestOutput, error) {
 	output, err := h.Handler.PermissionRequest(ctx, input)
-	h.track(ctx, input.CommonInput, false, true, "")
+	h.track(ctx, input.CommonInput, false, "")
 	return output, err
 }
 
@@ -371,7 +370,7 @@ func (h restoreHookHandler) Notification(
 	ctx context.Context, input agenthook.NotificationInput,
 ) (agenthook.NotificationOutput, error) {
 	output, err := h.Handler.Notification(ctx, input)
-	h.track(ctx, input.CommonInput, false, true, "")
+	h.track(ctx, input.CommonInput, false, "")
 	return output, err
 }
 
@@ -379,16 +378,19 @@ func (h restoreHookHandler) Stop(
 	ctx context.Context, input agenthook.StopInput,
 ) (agenthook.StopOutput, error) {
 	output, err := h.Handler.Stop(ctx, input)
-	h.track(ctx, input.CommonInput, false, true, "")
+	h.track(ctx, input.CommonInput, false, "")
 	return output, err
 }
 
 func (h restoreHookHandler) SessionEnd(
 	ctx context.Context, input agenthook.SessionEndInput,
 ) (agenthook.SessionEndOutput, error) {
-	output, err := h.Handler.SessionEnd(ctx, input)
-	h.track(ctx, input.CommonInput, true, true, string(input.Reason))
-	return output, err
+	// Save before the inner handler clears the pane's activity. A shutdown
+	// signal can end the agent while tmux still runs; the snapshot must
+	// still show the turn it cut short. A deliberate end drops the record,
+	// so its activity no longer matters.
+	h.track(ctx, input.CommonInput, true, string(input.Reason))
+	return h.Handler.SessionEnd(ctx, input)
 }
 
 func parseHookAgents(names []string) ([]agenthook.Agent, error) {

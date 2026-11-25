@@ -885,10 +885,12 @@ for a kwt worktree session, and `state` (`pending`, `creating`, or
   telling the agent the machine restarted, that its processes and temporary
   files may be gone, and to check its work before it continues. A Codex turn
   counts as interrupted when its rollout records the turn's start and neither
-  its completion nor its abort. A Claude Code turn counts when its hook last
-  recorded `working`. Agents that finished, were waiting on you, or that kwt
-  cannot read resume without the message, as does `agy`. Without
-  `--continue`, no conversation gets the message.
+  its completion nor its abort, unless its hook last recorded it waiting for
+  your approval or answer. A Claude Code turn counts when its hook last
+  recorded `working`. Hooks save each change of activity at once. Agents that
+  finished, were waiting on you, or that kwt cannot read resume without the
+  message, as does `agy`. Without `--continue`, no conversation gets the
+  message.
 - **Preset agents:** a pane where a layout preset started a configured agent
   runs that agent's configured command again.
 - **Worktree and directory workspace sessions** are created through

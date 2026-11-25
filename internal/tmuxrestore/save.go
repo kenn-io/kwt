@@ -25,6 +25,13 @@ type SaveDeps struct {
 	// running server that is younger than this. A lost or replaced server is
 	// still noticed.
 	MinInterval time.Duration
+	// Pane and Activity, when Pane is set, are a hook's pane and the
+	// activity its agent recorded there. A save goes ahead despite
+	// MinInterval when the snapshot holds another activity for the pane, so
+	// a restore never reads a turn as working after it stopped for the
+	// person, or the reverse.
+	Pane     string
+	Activity *Activity
 }
 
 // SaveResult reports what a save found and did.
@@ -64,7 +71,8 @@ func Save(ctx context.Context, deps SaveDeps) (SaveResult, error) {
 			// session and conversation; the last good one is worth more.
 			return fmt.Errorf("snapshot left as it was: %w", protected.err)
 		}
-		if f.Live != nil && f.Live.Server == server {
+		if f.Live != nil && f.Live.Server == server &&
+			(deps.Pane == "" || sameActivity(f.Live.activityOf(deps.Pane), deps.Activity)) {
 			if age := now().UnixMilli() - f.Live.SavedAt; age >= 0 && age < deps.MinInterval.Milliseconds() {
 				return nil
 			}
@@ -164,4 +172,23 @@ func reconcile(ctx context.Context, snap *Snapshot, previous map[string]int64, t
 	if len(snap.Gone) == 0 {
 		snap.Gone = nil
 	}
+}
+
+// activityOf returns the activity the snapshot saved for the pane, or nil.
+func (s *Snapshot) activityOf(pane string) *Activity {
+	for _, window := range s.Windows {
+		for _, p := range window.Panes {
+			if p.ID == pane {
+				return p.Activity
+			}
+		}
+	}
+	return nil
+}
+
+func sameActivity(a, b *Activity) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }

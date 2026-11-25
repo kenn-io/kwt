@@ -32,8 +32,15 @@ func cutShort(pane Pane, turn Turn) bool {
 		return pane.Activity != nil && pane.Activity.Agent == "claude" &&
 			pane.Activity.State == string(agentstate.Working)
 	case "codex":
-		return turn.Unfinished
+		return turn.Unfinished && !waiting(pane.Activity, "codex")
 	default:
 		return false
 	}
+}
+
+// waiting reports whether the agent's hook last recorded it waiting for the
+// person's approval or answer.
+func waiting(activity *Activity, agent string) bool {
+	return activity != nil && activity.Agent == agent &&
+		(activity.State == string(agentstate.Approval) || activity.State == string(agentstate.Input))
 }
