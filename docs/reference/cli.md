@@ -471,6 +471,20 @@ new topology on a shared host.
 
 ## `kwt workspace`
 
+`workspace browse <absolute-path>` prints a JSON listing of the folder's
+visible immediate child folders without registering anything. The response has
+the resolved `path`, an `entries` array of `name`, `path`, and an optional
+`project_path`, and a `truncated` flag. `project_path` is the folder to pass
+to `projects add`: the primary checkout of a normal checkout or linked
+worktree, the `main` worktree of a `.bare` container, or the folder itself
+when it holds a bare repository named `.git`. Any entry's `path` can be passed
+to `workspace add`.
+
+Browsing skips hidden entries and symlinks and does not recurse. It lists at
+most 1,000 folders and inspects at most 10,000 entries, setting `truncated`
+when either limit stops it. Missing, unreadable, or non-directory paths fail,
+and browsing never creates or changes kwt settings.
+
 `workspace add [path]` registers a plain directory. The `workspace remove`
 command accepts its name and unregisters it without deleting the directory or
 killing a live tmux session. `workspace list` reports registered directories
