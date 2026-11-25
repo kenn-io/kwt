@@ -45,7 +45,49 @@ func TestCodexTurnReadsTheLatestTurn(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, Turn{Model: "gpt-b", Effort: "low"}, CodexTurn(writeRollout(t, tc.lines...)))
+			turn := CodexTurn(writeRollout(t, tc.lines...))
+			assert.Equal(t, "gpt-b", turn.Model)
+			assert.Equal(t, "low", turn.Effort)
+		})
+	}
+}
+
+func event(kind string) string {
+	return `{"timestamp":"2026-11-24T15:00:00Z","type":"event_msg","payload":{"type":"` + kind + `"}}` + "\n"
+}
+
+func TestCodexTurnTellsWhetherTheTurnFinished(t *testing.T) {
+	cases := []struct {
+		name       string
+		lines      []string
+		unfinished bool
+	}{
+		{"completed", []string{event("task_started"), turnContext("gpt-b", "low"), outputLine(10), event("task_complete")}, false},
+		{"aborted by the person", []string{event("task_started"), turnContext("gpt-b", "low"), event("turn_aborted")}, false},
+		{"cut short", []string{
+			event("task_started"), turnContext("gpt-a", "high"), event("task_complete"),
+			event("task_started"), turnContext("gpt-b", "low"), outputLine(10),
+		}, true},
+		{"cut short before its turn context", []string{
+			event("task_started"), turnContext("gpt-b", "low"), event("task_complete"), event("task_started"),
+		}, true},
+		{
+			// Output that quotes a completion is not one.
+			name: "output quoting a completion",
+			lines: []string{
+				event("task_started"), turnContext("gpt-b", "low"),
+				`{"type":"response_item","payload":{"output":"{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}"}}` + "\n",
+			},
+			unfinished: true,
+		},
+		{"long output after a completed turn", []string{
+			event("task_started"), turnContext("gpt-b", "low"), event("task_complete"), outputLine(3 * turnLineLimit),
+		}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			turn := CodexTurn(writeRollout(t, tc.lines...))
+			assert.Equal(t, Turn{Model: "gpt-b", Effort: "low", Unfinished: tc.unfinished}, turn)
 		})
 	}
 }

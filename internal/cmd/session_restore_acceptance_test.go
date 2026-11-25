@@ -200,3 +200,57 @@ func TestColdRestoreResumesCodexWithItsLatestModel(t *testing.T) {
 	assert.Equal(t, "codex", started["name"])
 	assert.True(t, strings.HasSuffix(started["args"], "-m gpt-b -c model_reasoning_effort=low resume x-1"), started["args"])
 }
+
+// writeCodexRollout writes a Codex rollout for conversation id under $HOME.
+func writeCodexRollout(t *testing.T, id string, lines ...string) {
+	t.Helper()
+	path := filepath.Join(os.Getenv("HOME"), ".codex", "sessions", "2026", "11", "25", "rollout-2026-11-25T09-00-00-"+id+".jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(t, os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+}
+
+// Restore with --continue tells only the agents the restart cut short to go
+// on: an unfinished Codex turn and a Claude Code pane its hooks left working.
+func TestColdRestoreContinuesInterruptedTurns(t *testing.T) {
+	a := newRestoreAcceptance(t)
+	started := `{"type":"event_msg","payload":{"type":"task_started"}}`
+	context := `{"type":"turn_context","payload":{"model":"gpt-b","effort":"low"}}`
+	writeCodexRollout(t, "x-1", started, context)
+	writeCodexRollout(t, "x-2", started, context, `{"type":"event_msg","payload":{"type":"task_complete"}}`)
+
+	a.mustTmux(t, "-L", "default", "new-session", "-d", "-s", "work", "-c", t.TempDir(), "-x", "150", "-y", "30")
+	a.mustTmux(t, "-L", "default", "split-window", "-h", "-t", "work", "-c", t.TempDir())
+	a.mustTmux(t, "-L", "default", "split-window", "-h", "-t", "work", "-c", t.TempDir())
+	a.mustTmux(t, "-L", "default", "select-layout", "-t", "work", "even-horizontal")
+	panes := strings.Fields(a.mustTmux(t, "-L", "default", "list-panes", "-t", "work", "-F", "#{pane_id}"))
+	require.Len(t, panes, 3)
+	a.startAgent(t, "default", panes[0], "codex", "x-1")
+	a.startAgent(t, "default", panes[1], "codex", "x-2")
+	a.startAgent(t, "default", panes[2], "claude", "c-1")
+	a.mustTmux(t, "-L", "default", "set-option", "-p", "-t", panes[2], "@kwt_agent", "working 1795000000 claude")
+	a.entries(t)
+	a.mustTmux(t, "-L", "default", "kill-server")
+
+	entries := a.entries(t)
+	require.Len(t, entries, 1)
+	assert.Equal(t, []string{"codex", "claude"}, entries[0].Interrupted)
+
+	var restored struct {
+		Entries []tmuxrestore.EntryReport `json:"entries"`
+	}
+	output := a.run(t, "", nil, "session", "restore", "--continue", entries[0].ID, "--json")
+	require.NoError(t, json.Unmarshal([]byte(output), &restored), output)
+	require.Len(t, restored.Entries, 1)
+	continued := map[int]bool{}
+	for _, pane := range restored.Entries[0].Panes {
+		continued[pane.Pane] = pane.Continued
+	}
+	assert.Equal(t, map[int]bool{0: true, 1: false, 2: true}, continued, output)
+
+	live := strings.Fields(a.mustTmux(t, "-L", "default", "list-panes", "-t", "work", "-F", "#{pane_id}"))
+	require.Len(t, live, 3)
+	args := func(pane string) string { return a.agentLog(t, pane)["args"] }
+	assert.True(t, strings.HasSuffix(args(live[0]), "resume x-1 "+tmuxrestore.ContinuePrompt), args(live[0]))
+	assert.True(t, strings.HasSuffix(args(live[1]), "resume x-2"), "a finished turn is not continued: %s", args(live[1]))
+	assert.True(t, strings.HasSuffix(args(live[2]), "--resume c-1 "+tmuxrestore.ContinuePrompt), args(live[2]))
+}

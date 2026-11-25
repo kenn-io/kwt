@@ -58,8 +58,14 @@ var sessionRestoreCmd = &cobra.Command{
 	Short: "Restore saved tmux sessions and resume their conversations",
 	Long: `Recreate each saved session's windows, panes, and layout on the server
 it came from, then resume each pane's Claude Code or Codex conversation with
-the settings it was started with. Panes that ran a layout preset's agent run
-its configured command again. Other panes open a shell in their directory.
+the settings it was started with; Codex uses the model and reasoning effort
+of its last turn. Panes that ran a layout preset's agent run its configured
+command again. Other panes open a shell in their directory.
+
+With --continue, an agent that was in the middle of a turn when its server
+was lost resumes with a message telling it the machine restarted, so it
+checks its work and continues. Agents that had finished or were waiting on
+you resume without one.
 
 Worktree and directory workspace sessions are created the way "kwt open"
 creates them; one whose worktree now holds a different checkout, or whose
@@ -101,13 +107,18 @@ var sessionExecCmd = &cobra.Command{
 	RunE:   runSessionExec,
 }
 
-var sessionAll bool
+var (
+	sessionAll      bool
+	sessionContinue bool
+)
 
 func init() {
 	rootCmd.AddCommand(sessionCmd)
 	sessionCmd.AddCommand(sessionSnapshotCmd, sessionRestoreCmd, sessionDismissCmd, sessionForgetCmd, sessionExecCmd)
 	sessionSnapshotCmd.Flags().BoolVar(&sessionJSON, "json", false, "Print machine-readable JSON")
 	sessionRestoreCmd.Flags().BoolVar(&sessionJSON, "json", false, "Print machine-readable JSON")
+	sessionRestoreCmd.Flags().BoolVar(&sessionContinue, "continue", false,
+		"Tell each agent the restart cut short to continue its turn")
 	for _, cmd := range []*cobra.Command{sessionRestoreCmd, sessionDismissCmd} {
 		cmd.Flags().BoolVar(&sessionAll, "all", false, "Act on every saved session")
 	}
@@ -190,6 +201,7 @@ func saveSessions(cmd *cobra.Command, store tmuxrestore.Store, executable string
 		Processes:  tmuxrestore.SystemProcesses(),
 		Protection: tmuxrestore.ProvenanceProtection(prStorePath()),
 		ClaudeDir:  claudeDir(),
+		Home:       userHomeDir(),
 	}, sockets)
 	for _, err := range errs {
 		fmt.Fprintln(cmd.ErrOrStderr(), "warning:", err)
@@ -265,6 +277,7 @@ func sessionRestoreDeps(cfg *models.Config) (tmuxrestore.RestoreDeps, error) {
 		StripNames: credentials.ProtectedNames(cfg),
 		Home:       home,
 		Protection: tmuxrestore.ProvenanceProtection(prStorePath()),
+		Continue:   sessionContinue,
 	}, nil
 }
 

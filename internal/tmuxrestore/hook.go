@@ -53,7 +53,7 @@ func (h HookTracker) Track(ctx context.Context, ev Event) {
 		return
 	}
 	var interval time.Duration
-	if !changed {
+	if !changed && !ev.Boundary {
 		interval = hookSaveInterval
 	}
 	protection := h.Protection

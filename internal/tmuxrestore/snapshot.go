@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"go.kenn.io/kwt/internal/agentstate"
 	kwttmux "go.kenn.io/kwt/internal/tmux"
 )
 
@@ -25,6 +26,9 @@ type Pane struct {
 	Dir         string  `json:"dir"`
 	Resume      *Record `json:"resume,omitempty"`
 	PresetAgent string  `json:"preset_agent,omitempty"`
+	// Activity is the state the pane's agent hook last recorded, so a
+	// restore can tell a turn the server's loss cut short.
+	Activity *Activity `json:"activity,omitempty"`
 	// PID and Command are the pane's first process and the program in its
 	// foreground. A save uses them to find an agent that has no record, and
 	// they mean nothing once the server is gone.
@@ -33,6 +37,23 @@ type Pane struct {
 	// Closed marks the conversation last ended on purpose in this pane; see
 	// closedMarker.
 	Closed string `json:"-"`
+}
+
+// Activity is an agent's lifecycle state as its hook recorded it in the
+// pane: working, approval, input, or done.
+type Activity struct {
+	State string `json:"state"`
+	Agent string `json:"agent"`
+}
+
+// parseActivity reads the "<state> <unix-seconds> <agent>" value hooks
+// write; anything else is no activity.
+func parseActivity(value string) *Activity {
+	f := strings.Fields(value)
+	if len(f) != 3 {
+		return nil
+	}
+	return &Activity{State: f[0], Agent: f[2]}
 }
 
 // endedOnPurpose reports whether rec is the conversation last ended on
@@ -96,7 +117,7 @@ var paneFields = []string{
 	"#{pane_index}", "#{pane_left}", "#{pane_top}", "#{pane_width}", "#{pane_height}",
 	"#{pane_active}", "#{pane_current_path}", "#{pane_id}",
 	"#{pane_pid}", "#{pane_current_command}", "#{" + ClosedOption + "}",
-	"#{" + kwttmux.PaneAgentOption + "}", "#{" + ResumeOption + "}",
+	"#{" + kwttmux.PaneAgentOption + "}", "#{" + agentstate.Option + "}", "#{" + ResumeOption + "}",
 }
 
 var paneFormat = strings.Join(paneFields, "\t")
@@ -193,12 +214,13 @@ func parsePanes(server ServerID, output string) (Snapshot, error) {
 			pane := Pane{
 				Index: ints[3], Left: ints[4], Top: ints[5], Width: ints[6], Height: ints[7],
 				Active: f[20] == "1", Dir: f[21], ID: f[22], Command: f[24], Closed: f[25], PresetAgent: f[26],
+				Activity: parseActivity(f[27]),
 			}
 			if pid, err := strconv.ParseInt(f[23], 10, 32); err == nil {
 				pane.PID = int32(pid)
 			}
-			if f[27] != "" {
-				if record, err := DecodeRecord(f[27]); err == nil {
+			if f[28] != "" {
+				if record, err := DecodeRecord(f[28]); err == nil {
 					pane.Resume = record
 				}
 			}

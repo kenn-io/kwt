@@ -103,6 +103,15 @@ func TestHookTrackerSavesAgainWhenTheRecordChangesOrTheSnapshotAges(t *testing.T
 	now = now.Add(time.Second)
 	track("c-2")
 	assert.Equal(t, "third", saved(), "a new conversation is saved at once")
+
+	// A turn that ends right after a tool call must not leave the saved
+	// activity at working, or a restore would continue a finished turn.
+	rename("third", "fourth")
+	now = now.Add(time.Second)
+	stop := claudeEvent("c-2")
+	stop.Now, stop.Boundary = now, true
+	h.Track(t.Context(), stop)
+	assert.Equal(t, "fourth", saved(), "a turn boundary is saved at once")
 }
 
 func TestHookTrackerSkipsTheSaveWhenTheLockIsHeld(t *testing.T) {

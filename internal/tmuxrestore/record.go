@@ -61,7 +61,11 @@ type Event struct {
 	PermissionMode string
 	IsEnd          bool
 	EndReason      string
-	Now            time.Time
+	// Boundary marks an event that starts or ends a turn, or leaves the
+	// agent waiting on the person. Its save is never skipped, so the saved
+	// activity tells whether a turn was running.
+	Boundary bool
+	Now      time.Time
 }
 
 // Apply returns the record a pane should hold after ev, and whether the pane
