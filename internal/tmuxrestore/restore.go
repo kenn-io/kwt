@@ -58,6 +58,9 @@ type RestoreDeps struct {
 	// StripNames are configured credential variables kept out of a tmux
 	// server restore starts.
 	StripNames []string
+	// Continue resumes each conversation its server's loss cut short with
+	// ContinuePrompt, so the agent picks the turn back up.
+	Continue bool
 	// ClaimWait is how long Restore waits for panes to claim launches
 	// before it reports them as still waiting.
 	ClaimWait time.Duration
@@ -87,6 +90,8 @@ type PaneReport struct {
 	Status  string   `json:"status"`
 	Note    string   `json:"note,omitempty"`
 	Dropped []string `json:"dropped,omitempty"`
+	// Continued means the conversation resumed with ContinuePrompt.
+	Continued bool `json:"continued,omitempty"`
 }
 
 // LiveEndpoint identifies the session a restore created.
@@ -610,17 +615,18 @@ func (r restorer) plan(ctx context.Context, ref WindowRef, w Window, built Built
 				l.Note = "agent cannot be resumed"
 				break
 			}
-			presence, path := FindConversation(*pane.Resume, r.deps.Home, r.deps.Getenv)
+			presence, turn := latestTurn(*pane.Resume, r.deps.Home, r.deps.Getenv)
 			if presence == PresenceAbsent {
 				l.Note = "conversation not found"
 				break
 			}
-			var turn Turn
-			if pane.Resume.Agent == "codex" {
-				turn = CodexTurn(path)
-			}
 			args := BuildLaunch(*pane.Resume, r.deps.Agents[pane.Resume.Agent], turn)
 			l.Status, l.Argv, l.Dropped = LaunchWaiting, args.Argv, args.Dropped
+			if r.deps.Continue && cutShort(pane, turn) {
+				// Both agents take a prompt after the conversation to resume.
+				l.Argv = append(l.Argv, ContinuePrompt)
+				l.Continued = true
+			}
 			if args.Fallback {
 				l.Note = "launch settings not recorded; configured command used"
 			}
@@ -683,7 +689,7 @@ func fillLaunches(report *EntryReport, entry Entry, sock Socket) {
 	for _, l := range entry.Launches {
 		report.Panes = append(report.Panes, PaneReport{
 			Window: l.WindowIndex, Pane: l.Index, Agent: l.Agent,
-			Status: l.Status, Note: l.Note, Dropped: l.Dropped,
+			Status: l.Status, Note: l.Note, Dropped: l.Dropped, Continued: l.Continued,
 		})
 	}
 	report.Live = &LiveEndpoint{

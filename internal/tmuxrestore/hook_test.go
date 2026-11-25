@@ -1,12 +1,15 @@
 package tmuxrestore
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/kwt/internal/agentstate"
 )
 
 func hookFixture(t *testing.T) (HookTracker, string) {
@@ -103,6 +106,30 @@ func TestHookTrackerSavesAgainWhenTheRecordChangesOrTheSnapshotAges(t *testing.T
 	now = now.Add(time.Second)
 	track("c-2")
 	assert.Equal(t, "third", saved(), "a new conversation is saved at once")
+
+	// The saved activity tells a restore which turns a restart cut short,
+	// so a change of activity is saved at once, even in a tool event that
+	// changed nothing else: a question for the person, or work resuming
+	// after an approval.
+	activity := func(value string) {
+		mustRun(t, h.Tmux, "set-option", "-p", "-t", h.Pane, agentstate.Option, value)
+	}
+	for i, value := range []string{
+		"working 1 claude", "input 2 claude", "approval 3 claude", "working 4 claude", "done 5 claude",
+	} {
+		name := "activity-" + strconv.Itoa(i)
+		rename(saved(), name)
+		activity(value)
+		now = now.Add(time.Second)
+		track("c-2")
+		assert.Equal(t, name, saved(), "activity %q is saved at once", value)
+	}
+
+	rename(saved(), "same-activity")
+	activity("done 6 claude")
+	now = now.Add(time.Second)
+	track("c-2")
+	assert.Equal(t, "activity-4", saved(), "a new time for the same activity waits")
 }
 
 func TestHookTrackerSkipsTheSaveWhenTheLockIsHeld(t *testing.T) {

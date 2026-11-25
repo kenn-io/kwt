@@ -817,15 +817,19 @@ the pane where it ran.
 kwt session snapshot --json   # save now, list what can be restored
 kwt session restore --all
 kwt session restore ID...
+kwt session restore --continue ID...  # also continue turns the restart cut short
 kwt session dismiss ID...     # or --all
 kwt session forget --socket PATH --session-id '$3' --server-pid PID --created TIME
 ```
 
 kwt saves the default tmux server, kwt's own server, and every server it saved
 before. [Agent hooks](#kwt-agent-hook) save as agents work, and
-`snapshot` saves on demand. A hook saves when its pane's conversation changed
-or the last save is more than five seconds old, so an agent's tool calls do
-not each pay for a save. A session becomes restorable once the server it
+`snapshot` saves on demand. A hook saves when its pane's conversation changed,
+when a turn starts or ends or the agent waits on you, or when the last save is
+more than five seconds old, so an agent's tool calls do not each pay for a
+save. Each save keeps the state the pane's hook last recorded (`working`,
+`approval`, `input`, or `done`), which tells a restore whether a turn was
+running. A session becomes restorable once the server it
 ran on is gone: a save that finds no server, or a server with a new PID or
 start time, turns the last saved state into restorable entries. A save that
 cannot reach the server changes nothing.
@@ -849,7 +853,8 @@ Codex needs its hooks there.
 `snapshot --json` prints `{"entries": [...]}`. Each entry has an opaque `id`,
 its `socket` (`path`, and `name` for a `-L` socket), `session`, `saved_at`
 (Unix milliseconds), `windows` and `panes` counts, the `agents` it will
-resume, `name_taken` when a live session already uses the name, `worktree`
+resume, `interrupted` with the agent of each pane whose turn the server's loss
+cut short, `name_taken` when a live session already uses the name, `worktree`
 for a kwt worktree session, and `state` (`pending`, `creating`, or
 `launching`). Entry IDs change each time a server is lost.
 
@@ -875,6 +880,18 @@ for a kwt worktree session, and `state` (`pending`, `creating`, or
   break the resume.
   A pane whose conversation file is gone runs nothing and is reported as
   `conversation not found`.
+- **Continuing interrupted turns:** with `--continue`, a conversation that was
+  in the middle of a turn when its server was lost resumes with a message
+  telling the agent the machine restarted, that its processes and temporary
+  files may be gone, and to check its work before it continues. A Codex turn
+  counts as interrupted when its rollout records the turn's start and neither
+  its completion nor its abort, unless its hook last recorded it waiting for
+  your approval or answer. A Claude Code turn counts when its hook last
+  recorded `working`. Hooks save each change of activity at once, and an
+  agent that a shutdown ends before tmux stops keeps its saved activity.
+  Agents that finished, were waiting on you, or that kwt cannot read resume
+  without the message, as does `agy`. Without `--continue`, no conversation
+  gets the message.
 - **Preset agents:** a pane where a layout preset started a configured agent
   runs that agent's configured command again.
 - **Worktree and directory workspace sessions** are created through
@@ -905,7 +922,7 @@ starts the agent once and only in its own shell. `restore --json`
 reports each entry's `outcome` (`restored`, `partially restored`, `skipped`,
 `failed`, or `not found`), a `reason`, the new session's `live` endpoint, and
 each pane's `status` (`none`, `waiting`, `started`, or `failed`) with its
-`note`. `partially restored` means a pane is still starting or failed to
+`note`, and `continued` when it resumed with the continue message. `partially restored` means a pane is still starting or failed to
 start. The command exits non-zero when an entry failed or an ID was not
 found. Running `restore` again after an interruption cleans up the unfinished
 session and starts over; a session whose launches were handed off is
@@ -952,6 +969,11 @@ Known limits:
   resumes with its launch model.
 - A Codex `/model` change made after the last turn started is lost, as is
   any change in a compressed rollout file.
+- `--continue` reads Claude Code's state from its hooks, so a Claude Code
+  pane without kwt's hooks is never continued. A Claude Code turn that ended
+  without a hook, such as one the person interrupted with Esc, still reads
+  as `working` and is continued. Sessions that `kwt open` restores are never
+  continued.
 - kwt does not confirm that the agent started or found its conversation. A
   launch that fails right after its handoff can still be reported as
   `started`. The pane shows the error.

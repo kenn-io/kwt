@@ -53,6 +53,8 @@ type PaneLaunch struct {
 	// type it.
 	Command string `json:"command,omitempty"`
 	Dir     string `json:"dir,omitempty"`
+	// Continued means Argv ends with ContinuePrompt.
+	Continued bool `json:"continued,omitempty"`
 }
 
 // Entry is a session from a server that is gone.

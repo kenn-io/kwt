@@ -385,9 +385,12 @@ func (h restoreHookHandler) Stop(
 func (h restoreHookHandler) SessionEnd(
 	ctx context.Context, input agenthook.SessionEndInput,
 ) (agenthook.SessionEndOutput, error) {
-	output, err := h.Handler.SessionEnd(ctx, input)
+	// Save before the inner handler clears the pane's activity. A shutdown
+	// signal can end the agent while tmux still runs; the snapshot must
+	// still show the turn it cut short. A deliberate end drops the record,
+	// so its activity no longer matters.
 	h.track(ctx, input.CommonInput, true, string(input.Reason))
-	return output, err
+	return h.Handler.SessionEnd(ctx, input)
 }
 
 func parseHookAgents(names []string) ([]agenthook.Agent, error) {

@@ -164,6 +164,29 @@ func TestAgentHookRecordsOnlyAgentsRestoreCanResume(t *testing.T) {
 	assert.Equal(t, "/tmp/a-1/transcript_full.jsonl", record.TranscriptPath)
 }
 
+func TestAgentHookKeepsATurnAShutdownSignalEnded(t *testing.T) {
+	// A shutdown can signal Claude Code before it stops tmux. The agent's
+	// end hook clears the pane's activity, but the saved snapshot must still
+	// show the turn it cut short, so a restore can continue it.
+	env := newSessionEnv(t)
+	pane := env.mustTmux(t, "-L", "default", "new-session", "-d", "-s", "work", "-P", "-F", "#{pane_id}")
+	event := func(name, extra string) string {
+		return `{"session_id":"c-1","transcript_path":"/tmp/c-1.jsonl","cwd":"/tmp",` +
+			`"permission_mode":"default","hook_event_name":"` + name + `"` + extra + `}`
+	}
+
+	env.hook(t, "claude", pane, sessionStartPayload("c-1"))
+	env.hook(t, "claude", pane, event("UserPromptSubmit", `,"prompt":"go on"`))
+	env.hook(t, "claude", pane, event("SessionEnd", `,"reason":"other"`))
+	assert.Empty(t, strings.TrimSpace(env.mustTmux(t, "-L", "default", "show-options", "-p", "-q", "-v", "-t", pane, "@kwt_agent")),
+		"the live indicator is cleared")
+	env.mustTmux(t, "-L", "default", "kill-server")
+
+	entries := env.snapshot(t)
+	require.Len(t, entries, 1)
+	assert.Equal(t, []string{"claude"}, entries[0].Interrupted)
+}
+
 func TestAgentHookSavesIntoAFreshKwtHome(t *testing.T) {
 	env := newSessionEnv(t)
 	env.home = filepath.Join(env.home, "not-yet")

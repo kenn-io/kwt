@@ -5,15 +5,19 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"slices"
 	"strings"
 )
 
-// Turn is the model and reasoning effort a conversation last used. Codex
-// lets the person change both mid-conversation, so the launch arguments can
-// be out of date.
+// Turn is what a Codex rollout says about its latest turn: the model and
+// reasoning effort it used, which the person can change mid-conversation,
+// and whether it was still running when the rollout stops.
 type Turn struct {
 	Model  string
 	Effort string
+	// Unfinished means the turn started but never completed or was
+	// aborted, as when the machine restarts while Codex works.
+	Unfinished bool
 }
 
 const (
@@ -24,12 +28,17 @@ const (
 	turnLineLimit = 1 << 20
 )
 
-var turnContextType = []byte(`"type":"turn_context"`)
+// turnMarkers are the rollout entries CodexTurn reads. Codex writes
+// task_started and a turn context when a turn begins, and task_complete or
+// turn_aborted when it ends.
+var turnMarkers = [][]byte{
+	[]byte(`"turn_context"`), []byte(`"task_started"`), []byte(`"task_complete"`), []byte(`"turn_aborted"`),
+}
 
-// CodexTurn reads a Codex rollout from its end for the latest turn's model
-// and effort. Codex writes a turn context at the start of every turn, so
-// the last one holds the settings the person was using. Rollouts grow to
-// gigabytes, so it reads backward and stops at the first match. A
+// CodexTurn reads a Codex rollout from its end for the latest turn. The
+// last turn context holds the settings the person was using, and the turn
+// is unfinished when no completion follows its start. Rollouts grow to
+// gigabytes, so it reads backward and stops once it knows both. A
 // compressed or unreadable rollout yields an empty Turn.
 func CodexTurn(path string) Turn {
 	if !strings.HasSuffix(path, ".jsonl") {
@@ -48,6 +57,26 @@ func CodexTurn(path string) Turn {
 	// far begin; its own start is still before pos.
 	var partial []byte
 	overlong := false
+	var turn Turn
+	decided := false
+	// read applies one line and reports whether the turn is known.
+	read := func(line []byte) bool {
+		kind, model, effort := parseTurnLine(line)
+		switch kind {
+		case "turn_context":
+			if !decided {
+				turn.Unfinished, decided = true, true
+			}
+			turn.Model, turn.Effort = model, effort
+		case "task_started":
+			if !decided {
+				turn.Unfinished, decided = true, true
+			}
+		case "task_complete", "turn_aborted":
+			decided = true
+		}
+		return decided && turn.Model != ""
+	}
 	for pos := info.Size(); pos > 0; {
 		n := min(int64(rolloutChunk), pos)
 		pos -= n
@@ -62,10 +91,8 @@ func CodexTurn(path string) Turn {
 			if nl < 0 {
 				break
 			}
-			if !overlong {
-				if turn, ok := parseTurnContext(data[nl+1 : end]); ok {
-					return turn
-				}
+			if !overlong && read(data[nl+1:end]) {
+				return turn
 			}
 			overlong = false
 			end = nl
@@ -76,26 +103,37 @@ func CodexTurn(path string) Turn {
 		}
 	}
 	if !overlong {
-		if turn, ok := parseTurnContext(partial); ok {
-			return turn
-		}
+		read(partial)
 	}
-	return Turn{}
+	return turn
 }
 
-func parseTurnContext(line []byte) (Turn, bool) {
-	if !bytes.Contains(line, turnContextType) {
-		return Turn{}, false
+// parseTurnLine returns which turn marker a rollout line is, if any, with a
+// turn context's model and effort. Output can quote a marker, so only the
+// entry's own type counts.
+func parseTurnLine(line []byte) (kind, model, effort string) {
+	if !slices.ContainsFunc(turnMarkers, func(m []byte) bool { return bytes.Contains(line, m) }) {
+		return "", "", ""
 	}
 	var entry struct {
 		Type    string `json:"type"`
 		Payload struct {
+			Type   string `json:"type"`
 			Model  string `json:"model"`
 			Effort string `json:"effort"`
 		} `json:"payload"`
 	}
-	if json.Unmarshal(line, &entry) != nil || entry.Type != "turn_context" || entry.Payload.Model == "" {
-		return Turn{}, false
+	if json.Unmarshal(line, &entry) != nil {
+		return "", "", ""
 	}
-	return Turn{Model: entry.Payload.Model, Effort: entry.Payload.Effort}, true
+	switch {
+	case entry.Type == "turn_context" && entry.Payload.Model != "":
+		return "turn_context", entry.Payload.Model, entry.Payload.Effort
+	case entry.Type == "event_msg":
+		switch entry.Payload.Type {
+		case "task_started", "task_complete", "turn_aborted":
+			return entry.Payload.Type, "", ""
+		}
+	}
+	return "", "", ""
 }
