@@ -196,8 +196,7 @@ func TestScopeCancellationAndExecutionPolicy(t *testing.T) {
 func TestListHandlesManyWorktreesIncludingPrunableAndCorruptedGenerations(t *testing.T) {
 	t.Parallel()
 	root, first := fixture(t)
-	wtsDir, err := filepath.EvalSymlinks(t.TempDir())
-	require.NoError(t, err)
+	wtsDir := resolvedTempDir(t)
 	paths := []string{root, first}
 	for i := range 10 {
 		wt := filepath.Join(wtsDir, fmt.Sprintf("wt-%d", i))
@@ -213,16 +212,17 @@ func TestListHandlesManyWorktreesIncludingPrunableAndCorruptedGenerations(t *tes
 	require.Len(t, initial, len(paths))
 	byPath := make(map[string]worktree.Entry, len(initial))
 	for _, entry := range initial {
+		require.NotEmpty(t, entry.Path)
+		require.NotEmpty(t, entry.GitDir)
 		require.Regexp(t, "^[0-9a-f]{32}$", entry.Generation)
 		require.Equal(t, worktree.GenerationValid, entry.GenerationStatus)
-		byPath[entry.Path] = entry
+		byPath[filepath.FromSlash(entry.Path)] = entry
 	}
 
 	corruptedPath := paths[2]
 	corruptedEntry, ok := byPath[corruptedPath]
 	require.True(t, ok)
-	require.NotEmpty(t, corruptedEntry.GitDir)
-	require.NoError(t, os.WriteFile(filepath.Join(corruptedEntry.GitDir, "kwt-generation"), []byte("bad"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.FromSlash(corruptedEntry.GitDir), "kwt-generation"), []byte("bad"), 0o600))
 	prunableA, prunableB := paths[len(paths)-2], paths[len(paths)-1]
 	require.NoError(t, os.RemoveAll(prunableA))
 	require.NoError(t, os.RemoveAll(prunableB))
@@ -231,17 +231,21 @@ func TestListHandlesManyWorktreesIncludingPrunableAndCorruptedGenerations(t *tes
 	require.NoError(t, err)
 	require.Len(t, relisted, len(paths))
 	for _, entry := range relisted {
+		require.NotEmpty(t, entry.Path)
 		require.Regexp(t, "^[0-9a-f]{32}$", entry.Generation)
 		require.Equal(t, worktree.GenerationValid, entry.GenerationStatus)
-		switch entry.Path {
+		entryPath := filepath.FromSlash(entry.Path)
+		previous, ok := byPath[entryPath]
+		require.True(t, ok)
+		switch entryPath {
 		case corruptedPath:
 			require.NotEqual(t, corruptedEntry.Generation, entry.Generation)
 		case prunableA, prunableB:
 			require.False(t, entry.Exists)
-			require.Equal(t, byPath[entry.Path].Generation, entry.Generation)
+			require.Equal(t, previous.Generation, entry.Generation)
 		default:
 			require.True(t, entry.Exists)
-			require.Equal(t, byPath[entry.Path].Generation, entry.Generation)
+			require.Equal(t, previous.Generation, entry.Generation)
 		}
 	}
 }
