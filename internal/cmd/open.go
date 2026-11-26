@@ -480,7 +480,7 @@ func openSelectedWorktreeWithResult(
 		}
 		targetDefault, err = config.LoadRepoLayoutDefault(
 			repoRoot,
-			stdinInteractive && !startSession,
+			allowOpenTargetTrustPrompt(startSession, stdinInteractive, openExpectedRepository, openExpectedSession),
 		)
 		if err != nil {
 			return err
@@ -702,7 +702,7 @@ func openSelectedDirectoryWorkspaceWithResult(
 		openLayout,
 		openSelectLayout,
 		selectLayout,
-		stdinInteractive && !startSession,
+		allowOpenTargetTrustPrompt(startSession, stdinInteractive, openExpectedRepository, openExpectedSession),
 	)
 	if err != nil {
 		return err
@@ -776,6 +776,19 @@ func resolveDirectoryWorkspaceLayout(
 // anyway).
 func shouldLoadTargetDefault(layoutFlag string, selectLayout bool) bool {
 	return layoutFlag == "" && !selectLayout
+}
+
+// allowOpenTargetTrustPrompt reports whether kwt open may prompt on stdin to
+// trust an untrusted target .kwt.toml. Machine-guarded opens (--expected-*)
+// and --start-session skip prompting so callers launching kwt inside a hidden
+// PTY do not block on an unreachable prompt; already-trusted configs still load.
+func allowOpenTargetTrustPrompt(
+	startSession bool,
+	stdinInteractive bool,
+	expectedRepository string,
+	expectedSession string,
+) bool {
+	return stdinInteractive && !startSession && expectedRepository == "" && expectedSession == ""
 }
 
 // findEntryByPath returns the discovery entry whose Path matches, or nil.

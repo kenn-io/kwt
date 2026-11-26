@@ -430,3 +430,30 @@ func TestWorkspaceSessionsExpectedEstablishmentCreatesCurrentBranchSession(t *te
 	assert.Equal(t, canonicalEndpoint(current), got)
 	assert.True(t, fixture.servers.kwtServer().HasSession(current))
 }
+
+func TestTmuxCommandListWorkspaceSessionsContextReadsMarkers(t *testing.T) {
+	fixture := newRealWorkspaceSessionsFixture(t)
+	fixture.createMatching(t, fixture.servers.kwtServer())
+	require.NoError(t, fixture.servers.kwtServer().RunCommandContext(
+		fixture.ctx, "new-session", "-d", "-s", "unmarked-session",
+	))
+
+	records, err := fixture.servers.kwtServer().ListWorkspaceSessionsContext(fixture.ctx)
+
+	require.NoError(t, err)
+	byName := make(map[string]workspaceSessionRecord, len(records))
+	for _, record := range records {
+		byName[record.Name] = record
+	}
+	marked, ok := byName[fixture.session]
+	require.True(t, ok)
+	assert.True(t, marked.MarkersKnown)
+	assert.Equal(t, WorkspacePathIdentity(fixture.workspace), marked.Identity)
+	assert.Equal(t, fixture.generation, marked.Generation)
+
+	unmarked, ok := byName["unmarked-session"]
+	require.True(t, ok)
+	assert.True(t, unmarked.MarkersKnown)
+	assert.Empty(t, unmarked.Identity)
+	assert.Empty(t, unmarked.Generation)
+}

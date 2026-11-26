@@ -94,12 +94,23 @@ func (s *Scope) List(ctx context.Context, identity IdentityPolicy) ([]Entry, err
 	if err != nil {
 		return nil, err
 	}
+	if identity.FileName == "" {
+		return inventory.Entries, nil
+	}
 	for i := range inventory.Entries {
 		e := &inventory.Entries[i]
-		if identity.FileName == "" {
+		// inspect already validated kwt-generation under this same scope lock.
+		if identity.FileName == generationFileName && identity.Generate &&
+			e.registrationError == nil && e.GenerationStatus == GenerationValid {
 			continue
 		}
-		value, err := s.EnsureIdentity(ctx, e.Path, identity)
+		if e.registrationError != nil {
+			return nil, &IncompleteInventoryError{
+				Path: e.Path,
+				Err:  fmt.Errorf("initialize worktree identity: %w", e.registrationError),
+			}
+		}
+		value, err := s.ensureIdentityInDir(ctx, e.Path, e.GitDir, identity)
 		if err != nil {
 			return nil, &IncompleteInventoryError{Path: e.Path, Err: fmt.Errorf("initialize worktree identity: %w", err)}
 		}
@@ -135,26 +146,42 @@ func (s *Scope) inspect(ctx context.Context, expire bool) (Inventory, error) {
 	if len(raw) > 0 && !raw[0].Bare {
 		raw[0].Path = main
 	}
+	excludedKey := ""
+	if excluded != "" {
+		excludedKey = comparableWorktreePath(excluded)
+	}
+	mainKey := ""
+	if main != "" {
+		mainKey = pathKey(main)
+	}
+	registrations := s.repo.buildRegistrationIndex()
 	inventory := Inventory{Entries: make([]Entry, 0, len(raw))}
 	for _, entry := range raw {
-		if entry.Bare || (excluded != "" && comparableWorktreePath(entry.Path) == comparableWorktreePath(excluded)) {
+		if entry.Bare {
+			continue
+		}
+		entryComparableKey := comparableWorktreePath(entry.Path)
+		if excludedKey != "" && entryComparableKey == excludedKey {
 			continue
 		}
 		target, err := ReadWorktreeBacklink(ctx, entry.Path)
 		if err != nil {
 			return inventory, &IncompleteInventoryError{Path: entry.Path, Err: fmt.Errorf("inspect worktree backlink: %w", err)}
 		}
-		e := Entry{Path: entry.Path, CommonDir: s.repo.commonDir, Branch: entry.Branch, Head: entry.Head, DotGitTarget: target, Detached: entry.Detached, Locked: entry.Locked, LockedReason: entry.LockedReason, Prunable: entry.Prunable, PrunableReason: entry.PrunableReason, GenerationStatus: GenerationUnreadable, IsMain: main != "" && pathKey(entry.Path) == pathKey(main)}
+		e := Entry{Path: entry.Path, CommonDir: s.repo.commonDir, Branch: entry.Branch, Head: entry.Head, DotGitTarget: target, Detached: entry.Detached, Locked: entry.Locked, LockedReason: entry.LockedReason, Prunable: entry.Prunable, PrunableReason: entry.PrunableReason, GenerationStatus: GenerationUnreadable}
 		if e.Branch == "" {
 			e.Branch = "HEAD"
 		}
 		if info, err := os.Stat(e.Path); err == nil {
 			e.Exists = true
 			e.CreatedAt = info.ModTime()
+			e.IsMain = mainKey != "" && entryComparableKey == mainKey
 		} else if !os.IsNotExist(err) {
 			return inventory, &IncompleteInventoryError{Path: e.Path, Err: err}
+		} else {
+			e.IsMain = mainKey != "" && pathKey(e.Path) == mainKey
 		}
-		dir, err := s.repo.registration(e.Path)
+		dir, err := registrations.resolve(e.Path, entryComparableKey)
 		if err != nil {
 			e.GitDirError = err.Error()
 			e.registrationError = err

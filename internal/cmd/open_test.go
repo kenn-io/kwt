@@ -1375,6 +1375,188 @@ func TestOpenSelectedWorktreeStartSessionDoesNotPromptForTargetTrust(t *testing.
 	assert.False(t, runner.attached)
 }
 
+func TestOpenSelectedWorktreeGuardedOpenDoesNotPromptForTargetTrust(t *testing.T) {
+	home := t.TempDir()
+	kwtHome := filepath.Join(home, ".config", "kwt")
+	require.NoError(t, os.MkdirAll(kwtHome, 0o755))
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("KWT_HOME", kwtHome)
+	repo, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	gitInit := exec.CommandContext(t.Context(), "git", "init", "-b", "main", repo)
+	require.NoError(t, gitInit.Run())
+	require.NoError(t, exec.CommandContext(t.Context(), "git", "-C", repo, "config", "user.email", "test@example.com").Run())
+	require.NoError(t, exec.CommandContext(t.Context(), "git", "-C", repo, "config", "user.name", "Test").Run())
+	require.NoError(t, exec.CommandContext(t.Context(), "git", "-C", repo, "commit", "--allow-empty", "-m", "init").Run())
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repo, ".kwt.toml"),
+		[]byte("[layouts]\ndefault = \"focus\"\n"),
+		0o644,
+	))
+	generation, err := openSharedWorktrees(t, git.New(repo)).EnsureIdentity(
+		t.Context(),
+		repo,
+		shared.IdentityPolicy{FileName: "kwt-generation", Generate: true},
+	)
+	require.NoError(t, err)
+	registered, err := registerProjectIdentityWithLifecycle(t.Context(), models.Project{
+		Name: "widget",
+		Path: repo,
+	})
+	require.NoError(t, err)
+	expectedSession := tmux.WorkspaceSessionName(
+		&url.RepositoryInfo{FullPath: registered.Repository},
+		"main",
+		repo,
+	)
+
+	runner := &recordingOpenWorkspaceRunner{
+		endpoint: testCanonicalSessionEndpoint(expectedSession),
+	}
+	oldNewRunner := newOpenWorkspaceRunner
+	oldLayout := openLayout
+	oldSelectLayout := openSelectLayout
+	oldExpectedRepo := openExpectedRepository
+	oldExpectedReg := openExpectedRegistration
+	oldExpectedGen := openExpectedGeneration
+	oldExpectedSess := openExpectedSession
+	t.Cleanup(func() {
+		newOpenWorkspaceRunner = oldNewRunner
+		openLayout = oldLayout
+		openSelectLayout = oldSelectLayout
+		openExpectedRepository = oldExpectedRepo
+		openExpectedRegistration = oldExpectedReg
+		openExpectedGeneration = oldExpectedGen
+		openExpectedSession = oldExpectedSess
+	})
+	newOpenWorkspaceRunner = func([]string, bool) openWorkspaceRunner { return runner }
+	openLayout = ""
+	openSelectLayout = false
+	openExpectedRepository = registered.Repository
+	openExpectedRegistration = registered.RegistrationFingerprint
+	openExpectedGeneration = generation
+	openExpectedSession = expectedSession
+
+	stdinFile, err := os.Create(filepath.Join(t.TempDir(), "stdin"))
+	require.NoError(t, err)
+	_, err = stdinFile.WriteString("y\n")
+	require.NoError(t, err)
+	_, err = stdinFile.Seek(0, 0)
+	require.NoError(t, err)
+	oldStdin := os.Stdin
+	os.Stdin = stdinFile
+
+	stderr, err := os.Create(filepath.Join(t.TempDir(), "stderr"))
+	require.NoError(t, err)
+	oldStderr := os.Stderr
+	os.Stderr = stderr
+	err = openSelectedWorktree(
+		t.Context(),
+		&CommandContext{Config: &models.Config{
+			Layouts: models.LayoutsConfig{Presets: []models.Layout{{
+				Name: "focus", Panes: []string{""},
+			}}},
+		}},
+		&discovery.GlobalWorktreeEntry{
+			Path:       repo,
+			Branch:     "main",
+			Generation: generation,
+			RepositoryInfo: &url.RepositoryInfo{
+				FullPath: registered.Repository,
+			},
+		},
+		nil,
+		false,
+		true,
+	)
+	os.Stdin = oldStdin
+	os.Stderr = oldStderr
+	require.NoError(t, stdinFile.Close())
+	require.NoError(t, stderr.Close())
+	output, readErr := os.ReadFile(stderr.Name())
+	require.NoError(t, readErr)
+
+	require.NoError(t, err)
+	assert.NotContains(t, string(output), "Trust this file and load it?")
+	assert.NotEqual(t, "focus", runner.layout.Name)
+	assert.True(t, runner.ensured)
+	assert.True(t, runner.attached)
+}
+
+func TestOpenSelectedDirectoryWorkspaceGuardedOpenDoesNotPromptForTargetTrust(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("KWT_HOME", filepath.Join(home, ".config", "kwt"))
+	resetWorkspaceCommandDeps(t)
+	workspace := models.Workspace{Name: "notes", Path: t.TempDir()}
+	require.NoError(t, os.WriteFile(
+		filepath.Join(workspace.Path, ".kwt.toml"),
+		[]byte("[layouts]\ndefault = \"focus\"\n"),
+		0o644,
+	))
+	resolveDirectorySessions = func(workspaces []models.Workspace) ([]tmux.WorkspaceSession, error) {
+		return testDirectorySessions(workspaces, ""), nil
+	}
+	expectedSession := tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path)
+	runner := &recordingOpenWorkspaceRunner{
+		endpoint: testCanonicalSessionEndpoint(expectedSession),
+	}
+	oldNewRunner := newOpenWorkspaceRunner
+	oldLayout := openLayout
+	oldSelectLayout := openSelectLayout
+	oldExpectedSess := openExpectedSession
+	t.Cleanup(func() {
+		newOpenWorkspaceRunner = oldNewRunner
+		openLayout = oldLayout
+		openSelectLayout = oldSelectLayout
+		openExpectedSession = oldExpectedSess
+	})
+	newOpenWorkspaceRunner = func([]string, bool) openWorkspaceRunner { return runner }
+	openLayout = ""
+	openSelectLayout = false
+	openExpectedSession = expectedSession
+
+	stdinFile, err := os.Create(filepath.Join(t.TempDir(), "stdin"))
+	require.NoError(t, err)
+	_, err = stdinFile.WriteString("y\n")
+	require.NoError(t, err)
+	_, err = stdinFile.Seek(0, 0)
+	require.NoError(t, err)
+	oldStdin := os.Stdin
+	os.Stdin = stdinFile
+
+	stderr, err := os.Create(filepath.Join(t.TempDir(), "stderr"))
+	require.NoError(t, err)
+	oldStderr := os.Stderr
+	os.Stderr = stderr
+	err = openSelectedDirectoryWorkspace(
+		t.Context(),
+		&CommandContext{Config: &models.Config{
+			Layouts: models.LayoutsConfig{Presets: []models.Layout{{
+				Name: "focus", Panes: []string{""},
+			}}},
+		}},
+		workspace,
+		nil,
+		false,
+		true,
+	)
+	os.Stdin = oldStdin
+	os.Stderr = oldStderr
+	require.NoError(t, stdinFile.Close())
+	require.NoError(t, stderr.Close())
+	output, readErr := os.ReadFile(stderr.Name())
+	require.NoError(t, readErr)
+
+	require.NoError(t, err)
+	assert.NotContains(t, string(output), "Trust this file and load it?")
+	assert.NotEqual(t, "focus", runner.layout.Name)
+	assert.True(t, runner.ensured)
+	assert.True(t, runner.attached)
+}
+
 // TestOpenCmdIsolatesFromCwdConfig guards the config-isolation invariant:
 // openCmd overrides the root PersistentPreRunE (which merges the caller's cwd
 // .kwt.toml) with a no-op, so opening another repo's worktree never inherits

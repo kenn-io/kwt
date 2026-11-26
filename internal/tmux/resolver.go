@@ -15,6 +15,41 @@ type endpointCommand interface {
 	ServerPIDContext(context.Context) (string, error)
 }
 
+type workspaceSessionRecord struct {
+	Name         string
+	Identity     string
+	Generation   string
+	MarkersKnown bool
+}
+
+type batchEndpointCommand interface {
+	ListWorkspaceSessionsContext(context.Context) ([]workspaceSessionRecord, error)
+}
+
+func listWorkspaceSessions(
+	ctx context.Context,
+	command endpointCommand,
+) ([]string, map[string]workspaceSessionRecord, error) {
+	if batch, ok := command.(batchEndpointCommand); ok {
+		records, err := batch.ListWorkspaceSessionsContext(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		names := make([]string, 0, len(records))
+		byName := make(map[string]workspaceSessionRecord, len(records))
+		for _, record := range records {
+			names = append(names, record.Name)
+			byName[record.Name] = record
+		}
+		return names, byName, nil
+	}
+	names, err := command.ListSessionsContext(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return names, nil, nil
+}
+
 // WorkspaceEndpointRequest is the identity required to resolve an existing
 // workspace session. Directory workspaces omit the generation.
 type WorkspaceEndpointRequest struct {
@@ -86,7 +121,7 @@ func (r *endpointResolver) resolve(
 	request WorkspaceEndpointRequest,
 ) (resolvedWorkspaceSession, error) {
 	intended := newResolvedWorkspaceSession(request.SessionName, false, false)
-	canonicalNames, err := r.canonical.ListSessionsContext(ctx)
+	canonicalNames, canonicalRecords, err := listWorkspaceSessions(ctx, r.canonical)
 	if err != nil {
 		return resolvedWorkspaceSession{}, fmt.Errorf(
 			"inspect canonical tmux endpoint: %w",
@@ -96,9 +131,10 @@ func (r *endpointResolver) resolve(
 	if candidate, ok := workspaceSessionCandidate(canonicalNames, request); ok {
 		candidateRequest := request
 		candidateRequest.SessionName = candidate
-		matches, inspectErr := inspectWorkspaceCandidate(
+		matches, inspectErr := inspectWorkspaceCandidateWithRecords(
 			ctx,
 			r.canonical,
+			canonicalRecords,
 			candidateRequest,
 			true,
 		)
@@ -111,12 +147,12 @@ func (r *endpointResolver) resolve(
 	}
 
 	// compat(kag1): default-server adoption
-	defaultNames, err := r.defaultServer.ListSessionsContext(ctx)
+	defaultNames, defaultRecords, err := listWorkspaceSessions(ctx, r.defaultServer)
 	if err != nil {
 		r.reportDiagnostic(fmt.Errorf("default-server adoption lookup degraded: %w", err))
 		return intended, nil
 	}
-	adopted, found, err := r.adoptDefaultServerSession(ctx, request, defaultNames)
+	adopted, found, err := r.adoptDefaultServerSession(ctx, request, defaultNames, defaultRecords)
 	if err != nil {
 		return resolvedWorkspaceSession{}, err
 	}
@@ -133,12 +169,12 @@ func (r *endpointResolver) liveEndpoints(
 	ctx context.Context,
 	request WorkspaceEndpointRequest,
 ) ([]SessionEndpoint, error) {
-	canonicalNames, err := r.canonical.ListSessionsContext(ctx)
+	canonicalNames, canonicalRecords, err := listWorkspaceSessions(ctx, r.canonical)
 	if err != nil {
 		return nil, fmt.Errorf("inspect canonical tmux endpoint: %w", err)
 	}
 	// compat(kag1): default-server adoption
-	defaultNames, err := r.defaultServer.ListSessionsContext(ctx)
+	defaultNames, defaultRecords, err := listWorkspaceSessions(ctx, r.defaultServer)
 	if err != nil {
 		return nil, fmt.Errorf("inspect default tmux endpoint: %w", err)
 	}
@@ -147,9 +183,10 @@ func (r *endpointResolver) liveEndpoints(
 	for _, candidate := range workspaceCleanupCandidates(canonicalNames, request) {
 		candidateRequest := request
 		candidateRequest.SessionName = candidate
-		matches, inspectErr := inspectWorkspaceCleanupCandidate(
+		matches, inspectErr := inspectWorkspaceCleanupCandidateWithRecords(
 			ctx,
 			r.canonical,
+			canonicalRecords,
 			candidateRequest,
 			candidate == request.SessionName,
 		)
@@ -164,9 +201,10 @@ func (r *endpointResolver) liveEndpoints(
 	for _, candidate := range workspaceCleanupCandidates(defaultNames, request) {
 		candidateRequest := request
 		candidateRequest.SessionName = candidate
-		matches, inspectErr := inspectWorkspaceCleanupCandidate(
+		matches, inspectErr := inspectWorkspaceCleanupCandidateWithRecords(
 			ctx,
 			r.defaultServer,
+			defaultRecords,
 			candidateRequest,
 			false,
 		)
@@ -225,7 +263,7 @@ func (r *endpointResolver) resolveEach(
 	if len(requests) == 0 {
 		return []WorkspaceSessionResolution{}, nil
 	}
-	canonicalNames, err := r.canonical.ListSessionsContext(ctx)
+	canonicalNames, canonicalRecords, err := listWorkspaceSessions(ctx, r.canonical)
 	if cancellationErr := resolutionCancellation(ctx, err); cancellationErr != nil {
 		return nil, cancellationErr
 	}
@@ -246,13 +284,14 @@ func (r *endpointResolver) resolveEach(
 		return results, nil
 	}
 	// compat(kag1): default-server adoption
-	defaultNames, defaultErr := r.defaultServer.ListSessionsContext(ctx)
+	defaultNames, defaultRecords, defaultErr := listWorkspaceSessions(ctx, r.defaultServer)
 	if cancellationErr := resolutionCancellation(ctx, defaultErr); cancellationErr != nil {
 		return nil, cancellationErr
 	}
 	if defaultErr != nil {
 		r.reportDiagnostic(fmt.Errorf("default-server adoption lookup degraded: %w", defaultErr))
 		defaultNames = nil
+		defaultRecords = nil
 	}
 
 	results := make([]WorkspaceSessionResolution, 0, len(requests))
@@ -261,7 +300,9 @@ func (r *endpointResolver) resolveEach(
 			ctx,
 			request,
 			canonicalNames,
+			canonicalRecords,
 			defaultNames,
+			defaultRecords,
 			defaultErr == nil,
 		)
 		if resolveErr != nil {
@@ -300,14 +341,22 @@ func (r *endpointResolver) resolveFromInventory(
 	ctx context.Context,
 	request WorkspaceEndpointRequest,
 	canonicalNames []string,
+	canonicalRecords map[string]workspaceSessionRecord,
 	defaultNames []string,
+	defaultRecords map[string]workspaceSessionRecord,
 	defaultAvailable bool,
 ) (resolvedWorkspaceSession, error) {
 	intended := newResolvedWorkspaceSession(request.SessionName, false, false)
 	if candidate, ok := workspaceSessionCandidate(canonicalNames, request); ok {
 		candidateRequest := request
 		candidateRequest.SessionName = candidate
-		matches, err := inspectWorkspaceCandidate(ctx, r.canonical, candidateRequest, true)
+		matches, err := inspectWorkspaceCandidateWithRecords(
+			ctx,
+			r.canonical,
+			canonicalRecords,
+			candidateRequest,
+			true,
+		)
 		if err != nil {
 			return resolvedWorkspaceSession{}, err
 		}
@@ -318,7 +367,7 @@ func (r *endpointResolver) resolveFromInventory(
 	if !defaultAvailable {
 		return intended, nil
 	}
-	adopted, found, err := r.adoptDefaultServerSession(ctx, request, defaultNames)
+	adopted, found, err := r.adoptDefaultServerSession(ctx, request, defaultNames, defaultRecords)
 	if err != nil {
 		return resolvedWorkspaceSession{}, err
 	}
@@ -333,6 +382,7 @@ func (r *endpointResolver) adoptDefaultServerSession(
 	ctx context.Context,
 	request WorkspaceEndpointRequest,
 	names []string,
+	records map[string]workspaceSessionRecord,
 ) (resolvedWorkspaceSession, bool, error) {
 	candidate, ok := workspaceSessionCandidate(names, request)
 	if !ok {
@@ -340,9 +390,10 @@ func (r *endpointResolver) adoptDefaultServerSession(
 	}
 	candidateRequest := request
 	candidateRequest.SessionName = candidate
-	matches, err := inspectWorkspaceCandidate(
+	matches, err := inspectWorkspaceCandidateWithRecords(
 		ctx,
 		r.defaultServer,
+		records,
 		candidateRequest,
 		false,
 	)
@@ -409,6 +460,42 @@ func containsExactSession(names []string, expected string) bool {
 	return false
 }
 
+func inspectWorkspaceCandidateWithRecords(
+	ctx context.Context,
+	command endpointCommand,
+	records map[string]workspaceSessionRecord,
+	request WorkspaceEndpointRequest,
+	canonical bool,
+) (bool, error) {
+	if record, ok := records[request.SessionName]; ok && record.MarkersKnown {
+		matches, err := validateWorkspaceIdentity(record.Identity, request, canonical)
+		if err != nil || !matches {
+			return matches, err
+		}
+		if request.WorkspaceGeneration == "" {
+			return true, nil
+		}
+		return validateWorkspaceGeneration(record.Generation, request, canonical)
+	}
+	return inspectWorkspaceCandidate(ctx, command, request, canonical)
+}
+
+func inspectWorkspaceCleanupCandidateWithRecords(
+	ctx context.Context,
+	command endpointCommand,
+	records map[string]workspaceSessionRecord,
+	request WorkspaceEndpointRequest,
+	canonical bool,
+) (bool, error) {
+	if request.WorkspaceGeneration != "" {
+		if record, ok := records[request.SessionName]; ok && record.MarkersKnown {
+			return validateWorkspaceGeneration(record.Generation, request, canonical)
+		}
+		return inspectWorkspaceGenerationCandidate(ctx, command, request, canonical)
+	}
+	return inspectWorkspaceCandidateWithRecords(ctx, command, records, request, canonical)
+}
+
 func inspectWorkspaceCandidate(
 	ctx context.Context,
 	command endpointCommand,
@@ -423,6 +510,21 @@ func inspectWorkspaceCandidate(
 	if err != nil {
 		return false, fmt.Errorf("read workspace identity marker: %w", err)
 	}
+	matches, err := validateWorkspaceIdentity(identity, request, canonical)
+	if err != nil || !matches {
+		return matches, err
+	}
+	if request.WorkspaceGeneration == "" {
+		return true, nil
+	}
+	return inspectWorkspaceGenerationCandidate(ctx, command, request, canonical)
+}
+
+func validateWorkspaceIdentity(
+	identity string,
+	request WorkspaceEndpointRequest,
+	canonical bool,
+) (bool, error) {
 	identity = strings.TrimSpace(identity)
 	if identity == "" {
 		if canonical {
@@ -451,22 +553,7 @@ func inspectWorkspaceCandidate(
 		}
 		return false, nil
 	}
-	if request.WorkspaceGeneration == "" {
-		return true, nil
-	}
-	return inspectWorkspaceGenerationCandidate(ctx, command, request, canonical)
-}
-
-func inspectWorkspaceCleanupCandidate(
-	ctx context.Context,
-	command endpointCommand,
-	request WorkspaceEndpointRequest,
-	canonical bool,
-) (bool, error) {
-	if request.WorkspaceGeneration != "" {
-		return inspectWorkspaceGenerationCandidate(ctx, command, request, canonical)
-	}
-	return inspectWorkspaceCandidate(ctx, command, request, canonical)
+	return true, nil
 }
 
 func inspectWorkspaceGenerationCandidate(
@@ -483,6 +570,14 @@ func inspectWorkspaceGenerationCandidate(
 	if err != nil {
 		return false, fmt.Errorf("read workspace generation marker: %w", err)
 	}
+	return validateWorkspaceGeneration(generation, request, canonical)
+}
+
+func validateWorkspaceGeneration(
+	generation string,
+	request WorkspaceEndpointRequest,
+	canonical bool,
+) (bool, error) {
 	generation = strings.TrimSpace(generation)
 	if generation == "" {
 		if canonical {
