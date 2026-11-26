@@ -1,8 +1,66 @@
 # Agent workspaces
 
-Give each agent its own branch, worktree, and tmux workspace so parallel tasks
+Give each agent its own branch, worktree, and persistent workspace so parallel tasks
 do not compete for one checkout. kwt exposes the same lifecycle to a person in
 the dashboard and to an agent through commands and JSON.
+
+## Choose Herdr Core
+
+Workspaces use tmux by default. To use Herdr Core instead, install `hc` on
+`PATH` and add this machine-wide setting to your global configuration:
+
+```toml
+[workspace]
+backend = "herdr-core" # "tmux" is the default
+core_socket = "/absolute/path/to/core.sock"
+```
+
+The selector applies to `kwt add` automatic launch, `kwt open`, registered
+directory workspaces, and the dashboard. Repository `.kwt.toml` files cannot
+change either setting, even when trusted. `core_socket` must be the absolute
+local socket path of the Core instance you use for workspaces. All workspace
+operations use this machine-owned route, including daemon inventory and
+removal; changing ambient `HC_SOCKET` or `HC_SESSION` does not redirect them.
+Launch uses the deterministic session `kwt` and no ambient Core parent.
+Standalone `kwt herdr` commands retain their usual environment-selected route.
+A configured socket that cannot be reached is not proof that no workspace
+survives: inventory and removal fail closed and ask you to start Core explicitly.
+Keep the configured route stable until its workspaces have been stopped and
+cleaned. Existing-branch creation still starts inert.
+
+Core supports a blank login shell (`--layout none`) or one layout command in a
+single terminal. The command runs once in the login shell; its completion
+leaves that shell available. Live reopen reuses the verified terminal without
+submitting the command again. After the shell has finally exited, an explicit
+open can create one new terminal; refresh and cached attachment never launch.
+Finished records remain available for `hc read <address>`.
+
+Core has no pane geometry API. Multi-pane layouts fail explicitly before
+launch, and before checkout creation when launch was requested by `kwt add`.
+Use tmux for those layouts. Core workspaces work without the desktop app.
+Attach through `kwt open`, or use `hc attach -- <address>` for an ordinary
+verified endpoint; Ctrl+\ detaches. The dashboard keeps its usual keys.
+
+`kwt open <path> --start-session --json`, worktree inventory, and directory
+workspace JSON identify Core with `workspace_runtime: "herdr-core"` and an
+immutable local `workspace_address`, with `workspace_created_ms` preserving
+the exact creation identity for cached attachment. These fields are separate from tmux socket
+fields. Respect the attachment policy: imported PR workspaces still require
+`kwt pr attach <path>`, verified provenance, and a blank shell with current kwt
+credential names removed before login startup. Keep/recovery is disabled;
+enabling it would replace the protected helper with an unsanitized shell.
+
+Stop a live Core workspace before removing its worktree. The dashboard kill
+operation stops the terminal while retaining history. Removal refuses a live
+matching Core workspace, including on the direct and force paths, then cleans
+only verified finished records after a permitted removal. Core has no atomic
+freeze-and-delete operation; this check cannot prevent a separate Core client
+from launching work outside kwt's coordination.
+
+If launch, command submission, or stop has an uncertain result, inspect the
+record and history before taking another action. kwt does not retry those
+mutations. Labels and names alone never authorize workspace adoption or
+cleanup, and standalone `kwt herdr run` terminals are not adopted as workspaces.
 
 ## Configure a layout
 
@@ -88,14 +146,15 @@ Establish it for another terminal client without attaching kwt's process:
 kwt open "$(kwt get fix/flaky-status)" --start-session --json
 ```
 
-New ordinary workspaces run on kwt's dedicated tmux server, `tmux -L kwt`,
+With the default backend, new ordinary workspaces run on kwt's dedicated tmux server, `tmux -L kwt`,
 instead of sharing the default server with personal sessions. During an upgrade,
 kwt can reuse a verified matching workspace already running on the default
 server. Upgrade cooperating clients together so an older client does not create
 a parallel session there.
 
-The JSON result names the selected endpoint with `session_name`,
-`tmux_socket_name`, and `tmux_attach_mode`. Use those fields together; do not
+The JSON result names tmux endpoints with `session_name`,
+`tmux_socket_name`, and `tmux_attach_mode`. Core endpoints use
+`workspace_runtime`, `workspace_address`, and `workspace_created_ms`. Use those fields together; do not
 infer the attachment policy from a socket name. The
 [CLI reference](../reference/cli.md#kwt-open) defines the complete contract.
 

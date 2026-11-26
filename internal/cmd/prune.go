@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/kwt/internal/git"
+	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/internal/prunepolicy"
 	"go.kenn.io/kwt/internal/registry"
 	"go.kenn.io/kwt/internal/utils"
@@ -230,9 +231,14 @@ func runPruneExpired(cmd *cobra.Command, _ []string) error {
 					cmd.Context(), candidate.git, entry.Path, pruneForce, candidate.conditions,
 					func(remove func() (shared.RemovalResult, error)) (bool, error) {
 						return reg.RemoveIfMatchAfter(entry.Path, entry, func() error {
+							cleanup, closeObservation, guardErr := lifecycle.PrepareCoreWorkspaceRemoval(cmd.Context(), entry.Path, entry.Generation)
+							if guardErr != nil {
+								return guardErr
+							}
+							defer closeObservation()
 							effects, err := remove()
 							if effects.RegistrationRemoved {
-								residualWarning = err
+								residualWarning = errors.Join(err, cleanup())
 								return nil
 							}
 							return err

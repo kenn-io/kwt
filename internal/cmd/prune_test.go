@@ -542,6 +542,33 @@ func TestPruneExpiredRemovesMatchingGenerationAndPublishesOnce(t *testing.T) {
 	assert.False(t, exists)
 }
 
+func TestPruneExpiredRefusesUnreachableConfiguredCore(t *testing.T) {
+	resetFleetCommandDeps(t)
+	resetPruneCommandFlags(t)
+	initCommandTestConfig(t, t.TempDir())
+	repoPath := newTUITestRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "expired-core")
+	runTUITestGit(t, repoPath, "branch", "feature/expired-core")
+	runTUITestGit(t, repoPath, "worktree", "add", worktreePath, "feature/expired-core")
+	generation, err := openSharedWorktrees(t, git.New(repoPath)).EnsureIdentity(t.Context(), worktreePath, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
+	require.NoError(t, err)
+	registerExpiredWorktree(t, worktreePath, generation)
+	f, err := os.OpenFile(filepath.Join(os.Getenv("KWT_HOME"), "config.toml"), os.O_APPEND|os.O_WRONLY, 0600)
+	require.NoError(t, err)
+	_, err = fmt.Fprintf(f, "\n[workspace]\ncore_socket = %q\n", filepath.Join(t.TempDir(), "missing.sock"))
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	pruneExpired, pruneForce = true, true
+	cmd, _, _ := fleetTestCommand()
+	err = runPrune(cmd, nil)
+	assertExitCode(t, err, 1)
+	assert.DirExists(t, worktreePath)
+	reg, err := registry.New()
+	require.NoError(t, err)
+	_, exists := reg.Get(worktreePath)
+	assert.True(t, exists)
+}
+
 func TestPruneExpiredNoopDoesNotPublish(t *testing.T) {
 	resetFleetCommandDeps(t)
 	resetPruneCommandFlags(t)
