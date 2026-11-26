@@ -68,6 +68,13 @@ func (s *Scope) EnsureIdentity(ctx context.Context, path string, identity Identi
 	if err != nil {
 		return "", err
 	}
+	return s.ensureIdentityInDir(ctx, path, dir, identity)
+}
+
+func (s *Scope) ensureIdentityInDir(ctx context.Context, path, dir string, identity IdentityPolicy) (string, error) {
+	if err := s.check(ctx); err != nil {
+		return "", err
+	}
 	marker := filepath.Join(dir, identity.FileName)
 	data, readErr := fslink.ReadFile(marker)
 	value := strings.TrimSpace(string(data))

@@ -685,3 +685,108 @@ func TestAttachWorkspaceEndpointRejectsNonNumericServerPIDWithoutVersionProbe(t 
 	require.ErrorContains(t, err, "tmux 2.1")
 	assert.Equal(t, []string{"display-message -p #{pid}"}, canonical.calls)
 }
+
+type fakeBatchEndpointCommand struct {
+	*fakeEndpointCommand
+	records []workspaceSessionRecord
+}
+
+func (f *fakeBatchEndpointCommand) ListWorkspaceSessionsContext(
+	context.Context,
+) ([]workspaceSessionRecord, error) {
+	f.calls = append(f.calls, "list-workspace-sessions")
+	f.listed = true
+	return append([]workspaceSessionRecord(nil), f.records...), f.listErr
+}
+
+func TestResolverUsesBatchedWorkspaceSessionListingWithoutPerSessionQueries(t *testing.T) {
+	matching := resolverTestRequest()
+	mismatched := WorkspaceEndpointRequest{
+		SessionName:         "kwt-wt-gadget-main-89abcdef",
+		WorkspacePath:       "/work/gadget",
+		WorkspaceGeneration: resolverTestGeneration,
+	}
+	adopted := WorkspaceEndpointRequest{
+		SessionName:         "kwt-wt-legacy-main-11223344",
+		WorkspacePath:       "/work/legacy",
+		WorkspaceGeneration: resolverTestGeneration,
+	}
+	fallback := WorkspaceEndpointRequest{
+		SessionName:         "kwt-wt-fallback-main-55667788",
+		WorkspacePath:       "/work/fallback",
+		WorkspaceGeneration: resolverTestGeneration,
+	}
+
+	canonicalBase, defaultBase := newResolverTestCommands(matching.WorkspacePath, matching.SessionName)
+	canonicalBase.optionsBySession = map[string]map[string]string{
+		fallback.SessionName: {
+			workspaceIdentityOption:   WorkspacePathIdentity(fallback.WorkspacePath),
+			workspaceGenerationOption: fallback.WorkspaceGeneration,
+		},
+	}
+	canonical := &fakeBatchEndpointCommand{
+		fakeEndpointCommand: canonicalBase,
+		records: []workspaceSessionRecord{
+			{
+				Name:         matching.SessionName,
+				Identity:     WorkspacePathIdentity(matching.WorkspacePath),
+				Generation:   matching.WorkspaceGeneration,
+				MarkersKnown: true,
+			},
+			{
+				Name:         mismatched.SessionName,
+				Identity:     WorkspacePathIdentity(mismatched.WorkspacePath),
+				Generation:   "fedcba9876543210fedcba9876543210",
+				MarkersKnown: true,
+			},
+			{
+				Name:         fallback.SessionName,
+				MarkersKnown: false,
+			},
+		},
+	}
+	defaultServer := &fakeBatchEndpointCommand{
+		fakeEndpointCommand: defaultBase,
+		records: []workspaceSessionRecord{
+			{
+				Name:         adopted.SessionName,
+				Identity:     WorkspacePathIdentity(adopted.WorkspacePath),
+				Generation:   adopted.WorkspaceGeneration,
+				MarkersKnown: true,
+			},
+		},
+	}
+	resolver := newEndpointResolver(canonical, defaultServer, nil)
+
+	got, err := resolver.resolveAllBestEffort(
+		t.Context(),
+		[]WorkspaceEndpointRequest{matching, mismatched, adopted, fallback},
+	)
+
+	require.NoError(t, err)
+	require.Len(t, got, 4)
+
+	require.NoError(t, got[0].Err)
+	assert.Equal(t, canonicalEndpoint(matching.SessionName), got[0].Session.Endpoint)
+	assert.True(t, got[0].Session.Live)
+
+	var safetyErr *SessionSafetyError
+	require.ErrorAs(t, got[1].Err, &safetyErr)
+	assert.False(t, got[1].Session.Live)
+
+	require.NoError(t, got[2].Err)
+	assert.Equal(t, SessionEndpoint{SessionName: adopted.SessionName}, got[2].Session.Endpoint)
+	assert.True(t, got[2].Session.Live)
+
+	require.NoError(t, got[3].Err)
+	assert.Equal(t, canonicalEndpoint(fallback.SessionName), got[3].Session.Endpoint)
+	assert.True(t, got[3].Session.Live)
+
+	assert.Equal(t, 1, countCall(canonical.calls, "list-workspace-sessions"))
+	assert.Equal(t, 0, countCall(canonical.calls, "list-sessions"))
+	assert.Equal(t, 1, countCall(canonical.calls, workspaceIdentityOption), "only the MarkersKnown=false session should query options")
+	assert.Equal(t, 1, countCall(canonical.calls, workspaceGenerationOption), "only the MarkersKnown=false session should query options")
+	assert.Equal(t, 1, countCall(defaultServer.calls, "list-workspace-sessions"))
+	assert.Equal(t, 0, countCall(defaultServer.calls, workspaceIdentityOption))
+	assert.Equal(t, 0, countCall(defaultServer.calls, workspaceGenerationOption))
+}

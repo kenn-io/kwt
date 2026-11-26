@@ -2,6 +2,7 @@ package worktree_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -190,4 +191,96 @@ func TestScopeCancellationAndExecutionPolicy(t *testing.T) {
 	require.True(t, scopedRead, "scoped Git commands must run through the caller's RunGit")
 	_, err = testGitRunner().Output(t.Context(), other, "config", "--get", "example.written")
 	require.Error(t, err)
+}
+
+func TestListHandlesManyWorktreesIncludingPrunableAndCorruptedGenerations(t *testing.T) {
+	t.Parallel()
+	root, first := fixture(t)
+	wtsDir := resolvedTempDir(t)
+	paths := []string{root, first}
+	for i := range 10 {
+		wt := filepath.Join(wtsDir, fmt.Sprintf("wt-%d", i))
+		git(t, root, "worktree", "add", "-b", fmt.Sprintf("wt-%d", i), wt)
+		paths = append(paths, wt)
+	}
+	repo := open(t, root, kwtPolicy())
+	identity := worktree.IdentityPolicy{FileName: "kwt-generation", Generate: true}
+
+	// Initialize all generations once, then corrupt one and remove two checkouts (prunable).
+	initial, err := repo.List(t.Context(), identity)
+	require.NoError(t, err)
+	require.Len(t, initial, len(paths))
+	byPath := make(map[string]worktree.Entry, len(initial))
+	for _, entry := range initial {
+		require.NotEmpty(t, entry.Path)
+		require.NotEmpty(t, entry.GitDir)
+		require.Regexp(t, "^[0-9a-f]{32}$", entry.Generation)
+		require.Equal(t, worktree.GenerationValid, entry.GenerationStatus)
+		byPath[filepath.FromSlash(entry.Path)] = entry
+	}
+
+	corruptedPath := paths[2]
+	corruptedEntry, ok := byPath[corruptedPath]
+	require.True(t, ok)
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.FromSlash(corruptedEntry.GitDir), "kwt-generation"), []byte("bad"), 0o600))
+	prunableA, prunableB := paths[len(paths)-2], paths[len(paths)-1]
+	require.NoError(t, os.RemoveAll(prunableA))
+	require.NoError(t, os.RemoveAll(prunableB))
+
+	relisted, err := repo.List(t.Context(), identity)
+	require.NoError(t, err)
+	require.Len(t, relisted, len(paths))
+	for _, entry := range relisted {
+		require.NotEmpty(t, entry.Path)
+		require.Regexp(t, "^[0-9a-f]{32}$", entry.Generation)
+		require.Equal(t, worktree.GenerationValid, entry.GenerationStatus)
+		entryPath := filepath.FromSlash(entry.Path)
+		previous, ok := byPath[entryPath]
+		require.True(t, ok)
+		switch entryPath {
+		case corruptedPath:
+			require.NotEqual(t, corruptedEntry.Generation, entry.Generation)
+		case prunableA, prunableB:
+			require.False(t, entry.Exists)
+			require.Equal(t, previous.Generation, entry.Generation)
+		default:
+			require.True(t, entry.Exists)
+			require.Equal(t, previous.Generation, entry.Generation)
+		}
+	}
+}
+
+func BenchmarkListWorktrees(b *testing.B) {
+	root := b.TempDir()
+	runGit := func(dir string, args ...string) {
+		b.Helper()
+		_, err := testGitRunner().Output(b.Context(), dir, args...)
+		require.NoError(b, err)
+	}
+	runGit(root, "init", "-b", "main")
+	runGit(root, "config", "user.email", "test@example.com")
+	runGit(root, "config", "user.name", "Test")
+	runGit(root, "commit", "--allow-empty", "-m", "init")
+	wtsDir := b.TempDir()
+	for i := range 36 {
+		wt := filepath.Join(wtsDir, fmt.Sprintf("wt-%02d", i))
+		runGit(root, "worktree", "add", "-b", fmt.Sprintf("wt-%02d", i), wt)
+		if i >= 30 {
+			require.NoError(b, os.RemoveAll(wt))
+		}
+	}
+	coordinator, err := worktree.NewCoordinator(kwtPolicy())
+	require.NoError(b, err)
+	repo, err := coordinator.Open(b.Context(), worktree.RepositoryOptions{Path: root, Runner: testGitRunner()})
+	require.NoError(b, err)
+	identity := worktree.IdentityPolicy{FileName: "kwt-generation", Generate: true}
+	_, err = repo.List(b.Context(), identity)
+	require.NoError(b, err)
+
+	b.ResetTimer()
+	for b.Loop() {
+		entries, err := repo.List(b.Context(), identity)
+		require.NoError(b, err)
+		require.Len(b, entries, 37)
+	}
 }

@@ -445,8 +445,10 @@ cross-server nesting mechanism while retaining its stricter environment rules.
 session bootstrap without attaching a client. Use it before an external
 direct tmux client attaches to a session that may not exist yet. Registered
 directory paths resolve from the workspace registry; worktree paths resolve
-directly from Git rather than the global worktree base. This keeps automation
-noninteractive and supports both plain directories and linked worktrees stored
+directly from Git rather than the global worktree base. Both `--start-session`
+and guarded opens (`--expected-*`) skip interactive `.kwt.toml` trust prompts
+while still honoring already-trusted target configs, keeping automation
+noninteractive and supporting both plain directories and linked worktrees stored
 outside that base.
 Protected pull-request imports remain restricted to `kwt pr attach`.
 

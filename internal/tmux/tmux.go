@@ -191,6 +191,64 @@ func (t *TmuxCommand) ListSessionsContext(ctx context.Context) ([]string, error)
 	return sessions, nil
 }
 
+// ListWorkspaceSessionsContext returns session names alongside kwt's workspace
+// identity and generation user options in one tmux invocation. If any session
+// name contains the field delimiter, it falls back to ListSessionsContext with
+// MarkersKnown false so callers inspect options per session.
+func (t *TmuxCommand) ListWorkspaceSessionsContext(
+	ctx context.Context,
+) ([]workspaceSessionRecord, error) {
+	const sep = "\x1f"
+	format := "#{session_name}" + sep + "#{" + workspaceIdentityOption + "}" + sep + "#{" + workspaceGenerationOption + "}"
+	output, stderr, err := t.runCommandOutputContextWithStderr(ctx, "list-sessions", "-F", format)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, errors.Join(ctxErr, err)
+	}
+	if err != nil {
+		var exited exitCoder
+		if errors.As(err, &exited) && exited.ExitCode() == 1 &&
+			IsExplicitlyAbsentDiagnostic(stderr) {
+			return []workspaceSessionRecord{}, nil
+		}
+		return nil, fmt.Errorf(
+			"tmux list-sessions failed: %w, stderr: %s",
+			err,
+			strings.TrimSpace(stderr),
+		)
+	}
+	trimmed := strings.TrimRight(output, "\r\n")
+	if trimmed == "" {
+		return []workspaceSessionRecord{}, nil
+	}
+	lines := strings.Split(trimmed, "\n")
+	records := make([]workspaceSessionRecord, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, sep)
+		if len(parts) != 3 {
+			names, listErr := t.ListSessionsContext(ctx)
+			if listErr != nil {
+				return nil, listErr
+			}
+			fallback := make([]workspaceSessionRecord, 0, len(names))
+			for _, name := range names {
+				fallback = append(fallback, workspaceSessionRecord{Name: name})
+			}
+			return fallback, nil
+		}
+		records = append(records, workspaceSessionRecord{
+			Name:         parts[0],
+			Identity:     strings.TrimSpace(parts[1]),
+			Generation:   strings.TrimSpace(parts[2]),
+			MarkersKnown: true,
+		})
+	}
+	return records, nil
+}
+
 // SessionUserOptionContext reads one session-local user option without
 // exposing the command implementation to endpoint resolvers.
 func (t *TmuxCommand) SessionUserOptionContext(
