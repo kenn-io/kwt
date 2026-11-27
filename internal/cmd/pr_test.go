@@ -30,6 +30,7 @@ import (
 	"go.kenn.io/kwt/internal/template"
 	"go.kenn.io/kwt/internal/tmux"
 	urlutil "go.kenn.io/kwt/internal/url"
+	workspacepkg "go.kenn.io/kwt/internal/workspace"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 	shared "go.kenn.io/kwt/worktree"
@@ -85,6 +86,7 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 	oldAttachExpectedGeneration := prAttachExpectedGeneration
 	oldAttachExpectedSession := prAttachExpectedSession
 	oldAttachExpectedSocket := prAttachExpectedSocket
+	oldAttachExpectedRuntime, oldAttachExpectedAddress, oldAttachExpectedCreatedMS := prAttachExpectedRuntime, prAttachExpectedAddress, prAttachExpectedCreatedMS
 	oldValidateSessionConfig := validatePRWorkspaceSessionConfig
 	oldStartWorkspaceSession := ensurePRWorkspaceSession
 	oldAttachWorkspaceSession := attachExistingPRWorkspaceSession
@@ -107,6 +109,7 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 		prAttachExpectedGeneration = oldAttachExpectedGeneration
 		prAttachExpectedSession = oldAttachExpectedSession
 		prAttachExpectedSocket = oldAttachExpectedSocket
+		prAttachExpectedRuntime, prAttachExpectedAddress, prAttachExpectedCreatedMS = oldAttachExpectedRuntime, oldAttachExpectedAddress, oldAttachExpectedCreatedMS
 		validatePRWorkspaceSessionConfig = oldValidateSessionConfig
 		ensurePRWorkspaceSession = oldStartWorkspaceSession
 		attachExistingPRWorkspaceSession = oldAttachWorkspaceSession
@@ -140,6 +143,7 @@ func withPRCommandDeps(t *testing.T, cfg *models.Config, service prService) {
 	prAttachExpectedGeneration = ""
 	prAttachExpectedSession = ""
 	prAttachExpectedSocket = ""
+	prAttachExpectedRuntime, prAttachExpectedAddress, prAttachExpectedCreatedMS = "", "", 0
 	validatePRWorkspaceSessionConfig = func(*models.Config) error {
 		return nil
 	}
@@ -311,6 +315,35 @@ func testPRConfig() *models.Config {
 func TestPRCommandsSkipCallerLocalConfig(t *testing.T) {
 	require.NotNil(t, prCmd.PersistentPreRunE)
 	require.NoError(t, prCmd.PersistentPreRunE(prCmd, nil))
+}
+
+func TestGuardedCoreAttachRequiresExactEndpointIdentity(t *testing.T) {
+	withPRCommandDeps(t, testPRConfig(), &fakePRService{})
+	prAttachExpectedRepository = "github.com/acme/widget"
+	prAttachExpectedRegistration = "v1:" + strings.Repeat("a", 64)
+	prAttachExpectedGeneration = "0123456789abcdef0123456789abcdef"
+	prAttachExpectedSession = "fixture"
+	prAttachExpectedRuntime, prAttachExpectedAddress, prAttachExpectedCreatedMS = "herdr-core", "t91", 123
+	cmd, _, _ := prTestCommand()
+	markCommandFlagsChanged(t, cmd, "expected-repository", "expected-registration", "expected-generation", "expected-session", "expected-runtime", "expected-address", "expected-created-ms")
+	guarded, err := validateExpectedPRAttachFlags(cmd)
+	require.NoError(t, err)
+	assert.True(t, guarded)
+	prAttachExpectedAddress = "t91 "
+	_, err = validateExpectedPRAttachFlags(cmd)
+	assert.True(t, service.IsCode(err, service.InvalidRequest))
+	prAttachExpectedAddress = "t91"
+	prAttachExpectedCreatedMS = 0
+	_, err = validateExpectedPRAttachFlags(cmd)
+	require.Error(t, err)
+}
+
+func TestGuardedCoreResolutionClassifiesOnlyMissingEndpointAsChanged(t *testing.T) {
+	err := guardedCoreResolutionError(workspacepkg.ErrWorkspaceNotLive)
+	require.True(t, service.IsCode(err, service.RegistrationChanged))
+	assert.True(t, service.AsError(err).Retryable)
+	unavailable := errors.New("Core unavailable")
+	assert.ErrorIs(t, guardedCoreResolutionError(unavailable), unavailable)
 }
 
 func TestPRConfigInitializationFailureUsesJSONContract(t *testing.T) {
@@ -621,6 +654,32 @@ func TestRunPRImportStartsValidatedWorkspaceSessionOnRequest(t *testing.T) {
 		"kwt-pr-0123456789abcdef",
 		importedWorkspace.TmuxSocketName,
 	)
+}
+
+func TestRunPRImportCoreLaunchRequiresGenerationGuard(t *testing.T) {
+	workspace := pullrequest.Workspace{Path: "/fixture/worktree", SessionName: "fixture", Generation: "0123456789abcdef0123456789abcdef"}
+	service := &fakePRService{result: pullrequest.ImportResult{Status: pullrequest.ImportCreated, Workspace: workspace}}
+	cfg := testPRConfig()
+	cfg.Workspace.Backend = "herdr-core"
+	cfg.Workspace.CoreSocket = "/fixture/missing.sock"
+	withPRCommandDeps(t, cfg, service)
+	prStartSession = true
+	called := false
+	withPRWorkspaceGeneration = func(_ context.Context, _ string, path, generation string, _ func() error) error {
+		called = true
+		assert.Equal(t, workspace.Path, path)
+		assert.Equal(t, workspace.Generation, generation)
+		return errors.New("generation changed")
+	}
+	cmd, stdout, _ := prTestCommand()
+	require.NoError(t, runPRImport(cmd, []string{"17"}))
+	assert.True(t, called)
+	var result pullrequest.ImportResult
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
+	require.NotNil(t, result.SessionStartError)
+	assert.Equal(t, pullrequest.CodeWorkspaceCreation, result.SessionStartError.Code)
+	assert.Equal(t, "failed to start imported Core workspace", result.SessionStartError.Message)
+	assert.False(t, result.SessionStartError.Retryable)
 }
 
 func TestRunPRImportRejectsSessionStartWithoutValidatedEndpoint(t *testing.T) {

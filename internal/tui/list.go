@@ -806,6 +806,12 @@ func formatWorkspace(row Row) string {
 	if row.Entry == nil && row.Fleet != nil {
 		return "remote"
 	}
+	if row.TmuxEndpoint.Runtime == "herdr-core" {
+		if row.SessionLive {
+			return "core live"
+		}
+		return "core off"
+	}
 	if row.SessionLive {
 		return "live"
 	}

@@ -12,8 +12,18 @@ import (
 	kwt "go.kenn.io/kwt"
 	kwtdaemon "go.kenn.io/kwt/internal/daemon"
 	"go.kenn.io/kwt/internal/tmux"
+	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 )
+
+func TestCoreWorkspaceCapabilityRejectsOlderDaemon(t *testing.T) {
+	observation := kwtdaemon.Observation{Client: &kwtdaemon.Client{}}
+	cfg := &models.Config{Workspace: models.WorkspaceConfig{CoreSocket: "/fixture/core.sock"}}
+	assert.True(t, service.IsCode(requireCoreWorkspaceCapability(observation, cfg), service.DaemonIncompatible))
+	observation.Status.Capabilities = []string{kwtdaemon.CapabilityCoreWorkspace}
+	assert.NoError(t, requireCoreWorkspaceCapability(observation, cfg))
+	assert.NoError(t, requireCoreWorkspaceCapability(kwtdaemon.Observation{}, &models.Config{}))
+}
 
 func TestAcquireSSHLeaseDoesNotRetryDrainAfterExposingOperation(t *testing.T) {
 	for _, kind := range []service.OperationEventKind{

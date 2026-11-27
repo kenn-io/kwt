@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/credentials"
+	"go.kenn.io/kwt/internal/herdrcore"
 	"go.kenn.io/kwt/internal/pullrequest"
 	"go.kenn.io/kwt/internal/tmux"
 	"go.kenn.io/kwt/internal/utils"
@@ -53,6 +55,7 @@ type protectedEndpoint struct {
 	SessionName string
 	SocketName  string
 	Generation  string
+	Path        string
 }
 
 func NewProjectRemovalService(options ProjectRemovalServiceOptions) ProjectRemover {
@@ -232,6 +235,33 @@ func (s *projectRemovalService) RemoveProject(
 	if err != nil {
 		return result, err
 	}
+	if current.Config.Workspace.CoreSocket != "" && len(endpoints) > 0 {
+		terminals, observeErr := herdrcore.NewWorkspaceClient(current.Config.Workspace.CoreSocket).ObserveManaged(ctx)
+		if observeErr != nil {
+			return result, incompleteProtectedAuthority(observeErr)
+		}
+		executable, executableErr := os.Executable()
+		if executableErr != nil {
+			return result, incompleteProtectedAuthority(executableErr)
+		}
+		for _, endpoint := range endpoints {
+			for _, terminal := range terminals {
+				if terminal.Context() != "protected-workspace" {
+					continue
+				}
+				if terminal.Labels["kwt.generation"] != endpoint.Generation && utils.PathKey(terminal.Directory) != utils.PathKey(endpoint.Path) && utils.PathKey(terminal.Labels["kwt.workspace_path"]) != utils.PathKey(endpoint.Path) {
+					continue
+				}
+				if terminal.State != "finished" || terminal.Reason == "spawn_pending" {
+					return result, projectRemovalError(service.ProtectedSessionLive, "a protected Core workspace is live or uncertain", false, nil, nil)
+				}
+				opts := herdrcore.RunOptions{Executable: executable, Directory: endpoint.Path, Context: "protected-workspace", ProtectedNames: protectedNames}
+				if verifyErr := herdrcore.VerifyWorkspace(terminal, opts, endpoint.Generation); verifyErr != nil {
+					return result, incompleteProtectedAuthority(verifyErr)
+				}
+			}
+		}
+	}
 	for _, endpoint := range endpoints {
 		state, probeErr := s.probe(
 			ctx, endpoint.SocketName, endpoint.SessionName, protectedNames,
@@ -350,6 +380,7 @@ func (s *projectRemovalService) loadProtectedEndpoints(
 		}
 		endpoint := protectedEndpoint{
 			SessionName: workspace.SessionName,
+			Path:        workspace.Path,
 			SocketName: tmux.ProtectedWorkspaceSocketName(
 				workspace.SessionName,
 				workspace.Path,

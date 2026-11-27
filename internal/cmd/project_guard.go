@@ -4,16 +4,44 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	kwt "go.kenn.io/kwt"
 	"go.kenn.io/kwt/internal/config"
+	"go.kenn.io/kwt/internal/credentials"
 	"go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/lifecycle"
 	"go.kenn.io/kwt/pkg/models"
 	"go.kenn.io/kwt/service"
 	shared "go.kenn.io/kwt/worktree"
 )
+
+// Directory identity stays path-based, but a checkout root still shares the
+// repository mutation guard with worktree removal.
+func runDirectorySessionEstablishment(ctx context.Context, cfg *models.Config, path string, establish func() error) error {
+	if cfg.Workspace.Backend != "herdr-core" {
+		return establish()
+	}
+	if _, err := os.Lstat(filepath.Join(path, ".git")); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return establish()
+		}
+		return err
+	}
+	names := credentials.ProtectedNames(cfg)
+	repo, err := git.NewWithContext(ctx, path).WorktreeRepository(ctx, names)
+	if err != nil {
+		return err
+	}
+	generation, err := repo.EnsureIdentity(ctx, path, shared.IdentityPolicy{FileName: "kwt-generation", Generate: true})
+	if err != nil {
+		return err
+	}
+	_, err = runWorktreeSessionEstablishment(ctx, path, generation, names, func(string) error { return establish() })
+	return err
+}
 
 func runWorktreeSessionEstablishment(
 	ctx context.Context,

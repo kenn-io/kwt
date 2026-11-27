@@ -58,7 +58,7 @@ var openCmd = &cobra.Command{
 	Use:   "open [pattern]",
 	Short: "Open a worktree or registered directory workspace",
 	Long: `Fuzzy-pick a worktree across all repositories in the configured base
-directory and attach to its tmux workspace, creating the workspace with the
+directory and attach to its configured workspace runtime, creating it with the
 resolved layout if it does not yet exist. A pattern filters the worktree list.
 An exact worktree path or registered directory workspace path resolves directly.
 Add --start-session to create or repair the workspace without attaching.`,
@@ -98,7 +98,7 @@ func init() {
 		false,
 		"ensure an exact workspace exists without attaching",
 	)
-	openCmd.Flags().BoolVar(&openJSON, "json", false, "emit the established tmux endpoint as JSON")
+	openCmd.Flags().BoolVar(&openJSON, "json", false, "emit the established workspace endpoint as JSON")
 	openCmd.Flags().StringVar(&openExpectedRepository, "expected-repository", "", "require this registered repository identity before opening")
 	openCmd.Flags().StringVar(&openExpectedRegistration, "expected-registration", "", "require this project registration fingerprint before opening")
 	openCmd.Flags().StringVar(&openExpectedGeneration, "expected-generation", "", "require this exact worktree generation before opening")
@@ -206,13 +206,17 @@ func runOpenWithContext(
 }
 
 type openSessionResult struct {
-	SessionName    string                `json:"session_name"`
-	TmuxSocketName string                `json:"tmux_socket_name,omitempty"`
-	TmuxAttachMode models.TmuxAttachMode `json:"tmux_attach_mode"`
+	WorkspaceRuntime   string                `json:"workspace_runtime,omitempty"`
+	WorkspaceAddress   string                `json:"workspace_address,omitempty"`
+	WorkspaceCreatedMS int64                 `json:"workspace_created_ms,omitempty"`
+	SessionName        string                `json:"session_name"`
+	TmuxSocketName     string                `json:"tmux_socket_name,omitempty"`
+	TmuxAttachMode     models.TmuxAttachMode `json:"tmux_attach_mode"`
 }
 
 func openSessionResultFromEndpoint(endpoint tmux.SessionEndpoint) openSessionResult {
 	return openSessionResult{
+		WorkspaceRuntime: endpoint.Runtime, WorkspaceAddress: endpoint.Address, WorkspaceCreatedMS: endpoint.CreatedMS,
 		SessionName:    endpoint.SessionName,
 		TmuxSocketName: endpoint.SocketName,
 		TmuxAttachMode: models.TmuxAttachDirect,
@@ -506,6 +510,9 @@ func openSelectedWorktreeWithResult(
 	// A layout the user chose wins over the saved session.
 	restoreSaved := shouldLoadTargetDefault(openLayout, openSelectLayout)
 	runner := newOpenWorkspaceRunner(protectedNames, restoreSaved)
+	if ctx.Config.Workspace.Backend == "herdr-core" {
+		runner = newConfiguredWorkspaceSessions(ctx.Config, protectedNames, os.Stderr)
+	}
 	if openExpectedRepository != "" {
 		return openExpectedWorktree(
 			commandCtx,
@@ -685,16 +692,14 @@ func openSelectedDirectoryWorkspaceWithResult(
 	if err := acknowledgeRemoteSourcePath(workspace.Path); err != nil {
 		return err
 	}
-	sessions, err := resolveDirectorySessions([]models.Workspace{workspace})
-	if err != nil {
-		return fmt.Errorf("failed to list tmux sessions: %w", err)
-	}
-	records := directoryWorkspaceRecordsFromSessions(
-		[]models.Workspace{workspace},
-		sessions,
-	)
-	if len(records) != 1 {
-		return fmt.Errorf("could not resolve directory workspace %s", workspace.Path)
+	if ctx.Config.Workspace.Backend != "herdr-core" {
+		sessions, err := resolveDirectorySessions([]models.Workspace{workspace})
+		if err != nil {
+			return fmt.Errorf("failed to list tmux sessions: %w", err)
+		}
+		if len(directoryWorkspaceRecordsFromSessions([]models.Workspace{workspace}, sessions)) != 1 {
+			return fmt.Errorf("could not resolve directory workspace %s", workspace.Path)
+		}
 	}
 	layout, err := resolveDirectoryWorkspaceLayout(
 		ctx.Config,
@@ -707,25 +712,32 @@ func openSelectedDirectoryWorkspaceWithResult(
 	if err != nil {
 		return err
 	}
+	protectedNames := credentials.ProtectedNames(ctx.Config)
 	restoreSaved := shouldLoadTargetDefault(openLayout, openSelectLayout)
-	runner := newOpenWorkspaceRunner(credentials.ProtectedNames(ctx.Config), restoreSaved)
-	var endpoint tmux.SessionEndpoint
-	if openExpectedSession != "" {
-		endpoint, err = runner.EstablishExpectedWithGeneration(
-			commandCtx, tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
-			openExpectedSession, workspace.Path, "", layout,
-		)
-		if errors.Is(err, tmux.ErrWorkspaceSessionChanged) {
-			return service.NewError(service.RegistrationChanged,
-				"directory workspace session changed before it was opened",
-				true, nil, err)
-		}
-	} else {
-		endpoint, err = runner.Establish(
-			commandCtx, tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
-			workspace.Path, layout,
-		)
+	runner := newOpenWorkspaceRunner(protectedNames, restoreSaved)
+	if ctx.Config.Workspace.Backend == "herdr-core" {
+		runner = newConfiguredWorkspaceSessions(ctx.Config, protectedNames, os.Stderr)
 	}
+	var endpoint tmux.SessionEndpoint
+	err = runDirectorySessionEstablishment(commandCtx, ctx.Config, workspace.Path, func() error {
+		if openExpectedSession != "" {
+			endpoint, err = runner.EstablishExpectedWithGeneration(
+				commandCtx, tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
+				openExpectedSession, workspace.Path, "", layout,
+			)
+			if errors.Is(err, tmux.ErrWorkspaceSessionChanged) {
+				return service.NewError(service.RegistrationChanged,
+					"directory workspace session changed before it was opened",
+					true, nil, err)
+			}
+		} else {
+			endpoint, err = runner.Establish(
+				commandCtx, tmux.DirWorkspaceSessionName(workspace.Name, workspace.Path),
+				workspace.Path, layout,
+			)
+		}
+		return err
+	})
 	if err != nil {
 		return err
 	}

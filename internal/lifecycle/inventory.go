@@ -181,6 +181,10 @@ type Repository struct {
 }
 
 type Entry struct {
+	WorkspaceRuntime   string `json:"workspace_runtime,omitempty"`
+	WorkspaceAddress   string `json:"workspace_address,omitempty"`
+	WorkspaceCreatedMS int64  `json:"workspace_created_ms,omitempty"`
+
 	Path           string                `json:"path"`
 	Branch         string                `json:"branch"`
 	CommitHash     string                `json:"commit_hash"`

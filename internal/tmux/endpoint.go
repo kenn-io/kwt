@@ -12,8 +12,15 @@ const KWTServerSocketName = "kwt"
 
 // SessionEndpoint is the durable tmux address for one session.
 type SessionEndpoint struct {
-	SessionName string
-	SocketName  string
+	Runtime             string
+	Address             string
+	CreatedMS           int64
+	WorkspacePath       string
+	WorkspaceGeneration string
+	Protected           bool
+	CoreSocket          string
+	SessionName         string
+	SocketName          string
 }
 
 // WorkspaceSession pairs a durable endpoint with its observed liveness.
@@ -32,6 +39,9 @@ func canonicalEndpoint(session string) SessionEndpoint {
 // KillCommandHint formats a manual command for the durable endpoint address.
 // It does not infer attachment policy from the socket name.
 func KillCommandHint(endpoint SessionEndpoint) string {
+	if endpoint.Runtime == "herdr-core" {
+		return fmt.Sprintf("HC_SOCKET=%s hc kill -- %s", shellQuote(endpoint.CoreSocket), shellQuote(endpoint.Address))
+	}
 	if endpoint.SocketName != "" {
 		return fmt.Sprintf(
 			"env -u TMUX_TMPDIR tmux -L %s kill-session -t %s",
@@ -43,6 +53,10 @@ func KillCommandHint(endpoint SessionEndpoint) string {
 		"env -u TMUX -u TMUX_PANE tmux kill-session -t %s",
 		exactSessionTarget(endpoint.SessionName),
 	)
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 // WorkspaceSessionsOptions configures workspace session coordination. The
