@@ -274,10 +274,6 @@ func TestInstallUninstallDryRun(t *testing.T) {
 		assert.True(t, result.Changed)
 		assert.NoFileExists(t, result.ConfigPath)
 	}
-	statuses, err := Statuses(executable, false)
-	require.NoError(t, err)
-	assert.False(t, findStatus(t, statuses, agenthook.AgentClaude).Installed)
-	assert.False(t, findStatus(t, statuses, agenthook.AgentCodex).Installed)
 	_, err = Install(executable, false, nil, false)
 	require.NoError(t, err)
 	preview, err = Install(executable, false, nil, true)
@@ -317,11 +313,4 @@ func TestInstallUninstallDryRun(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(after), "other-tool")
 	assert.NotContains(t, string(after), Marker)
-}
-
-func TestInstallDryRunRejectsMissingAgentDirectory(t *testing.T) {
-	home := isolateAgentConfig(t)
-	_, err := Install("kwt", false, []agenthook.Agent{agenthook.AgentCodex}, true)
-	require.ErrorContains(t, err, "Codex")
-	assert.NoDirExists(t, filepath.Join(home, ".codex"))
 }

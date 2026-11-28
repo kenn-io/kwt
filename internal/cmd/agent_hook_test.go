@@ -56,7 +56,7 @@ func TestAgentHookDuplicateSelectionPreviewMatchesApply(t *testing.T) {
 				previewVerb, applyVerb = "Would remove", "Removed"
 			}
 			assert.Equal(t, 1, strings.Count(apply, applyVerb), apply)
-			assert.Equal(t, strings.Count(apply, applyVerb), strings.Count(preview, previewVerb), preview)
+			assert.Equal(t, 1, strings.Count(preview, previewVerb), preview)
 			if operation == "install" {
 				assert.Contains(t, apply, "Already current:")
 			}
