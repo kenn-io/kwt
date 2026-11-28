@@ -300,7 +300,7 @@ func TestInstallUninstallDryRun(t *testing.T) {
 	var settings map[string]any
 	require.NoError(t, json.Unmarshal(data, &settings))
 	hooks := settings["hooks"].(map[string]any)
-	hooks["OtherEvent"] = []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "other-tool"}}}}
+	hooks["Stop"] = append(hooks["Stop"].([]any), map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "other-tool"}}})
 	data, err = json.Marshal(settings)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(path, data, 0o600))

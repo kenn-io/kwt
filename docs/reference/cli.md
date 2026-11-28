@@ -772,7 +772,8 @@ keeps hooks owned by other tools. Codex asks you to trust new hooks once
 through `/hooks`.
 
 Use `--dry-run` with `install` or `uninstall` to preview config changes
-without writing files, running hooks, or granting trust. With `--json`, install
+without writing files, running hooks, or granting trust. Preview JSON includes
+`dry_run: true`. With `--json`, install
 lists each agent checked, its config path, and whether it would change;
 uninstall lists agents with kwt hooks to remove. An uninstall preview with
 nothing to remove prints no text, or an empty agents list with `--json`.
