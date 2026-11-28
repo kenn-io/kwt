@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,7 +16,90 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/agenthook"
 )
+
+func agentHookPreviewFixture(t *testing.T) (string, func(...string) string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	for _, profile := range agenthook.Profiles() {
+		if profile.ConfigEnvironment != "" {
+			t.Setenv(profile.ConfigEnvironment, "")
+		}
+	}
+	t.Setenv("KWT_HOME", filepath.Join(home, "kwt"))
+	require.NoError(t, os.Mkdir(filepath.Join(home, ".claude"), 0o700))
+	run := func(args ...string) string {
+		t.Helper()
+		t.Setenv("KWT_TEST_ARGS", strings.Join(append([]string{"agent-hook"}, args...), "\n"))
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestKwtHelperProcess$")
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(output))
+		return string(output)
+	}
+	return home, run
+}
+
+func TestAgentHookDuplicateSelectionPreviewMatchesApply(t *testing.T) {
+	for _, operation := range []string{"install", "uninstall"} {
+		t.Run(operation, func(t *testing.T) {
+			_, run := agentHookPreviewFixture(t)
+			if operation == "uninstall" {
+				run("install", "--agent", "claude")
+			}
+			preview := run(operation, "--dry-run", "--agent", "claude", "--agent", " CLAUDE ")
+			apply := run(operation, "--agent", "claude", "--agent", " CLAUDE ")
+			previewVerb, applyVerb := "Would install", "Installed"
+			if operation == "uninstall" {
+				previewVerb, applyVerb = "Would remove", "Removed"
+			}
+			assert.Equal(t, 1, strings.Count(apply, applyVerb), apply)
+			assert.Equal(t, 1, strings.Count(preview, previewVerb), preview)
+			if operation == "install" {
+				assert.Contains(t, apply, "Already current:")
+			}
+		})
+	}
+}
+
+func TestAgentHookDryRunJSONAndUninstall(t *testing.T) {
+	home, run := agentHookPreviewFixture(t)
+	path := filepath.Join(home, ".claude", "settings.json")
+	var plan struct {
+		DryRun bool `json:"dry_run"`
+		Agents []struct {
+			Agent      string `json:"agent"`
+			ConfigPath string `json:"config_path"`
+			Changed    bool   `json:"changed"`
+		} `json:"agents"`
+	}
+	output := run("install", "--dry-run", "--agent", "claude", "--json")
+	assert.NoDirExists(t, filepath.Join(home, "kwt"))
+	require.NoError(t, json.NewDecoder(strings.NewReader(string(output))).Decode(&plan))
+	require.True(t, plan.DryRun)
+	require.Len(t, plan.Agents, 1)
+	assert.Equal(t, "claude", plan.Agents[0].Agent)
+	assert.Equal(t, path, plan.Agents[0].ConfigPath)
+	assert.True(t, plan.Agents[0].Changed)
+	assert.NoFileExists(t, path)
+	run("install", "--agent", "claude")
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	output = run("uninstall", "--dry-run", "--agent", "claude", "--json")
+	require.NoError(t, json.NewDecoder(strings.NewReader(string(output))).Decode(&plan))
+	require.Len(t, plan.Agents, 1)
+	assert.True(t, plan.Agents[0].Changed)
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	run("uninstall", "--agent", "claude")
+	output = run("uninstall", "--dry-run", "--json")
+	require.NoError(t, json.NewDecoder(strings.NewReader(string(output))).Decode(&plan))
+	assert.NotNil(t, plan.Agents)
+	assert.Empty(t, plan.Agents)
+}
 
 // TestAgentHookRunHelperProcess is the kwt process the tests below start. It
 // goes through Execute with the real arguments, as an agent's hook would.
