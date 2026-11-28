@@ -110,17 +110,17 @@ when the global config names a preset.
 
 PR imports disable configured merge drivers by default. To retain selected
 drivers in newly imported worktrees, list their exact, case-sensitive Git
-driver names in the global config:
+driver names under `[pull_request]` in the global config.
 
 ```toml
 [pull_request]
 trusted_merge_drivers = ["mergiraf"]
 ```
 
-Repository-local configuration cannot grant this trust. A listed driver can
-also run when a pull request's own attributes select it, so list only drivers
-safe to run on contributor files. Filter and diff drivers and hooks remain
-disabled during import. Existing imported worktrees are not updated.
+Only the global config grants this trust. Git can also run a listed driver
+when a pull request's own attributes select it, so list only drivers safe to
+run on contributor files. Filter and diff drivers and hooks stay disabled
+during import. The setting applies to worktrees imported after you change it.
 
 ## Project registry
 
