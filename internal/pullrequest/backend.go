@@ -159,7 +159,7 @@ func (b *GitBackend) ImportPullRequest(ctx context.Context, pr PullRequest, bran
 	if b.loadTrustedMergeDrivers != nil {
 		trustedMergeDrivers, err = b.loadTrustedMergeDrivers()
 		if err != nil {
-			return workspace, fmt.Errorf("load trusted merge drivers: %w", err)
+			return workspace, NewError(CodeWorkspaceCreation, fmt.Sprintf("load trusted merge drivers: %v", err), false, err)
 		}
 	}
 	path, err := b.manager.PreparePathForRepository("", branch, b.project.Identity)

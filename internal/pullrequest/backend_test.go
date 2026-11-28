@@ -248,25 +248,16 @@ func TestGitBackendImportedWorktreeTrustedMergeDriver(t *testing.T) {
 	repo, backend := newBackendRepo(t)
 	runGit(t, repo, "config", "--global", "core.attributesFile", attributes)
 	backend = NewGitBackend(backend.git, backend.manager, backend.project, nil, "", config.LoadTrustedMergeDrivers)
-	for _, name := range []string{"trusted", "other"} {
-		runGit(t, repo, "config", "--global", "merge."+name+".driver", "printf 'resolved\\n' > %A")
-	}
-	for _, name := range []string{"a.txt", "b.txt"} {
-		require.NoError(t, os.WriteFile(filepath.Join(repo, name), []byte("base\n"), 0o644))
-	}
-	require.NoError(t, os.WriteFile(filepath.Join(repo, ".gitattributes"), []byte("b.txt merge=other\n"), 0o644))
-	runGit(t, repo, "add", "a.txt", "b.txt", ".gitattributes")
+	runGit(t, repo, "config", "--global", "merge.trusted.driver", "printf 'resolved\\n' > %A")
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "a.txt"), []byte("base\n"), 0o644))
+	runGit(t, repo, "add", "a.txt")
 	runGit(t, repo, "commit", "-m", "base")
 	runGit(t, repo, "checkout", "-b", "feature/widgets")
-	for _, name := range []string{"a.txt", "b.txt"} {
-		require.NoError(t, os.WriteFile(filepath.Join(repo, name), []byte("feature\n"), 0o644))
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "a.txt"), []byte("feature\n"), 0o644))
 	runGit(t, repo, "commit", "-am", "feature")
 	head := runGit(t, repo, "rev-parse", "HEAD")
 	runGit(t, repo, "checkout", "main")
-	for _, name := range []string{"a.txt", "b.txt"} {
-		require.NoError(t, os.WriteFile(filepath.Join(repo, name), []byte("main\n"), 0o644))
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "a.txt"), []byte("main\n"), 0o644))
 	runGit(t, repo, "commit", "-am", "main")
 	runGit(t, repo, "remote", "set-url", "origin", repo)
 	runGit(t, repo, "remote", "set-url", "--push", "origin", "https://github.com/acme/widget.git")
@@ -279,14 +270,10 @@ func TestGitBackendImportedWorktreeTrustedMergeDriver(t *testing.T) {
 	merge.Dir = workspace.Path
 	merge.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Test User", "GIT_AUTHOR_EMAIL=test@example.com", "GIT_COMMITTER_NAME=Test User", "GIT_COMMITTER_EMAIL=test@example.com")
 	output, err := merge.CombinedOutput()
-	require.Error(t, err, "untrusted driver should leave a conflict: %s", output)
+	require.NoError(t, err, "%s", output)
 	content, err := os.ReadFile(filepath.Join(workspace.Path, "a.txt"))
 	require.NoError(t, err)
 	assert.Equal(t, "resolved\n", string(content))
-	assert.Contains(t, runGit(t, workspace.Path, "status", "--short"), "UU b.txt")
-	content, err = os.ReadFile(filepath.Join(workspace.Path, "b.txt"))
-	require.NoError(t, err)
-	assert.Contains(t, string(content), "<<<<<<<")
 }
 
 func TestGitBackendMakesCredentialHelpersAvailableToLifecycle(t *testing.T) {

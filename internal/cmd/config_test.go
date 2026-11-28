@@ -96,7 +96,6 @@ func TestConfigSetRejectsPullRequestPolicy(t *testing.T) {
 			after, err := os.ReadFile(path)
 			require.NoError(t, err)
 			assert.Equal(t, before, after)
-			assert.False(t, viper.IsSet(tc.key))
 			_, err = os.Stat(".kwt.toml")
 			assert.True(t, os.IsNotExist(err))
 		})

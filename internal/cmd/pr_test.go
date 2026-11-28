@@ -479,6 +479,60 @@ func TestDefaultNewPRServiceResolvesTransferredRepository(t *testing.T) {
 	assert.Equal(t, "github.com/acme/widget", resolved.Identity)
 }
 
+func TestDefaultNewPRServiceReportsInvalidMergeDriverPolicy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	t.Setenv("KWT_HOME", filepath.Join(home, "kwt"))
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, "gitconfig"))
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_COUNT", "0")
+	require.NoError(t, os.MkdirAll(os.Getenv("KWT_HOME"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(os.Getenv("KWT_HOME"), "config.toml"), []byte("[pull_request]\ntrusted_merge_drivers = 'invalid'\n"), 0o600))
+	repo := newPRInspectionRepo(t)
+	runPRInspectionGit(t, repo, "remote", "add", "origin", "https://github.com/acme/widget.git")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/acme/widget":
+			_, _ = io.WriteString(w, `{"name":"widget","full_name":"acme/widget","clone_url":"https://github.com/acme/widget.git"}`)
+		case "/repos/acme/widget/pulls/17":
+			_, _ = io.WriteString(w, `{"number":17,"html_url":"https://github.com/acme/widget/pull/17","title":"Fixture","user":{"login":"tester"},"state":"open","head":{"ref":"topic","sha":"0123456789abcdef0123456789abcdef01234567","repo":{"name":"widget","full_name":"acme/widget","clone_url":"https://github.com/acme/widget.git"}},"base":{"ref":"main","repo":{"name":"widget","full_name":"acme/widget","clone_url":"https://github.com/acme/widget.git"}}}`)
+		default:
+			t.Errorf("unexpected provider request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	baseURL := server.URL + "/"
+	client, err := github.NewClient(github.WithURLs(&baseURL, nil))
+	require.NoError(t, err)
+	oldProvider := newPRGitHubProvider
+	t.Cleanup(func() { newPRGitHubProvider = oldProvider })
+	newPRGitHubProvider = func(context.Context) (*pullrequest.GitHubProvider, error) {
+		return pullrequest.NewGitHubProvider(client), nil
+	}
+	project := pullrequest.Project{Identity: "github.com/acme/widget", Name: "widget", Path: repo}
+	worktrees := filepath.Join(home, "worktrees")
+	cfg := &models.Config{Worktree: models.WorktreeConfig{BaseDir: worktrees, AutoMkdir: true}}
+	service, resolved, err := defaultNewPRService(t.Context(), cfg, project)
+	require.NoError(t, err)
+	result, err := service.Import(t.Context(), resolved, "17")
+	var typed *pullrequest.Error
+	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, pullrequest.CodeWorkspaceCreation, typed.Code)
+	assert.Equal(t, "load trusted merge drivers: pull_request.trusted_merge_drivers must be an array of strings", typed.Message)
+	require.Error(t, errors.Unwrap(typed))
+	assert.EqualError(t, errors.Unwrap(typed), "pull_request.trusted_merge_drivers must be an array of strings")
+	assert.Empty(t, result.Workspace.Path)
+	list := exec.CommandContext(t.Context(), "git", "worktree", "list", "--porcelain")
+	list.Dir = repo
+	output, listErr := list.Output()
+	require.NoError(t, listErr)
+	assert.Equal(t, 1, strings.Count(string(output), "worktree "))
+	assert.NotContains(t, string(output), "pr-17")
+}
+
 func TestDefaultNewPRServiceRejectsNestedRepositoryIdentity(t *testing.T) {
 	oldProvider := newPRGitHubProvider
 	t.Cleanup(func() { newPRGitHubProvider = oldProvider })
