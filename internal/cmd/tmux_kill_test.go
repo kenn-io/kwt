@@ -31,7 +31,7 @@ func TestTmuxKillConfirmationFlags(t *testing.T) {
 			require.Equal(t, tc.wantPrompt, strings.Contains(output, "Are you sure?"), output)
 			wantCalls := ""
 			if tc.wantKill {
-				wantCalls = "-L kwt kill-session -t =kwt-wt-work-a1b2c3d4\n"
+				wantCalls = "kwt-wt-work-a1b2c3d4\n"
 			}
 			require.Equal(t, wantCalls, calls)
 		})
@@ -55,7 +55,8 @@ func runSyntheticTmuxKill(t *testing.T, input, pattern, flag string) (string, st
 	logPath := filepath.Join(dir, "calls")
 	script := `#!/bin/sh
 if [ "$1" = kill-session ] || [ "$3" = kill-session ]; then
-  printf '%s\n' "$*" >> "$KWT_FAKE_LOG"
+  for arg do target=$arg; done
+  printf '%s\n' "${target#=}" >> "$KWT_FAKE_LOG"
 fi
 if [ "$1" = "-L" ]; then
   shift 2
