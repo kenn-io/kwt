@@ -110,7 +110,7 @@ exec "$WORKTREE_TEST_REAL_GIT" "$@"
 		t.Setenv("WORKTREE_TEST_PROVENANCE", provenance)
 		t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
-	backend := pr.NewGitBackend(gitadapter.New(root), manager, project, func() (pr.WorktreeCreationGuard, error) { return state, nil }, "")
+	backend := pr.NewGitBackend(gitadapter.New(root), manager, project, func() (pr.WorktreeCreationGuard, error) { return state, nil }, "", nil)
 	return &transactionFixture{root: root, home: home, path: path, provenance: provenance, project: project, provider: transactionProvider{request}, backend: backend, manager: manager, store: pr.NewFileStore(provenance)}
 }
 

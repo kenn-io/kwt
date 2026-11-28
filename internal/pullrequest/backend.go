@@ -19,11 +19,12 @@ import (
 )
 
 type GitBackend struct {
-	git               *gitadapter.Git
-	manager           *worktree.Manager
-	project           Project
-	openCreationGuard func() (WorktreeCreationGuard, error)
-	gitEnvironment    []string
+	git                 *gitadapter.Git
+	manager             *worktree.Manager
+	project             Project
+	openCreationGuard   func() (WorktreeCreationGuard, error)
+	gitEnvironment      []string
+	trustedMergeDrivers []string
 }
 
 type WorktreeCreationGuard interface {
@@ -36,11 +37,13 @@ func NewGitBackend(
 	project Project,
 	openCreationGuard func() (WorktreeCreationGuard, error),
 	fleetTokenEnv string,
+	trustedMergeDrivers []string,
 ) *GitBackend {
 	return &GitBackend{
 		git: g, manager: manager, project: project,
-		openCreationGuard: openCreationGuard,
-		gitEnvironment:    SafeGitEnvironment(os.Environ(), fleetTokenEnv),
+		openCreationGuard:   openCreationGuard,
+		gitEnvironment:      SafeGitEnvironment(os.Environ(), fleetTokenEnv),
+		trustedMergeDrivers: append([]string(nil), trustedMergeDrivers...),
 	}
 }
 
@@ -170,6 +173,7 @@ func (b *GitBackend) ImportPullRequest(ctx context.Context, pr PullRequest, bran
 				Path: path, Branch: branch, HookEnvironmentPrefix: "KWT", Number: pr.Number, HeadBranch: pr.Source.Name,
 				HeadRepoCloneURL: pr.Source.Repository.CloneURL, ExpectedHeadSHA: pr.HeadSHA, Platform: pr.Provider,
 				ProjectRepoIdentity: b.project.Identity,
+				TrustedMergeDrivers: b.trustedMergeDrivers,
 			}, Identity: shared.IdentityPolicy{FileName: "kwt-generation", Generate: true},
 		})
 		if created.Path == "" && created.OwnedBranch == "" {

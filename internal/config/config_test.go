@@ -1999,6 +1999,38 @@ func TestLoadForTargetMergesTrustedRepositorySettings(t *testing.T) {
 	assert.Equal(t, []string{"echo trusted"}, cfg.RepositorySettings[0].SetupCommands)
 }
 
+func TestTrustedMergeDriversAreGlobalOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("KWT_HOME", home)
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte("[pull_request]\ntrusted_merge_drivers = ['trusted']\n"), 0o600))
+	target := t.TempDir()
+	local := []byte("[pull_request]\ntrusted_merge_drivers = ['attacker']\n[worktree]\nauto_mkdir = true\n")
+	path := filepath.Join(target, ".kwt.toml")
+	require.NoError(t, os.WriteFile(path, local, 0o600))
+	abs, err := normalizeConfigPath(path)
+	require.NoError(t, err)
+	store := &TrustStore{path: defaultTrustStorePath()}
+	require.NoError(t, store.Add(abs, computeSHA256(local)))
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	require.NoError(t, Init())
+	global, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"trusted"}, global.PullRequest.TrustedMergeDrivers)
+	for _, load := range []func() (*models.Config, error){
+		func() (*models.Config, error) { return LoadForTarget(target, false) },
+		func() (*models.Config, error) { return LoadForTargetFrom(global, target, false) },
+	} {
+		cfg, err := load()
+		require.NoError(t, err)
+		assert.Equal(t, []string{"trusted"}, cfg.PullRequest.TrustedMergeDrivers)
+		assert.True(t, cfg.Worktree.AutoMkdir)
+	}
+	changeDir(t, target)
+	require.NoError(t, mergeLocalConfig(store, trustingPrompter(), true))
+	assert.Equal(t, []string{"trusted"}, viper.GetStringSlice("pull_request.trusted_merge_drivers"))
+}
+
 func TestLoadForTargetFromMergesLocalConfigOverProvidedSnapshot(t *testing.T) {
 	kwtHome := t.TempDir()
 	t.Setenv("KWT_HOME", kwtHome)

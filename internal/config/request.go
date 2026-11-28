@@ -204,7 +204,8 @@ func mergeRequestLocal(target, local *viper.Viper) {
 		case key == "projects" || key == "workspaces" || strings.HasPrefix(key, "workspaces."),
 			key == "fleet" || strings.HasPrefix(key, "fleet."),
 			key == "daemon" || strings.HasPrefix(key, "daemon."),
-			key == "ssh" || strings.HasPrefix(key, "ssh."):
+			key == "ssh" || strings.HasPrefix(key, "ssh."),
+			key == "pull_request" || strings.HasPrefix(key, "pull_request."):
 			continue
 		default:
 			target.Set(key, local.Get(key))

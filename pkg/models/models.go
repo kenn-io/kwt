@@ -72,6 +72,7 @@ type SSHConfig struct {
 
 // Config represents the application configuration.
 type Config struct {
+	PullRequest        PullRequestConfig   `mapstructure:"pull_request" toml:"pull_request"`
 	Daemon             DaemonConfig        `mapstructure:"daemon" toml:"daemon"`
 	SSH                SSHConfig           `mapstructure:"ssh" toml:"ssh"`
 	Worktree           WorktreeConfig      `mapstructure:"worktree"`                     // Worktree-related configuration
@@ -85,6 +86,11 @@ type Config struct {
 	Workspaces         []Workspace         `mapstructure:"workspaces" toml:"workspaces"` // Registered directory workspaces
 	RepositorySettings []RepositorySetting `mapstructure:"repository_settings"`          // Per-repository setup/copy overrides
 	Layouts            LayoutsConfig       `mapstructure:"layouts"`                      // Named tmux workspace layout library
+}
+
+// PullRequestConfig contains user-controlled policy for imported pull requests.
+type PullRequestConfig struct {
+	TrustedMergeDrivers []string `mapstructure:"trusted_merge_drivers" toml:"trusted_merge_drivers"`
 }
 
 // FleetConfig contains optional multi-machine sync configuration.

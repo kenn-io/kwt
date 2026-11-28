@@ -50,7 +50,7 @@ func newBackendRepo(t *testing.T) (string, *GitBackend) {
 		}},
 	}
 	return repo, NewGitBackend(
-		g, worktree.New(g, cfg), testProject(), nil, cfg.Fleet.TokenEnv,
+		g, worktree.New(g, cfg), testProject(), nil, cfg.Fleet.TokenEnv, nil,
 	)
 }
 
@@ -231,6 +231,60 @@ func TestGitBackendImportedWorktreePreservesMergeConflictContents(t *testing.T) 
 	assert.Contains(t, string(contents), ">>>>>>> other")
 	assert.Contains(t, string(contents), featureContent)
 	assert.Contains(t, string(contents), mainContent)
+}
+
+func TestGitBackendImportedWorktreeTrustedMergeDriver(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, "gitconfig"))
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_COUNT", "0")
+	attributes := filepath.Join(home, "attributes")
+	require.NoError(t, os.WriteFile(attributes, []byte("a.txt merge=trusted\nb.txt merge=other\n"), 0o600))
+	repo, backend := newBackendRepo(t)
+	runGit(t, repo, "config", "--global", "core.attributesFile", attributes)
+	drivers := []string{"trusted"}
+	backend = NewGitBackend(backend.git, backend.manager, backend.project, nil, "", drivers)
+	drivers[0] = "other" // The backend retains the policy captured at construction.
+	for _, name := range []string{"trusted", "other"} {
+		runGit(t, repo, "config", "--global", "merge."+name+".driver", "printf 'resolved\\n' > %A")
+	}
+	for _, name := range []string{"a.txt", "b.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(repo, name), []byte("base\n"), 0o644))
+	}
+	runGit(t, repo, "add", "a.txt", "b.txt")
+	runGit(t, repo, "commit", "-m", "base")
+	runGit(t, repo, "checkout", "-b", "feature/widgets")
+	for _, name := range []string{"a.txt", "b.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(repo, name), []byte("feature\n"), 0o644))
+	}
+	runGit(t, repo, "commit", "-am", "feature")
+	head := runGit(t, repo, "rev-parse", "HEAD")
+	runGit(t, repo, "checkout", "main")
+	for _, name := range []string{"a.txt", "b.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(repo, name), []byte("main\n"), 0o644))
+	}
+	runGit(t, repo, "commit", "-am", "main")
+	runGit(t, repo, "remote", "set-url", "origin", repo)
+	runGit(t, repo, "remote", "set-url", "--push", "origin", "https://github.com/acme/widget.git")
+	pr := testPR(17, false)
+	pr.HeadSHA = head
+	workspace, err := backend.ImportPullRequest(t.Context(), pr, "pr-17-feature-widgets")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = backend.Rollback(context.WithoutCancel(t.Context()), workspace) })
+	merge := exec.CommandContext(t.Context(), "git", "merge", "--no-edit", "main")
+	merge.Dir = workspace.Path
+	merge.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Test User", "GIT_AUTHOR_EMAIL=test@example.com", "GIT_COMMITTER_NAME=Test User", "GIT_COMMITTER_EMAIL=test@example.com")
+	output, err := merge.CombinedOutput()
+	require.Error(t, err, "untrusted driver should leave a conflict: %s", output)
+	content, err := os.ReadFile(filepath.Join(workspace.Path, "a.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "resolved\n", string(content))
+	assert.Contains(t, runGit(t, workspace.Path, "status", "--short"), "UU b.txt")
+	content, err = os.ReadFile(filepath.Join(workspace.Path, "b.txt"))
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "<<<<<<<")
 }
 
 func TestGitBackendMakesCredentialHelpersAvailableToLifecycle(t *testing.T) {

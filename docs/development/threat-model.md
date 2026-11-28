@@ -58,6 +58,8 @@ workspace and run any trusted layout or pane commands.
 must not be exposed to repository-controlled processes, printed, persisted in
 shared state, or published to fleet. Fleet configuration is global-only, and
 non-loopback fleet transport requires HTTPS.
+PR merge-driver trust is also global-only; an allowed driver can run on
+contributor-controlled files selected by pull request attributes.
 
 Ordinary developer credentials and environment variables outside `kwt`'s own
 credential surfaces remain the user's responsibility.

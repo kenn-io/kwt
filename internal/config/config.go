@@ -209,6 +209,8 @@ func mergeLocalConfig(store *TrustStore, prompter trustPrompter, interactive boo
 			fmt.Fprintf(os.Stderr, "kwt: ignoring %q in %s: daemon settings are global-only\n", key, absPath)
 		case key == "ssh" || strings.HasPrefix(key, "ssh."):
 			fmt.Fprintf(os.Stderr, "kwt: ignoring %q in %s: SSH settings are global-only\n", key, absPath)
+		case key == "pull_request" || strings.HasPrefix(key, "pull_request."):
+			fmt.Fprintf(os.Stderr, "kwt: ignoring %q in %s: pull request settings are global-only\n", key, absPath)
 		default:
 			viper.Set(key, localViper.Get(key))
 		}
@@ -574,7 +576,8 @@ func loadForTarget(
 					case key == "projects" || key == "workspaces" || strings.HasPrefix(key, "workspaces."),
 						key == "fleet" || strings.HasPrefix(key, "fleet."),
 						key == "daemon" || strings.HasPrefix(key, "daemon."),
-						key == "ssh" || strings.HasPrefix(key, "ssh."):
+						key == "ssh" || strings.HasPrefix(key, "ssh."),
+						key == "pull_request" || strings.HasPrefix(key, "pull_request."):
 						continue
 					default:
 						target.Set(key, local.Get(key))

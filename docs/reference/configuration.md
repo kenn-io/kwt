@@ -106,6 +106,22 @@ directory. Repository-local `.kwt.toml` files may also set
 `layouts.default = "none"` to opt a single project back into blank sessions
 when the global config names a preset.
 
+## Pull request merge drivers
+
+PR imports disable configured merge drivers by default. To retain selected
+drivers in newly imported worktrees, list their exact, case-sensitive Git
+driver names in the global config:
+
+```toml
+[pull_request]
+trusted_merge_drivers = ["mergiraf"]
+```
+
+Repository-local configuration cannot grant this trust. A listed driver can
+also run when a pull request's own attributes select it, so list only drivers
+safe to run on contributor files. Filter and diff drivers and hooks remain
+disabled during import. Existing imported worktrees are not updated.
+
 ## Project registry
 
 The dashboard lists worktrees from the configured base directory, the current
