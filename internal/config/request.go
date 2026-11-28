@@ -218,6 +218,9 @@ func configFromViper(
 	localTemplate, localSanitize bool,
 	expandPath func(string) (string, error),
 ) (*models.Config, error) {
+	if err := validateTrustedMergeDrivers(target); err != nil {
+		return nil, err
+	}
 	var config models.Config
 	if err := target.Unmarshal(&config); err != nil {
 		return nil, fmt.Errorf("unmarshal request config: %w", err)

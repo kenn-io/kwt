@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -2373,4 +2374,68 @@ func TestCanonicalHomeResolvesRelativeAndSymlinkedKwtHome(t *testing.T) {
 	canonicalRealHome, err := filepath.EvalSymlinks(realHome)
 	require.NoError(t, err)
 	assert.Equal(t, canonicalRealHome, home)
+}
+
+func TestTrustedMergeDriversRequireStringArray(t *testing.T) {
+	cases := []struct {
+		name, policy string
+		want         []string
+		invalid      bool
+	}{
+		{name: "absent"},
+		{name: "empty", policy: "trusted_merge_drivers = []\n", want: []string{}},
+		{name: "strings", policy: "trusted_merge_drivers = ['Merge.Tool', ' spaced ']\n", want: []string{"Merge.Tool", " spaced "}},
+		{name: "boolean element", policy: "trusted_merge_drivers = [true]\n", invalid: true},
+		{name: "number element", policy: "trusted_merge_drivers = [1]\n", invalid: true},
+		{name: "mixed elements", policy: "trusted_merge_drivers = ['safe', false]\n", invalid: true},
+		{name: "string scalar", policy: "trusted_merge_drivers = 'safe'\n", invalid: true},
+		{name: "boolean scalar", policy: "trusted_merge_drivers = true\n", invalid: true},
+		{name: "number scalar", policy: "trusted_merge_drivers = 1\n", invalid: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home, target := t.TempDir(), t.TempDir()
+			data := []byte("[pull_request]\n" + tc.policy)
+			require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), data, 0o600))
+			viper.Reset()
+			t.Cleanup(viper.Reset)
+			viper.SetConfigType("toml")
+			require.NoError(t, viper.ReadConfig(bytes.NewReader(data)))
+			loaders := map[string]func() (*models.Config, error){
+				"load":   Load,
+				"target": func() (*models.Config, error) { return LoadForTarget(target, false) },
+				"snapshot": func() (*models.Config, error) {
+					snapshot, err := LoadGlobalSnapshotAt(home)
+					if err != nil {
+						return nil, err
+					}
+					return snapshot.Config, nil
+				},
+				"request": func() (*models.Config, error) {
+					result, err := ResolveWorkingDirectory(ResolveRequest{Home: home, WorkingDirectory: target})
+					if err != nil {
+						return nil, err
+					}
+					return result.Config, nil
+				},
+			}
+			if tc.invalid {
+				assert.Empty(t, Get().PullRequest.TrustedMergeDrivers)
+			}
+			for name, load := range loaders {
+				t.Run(name, func(t *testing.T) {
+					cfg, err := load()
+					if tc.invalid {
+						require.Error(t, err)
+						return
+					}
+					require.NoError(t, err)
+					assert.Equal(t, tc.want, cfg.PullRequest.TrustedMergeDrivers)
+					from, err := LoadForTargetFrom(cfg, target, false)
+					require.NoError(t, err)
+					assert.Equal(t, tc.want, from.PullRequest.TrustedMergeDrivers)
+				})
+			}
+		})
+	}
 }
