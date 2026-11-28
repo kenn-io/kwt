@@ -117,6 +117,12 @@ driver names under `[pull_request]` in the global config.
 trusted_merge_drivers = ["mergiraf"]
 ```
 
+Set this key by editing the global `config.toml` directly. `kwt config set`
+refuses `pull_request` keys. The value must be a TOML array of strings, each an
+exact driver name. Any other type is a malformed policy, and `kwt pr import`
+then refuses to create a fresh imported worktree with an error that names the
+key. Other commands, including re-opening an existing import, keep working.
+
 Only the global config grants this trust. Git can also run a listed driver
 when a pull request's own attributes select it, so list only drivers safe to
 run on contributor files. Filter and diff drivers and hooks stay disabled
