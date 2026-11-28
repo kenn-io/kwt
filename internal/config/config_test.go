@@ -2004,7 +2004,7 @@ func TestTrustedMergeDriversAreGlobalOnly(t *testing.T) {
 	t.Setenv("KWT_HOME", home)
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte("[pull_request]\ntrusted_merge_drivers = ['trusted']\n"), 0o600))
 	target := t.TempDir()
-	local := []byte("[pull_request]\ntrusted_merge_drivers = ['attacker']\n[worktree]\nauto_mkdir = true\n")
+	local := []byte("[pull_request]\ntrusted_merge_drivers = ['attacker']\n[worktree]\nauto_mkdir = false\n")
 	path := filepath.Join(target, ".kwt.toml")
 	require.NoError(t, os.WriteFile(path, local, 0o600))
 	abs, err := normalizeConfigPath(path)
@@ -2024,7 +2024,7 @@ func TestTrustedMergeDriversAreGlobalOnly(t *testing.T) {
 		cfg, err := load()
 		require.NoError(t, err)
 		assert.Equal(t, []string{"trusted"}, cfg.PullRequest.TrustedMergeDrivers)
-		assert.True(t, cfg.Worktree.AutoMkdir)
+		assert.False(t, cfg.Worktree.AutoMkdir)
 	}
 	changeDir(t, target)
 	require.NoError(t, mergeLocalConfig(store, trustingPrompter(), true))

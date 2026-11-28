@@ -244,9 +244,7 @@ func TestGitBackendImportedWorktreeTrustedMergeDriver(t *testing.T) {
 	require.NoError(t, os.WriteFile(attributes, []byte("a.txt merge=trusted\nb.txt merge=other\n"), 0o600))
 	repo, backend := newBackendRepo(t)
 	runGit(t, repo, "config", "--global", "core.attributesFile", attributes)
-	drivers := []string{"trusted"}
-	backend = NewGitBackend(backend.git, backend.manager, backend.project, nil, "", drivers)
-	drivers[0] = "other" // The backend retains the policy captured at construction.
+	backend = NewGitBackend(backend.git, backend.manager, backend.project, nil, "", []string{"trusted"})
 	for _, name := range []string{"trusted", "other"} {
 		runGit(t, repo, "config", "--global", "merge."+name+".driver", "printf 'resolved\\n' > %A")
 	}

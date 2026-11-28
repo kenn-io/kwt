@@ -43,7 +43,7 @@ func NewGitBackend(
 		git: g, manager: manager, project: project,
 		openCreationGuard:   openCreationGuard,
 		gitEnvironment:      SafeGitEnvironment(os.Environ(), fleetTokenEnv),
-		trustedMergeDrivers: append([]string(nil), trustedMergeDrivers...),
+		trustedMergeDrivers: trustedMergeDrivers,
 	}
 }
 
