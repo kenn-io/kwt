@@ -19,11 +19,12 @@ import (
 )
 
 type GitBackend struct {
-	git               *gitadapter.Git
-	manager           *worktree.Manager
-	project           Project
-	openCreationGuard func() (WorktreeCreationGuard, error)
-	gitEnvironment    []string
+	git                     *gitadapter.Git
+	manager                 *worktree.Manager
+	project                 Project
+	openCreationGuard       func() (WorktreeCreationGuard, error)
+	gitEnvironment          []string
+	loadTrustedMergeDrivers func() ([]string, error)
 }
 
 type WorktreeCreationGuard interface {
@@ -36,11 +37,13 @@ func NewGitBackend(
 	project Project,
 	openCreationGuard func() (WorktreeCreationGuard, error),
 	fleetTokenEnv string,
+	loadTrustedMergeDrivers func() ([]string, error),
 ) *GitBackend {
 	return &GitBackend{
 		git: g, manager: manager, project: project,
-		openCreationGuard: openCreationGuard,
-		gitEnvironment:    SafeGitEnvironment(os.Environ(), fleetTokenEnv),
+		openCreationGuard:       openCreationGuard,
+		gitEnvironment:          SafeGitEnvironment(os.Environ(), fleetTokenEnv),
+		loadTrustedMergeDrivers: loadTrustedMergeDrivers,
 	}
 }
 
@@ -152,6 +155,13 @@ func (b *GitBackend) ImportPullRequest(ctx context.Context, pr PullRequest, bran
 	if err := ctx.Err(); err != nil {
 		return workspace, err
 	}
+	var trustedMergeDrivers []string
+	if b.loadTrustedMergeDrivers != nil {
+		trustedMergeDrivers, err = b.loadTrustedMergeDrivers()
+		if err != nil {
+			return workspace, NewError(CodeWorkspaceCreation, fmt.Sprintf("load trusted merge drivers: %v", err), false, err)
+		}
+	}
 	path, err := b.manager.PreparePathForRepository("", branch, b.project.Identity)
 	if err != nil {
 		return workspace, err
@@ -170,6 +180,7 @@ func (b *GitBackend) ImportPullRequest(ctx context.Context, pr PullRequest, bran
 				Path: path, Branch: branch, HookEnvironmentPrefix: "KWT", Number: pr.Number, HeadBranch: pr.Source.Name,
 				HeadRepoCloneURL: pr.Source.Repository.CloneURL, ExpectedHeadSHA: pr.HeadSHA, Platform: pr.Provider,
 				ProjectRepoIdentity: b.project.Identity,
+				TrustedMergeDrivers: trustedMergeDrivers,
 			}, Identity: shared.IdentityPolicy{FileName: "kwt-generation", Generate: true},
 		})
 		if created.Path == "" && created.OwnedBranch == "" {

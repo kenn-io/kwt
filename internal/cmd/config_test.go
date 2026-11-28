@@ -68,3 +68,36 @@ func TestConfigSetRejectsDirectProjectRegistryWrites(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigSetRejectsPullRequestPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		key   string
+		local bool
+	}{
+		{"pull_request.trusted_merge_drivers", false},
+		{"pull_request.trusted_merge_drivers", true},
+		{"Pull_Request", false},
+	} {
+		t.Run(tc.key+strconv.FormatBool(tc.local), func(t *testing.T) {
+			home := t.TempDir()
+			t.Chdir(t.TempDir())
+			t.Setenv("KWT_HOME", home)
+			viper.Reset()
+			t.Cleanup(viper.Reset)
+			old := configSetLocal
+			configSetLocal = tc.local
+			t.Cleanup(func() { configSetLocal = old })
+			path := filepath.Join(home, "config.toml")
+			before := []byte("[pull_request]\ntrusted_merge_drivers = ['safe']\n")
+			require.NoError(t, os.WriteFile(path, before, 0o600))
+			err := runConfigSet(&cobra.Command{}, []string{tc.key, "true"})
+			require.ErrorContains(t, err, tc.key)
+			require.ErrorContains(t, err, "edit [pull_request] in the global config.toml")
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+			_, err = os.Stat(".kwt.toml")
+			assert.True(t, os.IsNotExist(err))
+		})
+	}
+}

@@ -69,6 +69,36 @@ func (s globalConfigStore) ensure(contents string) (bool, error) {
 	return created, err
 }
 
+// LoadTrustedMergeDrivers reads import policy exclusively from the global file.
+func LoadTrustedMergeDrivers() ([]string, error) {
+	current, err := readGlobalViper(filepath.Join(getConfigDir(), configName+"."+configType))
+	if err != nil {
+		return nil, err
+	}
+	const key = "pull_request.trusted_merge_drivers"
+	if parent := current.Get("pull_request"); parent != nil {
+		if _, ok := parent.(map[string]any); !ok {
+			return nil, fmt.Errorf("pull_request must be a table")
+		}
+	}
+	switch entries := current.Get(key).(type) {
+	case nil:
+		return nil, nil
+	case []any:
+		var names []string
+		for _, entry := range entries {
+			name, ok := entry.(string)
+			if !ok {
+				return nil, fmt.Errorf("%s must be an array of strings", key)
+			}
+			names = append(names, name)
+		}
+		return names, nil
+	default:
+		return nil, fmt.Errorf("%s must be an array of strings", key)
+	}
+}
+
 func readGlobalViper(path string) (*viper.Viper, error) {
 	current := viper.New()
 	current.SetConfigFile(path)

@@ -609,6 +609,18 @@ template = "{{.Repository}}/{{.Branch}}"
 		}
 	})
 
+	t.Run("IgnoresPullRequestSettings", func(t *testing.T) {
+		viper.Reset()
+		t.Cleanup(viper.Reset)
+		viper.SetConfigType("toml")
+		require.NoError(t, viper.ReadConfig(strings.NewReader("[pull_request]\ntrusted_merge_drivers = ['global']\n")))
+		dir := t.TempDir()
+		changeDir(t, dir)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, ".kwt.toml"), []byte("[pull_request]\ntrusted_merge_drivers = ['local']\n"), 0o600))
+		require.NoError(t, mergeLocalConfig(&TrustStore{}, trustingPrompter(), true))
+		assert.Equal(t, []any{"global"}, GetValue("pull_request.trusted_merge_drivers"))
+	})
+
 	t.Run("IgnoresFleetSettings", func(t *testing.T) {
 		viper.Reset()
 		t.Cleanup(func() { viper.Reset() })
@@ -2341,4 +2353,52 @@ func TestCanonicalHomeResolvesRelativeAndSymlinkedKwtHome(t *testing.T) {
 	canonicalRealHome, err := filepath.EvalSymlinks(realHome)
 	require.NoError(t, err)
 	assert.Equal(t, canonicalRealHome, home)
+}
+
+func TestLoadTrustedMergeDrivers(t *testing.T) {
+	cases := []struct {
+		name, source string
+		want         []string
+		invalid      string
+	}{
+		{name: "empty file"},
+		{name: "absent", source: "[pull_request]\n"},
+		{name: "array parent", source: "pull_request = []\n", invalid: "pull_request must be a table"},
+		{name: "empty", source: "[pull_request]\ntrusted_merge_drivers = []\n"},
+		{name: "names", source: "[pull_request]\ntrusted_merge_drivers = ['mergiraf', 'Mergiraf']\n", want: []string{"mergiraf", "Mergiraf"}},
+		{name: "scalar", source: "[pull_request]\ntrusted_merge_drivers = 'x'\n", invalid: "pull_request.trusted_merge_drivers must be an array of strings"},
+		{name: "mixed", source: "[pull_request]\ntrusted_merge_drivers = ['a', false]\n", invalid: "pull_request.trusted_merge_drivers must be an array of strings"},
+		{name: "table", source: "[pull_request]\ntrusted_merge_drivers = { name = 'x' }\n", invalid: "pull_request.trusted_merge_drivers must be an array of strings"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("KWT_HOME", home)
+			require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(tc.source), 0o600))
+			got, err := LoadTrustedMergeDrivers()
+			if tc.invalid != "" {
+				require.ErrorContains(t, err, tc.invalid)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, got)
+			}
+		})
+	}
+}
+
+func TestMalformedMergeDriverPolicyDoesNotFailUnrelatedConfigLoads(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	t.Setenv("KWT_HOME", home)
+	path := filepath.Join(home, "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte("[pull_request]\ntrusted_merge_drivers = 'invalid'\n"), 0o600))
+	viper.SetConfigFile(path)
+	require.NoError(t, viper.ReadInConfig())
+	_, err := Load()
+	require.NoError(t, err)
+	_, err = LoadGlobalSnapshotAt(home)
+	require.NoError(t, err)
 }

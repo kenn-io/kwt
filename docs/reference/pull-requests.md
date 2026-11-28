@@ -288,6 +288,9 @@ commands therefore do not run during PR import: environment scrubbing alone
 cannot prevent same-user processes from reading kwt configuration or token
 files from disk.
 
+Imported worktrees disable merge drivers unless their exact names are listed
+in the global [trusted merge driver configuration](configuration.md#pull-request-merge-drivers).
+
 Kwt requires Git 2.20 or newer. PR import uses per-worktree Git configuration
 to make plain `git push` target the PR head without changing push behavior in
 the main checkout, and checks that capability before it fetches refs, adds

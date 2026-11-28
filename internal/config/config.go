@@ -200,6 +200,8 @@ func mergeLocalConfig(store *TrustStore, prompter trustPrompter, interactive boo
 			mergeRepositorySettings(localViper)
 		case key == "projects" || key == "workspaces" || strings.HasPrefix(key, "workspaces."):
 			continue
+		case key == "pull_request" || strings.HasPrefix(key, "pull_request."):
+			fmt.Fprintf(os.Stderr, "kwt: ignoring %q in %s: pull request settings are global-only\n", key, absPath)
 		case key == "fleet" || strings.HasPrefix(key, "fleet."):
 			// Sync settings decide where bearer tokens are read from and
 			// which hub they are sent to; accepting them from a repo-local

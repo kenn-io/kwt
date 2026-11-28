@@ -59,6 +59,9 @@ must not be exposed to repository-controlled processes, printed, persisted in
 shared state, or published to fleet. Fleet configuration is global-only, and
 non-loopback fleet transport requires HTTPS.
 
+Only the global config can trust PR merge drivers. Git can run an allowed
+driver on contributor-controlled files that pull request attributes select.
+
 Ordinary developer credentials and environment variables outside `kwt`'s own
 credential surfaces remain the user's responsibility.
 
