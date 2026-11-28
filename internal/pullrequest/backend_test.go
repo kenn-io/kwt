@@ -249,6 +249,7 @@ func TestGitBackendImportedWorktreeTrustedMergeDriver(t *testing.T) {
 	runGit(t, repo, "config", "--global", "core.attributesFile", attributes)
 	backend = NewGitBackend(backend.git, backend.manager, backend.project, nil, "", config.LoadTrustedMergeDrivers)
 	runGit(t, repo, "config", "--global", "merge.trusted.driver", "printf 'resolved\\n' > %A")
+	runGit(t, repo, "config", "--global", "merge.unlisted.driver", "false")
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "a.txt"), []byte("base\n"), 0o644))
 	runGit(t, repo, "add", "a.txt")
 	runGit(t, repo, "commit", "-m", "base")
@@ -266,6 +267,7 @@ func TestGitBackendImportedWorktreeTrustedMergeDriver(t *testing.T) {
 	workspace, err := backend.ImportPullRequest(t.Context(), pr, "pr-17-feature-widgets")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = backend.Rollback(context.WithoutCancel(t.Context()), workspace) })
+	assert.NotEqual(t, "false", runGit(t, workspace.Path, "config", "--worktree", "--get", "merge.unlisted.driver"))
 	merge := exec.CommandContext(t.Context(), "git", "merge", "--no-edit", "main")
 	merge.Dir = workspace.Path
 	merge.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Test User", "GIT_AUTHOR_EMAIL=test@example.com", "GIT_COMMITTER_NAME=Test User", "GIT_COMMITTER_EMAIL=test@example.com")
