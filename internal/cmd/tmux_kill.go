@@ -14,6 +14,7 @@ var (
 	tmuxKillInteractive bool
 	tmuxKillAll         bool
 	tmuxKillForce       bool
+	tmuxKillYes         bool
 )
 
 var tmuxKillCmd = &cobra.Command{
@@ -32,8 +33,8 @@ If no pattern is provided, an interactive session selector will be displayed.`,
   # Terminate all sessions (with confirmation)
   kwt tmux kill --all
 
-  # Force kill without confirmation
-  kwt tmux kill --all --force`,
+  # Terminate without confirmation
+  kwt tmux kill --all --yes`,
 	RunE: runTmuxKill,
 }
 
@@ -42,7 +43,8 @@ func init() {
 
 	tmuxKillCmd.Flags().BoolVarP(&tmuxKillInteractive, "interactive", "i", false, "Always use interactive selection")
 	tmuxKillCmd.Flags().BoolVar(&tmuxKillAll, "all", false, "Terminate all sessions")
-	tmuxKillCmd.Flags().BoolVar(&tmuxKillForce, "force", false, "Skip confirmation prompts")
+	tmuxKillCmd.Flags().BoolVar(&tmuxKillYes, "yes", false, "Skip confirmation prompts")
+	tmuxKillCmd.Flags().BoolVar(&tmuxKillForce, "force", false, "Skip confirmation prompts (alias for --yes)")
 }
 
 func runTmuxKill(cmd *cobra.Command, args []string) error {
@@ -98,8 +100,8 @@ func runTmuxKill(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Confirmation unless force flag is used
-	if !tmuxKillForce {
+	// Confirmation unless either skip-confirmation flag is used.
+	if !tmuxKillYes && !tmuxKillForce {
 		if !confirmKillSessions(sessionsToKill) {
 			fmt.Println("Operation cancelled")
 			return nil
