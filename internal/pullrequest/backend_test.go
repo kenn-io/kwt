@@ -152,79 +152,63 @@ func TestGitBackendImportsVerifiedHeadAndIdentity(t *testing.T) {
 	assert.NotContains(t, runGit(t, repo, "for-each-ref", "--format=%(refname)"), "refs/heads/pr-17-feature-widgets")
 }
 
+// importConflictingWorktree creates divergent changes, imports the feature, and merges main.
+func importConflictingWorktree(t *testing.T, repo string, backend *GitBackend, files []string, base, feature, main string) string {
+	t.Helper()
+	writeFiles := func(content string) {
+		t.Helper()
+		for _, name := range files {
+			require.NoError(t, os.WriteFile(filepath.Join(repo, name), []byte(content), 0o644))
+		}
+	}
+	writeFiles(base)
+	runGit(t, repo, "add", ".gitattributes")
+	runGit(t, repo, append([]string{"add"}, files...)...)
+	runGit(t, repo, "commit", "-m", "base")
+	runGit(t, repo, "checkout", "-q", "-b", "feature/widgets")
+	writeFiles(feature)
+	runGit(t, repo, "commit", "-am", "feature")
+	head := runGit(t, repo, "rev-parse", "HEAD")
+	runGit(t, repo, "checkout", "-q", "main")
+	writeFiles(main)
+	runGit(t, repo, "commit", "-am", "main")
+	runGit(t, repo, "remote", "set-url", "origin", repo)
+	runGit(t, repo, "remote", "set-url", "--push", "origin", "https://github.com/acme/widget.git")
+	pr := testPR(17, false)
+	pr.HeadSHA = head
+	workspace, err := backend.ImportPullRequest(t.Context(), pr, "pr-17-feature-widgets")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = backend.Rollback(context.WithoutCancel(t.Context()), workspace) })
+	merge := exec.CommandContext(t.Context(), "git", "merge", "--no-edit", "main")
+	merge.Dir = workspace.Path
+	merge.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=Test User", "GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=Test User", "GIT_COMMITTER_EMAIL=test@example.com",
+	)
+	output, err := merge.CombinedOutput()
+	require.Error(t, err, "the merge must report the overlapping change: %s", output)
+	return workspace.Path
+}
+
 func TestGitBackendImportedWorktreePreservesMergeConflictContents(t *testing.T) {
-	canonicalURL := "https://github.com/acme/widget.git"
 	baseContent := "base\n"
 	featureContent := "feature change\n"
 	mainContent := "main change\n"
 
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("KWT_HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, "gitconfig"))
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_COUNT", "0")
 	projectRepo, backend := newBackendRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(projectRepo, ".gitattributes"), []byte("conflict.txt merge=untrusted\n"), 0o644))
+	runGit(t, projectRepo, "config", "merge.untrusted.driver", "f() { return 1; }; f")
 
-	require.NoError(t, os.WriteFile(
-		filepath.Join(projectRepo, ".gitattributes"),
-		[]byte("conflict.txt merge=untrusted\n"),
-		0o644,
-	))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(projectRepo, "conflict.txt"),
-		[]byte(baseContent),
-		0o644,
-	))
-	runGit(t, projectRepo, "add", ".gitattributes", "conflict.txt")
-	runGit(t, projectRepo, "commit", "-m", "add merge-driver fixture")
-	runGit(t, projectRepo, "config", "merge.untrusted.driver",
-		"f() { return 1; }; f")
-
-	runGit(t, projectRepo, "checkout", "-q", "-b", "feature/widgets")
-	require.NoError(t, os.WriteFile(
-		filepath.Join(projectRepo, "conflict.txt"),
-		[]byte(featureContent),
-		0o644,
-	))
-	runGit(t, projectRepo, "commit", "-am", "feature change")
-	headSHA := runGit(t, projectRepo, "rev-parse", "HEAD")
-
-	runGit(t, projectRepo, "checkout", "-q", "main")
-	require.NoError(t, os.WriteFile(
-		filepath.Join(projectRepo, "conflict.txt"),
-		[]byte(mainContent),
-		0o644,
-	))
-	runGit(t, projectRepo, "commit", "-am", "main change")
-	mainSHA := runGit(t, projectRepo, "rev-parse", "main")
-
-	runGit(t, projectRepo, "remote", "set-url", "origin", projectRepo)
-	runGit(t, projectRepo, "remote", "set-url", "--push", "origin", canonicalURL)
-
-	pr := testPR(17, false)
-	pr.HeadSHA = headSHA
-	pr.Source.Repository.CloneURL = canonicalURL
-
-	workspace, err := backend.ImportPullRequest(
-		t.Context(), pr, "pr-17-feature-widgets",
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = backend.Rollback(context.WithoutCancel(t.Context()), workspace)
-	})
-
-	merge := exec.CommandContext(t.Context(), "git", "merge", "--no-edit", mainSHA)
-	merge.Dir = workspace.Path
-	merge.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=Test User",
-		"GIT_AUTHOR_EMAIL=test@example.com",
-		"GIT_COMMITTER_NAME=Test User",
-		"GIT_COMMITTER_EMAIL=test@example.com",
-		"GIT_CONFIG_NOSYSTEM=1",
-	)
-	mergeOutput, err := merge.CombinedOutput()
-	require.Error(t, err, "the merge must report the overlapping change: %s", mergeOutput)
-
-	assert.Equal(t, "UU conflict.txt",
-		runGit(t, workspace.Path, "status", "--short"))
-	contents, err := os.ReadFile(filepath.Join(workspace.Path, "conflict.txt"))
+	path := importConflictingWorktree(t, projectRepo, backend, []string{"conflict.txt"}, baseContent, featureContent, mainContent)
+	assert.Equal(t, "UU conflict.txt", runGit(t, path, "status", "--short"))
+	contents, err := os.ReadFile(filepath.Join(path, "conflict.txt"))
 	require.NoError(t, err)
 	assert.Contains(t, string(contents), "<<<<<<< current")
 	assert.Contains(t, string(contents), "||||||| base")
@@ -250,39 +234,12 @@ func TestGitBackendImportedWorktreeTrustedMergeDriver(t *testing.T) {
 	backend = NewGitBackend(backend.git, backend.manager, backend.project, nil, "", config.LoadTrustedMergeDrivers)
 	runGit(t, repo, "config", "--global", "merge.trusted.driver", "printf 'resolved\\n' > %A")
 	runGit(t, repo, "config", "--global", "merge.unlisted.driver", "printf 'unlisted\\n' > %A")
-	for _, name := range []string{"a.txt", "b.txt"} {
-		require.NoError(t, os.WriteFile(filepath.Join(repo, name), []byte("base\n"), 0o644))
-	}
 	require.NoError(t, os.WriteFile(filepath.Join(repo, ".gitattributes"), []byte("b.txt merge=unlisted\n"), 0o644))
-	runGit(t, repo, "add", "a.txt", "b.txt", ".gitattributes")
-	runGit(t, repo, "commit", "-m", "base")
-	runGit(t, repo, "checkout", "-b", "feature/widgets")
-	for _, name := range []string{"a.txt", "b.txt"} {
-		require.NoError(t, os.WriteFile(filepath.Join(repo, name), []byte("feature\n"), 0o644))
-	}
-	runGit(t, repo, "commit", "-am", "feature")
-	head := runGit(t, repo, "rev-parse", "HEAD")
-	runGit(t, repo, "checkout", "main")
-	for _, name := range []string{"a.txt", "b.txt"} {
-		require.NoError(t, os.WriteFile(filepath.Join(repo, name), []byte("main\n"), 0o644))
-	}
-	runGit(t, repo, "commit", "-am", "main")
-	runGit(t, repo, "remote", "set-url", "origin", repo)
-	runGit(t, repo, "remote", "set-url", "--push", "origin", "https://github.com/acme/widget.git")
-	pr := testPR(17, false)
-	pr.HeadSHA = head
-	workspace, err := backend.ImportPullRequest(t.Context(), pr, "pr-17-feature-widgets")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Rollback(context.WithoutCancel(t.Context()), workspace) })
-	merge := exec.CommandContext(t.Context(), "git", "merge", "--no-edit", "main")
-	merge.Dir = workspace.Path
-	merge.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Test User", "GIT_AUTHOR_EMAIL=test@example.com", "GIT_COMMITTER_NAME=Test User", "GIT_COMMITTER_EMAIL=test@example.com")
-	output, err := merge.CombinedOutput()
-	require.Error(t, err, "untrusted driver should leave a conflict: %s", output)
-	content, err := os.ReadFile(filepath.Join(workspace.Path, "a.txt"))
+	path := importConflictingWorktree(t, repo, backend, []string{"a.txt", "b.txt"}, "base\n", "feature\n", "main\n")
+	content, err := os.ReadFile(filepath.Join(path, "a.txt"))
 	require.NoError(t, err)
 	assert.Equal(t, "resolved\n", string(content))
-	assert.Contains(t, runGit(t, workspace.Path, "status", "--short"), "UU b.txt")
+	assert.Contains(t, runGit(t, path, "status", "--short"), "UU b.txt")
 }
 
 func TestGitBackendMakesCredentialHelpersAvailableToLifecycle(t *testing.T) {
