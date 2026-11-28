@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -14,9 +16,6 @@ import (
 // The fake executable is the only tmux on PATH, including for the canonical
 // KWT socket, so this test cannot inspect or terminate a real session.
 func TestTmuxKillConfirmationFlags(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("synthetic tmux uses a POSIX shell")
-	}
 	for _, tc := range []struct {
 		name, flag, input    string
 		wantPrompt, wantKill bool
@@ -30,18 +29,21 @@ func TestTmuxKillConfirmationFlags(t *testing.T) {
 			output, calls, err := runSyntheticTmuxKill(t, tc.input, false, tc.flag)
 			require.NoError(t, err, output)
 			require.Equal(t, tc.wantPrompt, strings.Contains(output, "Are you sure?"), output)
-			require.Equal(t, tc.wantKill, strings.Contains(calls, "kill-session"), calls)
+			wantCalls := ""
+			if tc.wantKill {
+				wantCalls = "-L kwt kill-session -t =kwt-wt-work-a1b2c3d4\n"
+			}
+			require.Equal(t, wantCalls, calls)
 		})
 	}
 }
 
 func TestTmuxKillYesPreservesInteractiveSelection(t *testing.T) {
 	output, calls, err := runSyntheticTmuxKill(t, "", true, "--yes")
-	// Without a terminal the finder fails, demonstrating that multiple matches
-	// still go through selection instead of being terminated automatically.
+	// An unset TERM makes finder initialization fail even with a controlling TTY.
 	require.Error(t, err, output)
 	require.Contains(t, output, "session selection cancelled")
-	require.NotContains(t, calls, "kill-session")
+	require.Empty(t, calls)
 }
 
 func runSyntheticTmuxKill(t *testing.T, input string, multiple bool, flag string) (string, string, error) {
@@ -52,7 +54,9 @@ func runSyntheticTmuxKill(t *testing.T, input string, multiple bool, flag string
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "calls")
 	script := `#!/bin/sh
-printf '%s\n' "$*" >> "$KWT_FAKE_LOG"
+if [ "$1" = kill-session ] || [ "$3" = kill-session ]; then
+  printf '%s\n' "$*" >> "$KWT_FAKE_LOG"
+fi
 if [ "$1" = "-L" ]; then
   shift 2
 else
@@ -63,6 +67,8 @@ case "$1" in
     printf 'kwt-wt-work-a1b2c3d4:1:1:0:sh:/tmp\n'
     if [ "$KWT_FAKE_MULTIPLE" = 1 ]; then
       printf 'kwt-wt-work-e5f6a7b8:1:1:0:sh:/tmp\n'
+    else
+      printf 'kwt-wt-other-e5f6a7b8:1:1:0:sh:/tmp\n'
     fi
     ;;
   has-session|kill-session) exit 0 ;;
@@ -70,18 +76,25 @@ case "$1" in
 esac
 `
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0700))
-	args := []string{"tmux", "kill", "work"}
+	pattern := "a1b2c3d4"
+	if multiple {
+		pattern = "work"
+	}
+	args := []string{"tmux", "kill", pattern}
 	if flag != "" {
 		args = append(args, flag)
 	}
-	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestKwtHelperProcess$")
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestKwtHelperProcess$")
 	cmd.Env = append(os.Environ(), "PATH="+dir, "KWT_HOME="+filepath.Join(dir, "home"),
-		"KWT_FAKE_LOG="+logPath, "KWT_TEST_ARGS="+strings.Join(args, "\n"))
+		"KWT_FAKE_LOG="+logPath, "KWT_FAKE_MULTIPLE=0", "TERM=", "KWT_TEST_ARGS="+strings.Join(args, "\n"))
 	if multiple {
 		cmd.Env = append(cmd.Env, "KWT_FAKE_MULTIPLE=1")
 	}
 	cmd.Stdin = strings.NewReader(input)
 	output, err := cmd.CombinedOutput()
+	require.NoError(t, ctx.Err(), "helper timed out: %s", output)
 	calls, readErr := os.ReadFile(logPath)
 	if readErr != nil && !os.IsNotExist(readErr) {
 		t.Fatal(readErr)
