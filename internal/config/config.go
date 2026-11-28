@@ -209,8 +209,6 @@ func mergeLocalConfig(store *TrustStore, prompter trustPrompter, interactive boo
 			fmt.Fprintf(os.Stderr, "kwt: ignoring %q in %s: daemon settings are global-only\n", key, absPath)
 		case key == "ssh" || strings.HasPrefix(key, "ssh."):
 			fmt.Fprintf(os.Stderr, "kwt: ignoring %q in %s: SSH settings are global-only\n", key, absPath)
-		case key == "pull_request" || strings.HasPrefix(key, "pull_request."):
-			fmt.Fprintf(os.Stderr, "kwt: ignoring %q in %s: pull request settings are global-only\n", key, absPath)
 		default:
 			viper.Set(key, localViper.Get(key))
 		}
@@ -576,8 +574,7 @@ func loadForTarget(
 					case key == "projects" || key == "workspaces" || strings.HasPrefix(key, "workspaces."),
 						key == "fleet" || strings.HasPrefix(key, "fleet."),
 						key == "daemon" || strings.HasPrefix(key, "daemon."),
-						key == "ssh" || strings.HasPrefix(key, "ssh."),
-						key == "pull_request" || strings.HasPrefix(key, "pull_request."):
+						key == "ssh" || strings.HasPrefix(key, "ssh."):
 						continue
 					default:
 						target.Set(key, local.Get(key))
@@ -587,9 +584,6 @@ func loadForTarget(
 		}
 	}
 
-	if err := validateTrustedMergeDrivers(target); err != nil {
-		return nil, err
-	}
 	var cfg models.Config
 	if err := target.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal target config: %w", err)
@@ -732,32 +726,9 @@ func targetPathHasEnvironmentReference(value string) bool {
 // that gate interactive trust prompts).
 func StdinInteractive() bool { return isStdinInteractive() }
 
-// validateTrustedMergeDrivers checks the raw value before Viper can weakly
-// convert scalars or non-string elements into trusted names.
-func validateTrustedMergeDrivers(source *viper.Viper) error {
-	const key = "pull_request.trusted_merge_drivers"
-	value := source.Get(key)
-	switch entries := value.(type) {
-	case nil, []string:
-		return nil
-	case []any:
-		for _, entry := range entries {
-			if _, ok := entry.(string); !ok {
-				return fmt.Errorf("%s must be an array of strings", key)
-			}
-		}
-		return nil
-	default:
-		return fmt.Errorf("%s must be an array of strings", key)
-	}
-}
-
 // Load loads and returns the current configuration.
 func Load() (*models.Config, error) {
 	applyGlobalDefaults(viper.GetViper())
-	if err := validateTrustedMergeDrivers(viper.GetViper()); err != nil {
-		return nil, err
-	}
 	var cfg models.Config
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
@@ -857,9 +828,6 @@ func LoadGlobalSnapshotAtWithExpansion(
 		return nil, err
 	}
 	applyGlobalDefaults(globalViper)
-	if err := validateTrustedMergeDrivers(globalViper); err != nil {
-		return nil, err
-	}
 
 	var persisted models.Config
 	if err := globalViper.Unmarshal(&persisted); err != nil {
@@ -1300,10 +1268,6 @@ func Get() *models.Config {
 		var defaultCfg models.Config
 		if err := viper.Unmarshal(&defaultCfg); err != nil {
 			return &models.Config{}
-		}
-
-		if validateTrustedMergeDrivers(viper.GetViper()) != nil {
-			defaultCfg.PullRequest.TrustedMergeDrivers = nil
 		}
 
 		// Apply path expansions to defaults, ignoring errors

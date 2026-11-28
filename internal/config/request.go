@@ -204,8 +204,7 @@ func mergeRequestLocal(target, local *viper.Viper) {
 		case key == "projects" || key == "workspaces" || strings.HasPrefix(key, "workspaces."),
 			key == "fleet" || strings.HasPrefix(key, "fleet."),
 			key == "daemon" || strings.HasPrefix(key, "daemon."),
-			key == "ssh" || strings.HasPrefix(key, "ssh."),
-			key == "pull_request" || strings.HasPrefix(key, "pull_request."):
+			key == "ssh" || strings.HasPrefix(key, "ssh."):
 			continue
 		default:
 			target.Set(key, local.Get(key))
@@ -218,9 +217,6 @@ func configFromViper(
 	localTemplate, localSanitize bool,
 	expandPath func(string) (string, error),
 ) (*models.Config, error) {
-	if err := validateTrustedMergeDrivers(target); err != nil {
-		return nil, err
-	}
 	var config models.Config
 	if err := target.Unmarshal(&config); err != nil {
 		return nil, fmt.Errorf("unmarshal request config: %w", err)

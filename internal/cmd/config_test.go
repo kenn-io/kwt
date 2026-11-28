@@ -68,3 +68,38 @@ func TestConfigSetRejectsDirectProjectRegistryWrites(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigSetRejectsPullRequestPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		key   string
+		local bool
+	}{
+		{"pull_request.trusted_merge_drivers", false},
+		{"pull_request.trusted_merge_drivers", true},
+		{"Pull_Request", false},
+	} {
+		t.Run(tc.key+strconv.FormatBool(tc.local), func(t *testing.T) {
+			home := t.TempDir()
+			t.Chdir(t.TempDir())
+			t.Setenv("KWT_HOME", home)
+			viper.Reset()
+			t.Cleanup(viper.Reset)
+			old := configSetLocal
+			configSetLocal = tc.local
+			t.Cleanup(func() { configSetLocal = old })
+			path := filepath.Join(home, "config.toml")
+			before := []byte("[pull_request]\ntrusted_merge_drivers = ['safe']\n")
+			require.NoError(t, os.WriteFile(path, before, 0o600))
+			viper.Set("sentinel", "unchanged")
+			err := runConfigSet(&cobra.Command{}, []string{tc.key, "true"})
+			require.ErrorContains(t, err, "pull_request.trusted_merge_drivers is an array")
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+			assert.Equal(t, "unchanged", viper.GetString("sentinel"))
+			assert.False(t, viper.IsSet(tc.key))
+			_, err = os.Stat(".kwt.toml")
+			assert.True(t, os.IsNotExist(err))
+		})
+	}
+}

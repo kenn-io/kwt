@@ -216,19 +216,6 @@ func TestResolveWorkingDirectoryIgnoresTrustedLocalSSHPolicy(t *testing.T) {
 	assert.Equal(t, 2*time.Hour, result.Config.SSH.IdleTimeout)
 }
 
-func TestResolveWorkingDirectoryIgnoresLocalMergeDriverPolicy(t *testing.T) {
-	home, repo, localPath := requestConfigFixture(t)
-	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte("[pull_request]\ntrusted_merge_drivers = ['trusted']\n"), 0o600))
-	require.NoError(t, os.WriteFile(localPath, []byte("[pull_request]\ntrusted_merge_drivers = ['attacker']\n"), 0o600))
-	_, err := ResolveWorkingDirectory(ResolveRequest{Home: home, WorkingDirectory: repo, UntrustedPolicy: RequireInteraction})
-	var required *TrustRequiredError
-	require.ErrorAs(t, err, &required)
-	require.NoError(t, ApproveWorkingDirectory(Approval{Home: home, Path: required.Path, Digest: required.Digest}))
-	result, err := ResolveWorkingDirectory(ResolveRequest{Home: home, WorkingDirectory: repo, UntrustedPolicy: RequireInteraction})
-	require.NoError(t, err)
-	assert.Equal(t, []string{"trusted"}, result.Config.PullRequest.TrustedMergeDrivers)
-}
-
 func TestTrustRequirementBoundsAndSanitizesPreview(t *testing.T) {
 	home, repo, localPath := requestConfigFixture(t)
 	content := "\x1b[31m" + strings.Repeat("x", promptPreviewLimit+100)

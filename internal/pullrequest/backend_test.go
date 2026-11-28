@@ -241,17 +241,18 @@ func TestGitBackendImportedWorktreeTrustedMergeDriver(t *testing.T) {
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_CONFIG_COUNT", "0")
 	attributes := filepath.Join(home, "attributes")
-	require.NoError(t, os.WriteFile(attributes, []byte("a.txt merge=trusted\nb.txt merge=other\n"), 0o600))
+	require.NoError(t, os.WriteFile(attributes, []byte("a.txt merge=trusted\n"), 0o600))
 	repo, backend := newBackendRepo(t)
 	runGit(t, repo, "config", "--global", "core.attributesFile", attributes)
-	backend = NewGitBackend(backend.git, backend.manager, backend.project, nil, "", []string{"trusted"})
+	backend = NewGitBackend(backend.git, backend.manager, backend.project, nil, "", func() ([]string, error) { return []string{"trusted"}, nil })
 	for _, name := range []string{"trusted", "other"} {
 		runGit(t, repo, "config", "--global", "merge."+name+".driver", "printf 'resolved\\n' > %A")
 	}
 	for _, name := range []string{"a.txt", "b.txt"} {
 		require.NoError(t, os.WriteFile(filepath.Join(repo, name), []byte("base\n"), 0o644))
 	}
-	runGit(t, repo, "add", "a.txt", "b.txt")
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".gitattributes"), []byte("b.txt merge=other\n"), 0o644))
+	runGit(t, repo, "add", "a.txt", "b.txt", ".gitattributes")
 	runGit(t, repo, "commit", "-m", "base")
 	runGit(t, repo, "checkout", "-b", "feature/widgets")
 	for _, name := range []string{"a.txt", "b.txt"} {
@@ -502,4 +503,15 @@ func TestGitBackendListWorkspacesOmitsMissingRegistrations(t *testing.T) {
 func TestMapSharedChangeRequestErrorPreservesUnknownErrors(t *testing.T) {
 	want := errors.New("application failure")
 	assert.ErrorIs(t, mapSharedChangeRequestError(want), want)
+}
+
+func TestGitBackendImportRejectsInvalidMergeDriverPolicy(t *testing.T) {
+	repo, backend := newBackendRepo(t)
+	policyErr := errors.New("invalid policy")
+	backend.loadTrustedMergeDrivers = func() ([]string, error) { return nil, policyErr }
+	before := runGit(t, repo, "worktree", "list", "--porcelain")
+	workspace, err := backend.ImportPullRequest(t.Context(), testPR(17, false), "pr-17-feature-widgets")
+	require.ErrorIs(t, err, policyErr)
+	assert.Empty(t, workspace.Path)
+	assert.Equal(t, before, runGit(t, repo, "worktree", "list", "--porcelain"))
 }

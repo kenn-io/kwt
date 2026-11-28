@@ -1240,7 +1240,7 @@ func defaultNewPRService(
 			return registry.New()
 		},
 		cfg.Fleet.TokenEnv,
-		cfg.PullRequest.TrustedMergeDrivers,
+		config.LoadTrustedMergeDrivers,
 	)
 	return pullrequest.NewService(
 		provider,

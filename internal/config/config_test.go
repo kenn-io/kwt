@@ -1,7 +1,6 @@
 package config
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -2000,38 +1999,6 @@ func TestLoadForTargetMergesTrustedRepositorySettings(t *testing.T) {
 	assert.Equal(t, []string{"echo trusted"}, cfg.RepositorySettings[0].SetupCommands)
 }
 
-func TestTrustedMergeDriversAreGlobalOnly(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("KWT_HOME", home)
-	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte("[pull_request]\ntrusted_merge_drivers = ['trusted']\n"), 0o600))
-	target := t.TempDir()
-	local := []byte("[pull_request]\ntrusted_merge_drivers = ['attacker']\n[worktree]\nauto_mkdir = false\n")
-	path := filepath.Join(target, ".kwt.toml")
-	require.NoError(t, os.WriteFile(path, local, 0o600))
-	abs, err := normalizeConfigPath(path)
-	require.NoError(t, err)
-	store := &TrustStore{path: defaultTrustStorePath()}
-	require.NoError(t, store.Add(abs, computeSHA256(local)))
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-	require.NoError(t, Init())
-	global, err := Load()
-	require.NoError(t, err)
-	assert.Equal(t, []string{"trusted"}, global.PullRequest.TrustedMergeDrivers)
-	for _, load := range []func() (*models.Config, error){
-		func() (*models.Config, error) { return LoadForTarget(target, false) },
-		func() (*models.Config, error) { return LoadForTargetFrom(global, target, false) },
-	} {
-		cfg, err := load()
-		require.NoError(t, err)
-		assert.Equal(t, []string{"trusted"}, cfg.PullRequest.TrustedMergeDrivers)
-		assert.False(t, cfg.Worktree.AutoMkdir)
-	}
-	changeDir(t, target)
-	require.NoError(t, mergeLocalConfig(store, trustingPrompter(), true))
-	assert.Equal(t, []string{"trusted"}, viper.GetStringSlice("pull_request.trusted_merge_drivers"))
-}
-
 func TestLoadForTargetFromMergesLocalConfigOverProvidedSnapshot(t *testing.T) {
 	kwtHome := t.TempDir()
 	t.Setenv("KWT_HOME", kwtHome)
@@ -2376,65 +2343,45 @@ func TestCanonicalHomeResolvesRelativeAndSymlinkedKwtHome(t *testing.T) {
 	assert.Equal(t, canonicalRealHome, home)
 }
 
-func TestTrustedMergeDriversRequireStringArray(t *testing.T) {
+func TestLoadTrustedMergeDrivers(t *testing.T) {
 	cases := []struct {
 		name, policy string
 		want         []string
 		invalid      bool
 	}{
 		{name: "absent"},
-		{name: "empty", policy: "trusted_merge_drivers = []\n", want: []string{}},
-		{name: "strings", policy: "trusted_merge_drivers = ['Merge.Tool', ' spaced ']\n", want: []string{"Merge.Tool", " spaced "}},
-		{name: "boolean element", policy: "trusted_merge_drivers = [true]\n", invalid: true},
-		{name: "number element", policy: "trusted_merge_drivers = [1]\n", invalid: true},
-		{name: "mixed elements", policy: "trusted_merge_drivers = ['safe', false]\n", invalid: true},
-		{name: "string scalar", policy: "trusted_merge_drivers = 'safe'\n", invalid: true},
-		{name: "boolean scalar", policy: "trusted_merge_drivers = true\n", invalid: true},
-		{name: "number scalar", policy: "trusted_merge_drivers = 1\n", invalid: true},
+		{name: "empty", policy: "trusted_merge_drivers = []\n"},
+		{name: "names", policy: "trusted_merge_drivers = ['mergiraf', ' x']\n", want: []string{"mergiraf", " x"}},
+		{name: "string", policy: "trusted_merge_drivers = 'x'\n", invalid: true},
+		{name: "bool", policy: "trusted_merge_drivers = true\n", invalid: true},
+		{name: "number", policy: "trusted_merge_drivers = 1\n", invalid: true},
+		{name: "bool array", policy: "trusted_merge_drivers = [true]\n", invalid: true},
+		{name: "number array", policy: "trusted_merge_drivers = [1]\n", invalid: true},
+		{name: "mixed", policy: "trusted_merge_drivers = ['a', false]\n", invalid: true},
+		{name: "table", policy: "trusted_merge_drivers = { name = 'x' }\n", invalid: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			home, target := t.TempDir(), t.TempDir()
+			home := t.TempDir()
+			t.Setenv("KWT_HOME", home)
 			data := []byte("[pull_request]\n" + tc.policy)
 			require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), data, 0o600))
-			viper.Reset()
-			t.Cleanup(viper.Reset)
-			viper.SetConfigType("toml")
-			require.NoError(t, viper.ReadConfig(bytes.NewReader(data)))
-			loaders := map[string]func() (*models.Config, error){
-				"load":   Load,
-				"target": func() (*models.Config, error) { return LoadForTarget(target, false) },
-				"snapshot": func() (*models.Config, error) {
-					snapshot, err := LoadGlobalSnapshotAt(home)
-					if err != nil {
-						return nil, err
-					}
-					return snapshot.Config, nil
-				},
-				"request": func() (*models.Config, error) {
-					result, err := ResolveWorkingDirectory(ResolveRequest{Home: home, WorkingDirectory: target})
-					if err != nil {
-						return nil, err
-					}
-					return result.Config, nil
-				},
-			}
+			got, err := LoadTrustedMergeDrivers()
 			if tc.invalid {
-				assert.Empty(t, Get().PullRequest.TrustedMergeDrivers)
+				require.ErrorContains(t, err, "pull_request.trusted_merge_drivers must be an array of strings")
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, got)
 			}
-			for name, load := range loaders {
-				t.Run(name, func(t *testing.T) {
-					cfg, err := load()
-					if tc.invalid {
-						require.Error(t, err)
-						return
-					}
-					require.NoError(t, err)
-					assert.Equal(t, tc.want, cfg.PullRequest.TrustedMergeDrivers)
-					from, err := LoadForTargetFrom(cfg, target, false)
-					require.NoError(t, err)
-					assert.Equal(t, tc.want, from.PullRequest.TrustedMergeDrivers)
-				})
+			if tc.name == "string" {
+				viper.Reset()
+				t.Cleanup(viper.Reset)
+				viper.SetConfigFile(filepath.Join(home, "config.toml"))
+				require.NoError(t, viper.ReadInConfig())
+				_, err = Load()
+				require.NoError(t, err)
+				_, err = LoadGlobalSnapshotAt(home)
+				require.NoError(t, err)
 			}
 		})
 	}

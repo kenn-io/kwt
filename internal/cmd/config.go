@@ -94,6 +94,10 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("projects is managed by kwt projects add and kwt projects remove")
 	}
 
+	if normalizedKey == "pull_request" || strings.HasPrefix(normalizedKey, "pull_request.") {
+		return fmt.Errorf("pull_request.trusted_merge_drivers is an array; set it under [pull_request] in the global config.toml")
+	}
+
 	// Convert string values to appropriate types
 	var typedValue any = value
 	switch value {
