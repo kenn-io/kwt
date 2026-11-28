@@ -668,6 +668,10 @@ from the session name.
 `kwt tmux run --context` rejects `wt` and `workspace`, which are reserved for
 managed worktree and directory-workspace session names.
 
+`kwt tmux kill` asks for confirmation before terminating selected sessions.
+Pass `--yes` to skip confirmation; `--force` remains supported as a compatible
+alias.
+
 ## `kwt rex`
 
 [Rex](https://www.superlogical.com/rex/docs) has no client that runs inside
