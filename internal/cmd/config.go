@@ -95,7 +95,7 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	}
 
 	if normalizedKey == "pull_request" || strings.HasPrefix(normalizedKey, "pull_request.") {
-		return fmt.Errorf("%s cannot be set here; edit [pull_request] in the global config.toml", key)
+		return fmt.Errorf("to set %s, edit [pull_request] in the global config.toml", key)
 	}
 
 	// Convert string values to appropriate types
