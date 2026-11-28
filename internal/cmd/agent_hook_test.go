@@ -19,12 +19,43 @@ import (
 	"go.kenn.io/kit/agenthook"
 )
 
-func TestAgentHookDryRunHelperProcess(t *testing.T) {
-	if os.Getenv("KWT_TEST_DRY_RUN") != "1" {
-		t.Skip("helper process")
+func TestAgentHookDuplicateSelectionPreviewMatchesApply(t *testing.T) {
+	for _, operation := range []string{"install", "uninstall"} {
+		t.Run(operation, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+			for _, profile := range agenthook.Profiles() {
+				if profile.ConfigEnvironment != "" {
+					t.Setenv(profile.ConfigEnvironment, "")
+				}
+			}
+			t.Setenv("KWT_HOME", filepath.Join(home, "kwt"))
+			require.NoError(t, os.Mkdir(filepath.Join(home, ".claude"), 0o700))
+			run := func(args ...string) string {
+				t.Helper()
+				t.Setenv("KWT_TEST_ARGS", strings.Join(append([]string{"agent-hook"}, args...), "\n"))
+				cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestKwtHelperProcess$")
+				output, err := cmd.CombinedOutput()
+				require.NoError(t, err, string(output))
+				return string(output)
+			}
+			if operation == "uninstall" {
+				run("install", "--agent", "claude")
+			}
+			preview := run(operation, "--dry-run", "--agent", "claude", "--agent", " CLAUDE ")
+			apply := run(operation, "--agent", "claude", "--agent", " CLAUDE ")
+			previewVerb, applyVerb := "Would install", "Installed"
+			if operation == "uninstall" {
+				previewVerb, applyVerb = "Would remove", "Removed"
+			}
+			assert.Equal(t, 1, strings.Count(apply, applyVerb), apply)
+			assert.Equal(t, strings.Count(apply, applyVerb), strings.Count(preview, previewVerb), preview)
+			if operation == "install" {
+				assert.Contains(t, apply, "Already current:")
+			}
+		})
 	}
-	os.Args = append([]string{os.Args[0], "agent-hook"}, strings.Fields(os.Getenv("KWT_TEST_DRY_RUN_ARGS"))...)
-	Execute()
 }
 
 func TestAgentHookInstallDryRunDoesNotInitializeConfig(t *testing.T) {
@@ -39,9 +70,8 @@ func TestAgentHookInstallDryRunDoesNotInitializeConfig(t *testing.T) {
 	require.NoError(t, os.Mkdir(filepath.Join(home, ".claude"), 0o700))
 	kwtHome := filepath.Join(home, "kwt-home")
 	t.Setenv("KWT_HOME", kwtHome)
-	t.Setenv("KWT_TEST_DRY_RUN", "1")
-	t.Setenv("KWT_TEST_DRY_RUN_ARGS", "install --dry-run --agent claude")
-	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestAgentHookDryRunHelperProcess$")
+	t.Setenv("KWT_TEST_ARGS", strings.Join([]string{"agent-hook", "install", "--dry-run", "--agent", "claude"}, "\n"))
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestKwtHelperProcess$")
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(output))
 	assert.Contains(t, string(output), "Would install Claude Code hooks")
@@ -60,11 +90,10 @@ func TestAgentHookDryRunJSONAndUninstall(t *testing.T) {
 	}
 	require.NoError(t, os.Mkdir(filepath.Join(home, ".claude"), 0o700))
 	t.Setenv("KWT_HOME", filepath.Join(home, "kwt"))
-	t.Setenv("KWT_TEST_DRY_RUN", "1")
 	run := func(args string) []byte {
 		t.Helper()
-		t.Setenv("KWT_TEST_DRY_RUN_ARGS", args)
-		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestAgentHookDryRunHelperProcess$")
+		t.Setenv("KWT_TEST_ARGS", strings.Join(append([]string{"agent-hook"}, strings.Fields(args)...), "\n"))
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestKwtHelperProcess$")
 		output, err := cmd.CombinedOutput()
 		require.NoError(t, err, string(output))
 		return output
@@ -79,7 +108,6 @@ func TestAgentHookDryRunJSONAndUninstall(t *testing.T) {
 		} `json:"agents"`
 	}
 	output := run("install --dry-run --agent claude --json")
-	// The test binary appends PASS after the command's JSON.
 	require.NoError(t, json.NewDecoder(strings.NewReader(string(output))).Decode(&plan))
 	require.True(t, plan.DryRun)
 	require.Len(t, plan.Agents, 1)

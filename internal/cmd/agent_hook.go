@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -435,6 +436,9 @@ func parseHookAgents(names []string) ([]agenthook.Agent, error) {
 		agent, err := agenthook.ParseAgent(name)
 		if err != nil {
 			return nil, err
+		}
+		if agentHookDryRun && slices.Contains(agents, agent) {
+			continue
 		}
 		agents = append(agents, agent)
 	}

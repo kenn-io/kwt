@@ -759,6 +759,7 @@ sessions have an agent waiting for you.
 kwt agent-hook install                  # every agent set up on this host
 kwt agent-hook install --agent codex
 kwt agent-hook install --dry-run        # preview changes
+kwt agent-hook uninstall --dry-run --json # list hooks that would be removed
 kwt agent-hook status --json
 kwt agent-hook uninstall
 ```
@@ -771,8 +772,10 @@ keeps hooks owned by other tools. Codex asks you to trust new hooks once
 through `/hooks`.
 
 Use `--dry-run` with `install` or `uninstall` to preview config changes
-without writing files, running hooks, or granting trust. With `--json`, the
-preview reports each affected agent, config path, and whether it would change.
+without writing files, running hooks, or granting trust. With `--json`, install
+lists each agent checked, its config path, and whether it would change;
+uninstall lists agents with kwt hooks to remove. An uninstall preview with
+nothing to remove prints no text, or an empty agents list with `--json`.
 
 Each hook writes the tmux pane option `@kwt_agent` on the pane the agent
 runs in:
