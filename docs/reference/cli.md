@@ -670,7 +670,7 @@ managed worktree and directory-workspace session names.
 
 `kwt tmux kill` asks for confirmation before terminating selected sessions.
 Pass `--yes` to skip confirmation; `--force` remains supported as a compatible
-alias. A pattern that matches multiple sessions still opens the picker.
+alias.
 
 ## `kwt rex`
 
