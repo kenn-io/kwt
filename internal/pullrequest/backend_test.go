@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	gitcmd "go.kenn.io/kit/git/cmd"
 	managedworktree "go.kenn.io/kit/git/managed"
+	"go.kenn.io/kwt/internal/config"
 	gitadapter "go.kenn.io/kwt/internal/git"
 	"go.kenn.io/kwt/internal/worktree"
 	"go.kenn.io/kwt/pkg/models"
@@ -236,6 +237,8 @@ func TestGitBackendImportedWorktreePreservesMergeConflictContents(t *testing.T) 
 func TestGitBackendImportedWorktreeTrustedMergeDriver(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("KWT_HOME", home)
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte("[pull_request]\ntrusted_merge_drivers = ['trusted']\n"), 0o600))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, "gitconfig"))
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
@@ -244,7 +247,7 @@ func TestGitBackendImportedWorktreeTrustedMergeDriver(t *testing.T) {
 	require.NoError(t, os.WriteFile(attributes, []byte("a.txt merge=trusted\n"), 0o600))
 	repo, backend := newBackendRepo(t)
 	runGit(t, repo, "config", "--global", "core.attributesFile", attributes)
-	backend = NewGitBackend(backend.git, backend.manager, backend.project, nil, "", func() ([]string, error) { return []string{"trusted"}, nil })
+	backend = NewGitBackend(backend.git, backend.manager, backend.project, nil, "", config.LoadTrustedMergeDrivers)
 	for _, name := range []string{"trusted", "other"} {
 		runGit(t, repo, "config", "--global", "merge."+name+".driver", "printf 'resolved\\n' > %A")
 	}

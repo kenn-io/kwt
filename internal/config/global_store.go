@@ -76,11 +76,14 @@ func LoadTrustedMergeDrivers() ([]string, error) {
 		return nil, err
 	}
 	const key = "pull_request.trusted_merge_drivers"
+	if parent := current.Get("pull_request"); parent != nil {
+		if _, ok := parent.(map[string]any); !ok {
+			return nil, fmt.Errorf("pull_request must be a table")
+		}
+	}
 	switch entries := current.Get(key).(type) {
 	case nil:
 		return nil, nil
-	case []string:
-		return entries, nil
 	case []any:
 		var names []string
 		for _, entry := range entries {

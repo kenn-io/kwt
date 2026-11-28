@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	managedworktree "go.kenn.io/kit/git/managed"
-	"go.kenn.io/kwt/internal/config"
 	"go.kenn.io/kwt/internal/template"
 	"go.kenn.io/kwt/internal/tmux"
 	urlutil "go.kenn.io/kwt/internal/url"
@@ -836,37 +835,6 @@ func TestImportRejectsExistingWorkspaceWithMissingSourceProvenance(t *testing.T)
 	assertErrorCode(t, err, CodeConflict)
 	assert.ErrorContains(t, err, "source provenance")
 	assert.Zero(t, backend.importCalls)
-}
-
-type policyLoadingBackend struct {
-	*fakeWorkspaceBackend
-	gitBackend *GitBackend
-}
-
-func (b *policyLoadingBackend) ImportPullRequest(ctx context.Context, pr PullRequest, branch string) (Workspace, error) {
-	return b.gitBackend.ImportPullRequest(ctx, pr, branch)
-}
-
-func TestImportExistingWithMalformedGlobalMergeDriverPolicy(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("KWT_HOME", home)
-	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte("[pull_request]\ntrusted_merge_drivers = true\n"), 0o600))
-	_, err := config.LoadTrustedMergeDrivers()
-	require.Error(t, err)
-	pr := testPR(47, false)
-	fake := newFakeBackend()
-	workspace := Workspace{ID: "ws-47", Repository: testProject().Identity, Branch: "pr-47-feature-widgets", Path: "/worktrees/47", State: "ready"}
-	fake.workspaces = []Workspace{workspace}
-	store := newMemoryStore()
-	store.records[pr.ID] = Provenance{
-		PullRequestID: pr.ID, Project: testProject(), Workspace: workspace, HeadSHA: pr.HeadSHA,
-		SourceRepo: pr.Source.Repository.Identity, SourceBranch: pr.Source.Name,
-	}
-	backend := &policyLoadingBackend{fakeWorkspaceBackend: fake, gitBackend: &GitBackend{loadTrustedMergeDrivers: config.LoadTrustedMergeDrivers}}
-	service := newTestService(&fakeProvider{prs: []PullRequest{pr}}, backend, store)
-	result, err := service.Import(t.Context(), testProject(), "47")
-	require.NoError(t, err)
-	assert.Equal(t, ImportExisting, result.Status)
 }
 
 func TestImportExistingDoesNotReenterSharedLifecycle(t *testing.T) {

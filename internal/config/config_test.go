@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -2341,6 +2342,57 @@ func TestCanonicalHomeResolvesRelativeAndSymlinkedKwtHome(t *testing.T) {
 	canonicalRealHome, err := filepath.EvalSymlinks(realHome)
 	require.NoError(t, err)
 	assert.Equal(t, canonicalRealHome, home)
+}
+
+func TestMergeCwdLocalPreservesGlobalMergeDriverView(t *testing.T) {
+	for _, global := range []string{"", "[pull_request]\ntrusted_merge_drivers = ['global']\n"} {
+		t.Run(strconv.FormatBool(global != ""), func(t *testing.T) {
+			viper.Reset()
+			t.Cleanup(viper.Reset)
+			viper.SetConfigType("toml")
+			require.NoError(t, viper.ReadConfig(strings.NewReader(global)))
+			dir := t.TempDir()
+			changeDir(t, dir)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, ".kwt.toml"), []byte("[pull_request]\ntrusted_merge_drivers = ['local']\n[ui]\ncolor = false\n"), 0o600))
+			require.NoError(t, mergeLocalConfig(&TrustStore{}, trustingPrompter(), true))
+			if global == "" {
+				assert.Nil(t, GetValue("pull_request.trusted_merge_drivers"))
+				assert.NotContains(t, AllSettings(), "pull_request")
+			} else {
+				assert.Equal(t, []any{"global"}, GetValue("pull_request.trusted_merge_drivers"))
+				assert.Equal(t, []any{"global"}, AllSettings()["pull_request"].(map[string]any)["trusted_merge_drivers"])
+			}
+			assert.Equal(t, false, GetValue("ui.color"))
+		})
+	}
+}
+
+func TestLoadTrustedMergeDriversParent(t *testing.T) {
+	for _, tc := range []struct {
+		name, source string
+		invalid      bool
+		want         []string
+	}{
+		{"missing", "", false, nil},
+		{"empty table", "[pull_request]\n", false, nil},
+		{"valid table", "[pull_request]\ntrusted_merge_drivers = ['safe']\n", false, []string{"safe"}},
+		{"string parent", "pull_request = 'invalid'\n", true, nil},
+		{"boolean parent", "pull_request = true\n", true, nil},
+		{"array parent", "pull_request = []\n", true, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("KWT_HOME", home)
+			require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(tc.source), 0o600))
+			got, err := LoadTrustedMergeDrivers()
+			if tc.invalid {
+				require.ErrorContains(t, err, "pull_request")
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, got)
+			}
+		})
+	}
 }
 
 func TestLoadTrustedMergeDrivers(t *testing.T) {
