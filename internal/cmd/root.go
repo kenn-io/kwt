@@ -171,7 +171,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 // initializer callback cannot return an error, so command pre-run hooks
 // propagate the stored failure without terminating the process directly.
 func initConfig() {
-	if skipConfigInit {
+	if skipConfigInit || agentHookDryRun {
 		return
 	}
 	configInitErr = config.Init()

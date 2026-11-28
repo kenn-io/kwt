@@ -222,15 +222,19 @@ type Status struct {
 // it targets every supported agent whose config directory already exists.
 // Claude Code and Codex hooks that run another kwt that still exists stay as
 // they are, so an update that moves kwt does not make Codex ask for trust
-// again; exact moves them to executable.
-func Install(executable string, exact bool, agents []agenthook.Agent) ([]agenthook.Result, error) {
+// again; exact moves them to executable. dryRun only plans the changes.
+func Install(executable string, exact bool, agents []agenthook.Agent, dryRun bool) ([]agenthook.Result, error) {
 	targets, err := installTargets(agents)
 	if err != nil {
 		return nil, err
 	}
 	results := make([]agenthook.Result, 0, len(targets))
 	for _, agent := range targets {
-		result, err := agenthook.Install(agent, installOptions(agent, executable, exact))
+		operation := agenthook.Install
+		if dryRun {
+			operation = agenthook.PlanInstall
+		}
+		result, err := operation(agent, installOptions(agent, executable, exact))
 		if err != nil {
 			return results, err
 		}
@@ -240,14 +244,18 @@ func Install(executable string, exact bool, agents []agenthook.Agent) ([]agentho
 }
 
 // Uninstall removes kwt's hooks. With no agents, it checks every supported
-// agent and reports only configs that changed.
-func Uninstall(agents []agenthook.Agent) ([]agenthook.Result, error) {
+// agent and reports only configs that changed. dryRun only plans the changes.
+func Uninstall(agents []agenthook.Agent, dryRun bool) ([]agenthook.Result, error) {
 	if len(agents) == 0 {
 		agents = allAgents()
 	}
 	results := []agenthook.Result{}
 	for _, agent := range agents {
-		result, err := agenthook.Uninstall(agent, "", Marker)
+		operation := agenthook.Uninstall
+		if dryRun {
+			operation = agenthook.PlanUninstall
+		}
+		result, err := operation(agent, "", Marker)
 		if err != nil {
 			return results, err
 		}

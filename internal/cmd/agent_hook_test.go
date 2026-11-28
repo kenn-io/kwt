@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,7 +16,94 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/agenthook"
 )
+
+func TestAgentHookDryRunHelperProcess(t *testing.T) {
+	if os.Getenv("KWT_TEST_DRY_RUN") != "1" {
+		t.Skip("helper process")
+	}
+	os.Args = append([]string{os.Args[0], "agent-hook"}, strings.Fields(os.Getenv("KWT_TEST_DRY_RUN_ARGS"))...)
+	Execute()
+}
+
+func TestAgentHookInstallDryRunDoesNotInitializeConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	for _, profile := range agenthook.Profiles() {
+		if profile.ConfigEnvironment != "" {
+			t.Setenv(profile.ConfigEnvironment, "")
+		}
+	}
+	require.NoError(t, os.Mkdir(filepath.Join(home, ".claude"), 0o700))
+	kwtHome := filepath.Join(home, "kwt-home")
+	t.Setenv("KWT_HOME", kwtHome)
+	t.Setenv("KWT_TEST_DRY_RUN", "1")
+	t.Setenv("KWT_TEST_DRY_RUN_ARGS", "install --dry-run --agent claude")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestAgentHookDryRunHelperProcess$")
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
+	assert.Contains(t, string(output), "Would install Claude Code hooks")
+	assert.NoFileExists(t, filepath.Join(home, ".claude", "settings.json"))
+	assert.NoDirExists(t, kwtHome)
+}
+
+func TestAgentHookDryRunJSONAndUninstall(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	for _, profile := range agenthook.Profiles() {
+		if profile.ConfigEnvironment != "" {
+			t.Setenv(profile.ConfigEnvironment, "")
+		}
+	}
+	require.NoError(t, os.Mkdir(filepath.Join(home, ".claude"), 0o700))
+	t.Setenv("KWT_HOME", filepath.Join(home, "kwt"))
+	t.Setenv("KWT_TEST_DRY_RUN", "1")
+	run := func(args string) []byte {
+		t.Helper()
+		t.Setenv("KWT_TEST_DRY_RUN_ARGS", args)
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestAgentHookDryRunHelperProcess$")
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(output))
+		return output
+	}
+	path := filepath.Join(home, ".claude", "settings.json")
+	var plan struct {
+		DryRun bool `json:"dry_run"`
+		Agents []struct {
+			Agent      string `json:"agent"`
+			ConfigPath string `json:"config_path"`
+			Changed    bool   `json:"changed"`
+		} `json:"agents"`
+	}
+	output := run("install --dry-run --agent claude --json")
+	// The test binary appends PASS after the command's JSON.
+	require.NoError(t, json.NewDecoder(strings.NewReader(string(output))).Decode(&plan))
+	require.True(t, plan.DryRun)
+	require.Len(t, plan.Agents, 1)
+	assert.Equal(t, "claude", plan.Agents[0].Agent)
+	assert.Equal(t, path, plan.Agents[0].ConfigPath)
+	assert.True(t, plan.Agents[0].Changed)
+	assert.NoFileExists(t, path)
+	run("install --agent claude")
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	output = run("uninstall --dry-run --agent claude --json")
+	require.NoError(t, json.NewDecoder(strings.NewReader(string(output))).Decode(&plan))
+	require.Len(t, plan.Agents, 1)
+	assert.True(t, plan.Agents[0].Changed)
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	assert.Contains(t, string(run("uninstall --dry-run --agent claude")), "Would remove Claude Code hooks")
+	run("uninstall --agent claude")
+	output = run("uninstall --dry-run --json")
+	require.NoError(t, json.NewDecoder(strings.NewReader(string(output))).Decode(&plan))
+	assert.NotNil(t, plan.Agents)
+	assert.Empty(t, plan.Agents)
+}
 
 // TestAgentHookRunHelperProcess is the kwt process the tests below start. It
 // goes through Execute with the real arguments, as an agent's hook would.

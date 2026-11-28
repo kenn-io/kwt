@@ -84,7 +84,7 @@ func TestInstallTargetsAgentsPresentOnHost(t *testing.T) {
 	home := isolateAgentConfig(t)
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".claude"), 0o700))
 
-	results, err := Install("/opt/kwt/bin/kwt", false, nil)
+	results, err := Install("/opt/kwt/bin/kwt", false, nil, false)
 	require.NoError(t, err)
 
 	require.Len(t, results, 1)
@@ -109,7 +109,7 @@ func TestInstallTargetsAgentsPresentOnHost(t *testing.T) {
 	assert.True(t, claude.Installed)
 	assert.False(t, claude.Current, "a moved executable needs reinstalling")
 
-	removed, err := Uninstall(nil)
+	removed, err := Uninstall(nil, false)
 	require.NoError(t, err)
 	require.Len(t, removed, 1)
 	statuses, err = Statuses("/opt/kwt/bin/kwt", false)
@@ -127,17 +127,17 @@ func TestExactInstallMovesHooksOffAnotherKwt(t *testing.T) {
 	require.NoError(t, err)
 	stable := filepath.Join(t.TempDir(), "kwt")
 	codex := []agenthook.Agent{agenthook.AgentCodex}
-	_, err = Install(pinned, false, codex)
+	_, err = Install(pinned, false, codex, false)
 	require.NoError(t, err)
 
-	kept, err := Install(stable, false, codex)
+	kept, err := Install(stable, false, codex, false)
 	require.NoError(t, err)
 	assert.False(t, kept[0].Changed)
 	statuses, err := Statuses(stable, true)
 	require.NoError(t, err)
 	assert.False(t, findStatus(t, statuses, agenthook.AgentCodex).Current, "the hooks still run the other kwt")
 
-	moved, err := Install(stable, true, codex)
+	moved, err := Install(stable, true, codex, false)
 	require.NoError(t, err)
 	assert.True(t, moved[0].Changed)
 	commands := codexHookCommands(t, filepath.Join(home, ".codex", "hooks.json"))
@@ -178,7 +178,7 @@ func codexHookCommands(t *testing.T, path string) []string {
 func TestInstallRejectsNamedAgentWithoutConfigDirectory(t *testing.T) {
 	isolateAgentConfig(t)
 
-	_, err := Install("/opt/kwt/bin/kwt", false, []agenthook.Agent{agenthook.AgentCodex})
+	_, err := Install("/opt/kwt/bin/kwt", false, []agenthook.Agent{agenthook.AgentCodex}, false)
 
 	require.ErrorContains(t, err, "Codex")
 }
@@ -258,4 +258,70 @@ func findStatus(t *testing.T, statuses []Status, agent agenthook.Agent) Status {
 	}
 	t.Fatalf("no status for %s", agent)
 	return Status{}
+}
+
+func TestInstallUninstallDryRun(t *testing.T) {
+	home := isolateAgentConfig(t)
+	for _, dir := range []string{".claude", ".codex"} {
+		require.NoError(t, os.Mkdir(filepath.Join(home, dir), 0o700))
+	}
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	preview, err := Install(executable, false, nil, true)
+	require.NoError(t, err)
+	require.Len(t, preview, 2)
+	for _, result := range preview {
+		assert.True(t, result.Changed)
+		assert.NoFileExists(t, result.ConfigPath)
+	}
+	statuses, err := Statuses(executable, false)
+	require.NoError(t, err)
+	assert.False(t, findStatus(t, statuses, agenthook.AgentClaude).Installed)
+	assert.False(t, findStatus(t, statuses, agenthook.AgentCodex).Installed)
+	_, err = Install(executable, false, nil, false)
+	require.NoError(t, err)
+	preview, err = Install(executable, false, nil, true)
+	require.NoError(t, err)
+	for _, result := range preview {
+		assert.False(t, result.Changed)
+	}
+	codex := []agenthook.Agent{agenthook.AgentCodex}
+	moved := filepath.Join(t.TempDir(), "kwt")
+	kept, err := Install(moved, false, codex, true)
+	require.NoError(t, err)
+	assert.False(t, kept[0].Changed)
+	changed, err := Install(moved, true, codex, true)
+	require.NoError(t, err)
+	assert.True(t, changed[0].Changed)
+
+	path := filepath.Join(home, ".claude", "settings.json")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var settings map[string]any
+	require.NoError(t, json.Unmarshal(data, &settings))
+	hooks := settings["hooks"].(map[string]any)
+	hooks["OtherEvent"] = []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "other-tool"}}}}
+	data, err = json.Marshal(settings)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+	claude := []agenthook.Agent{agenthook.AgentClaude}
+	removed, err := Uninstall(claude, true)
+	require.NoError(t, err)
+	require.Len(t, removed, 1)
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, data, after)
+	_, err = Uninstall(claude, false)
+	require.NoError(t, err)
+	after, err = os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(after), "other-tool")
+	assert.NotContains(t, string(after), Marker)
+}
+
+func TestInstallDryRunRejectsMissingAgentDirectory(t *testing.T) {
+	home := isolateAgentConfig(t)
+	_, err := Install("kwt", false, []agenthook.Agent{agenthook.AgentCodex}, true)
+	require.ErrorContains(t, err, "Codex")
+	assert.NoDirExists(t, filepath.Join(home, ".codex"))
 }

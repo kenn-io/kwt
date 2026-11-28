@@ -758,6 +758,7 @@ sessions have an agent waiting for you.
 ```sh
 kwt agent-hook install                  # every agent set up on this host
 kwt agent-hook install --agent codex
+kwt agent-hook install --dry-run        # preview changes
 kwt agent-hook status --json
 kwt agent-hook uninstall
 ```
@@ -768,6 +769,10 @@ agent whose config directory is missing is an error. Reinstalling replaces
 kwt's earlier hooks, including ones that point at a different kwt path, and
 keeps hooks owned by other tools. Codex asks you to trust new hooks once
 through `/hooks`.
+
+Use `--dry-run` with `install` or `uninstall` to preview config changes
+without writing files, running hooks, or granting trust. With `--json`, the
+preview reports each affected agent, config path, and whether it would change.
 
 Each hook writes the tmux pane option `@kwt_agent` on the pane the agent
 runs in:

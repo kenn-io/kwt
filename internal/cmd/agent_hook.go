@@ -20,6 +20,7 @@ var (
 	agentHookAgents     []string
 	agentHookExecutable string
 	agentHookJSON       bool
+	agentHookDryRun     bool
 	agentHookRunAgent   string
 	agentHookRunSource  string
 )
@@ -47,9 +48,11 @@ var agentHookInstallCmd = &cobra.Command{
 	Short: "Install agent hooks for this user",
 	Long: `Install kwt's hooks into each supported agent's user config. Without
 --agent, every supported agent whose config directory exists is updated.
-Reinstalling replaces kwt's earlier hooks and keeps hooks owned by others.`,
+Reinstalling replaces kwt's earlier hooks and keeps hooks owned by others.
+Use --dry-run to preview changes without writing.`,
 	Example: `  kwt agent-hook install
-  kwt agent-hook install --agent claude --agent codex`,
+  kwt agent-hook install --agent claude --agent codex
+  kwt agent-hook install --dry-run`,
 	Args: cobra.NoArgs,
 	RunE: runAgentHookInstall,
 }
@@ -57,6 +60,7 @@ Reinstalling replaces kwt's earlier hooks and keeps hooks owned by others.`,
 var agentHookUninstallCmd = &cobra.Command{
 	Use:   "uninstall",
 	Short: "Remove kwt's agent hooks",
+	Long:  "Remove kwt's agent hooks. Use --dry-run to preview changes without writing.",
 	Args:  cobra.NoArgs,
 	RunE:  runAgentHookUninstall,
 }
@@ -86,6 +90,7 @@ func init() {
 	)
 	for _, command := range []*cobra.Command{agentHookInstallCmd, agentHookUninstallCmd} {
 		command.Flags().StringSliceVar(&agentHookAgents, "agent", nil, "Agent to update (repeatable)")
+		command.Flags().BoolVar(&agentHookDryRun, "dry-run", false, "Preview config changes without writing")
 	}
 	for _, command := range []*cobra.Command{agentHookInstallCmd, agentHookStatusCmd} {
 		command.Flags().StringVar(&agentHookExecutable, "executable", "", "kwt path written into hooks, replacing hooks that run another kwt (default: this executable)")
@@ -106,11 +111,14 @@ func runAgentHookInstall(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	results, err := agentstate.Install(executable, exact, agents)
+	results, err := agentstate.Install(executable, exact, agents, agentHookDryRun)
 	if err != nil {
 		return err
 	}
 	if agentHookJSON {
+		if agentHookDryRun {
+			return writeAgentHookPlan(cmd, results)
+		}
 		return writeAgentHookStatuses(cmd, executable, exact)
 	}
 	if len(results) == 0 {
@@ -120,6 +128,9 @@ func runAgentHookInstall(cmd *cobra.Command, _ []string) error {
 	for _, result := range results {
 		profile, _ := agenthook.LookupProfile(result.Agent)
 		verb := "Installed"
+		if agentHookDryRun {
+			verb = "Would install"
+		}
 		if !result.Changed {
 			verb = "Already current:"
 		}
@@ -128,7 +139,7 @@ func runAgentHookInstall(cmd *cobra.Command, _ []string) error {
 		); err != nil {
 			return err
 		}
-		if result.Agent == agenthook.AgentCodex && result.Changed {
+		if result.Agent == agenthook.AgentCodex && result.Changed && !agentHookDryRun {
 			if _, err := fmt.Fprintln(
 				cmd.OutOrStdout(), "Open /hooks in Codex once to review and trust the new hook commands.",
 			); err != nil {
@@ -144,11 +155,14 @@ func runAgentHookUninstall(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	results, err := agentstate.Uninstall(agents)
+	results, err := agentstate.Uninstall(agents, agentHookDryRun)
 	if err != nil {
 		return err
 	}
 	if agentHookJSON {
+		if agentHookDryRun {
+			return writeAgentHookPlan(cmd, results)
+		}
 		executable, exact, err := hookExecutable()
 		if err != nil {
 			return err
@@ -157,13 +171,35 @@ func runAgentHookUninstall(cmd *cobra.Command, _ []string) error {
 	}
 	for _, result := range results {
 		profile, _ := agenthook.LookupProfile(result.Agent)
+		verb := "Removed"
+		if agentHookDryRun {
+			verb = "Would remove"
+		}
 		if _, err := fmt.Fprintf(
-			cmd.OutOrStdout(), "Removed %s hooks from %s\n", profile.DisplayName, result.ConfigPath,
+			cmd.OutOrStdout(), "%s %s hooks from %s\n", verb, profile.DisplayName, result.ConfigPath,
 		); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func writeAgentHookPlan(cmd *cobra.Command, results []agenthook.Result) error {
+	type change struct {
+		Agent      agenthook.Agent `json:"agent"`
+		ConfigPath string          `json:"config_path"`
+		Changed    bool            `json:"changed"`
+	}
+	changes := make([]change, 0, len(results))
+	for _, result := range results {
+		changes = append(changes, change{result.Agent, result.ConfigPath, result.Changed})
+	}
+	encoder := json.NewEncoder(cmd.OutOrStdout())
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(struct {
+		DryRun bool     `json:"dry_run"`
+		Agents []change `json:"agents"`
+	}{true, changes})
 }
 
 func runAgentHookStatus(cmd *cobra.Command, _ []string) error {
